@@ -25,6 +25,12 @@ docker compose up -d
 Done! Your node is live at `https://your-domain.com` with automatic SSL. No build step. No dependencies. No fuss.
 Database migrations run automatically on startup and during updates.
 
+If your server already has nginx or another reverse proxy using `80/443`, use the advanced mode instead:
+
+```bash
+curl -fsSL https://synapsis.social/install.sh | PROXY=none bash
+```
+
 **Updating (migrations run automatically):**
 ```bash
 docker compose pull && docker compose up -d

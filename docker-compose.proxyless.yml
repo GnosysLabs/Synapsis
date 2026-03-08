@@ -1,0 +1,78 @@
+# Synapsis - Docker Compose (Production, External Reverse Proxy)
+# Uses pre-built image from GitHub Container Registry
+#
+# Intended for hosts that already run nginx/Traefik/Caddy on 80/443.
+# Synapsis binds only to localhost so your existing proxy can forward to it.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: synapsis-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-synapsis}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: ${DB_NAME:-synapsis}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - synapsis-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-synapsis} -d ${DB_NAME:-synapsis}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+
+  app:
+    image: ghcr.io/gnosyslabs/synapsis:latest
+    container_name: synapsis-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-synapsis}:${DB_PASSWORD:-changeme}@postgres:5432/${DB_NAME:-synapsis}
+      AUTH_SECRET: ${AUTH_SECRET}
+      DOMAIN: ${DOMAIN:-localhost}
+      NEXT_PUBLIC_NODE_DOMAIN: ${NEXT_PUBLIC_NODE_DOMAIN:-}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-}
+      ALLOW_LOCALHOST: ${ALLOW_LOCALHOST:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS}
+      BOT_MAX_PER_USER: ${BOT_MAX_PER_USER:-5}
+      PORT: "3000"
+      NODE_ENV: production
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - synapsis-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+
+volumes:
+  postgres_data:
+    driver: local
+  uploads_data:
+    driver: local
+
+networks:
+  synapsis-network:
+    driver: bridge

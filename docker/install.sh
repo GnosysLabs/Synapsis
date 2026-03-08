@@ -6,6 +6,7 @@ REPO="${REPO:-GnosysLabs/Synapsis}"
 REF="${REF:-main}"
 INSTALL_DIR="${1:-${INSTALL_DIR:-/opt/synapsis}}"
 PUBLIC_INSTALL_URL="${PUBLIC_INSTALL_URL:-https://synapsis.social/install.sh}"
+PROXY="${PROXY:-caddy}"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -19,6 +20,53 @@ download_file() {
     target_path="$2"
     echo "⬇️  Downloading ${source_path}"
     curl -fsSL "${RAW_BASE}/${source_path}" -o "${target_path}"
+}
+
+normalize_proxy_mode() {
+    case "$1" in
+        caddy|none)
+            printf '%s\n' "$1"
+            ;;
+        *)
+            echo "❌ Unsupported PROXY mode: $1" >&2
+            echo "   Supported values: caddy, none" >&2
+            exit 1
+            ;;
+    esac
+}
+
+is_port_in_use() {
+    port="$1"
+
+    if command -v ss >/dev/null 2>&1; then
+        ss -tulpn 2>/dev/null | grep -q ":${port} "
+        return $?
+    fi
+
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+        return $?
+    fi
+
+    if command -v netstat >/dev/null 2>&1; then
+        netstat -tulpn 2>/dev/null | grep -q ":${port} "
+        return $?
+    fi
+
+    return 1
+}
+
+ensure_caddy_ports_available() {
+    for port in 80 443; do
+        if is_port_in_use "$port"; then
+            echo "❌ Port ${port} is already in use on this host." >&2
+            echo "   The default Synapsis install includes Caddy and needs ports 80/443." >&2
+            echo "   If this is a fresh VPS, free those ports and rerun the installer." >&2
+            echo "   If this host already runs nginx or another reverse proxy, rerun with:" >&2
+            echo "   curl -fsSL ${PUBLIC_INSTALL_URL} | PROXY=none bash" >&2
+            exit 1
+        fi
+    done
 }
 
 set_env_value() {
@@ -73,6 +121,7 @@ require_command mkdir
 require_command cp
 
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
+PROXY="$(normalize_proxy_mode "${PROXY}")"
 
 echo "========================================"
 echo "  Synapsis Docker Installer"
@@ -80,17 +129,27 @@ echo "========================================"
 echo "  Repo: ${REPO}"
 echo "  Ref: ${REF}"
 echo "  Install dir: ${INSTALL_DIR}"
+echo "  Proxy mode: ${PROXY}"
 echo "========================================"
 
 install_docker_if_needed
 mkdir -p "${INSTALL_DIR}"
 
-download_file "docker-compose.yml" "${INSTALL_DIR}/docker-compose.yml"
-download_file "docker/Caddyfile" "${INSTALL_DIR}/Caddyfile"
-download_file "docker/caddy-entrypoint.sh" "${INSTALL_DIR}/caddy-entrypoint.sh"
 download_file "docker/.env.example" "${INSTALL_DIR}/.env.example"
-
-chmod 755 "${INSTALL_DIR}/caddy-entrypoint.sh"
+case "${PROXY}" in
+    caddy)
+        ensure_caddy_ports_available
+        download_file "docker-compose.yml" "${INSTALL_DIR}/docker-compose.yml"
+        download_file "docker/Caddyfile" "${INSTALL_DIR}/Caddyfile"
+        download_file "docker/caddy-entrypoint.sh" "${INSTALL_DIR}/caddy-entrypoint.sh"
+        chmod 755 "${INSTALL_DIR}/caddy-entrypoint.sh"
+        rm -f "${INSTALL_DIR}/docker-compose.proxyless.yml"
+        ;;
+    none)
+        download_file "docker-compose.proxyless.yml" "${INSTALL_DIR}/docker-compose.yml"
+        rm -f "${INSTALL_DIR}/Caddyfile" "${INSTALL_DIR}/caddy-entrypoint.sh"
+        ;;
+esac
 
 if [ ! -f "${INSTALL_DIR}/.env" ]; then
     cp "${INSTALL_DIR}/.env.example" "${INSTALL_DIR}/.env"
@@ -120,5 +179,12 @@ fi
 echo ""
 echo "Next steps:"
 echo "  1. Review ${INSTALL_DIR}/.env"
-echo "  2. Start Synapsis:"
-echo "     cd ${INSTALL_DIR} && docker compose up -d"
+if [ "${PROXY}" = "caddy" ]; then
+    echo "  2. Start Synapsis:"
+    echo "     cd ${INSTALL_DIR} && docker compose up -d"
+else
+    echo "  2. Start Synapsis:"
+    echo "     cd ${INSTALL_DIR} && docker compose up -d"
+    echo "  3. Configure your existing reverse proxy to forward to:"
+    echo "     http://127.0.0.1:\${APP_HOST_PORT:-3000}"
+fi

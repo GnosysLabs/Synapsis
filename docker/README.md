@@ -6,6 +6,8 @@ Production Docker deployment using pre-built images from GitHub Container Regist
 
 ## 🚀 Quick Start
 
+This is the default install path for a fresh VPS where Synapsis should manage its own HTTPS with Caddy.
+
 ```bash
 curl -fsSL https://synapsis.social/install.sh | bash
 nano /opt/synapsis/.env  # Add your domain and admin email
@@ -24,6 +26,7 @@ Your node is live at `https://your-domain.com` with automatic SSL.
 | **Server** | 2GB RAM, 2 CPU cores, 20GB SSD (minimum) |
 | **Domain** | A domain or subdomain pointing to your server |
 | **Docker** | Installed automatically by `install.sh` when missing on supported Linux hosts |
+| **Ports** | `80` and `443` must be free for the default Caddy install |
 
 ---
 
@@ -46,6 +49,44 @@ Optional (advanced):
 **Port Configuration:**
 - `PORT=auto` (default) — Automatically finds an available port between 3000-3020
 - `PORT=3000` — Use a specific port instead
+- `APP_HOST_PORT=3000` — Only used in advanced `PROXY=none` installs
+
+---
+
+## Advanced: Existing nginx/Traefik/Caddy Host
+
+If your server already runs a reverse proxy on `80/443`, use the advanced mode:
+
+```bash
+curl -fsSL https://synapsis.social/install.sh | PROXY=none bash
+nano /opt/synapsis/.env
+cd /opt/synapsis
+docker compose up -d
+```
+
+This mode:
+- skips the bundled Caddy service
+- binds Synapsis to `127.0.0.1:${APP_HOST_PORT:-3000}`
+- expects your existing reverse proxy to forward traffic there
+
+Example nginx site:
+
+```nginx
+server {
+    server_name node.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
 
 ---
 
@@ -98,7 +139,15 @@ docker compose logs app --tail=50  # Check errors
 ```
 
 ### Port already in use
-`PORT=auto` (default) automatically finds an available port. If you set a specific port that's taken:
+If the installer says `80` or `443` is already in use, another reverse proxy is already bound there.
+
+Use a fresh VPS for the default Caddy install, or rerun the installer in advanced mode:
+
+```bash
+curl -fsSL https://synapsis.social/install.sh | PROXY=none bash
+```
+
+For the application port itself, `PORT=auto` (default) automatically finds an available port. If you set a specific port that's taken:
 ```bash
 # Check what's using the port
 sudo netstat -tlnp | grep :3000
