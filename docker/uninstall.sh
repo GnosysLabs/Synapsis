@@ -30,8 +30,14 @@ confirm_uninstall() {
     echo "  - Synapsis images pulled from GHCR/local cache"
     echo "  - ${INSTALL_DIR}"
     echo ""
-    printf "Type DELETE to continue: "
-    read -r confirmation
+    if [ -r /dev/tty ]; then
+        printf "Type DELETE to continue: " > /dev/tty
+        read -r confirmation < /dev/tty
+    else
+        echo "❌ Interactive confirmation requires a TTY." >&2
+        echo "   Re-run with FORCE=1 if you want to skip the prompt." >&2
+        exit 1
+    fi
 
     if [ "$confirmation" != "DELETE" ]; then
         echo "Aborted."
