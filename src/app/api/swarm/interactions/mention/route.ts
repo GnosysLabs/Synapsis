@@ -11,18 +11,19 @@ import { db, users, notifications } from '@/db';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const swarmMentionSchema = z.object({
-  mentionedHandle: z.string(),
+  mentionedHandle: localHandleSchema,
   mention: z.object({
-    actorHandle: z.string(),
-    actorDisplayName: z.string(),
-    actorAvatarUrl: z.string().optional(),
-    actorNodeDomain: z.string(),
-    postId: z.string(),
-    postContent: z.string(),
-    interactionId: z.string(),
-    timestamp: z.string(),
+    actorHandle: localHandleSchema,
+    actorDisplayName: z.string().min(1).max(50),
+    actorAvatarUrl: z.string().url().optional(),
+    actorNodeDomain: nodeDomainSchema,
+    postId: z.string().uuid(),
+    postContent: z.string().max(10000),
+    interactionId: z.string().uuid(),
+    timestamp: z.string().datetime(),
   }),
   signature: z.string(),
 });

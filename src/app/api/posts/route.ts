@@ -534,6 +534,25 @@ export async function GET(request: Request) {
             });
 
             // Transform swarm posts to match local post format
+            const localSwarmReplyIds = swarmResult.posts.map(sp => `swarm:${sp.nodeDomain}:${sp.id}`);
+            const localReplyCounts = localSwarmReplyIds.length > 0
+                ? await db.select({
+                    swarmReplyToId: posts.swarmReplyToId,
+                    count: sql<number>`count(*)`,
+                })
+                    .from(posts)
+                    .where(and(
+                        inArray(posts.swarmReplyToId, localSwarmReplyIds),
+                        eq(posts.isRemoved, false)
+                    ))
+                    .groupBy(posts.swarmReplyToId)
+                : [];
+            const localReplyCountMap = new Map(
+                localReplyCounts
+                    .filter(row => row.swarmReplyToId)
+                    .map(row => [row.swarmReplyToId as string, Number(row.count || 0)])
+            );
+
             const swarmPosts = swarmResult.posts.map(sp => ({
                 id: `swarm:${sp.nodeDomain}:${sp.id}`,
                 originalPostId: sp.id, // Keep the original ID for replies
@@ -541,7 +560,7 @@ export async function GET(request: Request) {
                 createdAt: new Date(sp.createdAt),
                 likesCount: sp.likeCount,
                 repostsCount: sp.repostCount,
-                repliesCount: sp.replyCount,
+                repliesCount: sp.replyCount + (localReplyCountMap.get(`swarm:${sp.nodeDomain}:${sp.id}`) || 0),
                 isSwarm: true,
                 nodeDomain: sp.nodeDomain,
                 author: {

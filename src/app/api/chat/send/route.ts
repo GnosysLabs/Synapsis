@@ -5,12 +5,11 @@ import { requireSignedAction } from '@/lib/auth/verify-signature';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { createSignedPayload } from '@/lib/swarm/signature';
-
-const handleRegex = /^[a-zA-Z0-9_]{3,20}$/;
+import { federatedHandleSchema } from '@/lib/utils/federation';
 
 const chatSendSchema = z.object({
     recipientDid: z.string().min(1).regex(/^did:/, 'Must be a valid DID (did:key:... or did:synapsis:...)'),
-    recipientHandle: z.string().min(3).max(30).regex(handleRegex, 'Handle must be 3-20 characters, alphanumeric and underscores only'),
+    recipientHandle: federatedHandleSchema,
     content: z.string().min(1).max(5000),
 });
 

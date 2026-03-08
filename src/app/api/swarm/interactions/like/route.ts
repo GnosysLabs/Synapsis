@@ -11,14 +11,15 @@ import { db, posts, users, notifications, remoteLikes } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const swarmLikeSchema = z.object({
   postId: z.string().uuid(),
   like: z.object({
-    actorHandle: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Handle must be alphanumeric with underscores'),
+    actorHandle: localHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
     actorAvatarUrl: z.string().url().optional(),
-    actorNodeDomain: z.string().min(1).regex(/^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$/, 'Invalid domain format'),
+    actorNodeDomain: nodeDomainSchema,
     interactionId: z.string().uuid(),
     timestamp: z.string().datetime(),
   }),

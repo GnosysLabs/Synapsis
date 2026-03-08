@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, posts, users, media, remotePosts } from '@/db';
-import { eq, desc, and, sql } from 'drizzle-orm';
+import { eq, desc, and, sql, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 // Schema for local post ID (UUID)
@@ -77,7 +77,7 @@ export async function GET(
                             linkPreviewImage: data.post.linkPreviewImage,
                         };
 
-                        // Transform replies
+                        // Transform replies from the origin node
                         replyPosts = (data.replies || []).map((r: any) => ({
                             id: `swarm:${originDomain}:${r.id}`,
                             originalPostId: r.id,
@@ -102,6 +102,60 @@ export async function GET(
                                 altText: m.altText || null,
                             })) || [],
                         }));
+
+                        const localSwarmReplyId = `swarm:${originDomain}:${originalPostId}`;
+                        const localReplies = await db.query.posts.findMany({
+                            where: and(
+                                eq(posts.swarmReplyToId, localSwarmReplyId),
+                                eq(posts.isRemoved, false)
+                            ),
+                            with: {
+                                author: true,
+                                media: true,
+                            },
+                            orderBy: [desc(posts.createdAt)],
+                        });
+
+                        if (localReplies.length > 0) {
+                            let likedReplyIds = new Set<string>();
+                            let repostedReplyIds = new Set<string | null>();
+
+                            try {
+                                const { requireAuth } = await import('@/lib/auth');
+                                const { likes } = await import('@/db');
+                                const viewer = await requireAuth();
+                                const localReplyIds = localReplies.map(reply => reply.id);
+
+                                const viewerLikes = await db.query.likes.findMany({
+                                    where: and(
+                                        eq(likes.userId, viewer.id),
+                                        inArray(likes.postId, localReplyIds)
+                                    ),
+                                });
+                                likedReplyIds = new Set(viewerLikes.map(like => like.postId));
+
+                                const viewerReposts = await db.query.posts.findMany({
+                                    where: and(
+                                        eq(posts.userId, viewer.id),
+                                        inArray(posts.repostOfId, localReplyIds),
+                                        eq(posts.isRemoved, false)
+                                    ),
+                                });
+                                repostedReplyIds = new Set(viewerReposts.map(reply => reply.repostOfId));
+                            } catch {
+                            }
+
+                            const formattedLocalReplies = localReplies.map((reply: any) => ({
+                                ...reply,
+                                isLiked: likedReplyIds.has(reply.id),
+                                isReposted: repostedReplyIds.has(reply.id),
+                            }));
+
+                            replyPosts = [...formattedLocalReplies, ...replyPosts]
+                                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+                            mainPost.repliesCount = (mainPost.repliesCount || 0) + localReplies.length;
+                        }
 
                         // Check if current user has liked this post
                         try {

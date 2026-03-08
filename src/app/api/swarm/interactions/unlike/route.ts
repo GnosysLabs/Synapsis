@@ -11,14 +11,15 @@ import { db, posts, remoteLikes } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const swarmUnlikeSchema = z.object({
   postId: z.string().uuid(),
   unlike: z.object({
-    actorHandle: z.string(),
-    actorNodeDomain: z.string(),
-    interactionId: z.string(),
-    timestamp: z.string(),
+    actorHandle: localHandleSchema,
+    actorNodeDomain: nodeDomainSchema,
+    interactionId: z.string().uuid(),
+    timestamp: z.string().datetime(),
   }),
   signature: z.string(),
 });

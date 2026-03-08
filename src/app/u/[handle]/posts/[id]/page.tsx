@@ -83,10 +83,13 @@ export default function PostDetailPage() {
 
     const handleLike = async (postId: string, currentLiked: boolean) => {
         if (!did || !userHandle) return;
-        if (currentLiked) {
-            await signedAPI.unlikePost(postId, did, userHandle);
-        } else {
-            await signedAPI.likePost(postId, did, userHandle);
+        const res = currentLiked
+            ? await signedAPI.unlikePost(postId, did, userHandle)
+            : await signedAPI.likePost(postId, did, userHandle);
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'Failed to update like');
         }
     };
 

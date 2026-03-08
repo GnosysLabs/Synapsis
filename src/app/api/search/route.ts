@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db, users, posts, likes } from '@/db';
 import { ilike, or, desc, and, notInArray, eq, inArray } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
+import { discoverNode } from '@/lib/swarm/discovery';
 
 type SearchUser = {
     id: string;
@@ -127,7 +128,12 @@ export async function GET(request: Request) {
             const parsedRemote = parseRemoteHandleQuery(query);
             if (parsedRemote) {
                 // Only lookup on swarm nodes
-                const isSwarm = await isSwarmNode(parsedRemote.domain);
+                let isSwarm = await isSwarmNode(parsedRemote.domain);
+                if (!isSwarm) {
+                    const discovery = await discoverNode(parsedRemote.domain);
+                    isSwarm = discovery.success;
+                }
+
                 if (isSwarm) {
                     try {
                         const profileData = await fetchSwarmUserProfile(parsedRemote.handle, parsedRemote.domain, 0);

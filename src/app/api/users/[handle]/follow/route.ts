@@ -5,6 +5,7 @@ import { eq, and, sql } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth';
 import { requireSignedAction } from '@/lib/auth/verify-signature';
 import { isSwarmNode, deliverSwarmFollow, deliverSwarmUnfollow, cacheSwarmUserPosts } from '@/lib/swarm/interactions';
+import { discoverNode } from '@/lib/swarm/discovery';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -115,7 +116,12 @@ export async function POST(request: Request, context: RouteContext) {
             }
 
             // Only allow following swarm nodes
-            const isSwarm = await isSwarmNode(remote.domain);
+            let isSwarm = await isSwarmNode(remote.domain);
+            if (!isSwarm) {
+                const discovery = await discoverNode(remote.domain, nodeDomain);
+                isSwarm = discovery.success;
+            }
+
             if (!isSwarm) {
                 return NextResponse.json({ error: 'Can only follow users on Synapsis swarm nodes' }, { status: 400 });
             }

@@ -3,6 +3,7 @@ import { eq, and } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
 import { db, users, follows } from '@/db';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
+import { discoverNode } from '@/lib/swarm/discovery';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -40,7 +41,12 @@ export async function GET(request: Request, context: RouteContext) {
         if (!user || isRemotePlaceholder) {
             if (remoteHandle && remoteDomain) {
                 // Only fetch from swarm nodes
-                const isSwarm = await isSwarmNode(remoteDomain);
+                let isSwarm = await isSwarmNode(remoteDomain);
+                if (!isSwarm) {
+                    const discovery = await discoverNode(remoteDomain);
+                    isSwarm = discovery.success;
+                }
+
                 if (isSwarm) {
                     const profileData = await fetchSwarmUserProfile(remoteHandle, remoteDomain, 0);
                     if (profileData?.profile) {

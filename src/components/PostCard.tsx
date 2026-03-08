@@ -49,6 +49,8 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
     const { showToast } = useToast();
     const router = useRouter();
     const [liked, setLiked] = useState(post.isLiked || false);
+    const [likesCount, setLikesCount] = useState(post.likesCount || 0);
+    const [likePending, setLikePending] = useState(false);
     const [reposted, setReposted] = useState(post.isReposted || false);
     const [repostsCount, setRepostsCount] = useState(post.repostsCount || 0);
     const [repostPending, setRepostPending] = useState(false);
@@ -57,14 +59,13 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
     const [showMenu, setShowMenu] = useState(false);
     const domain = useDomain();
     const authorHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
-    const replyToHandle = post.replyTo?.author?.handle ? useFormattedHandle(post.replyTo.author.handle) : '';
-
     // Sync state if post changes (e.g. after a re-render from parent)
     useEffect(() => {
         setLiked(post.isLiked || false);
+        setLikesCount(post.likesCount || 0);
         setReposted(post.isReposted || false);
         setRepostsCount(post.repostsCount || 0);
-    }, [post.isLiked, post.isReposted, post.repostsCount, post.id]);
+    }, [post.isLiked, post.likesCount, post.isReposted, post.repostsCount, post.id]);
 
     const formatTime = (dateStr: string | Date) => {
         const date = new Date(dateStr);
@@ -93,9 +94,13 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
         return date.toLocaleDateString();
     };
 
-    const handleLike = (e: React.MouseEvent) => {
+    const handleLike = async (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+
+        if (likePending) {
+            return;
+        }
 
         if (!isIdentityUnlocked) {
             showToast('Please log in to like posts', 'error');
@@ -103,8 +108,23 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
         }
 
         const currentLiked = liked;
-        setLiked(!currentLiked);
-        onLike?.(post.id, currentLiked); // Pass current state before toggle
+        const currentLikesCount = likesCount;
+        const nextLiked = !currentLiked;
+        const nextLikesCount = Math.max(0, currentLikesCount + (currentLiked ? -1 : 1));
+
+        setLiked(nextLiked);
+        setLikesCount(nextLikesCount);
+        setLikePending(true);
+
+        try {
+            await onLike?.(post.id, currentLiked);
+        } catch (error) {
+            setLiked(currentLiked);
+            setLikesCount(currentLikesCount);
+            showToast(error instanceof Error ? error.message : 'Failed to update like', 'error');
+        } finally {
+            setLikePending(false);
+        }
     };
 
     const handleRepost = async (e: React.MouseEvent) => {
@@ -410,6 +430,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
             ? JSON.parse(post.swarmReplyToAuthor)
             : post.swarmReplyToAuthor)?.nodeDomain,
     } as Post : null);
+    const replyToHandle = effectiveReplyTo?.author?.handle ? useFormattedHandle(effectiveReplyTo.author.handle, effectiveReplyTo.nodeDomain) : '';
 
     // If this is a thread parent being rendered, just render the article
     if (isThreadParent) {
@@ -685,7 +706,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                     </button>
                     <button className={`post-action ${liked ? 'liked' : ''}`} onClick={handleLike}>
                         <HeartIcon filled={liked} />
-                        <span>{(post.likesCount - (post.isLiked ? 1 : 0)) + (liked ? 1 : 0) || ''}</span>
+                        <span>{likesCount || ''}</span>
                     </button>
                     <button className="post-action" onClick={handleReport} disabled={reporting}>
                         <FlagIcon />

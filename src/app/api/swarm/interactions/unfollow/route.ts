@@ -11,14 +11,15 @@ import { db, users, remoteFollowers } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const swarmUnfollowSchema = z.object({
-  targetHandle: z.string(),
+  targetHandle: localHandleSchema,
   unfollow: z.object({
-    followerHandle: z.string(),
-    followerNodeDomain: z.string(),
-    interactionId: z.string(),
-    timestamp: z.string(),
+    followerHandle: localHandleSchema,
+    followerNodeDomain: nodeDomainSchema,
+    interactionId: z.string().uuid(),
+    timestamp: z.string().datetime(),
   }),
   signature: z.string(),
 });

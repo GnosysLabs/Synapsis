@@ -208,7 +208,12 @@ export default function ProfilePage() {
 
     const handleLike = async (postId: string, currentLiked: boolean) => {
         const method = currentLiked ? 'DELETE' : 'POST';
-        await fetch(`/api/posts/${postId}/like`, { method });
+        const res = await fetch(`/api/posts/${postId}/like`, { method });
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'Failed to update like');
+        }
     };
 
     const handleRepost = async (postId: string, currentReposted: boolean) => {

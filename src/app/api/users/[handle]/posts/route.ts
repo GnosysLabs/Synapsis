@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db, posts, users, likes } from '@/db';
 import { eq, desc, and, inArray, lt } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
+import { discoverNode } from '@/lib/swarm/discovery';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -30,7 +31,12 @@ export async function GET(request: Request, context: RouteContext) {
             }
 
             // Only fetch from swarm nodes
-            const isSwarm = await isSwarmNode(remote.domain);
+            let isSwarm = await isSwarmNode(remote.domain);
+            if (!isSwarm) {
+                const discovery = await discoverNode(remote.domain);
+                isSwarm = discovery.success;
+            }
+
             if (!isSwarm) {
                 return NextResponse.json({ posts: [], message: 'Only Synapsis swarm nodes are supported' });
             }
@@ -81,7 +87,12 @@ export async function GET(request: Request, context: RouteContext) {
             }
 
             // Only fetch from swarm nodes
-            const isSwarm = await isSwarmNode(remote.domain);
+            let isSwarm = await isSwarmNode(remote.domain);
+            if (!isSwarm) {
+                const discovery = await discoverNode(remote.domain);
+                isSwarm = discovery.success;
+            }
+
             if (!isSwarm) {
                 return NextResponse.json({ posts: [], message: 'Only Synapsis swarm nodes are supported' });
             }

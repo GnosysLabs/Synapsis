@@ -14,15 +14,16 @@ import { db, users, notifications, remoteFollowers } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const swarmFollowSchema = z.object({
-  targetHandle: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Handle must be alphanumeric with underscores'),
+  targetHandle: localHandleSchema,
   follow: z.object({
-    followerHandle: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Handle must be alphanumeric with underscores'),
+    followerHandle: localHandleSchema,
     followerDisplayName: z.string().min(1).max(50),
     followerAvatarUrl: z.string().url().optional(),
     followerBio: z.string().max(500).optional(),
-    followerNodeDomain: z.string().min(1).regex(/^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$/, 'Invalid domain format'),
+    followerNodeDomain: nodeDomainSchema,
     interactionId: z.string().uuid(),
     timestamp: z.string().datetime(),
   }),
