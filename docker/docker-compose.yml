@@ -8,8 +8,6 @@
 #
 # All state is stored in Docker volumes - source code is immutable in the image
 
-version: "3.8"
-
 services:
   # ============================================
   # PostgreSQL Database

@@ -127,7 +127,7 @@ docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
 ### Image pull fails
 ```bash
 # Verify image exists
-docker pull ghcr.io/cyph3rasi/synapsis:latest
+docker pull ghcr.io/gnosyslabs/synapsis:latest
 
 # Check the published package tags in GitHub Container Registry
 ```

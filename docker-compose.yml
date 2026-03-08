@@ -45,7 +45,7 @@ services:
   # Synapsis Application (from GHCR)
   # ============================================
   app:
-    image: ghcr.io/cyph3rasi/synapsis:latest
+    image: ghcr.io/gnosyslabs/synapsis:latest
     container_name: synapsis-app
     restart: unless-stopped
     environment:

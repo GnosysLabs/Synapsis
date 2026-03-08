@@ -3,34 +3,9 @@
 set -eu
 
 REPO="${REPO:-GnosysLabs/Synapsis}"
-REF="${REF:-}"
+REF="${REF:-main}"
 INSTALL_DIR="${1:-${INSTALL_DIR:-/opt/synapsis}}"
-REPO_API="https://api.github.com/repos/${REPO}"
 PUBLIC_INSTALL_URL="${PUBLIC_INSTALL_URL:-https://synapsis.social/install.sh}"
-
-resolve_ref() {
-    if [ -n "${REF}" ]; then
-        REF_SOURCE="custom override"
-        return
-    fi
-
-    echo "🔎 Resolving latest Synapsis release"
-    latest_tag=$(
-        curl -fsSL "${REPO_API}/releases/latest" 2>/dev/null \
-            | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-            | head -n 1
-    )
-
-    if [ -n "${latest_tag}" ]; then
-        REF="${latest_tag}"
-        REF_SOURCE="latest GitHub release"
-        return
-    fi
-
-    REF="main"
-    REF_SOURCE="main fallback"
-    echo "⚠️  Could not resolve the latest release, falling back to ${REF}" >&2
-}
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -97,14 +72,13 @@ require_command chmod
 require_command mkdir
 require_command cp
 
-resolve_ref
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
 
 echo "========================================"
 echo "  Synapsis Docker Installer"
 echo "========================================"
 echo "  Repo: ${REPO}"
-echo "  Ref: ${REF} (${REF_SOURCE})"
+echo "  Ref: ${REF}"
 echo "  Install dir: ${INSTALL_DIR}"
 echo "========================================"
 
