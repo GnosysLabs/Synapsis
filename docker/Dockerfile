@@ -53,7 +53,13 @@ ENV APP_SOURCE_REPO=${APP_SOURCE_REPO}
 RUN npm run build
 
 # ============================================
-# Stage 3: Production Runner
+# Stage 3: Production Dependencies
+# ============================================
+FROM deps AS prod-deps
+RUN npm prune --omit=dev && npm cache clean --force
+
+# ============================================
+# Stage 4: Production Runner
 # ============================================
 FROM node:22-alpine AS runner
 RUN apk add --no-cache libc6-compat openssl netcat-openbsd wget
@@ -99,8 +105,8 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Copy node_modules from builder (includes ALL dependencies)
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+# Copy pruned runtime dependencies
+COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 
 # Copy drizzle migrations, config, and schema (needed for migrations)
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle

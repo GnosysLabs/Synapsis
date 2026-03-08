@@ -8,6 +8,7 @@ BUILDER="${BUILDER:-colima}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 DATE_PREFIX="${DATE_PREFIX:-$(date -u +%Y.%m.%d)}"
 SOURCE_REPO="${SOURCE_REPO:-https://github.com/GnosysLabs/Synapsis}"
+PRUNE_BUILD_CACHE="${PRUNE_BUILD_CACHE:-1}"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -79,3 +80,9 @@ echo "✅ Published:"
 echo "  ${IMAGE_REPO}:latest"
 echo "  ${IMAGE_REPO}:${APP_VERSION}"
 echo "  ${IMAGE_REPO}:${CURRENT_SHA}"
+
+if [ "${PRUNE_BUILD_CACHE}" = "1" ]; then
+    echo ""
+    echo "🧹 Pruning BuildKit cache"
+    docker buildx prune --builder "${BUILDER}" -af >/dev/null
+fi
