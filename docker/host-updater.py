@@ -18,7 +18,7 @@ LOG_FILE = os.environ.get("HOST_UPDATER_LOG_FILE", "/opt/synapsis/updater.log")
 UPDATE_SCRIPT = os.environ.get("HOST_UPDATER_SCRIPT", "/opt/synapsis/update-local.sh")
 INSTALL_DIR = os.environ.get("INSTALL_DIR", "/opt/synapsis")
 
-status_lock = threading.Lock()
+status_lock = threading.RLock()
 current_process = None
 
 
@@ -72,14 +72,14 @@ def watch_process(process):
     exit_code = process.wait()
     with status_lock:
         current_process = None
-    update_status(
-        status="success" if exit_code == 0 else "error",
-        message="Synapsis update completed." if exit_code == 0 else "Synapsis update failed.",
-        lastFinishedAt=now_iso(),
-        lastExitCode=exit_code,
-        lastError=None if exit_code == 0 else f"Updater exited with code {exit_code}",
-        pid=None,
-    )
+        update_status(
+            status="success" if exit_code == 0 else "error",
+            message="Synapsis update completed." if exit_code == 0 else "Synapsis update failed.",
+            lastFinishedAt=now_iso(),
+            lastExitCode=exit_code,
+            lastError=None if exit_code == 0 else f"Updater exited with code {exit_code}",
+            pid=None,
+        )
 
 
 def start_update_process():
@@ -104,8 +104,8 @@ def start_update_process():
 
         update_status(pid=current_process.pid)
 
-        thread = threading.Thread(target=watch_process, args=(current_process,), daemon=True)
-        thread.start()
+    thread = threading.Thread(target=watch_process, args=(current_process,), daemon=True)
+    thread.start()
 
 
 class ThreadedUnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):

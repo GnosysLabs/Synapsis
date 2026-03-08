@@ -5,7 +5,7 @@ set -eu
 IMAGE_REPO="${IMAGE_REPO:-ghcr.io/gnosyslabs/synapsis}"
 PACKAGE_API="${PACKAGE_API:-/orgs/GnosysLabs/packages/container/synapsis/versions?per_page=100}"
 BUILDER="${BUILDER:-colima}"
-PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
+PLATFORMS="${PLATFORMS:-linux/amd64}"
 DATE_PREFIX="${DATE_PREFIX:-$(date -u +%Y.%m.%d)}"
 SOURCE_REPO="${SOURCE_REPO:-https://github.com/GnosysLabs/Synapsis}"
 PRUNE_BUILD_CACHE="${PRUNE_BUILD_CACHE:-1}"

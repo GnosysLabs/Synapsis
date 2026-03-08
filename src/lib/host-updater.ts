@@ -1,6 +1,7 @@
 import http from 'http';
 
 const DEFAULT_SOCKET_PATH = '/var/run/synapsis-updater/updater.sock';
+const REQUEST_TIMEOUT_MS = 4000;
 
 export interface HostUpdaterStatus {
   available: boolean;
@@ -68,6 +69,10 @@ function requestUpdater<T>(method: 'GET' | 'POST', path: string, body?: unknown)
         });
       }
     );
+
+    request.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      request.destroy(new Error('Host updater request timed out'));
+    });
 
     request.on('error', (error) => {
       reject(error);
