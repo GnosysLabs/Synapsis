@@ -9,6 +9,15 @@ import { eq, sql } from 'drizzle-orm';
 import type { SwarmAnnouncement, SwarmNodeInfo, SwarmCapability } from './types';
 import { upsertSwarmNode, getSeedNodes, markNodeSuccess, markNodeFailure } from './registry';
 
+function normalizeOptionalUrl(value: string | null | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 /**
  * Build this node's announcement payload
  */
@@ -32,7 +41,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     if (node) {
       name = node.name;
       description = node.description ?? undefined;
-      logoUrl = node.logoUrl ?? undefined;
+      logoUrl = normalizeOptionalUrl(node.logoUrl);
       publicKey = node.publicKey ?? '';
       isNsfw = node.isNsfw;
     }

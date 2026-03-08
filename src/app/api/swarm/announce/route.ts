@@ -13,11 +13,20 @@ import { buildAnnouncement } from '@/lib/swarm/discovery';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import type { SwarmNodeInfo } from '@/lib/swarm/types';
 
+const optionalUrlSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}, z.string().url().optional());
+
 const announcementSchema = z.object({
   domain: z.string().min(1),
   name: z.string().optional(),
   description: z.string().optional(),
-  logoUrl: z.string().url().optional(),
+  logoUrl: optionalUrlSchema,
   publicKey: z.string().optional(),
   softwareVersion: z.string().optional(),
   userCount: z.number().optional(),

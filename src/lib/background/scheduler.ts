@@ -64,9 +64,21 @@ async function runBotTasks() {
 
 async function runSwarmGossip() {
   try {
+    const stats = await getSwarmStats();
+
+    // Recover from empty peer lists by periodically re-announcing to seeds.
+    if (stats.activeNodes === 0) {
+      const announceResult = await announceToSeeds();
+      if (announceResult.successful.length > 0 || announceResult.failed.length > 0) {
+        log('SWARM', `Re-announced to seeds: ${announceResult.successful.length} successful, ${announceResult.failed.length} failed`);
+      }
+    }
+
     const result = await runGossipRound();
     if (result.contacted > 0) {
       log('SWARM', `Gossip: contacted ${result.contacted}, successful ${result.successful}, received ${result.totalNodesReceived} nodes`);
+    } else if (stats.activeNodes === 0) {
+      log('SWARM', 'No active swarm peers yet');
     }
   } catch (error) {
     log('SWARM', `Gossip error: ${error}`);
