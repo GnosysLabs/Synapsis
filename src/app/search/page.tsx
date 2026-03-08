@@ -187,7 +187,12 @@ export default function SearchPage() {
 
     const handleRepost = async (postId: string, currentReposted: boolean) => {
         const method = currentReposted ? 'DELETE' : 'POST';
-        await fetch(`/api/posts/${postId}/repost`, { method });
+        const res = await fetch(`/api/posts/${postId}/repost`, { method });
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'Failed to update repost');
+        }
     };
 
     const handleDelete = (postId: string) => {

@@ -92,10 +92,13 @@ export default function PostDetailPage() {
 
     const handleRepost = async (postId: string, currentReposted: boolean) => {
         if (!did || !userHandle) return;
-        if (currentReposted) {
-            await signedAPI.unrepostPost(postId, did, userHandle);
-        } else {
-            await signedAPI.repostPost(postId, did, userHandle);
+        const res = currentReposted
+            ? await signedAPI.unrepostPost(postId, did, userHandle)
+            : await signedAPI.repostPost(postId, did, userHandle);
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'Failed to update repost');
         }
     };
 

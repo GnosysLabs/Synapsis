@@ -34,7 +34,7 @@ function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
 interface PostCardProps {
     post: Post;
     onLike?: (id: string, currentLiked: boolean) => void;
-    onRepost?: (id: string, currentReposted: boolean) => void;
+    onRepost?: (id: string, currentReposted: boolean) => Promise<void> | void;
     onComment?: (post: Post) => void;
     onDelete?: (id: string) => void;
     onHide?: (id: string) => void; // Called when post should be hidden (block/mute)
@@ -50,6 +50,8 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
     const router = useRouter();
     const [liked, setLiked] = useState(post.isLiked || false);
     const [reposted, setReposted] = useState(post.isReposted || false);
+    const [repostsCount, setRepostsCount] = useState(post.repostsCount || 0);
+    const [repostPending, setRepostPending] = useState(false);
     const [reporting, setReporting] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
@@ -61,7 +63,8 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
     useEffect(() => {
         setLiked(post.isLiked || false);
         setReposted(post.isReposted || false);
-    }, [post.isLiked, post.isReposted, post.id]);
+        setRepostsCount(post.repostsCount || 0);
+    }, [post.isLiked, post.isReposted, post.repostsCount, post.id]);
 
     const formatTime = (dateStr: string | Date) => {
         const date = new Date(dateStr);
@@ -104,9 +107,13 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
         onLike?.(post.id, currentLiked); // Pass current state before toggle
     };
 
-    const handleRepost = (e: React.MouseEvent) => {
+    const handleRepost = async (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+
+        if (repostPending) {
+            return;
+        }
 
         if (!isIdentityUnlocked) {
             showToast('Please log in to repost', 'error');
@@ -114,8 +121,23 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
         }
 
         const currentReposted = reposted;
-        setReposted(!currentReposted);
-        onRepost?.(post.id, currentReposted); // Pass current state before toggle
+        const currentRepostsCount = repostsCount;
+        const nextReposted = !currentReposted;
+        const nextRepostsCount = Math.max(0, currentRepostsCount + (currentReposted ? -1 : 1));
+
+        setReposted(nextReposted);
+        setRepostsCount(nextRepostsCount);
+        setRepostPending(true);
+
+        try {
+            await onRepost?.(post.id, currentReposted);
+        } catch (error) {
+            setReposted(currentReposted);
+            setRepostsCount(currentRepostsCount);
+            showToast(error instanceof Error ? error.message : 'Failed to update repost', 'error');
+        } finally {
+            setRepostPending(false);
+        }
     };
 
     const handleComment = (e: React.MouseEvent) => {
@@ -657,9 +679,9 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                         <MessageIcon />
                         <span>{post.repliesCount || ''}</span>
                     </button>
-                    <button className={`post-action ${reposted ? 'reposted' : ''}`} onClick={handleRepost}>
+                    <button className={`post-action ${reposted ? 'reposted' : ''}`} onClick={handleRepost} disabled={repostPending}>
                         <RepeatIcon />
-                        <span>{(post.repostsCount - (post.isReposted ? 1 : 0)) + (reposted ? 1 : 0) || ''}</span>
+                        <span>{repostsCount || ''}</span>
                     </button>
                     <button className={`post-action ${liked ? 'liked' : ''}`} onClick={handleLike}>
                         <HeartIcon filled={liked} />

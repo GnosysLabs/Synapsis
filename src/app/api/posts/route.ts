@@ -821,7 +821,8 @@ export async function GET(request: Request) {
                     const viewerReposts = await db.query.posts.findMany({
                         where: and(
                             eq(posts.userId, viewer.id),
-                            inArray(posts.repostOfId, localPostIds)
+                            inArray(posts.repostOfId, localPostIds),
+                            eq(posts.isRemoved, false)
                         ),
                     });
                     viewerReposts.forEach(r => { if (r.repostOfId) repostedPostIds.add(r.repostOfId); });

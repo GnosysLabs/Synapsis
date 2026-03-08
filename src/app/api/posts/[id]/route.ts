@@ -182,7 +182,8 @@ export async function GET(
                     const viewerReposts = await db.query.posts.findMany({
                         where: and(
                             eq(posts.userId, viewer.id),
-                            inArray(posts.repostOfId, allPostIds)
+                            inArray(posts.repostOfId, allPostIds),
+                            eq(posts.isRemoved, false)
                         ),
                     });
                     const repostedPostIds = new Set(viewerReposts.map(r => r.repostOfId));
