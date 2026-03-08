@@ -473,7 +473,6 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                         showThread={false}
                         isThreadParent={true}
                     />
-                    <div className="thread-line" />
                 </div>
             )}
             <article className={`post ${isDetail ? 'detail' : ''}`}>

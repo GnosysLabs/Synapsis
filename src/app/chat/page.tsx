@@ -126,12 +126,16 @@ export default function ChatPage() {
 
     const markAsRead = async (conversationId: string) => {
         try {
-            await fetch('/api/swarm/chat/messages', {
+            const res = await fetch('/api/swarm/chat/messages', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ conversationId })
             });
+            if (!res.ok) {
+                return;
+            }
             setConversations(prev => prev.map(c => c.id === conversationId ? { ...c, unreadCount: 0 } : c));
+            window.dispatchEvent(new Event('synapsis:chat-updated'));
         } catch { }
     };
 

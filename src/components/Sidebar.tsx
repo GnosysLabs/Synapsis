@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -31,43 +31,61 @@ export function Sidebar() {
             });
     }, []);
 
+    const fetchUnreadNotifications = useCallback(() => {
+        fetch('/api/notifications?unread=true&limit=50')
+            .then(res => res.json())
+            .then(data => {
+                setUnreadCount(data.notifications?.length || 0);
+            })
+            .catch(() => { });
+    }, []);
+
+    const fetchUnreadChats = useCallback(() => {
+        fetch('/api/chat/unread')
+            .then(res => res.json())
+            .then(data => {
+                setUnreadChatCount(data.unreadCount || 0);
+            })
+            .catch(() => { });
+    }, []);
+
     // Fetch unread notification count
     useEffect(() => {
         if (!user) return;
 
-        const fetchUnread = () => {
-            fetch('/api/notifications?unread=true&limit=50')
-                .then(res => res.json())
-                .then(data => {
-                    setUnreadCount(data.notifications?.length || 0);
-                })
-                .catch(() => { });
+        fetchUnreadNotifications();
+
+        const handleUnreadRefresh = () => {
+            fetchUnreadNotifications();
         };
 
-        fetchUnread();
+        window.addEventListener('synapsis:notifications-updated', handleUnreadRefresh);
         // Poll every 30 seconds
-        const interval = setInterval(fetchUnread, 30000);
-        return () => clearInterval(interval);
-    }, [user]);
+        const interval = setInterval(fetchUnreadNotifications, 30000);
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('synapsis:notifications-updated', handleUnreadRefresh);
+        };
+    }, [user, fetchUnreadNotifications]);
 
     // Fetch unread chat count
     useEffect(() => {
         if (!user) return;
 
-        const fetchUnreadChats = () => {
-            fetch('/api/chat/unread')
-                .then(res => res.json())
-                .then(data => {
-                    setUnreadChatCount(data.unreadCount || 0);
-                })
-                .catch(() => { });
+        fetchUnreadChats();
+
+        const handleUnreadRefresh = () => {
+            fetchUnreadChats();
         };
 
-        fetchUnreadChats();
+        window.addEventListener('synapsis:chat-updated', handleUnreadRefresh);
         // Poll every 10 seconds
         const interval = setInterval(fetchUnreadChats, 10000);
-        return () => clearInterval(interval);
-    }, [user]);
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('synapsis:chat-updated', handleUnreadRefresh);
+        };
+    }, [user, fetchUnreadChats]);
 
     // Home is exact match
     const isHome = pathname === '/';

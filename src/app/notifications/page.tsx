@@ -69,6 +69,7 @@ export default function NotificationsPage() {
                 throw new Error('Failed to mark notifications as read');
             }
             setNotifications(prev => prev.map(n => ({ ...n, readAt: new Date().toISOString() })));
+            window.dispatchEvent(new Event('synapsis:notifications-updated'));
         } catch (err) {
             console.error('Failed to mark notifications as read:', err);
         }
