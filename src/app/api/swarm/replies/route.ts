@@ -23,6 +23,8 @@ const swarmReplySchema = z.object({
       handle: z.string(),
       displayName: z.string().optional().nullable(),
       avatarUrl: z.string().optional(),
+      did: z.string().optional(),
+      publicKey: z.string().optional(),
     }),
     nodeDomain: z.string(),
     mediaUrls: z.array(z.string()).optional(),
@@ -79,13 +81,14 @@ export async function POST(request: NextRequest) {
     }
 
     const remoteHandle = `${data.reply.author.handle}@${sourceDomain}`;
-    const remoteDid = `did:swarm:${sourceDomain}:${data.reply.author.handle}`;
+    const remoteDid = data.reply.author.did || `did:swarm:${sourceDomain}:${data.reply.author.handle}`;
 
     await upsertRemoteUser({
       handle: remoteHandle,
       displayName: data.reply.author.displayName || data.reply.author.handle,
       avatarUrl: data.reply.author.avatarUrl || null,
       did: remoteDid,
+      publicKey: data.reply.author.publicKey,
     });
 
     const remoteUser = await db.query.users.findFirst({

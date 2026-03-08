@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, users, notifications } from '@/db';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const swarmMentionSchema = z.object({
@@ -44,12 +44,7 @@ export async function POST(request: NextRequest) {
 
     // SECURITY: Verify the signature
     const { signature, ...payload } = data;
-    const isValid = await verifyUserInteraction(
-      payload,
-      signature,
-      data.mention.actorHandle,
-      data.mention.actorNodeDomain
-    );
+    const isValid = await verifySwarmRequest(payload, signature, data.mention.actorNodeDomain);
 
     if (!isValid) {
       console.warn(`[Swarm] Invalid signature for mention from ${data.mention.actorHandle}@${data.mention.actorNodeDomain}`);

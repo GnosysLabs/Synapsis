@@ -1,5 +1,5 @@
 import { db, users } from '@/db';
-import { eq } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 
 export interface RemoteProfile {
     handle: string;
@@ -21,7 +21,10 @@ export async function upsertRemoteUser(profile: RemoteProfile): Promise<void> {
     try {
         // Check if user already exists
         const existing = await db.query.users.findFirst({
-            where: eq(users.did, profile.did),
+            where: or(
+                eq(users.did, profile.did),
+                eq(users.handle, profile.handle),
+            ),
         });
 
         if (existing) {
@@ -31,10 +34,12 @@ export async function upsertRemoteUser(profile: RemoteProfile): Promise<void> {
 
             await db.update(users)
                 .set({
+                    did: existing.did || profile.did,
+                    handle: existing.handle || profile.handle,
                     displayName: profile.displayName || existing.displayName,
                     avatarUrl: profile.avatarUrl || existing.avatarUrl,
                     isBot: profile.isBot ?? existing.isBot,
-                    publicKey: shouldUpdateKey ? profile.publicKey : undefined, // Only update if needed
+                    publicKey: shouldUpdateKey ? profile.publicKey : existing.publicKey,
                     updatedAt: new Date(),
                 })
                 .where(eq(users.id, existing.id));

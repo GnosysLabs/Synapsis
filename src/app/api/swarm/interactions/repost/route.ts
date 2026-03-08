@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, posts, users, notifications } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const swarmRepostSchema = z.object({
@@ -43,12 +43,7 @@ export async function POST(request: NextRequest) {
 
     // SECURITY: Verify the signature
     const { signature, ...payload } = data;
-    const isValid = await verifyUserInteraction(
-      payload,
-      signature,
-      data.repost.actorHandle,
-      data.repost.actorNodeDomain
-    );
+    const isValid = await verifySwarmRequest(payload, signature, data.repost.actorNodeDomain);
 
     if (!isValid) {
       console.warn(`[Swarm] Invalid signature for repost from ${data.repost.actorHandle}@${data.repost.actorNodeDomain}`);

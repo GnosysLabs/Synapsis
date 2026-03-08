@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, posts } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const swarmUnrepostSchema = z.object({
@@ -40,12 +40,7 @@ export async function POST(request: NextRequest) {
 
     // SECURITY: Verify the signature
     const { signature, ...payload } = data;
-    const isValid = await verifyUserInteraction(
-      payload,
-      signature,
-      data.unrepost.actorHandle,
-      data.unrepost.actorNodeDomain
-    );
+    const isValid = await verifySwarmRequest(payload, signature, data.unrepost.actorNodeDomain);
 
     if (!isValid) {
       console.warn(`[Swarm] Invalid signature for unrepost from ${data.unrepost.actorHandle}@${data.unrepost.actorNodeDomain}`);

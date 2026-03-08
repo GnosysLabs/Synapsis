@@ -133,6 +133,8 @@ export async function POST(request: Request) {
                                 handle: user.handle,
                                 displayName: user.displayName || user.handle,
                                 avatarUrl: user.avatarUrl || undefined,
+                                did: user.did,
+                                publicKey: user.publicKey,
                             },
                             nodeDomain,
                             mediaUrls: attachedMedia.map(m => m.url),

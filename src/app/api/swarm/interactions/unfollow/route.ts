@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, users, remoteFollowers } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const swarmUnfollowSchema = z.object({
@@ -40,12 +40,7 @@ export async function POST(request: NextRequest) {
 
     // SECURITY: Verify the signature
     const { signature, ...payload } = data;
-    const isValid = await verifyUserInteraction(
-      payload,
-      signature,
-      data.unfollow.followerHandle,
-      data.unfollow.followerNodeDomain
-    );
+    const isValid = await verifySwarmRequest(payload, signature, data.unfollow.followerNodeDomain);
 
     if (!isValid) {
       console.warn(`[Swarm] Invalid signature for unfollow from ${data.unfollow.followerHandle}@${data.unfollow.followerNodeDomain}`);

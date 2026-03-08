@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, users, notifications, remoteFollowers } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const swarmFollowSchema = z.object({
@@ -46,12 +46,7 @@ export async function POST(request: NextRequest) {
 
     // SECURITY: Verify the signature
     const { signature, ...payload } = data;
-    const isValid = await verifyUserInteraction(
-      payload,
-      signature,
-      data.follow.followerHandle,
-      data.follow.followerNodeDomain
-    );
+    const isValid = await verifySwarmRequest(payload, signature, data.follow.followerNodeDomain);
 
     if (!isValid) {
       console.warn(`[Swarm] Invalid signature for follow from ${data.follow.followerHandle}@${data.follow.followerNodeDomain}`);
