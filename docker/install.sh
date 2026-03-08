@@ -94,13 +94,31 @@ generate_db_password() {
     openssl rand -base64 24 | tr -d '\n' | tr '/+' '_-' | cut -c1-32
 }
 
+find_available_port() {
+    start="${1:-3000}"
+    end="${2:-3020}"
+
+    port="$start"
+    while [ "$port" -le "$end" ]; do
+        if ! is_port_in_use "$port"; then
+            printf '%s\n' "$port"
+            return 0
+        fi
+        port=$((port + 1))
+    done
+
+    echo "❌ No available localhost port found in range ${start}-${end} for PROXY=none." >&2
+    echo "   Set PORT explicitly when rerunning the installer if you want a different range." >&2
+    exit 1
+}
+
 resolve_proxyless_port() {
     if [ -n "${PORT:-}" ] && [ "${PORT}" != "auto" ]; then
         printf '%s\n' "${PORT}"
         return
     fi
 
-    printf '%s\n' "3000"
+    find_available_port 3000 3020
 }
 
 install_docker_if_needed() {
