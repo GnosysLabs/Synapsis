@@ -231,7 +231,7 @@ export default function AdminPage() {
     const handleTriggerUpdate = async () => {
         setTriggeringUpdate(true);
         try {
-            const res = await fetch('/api/admin/update', { method: 'POST' });
+            const res = await fetch('/api/admin/update', { method: 'POST', keepalive: true });
             const data = await res.json().catch(() => ({}));
 
             if (!res.ok) {
@@ -241,7 +241,15 @@ export default function AdminPage() {
             showToast(data.message || 'Update started. Synapsis will restart shortly.', 'success');
             await loadUpdateStatus();
         } catch (error) {
-            showToast(error instanceof Error ? error.message : 'Failed to start update', 'error');
+            const message = error instanceof Error ? error.message : 'Failed to start update';
+            if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network')) {
+                showToast('Update likely started. The node is restarting, so this page may disconnect briefly.', 'success');
+                window.setTimeout(() => {
+                    window.location.reload();
+                }, 5000);
+            } else {
+                showToast(message, 'error');
+            }
         } finally {
             setTriggeringUpdate(false);
         }

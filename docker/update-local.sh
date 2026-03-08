@@ -63,11 +63,19 @@ case "${ACTIVE_PROXY}" in
         ;;
 esac
 
+download_file "docker/host-updater.py" "${INSTALL_DIR}/host-updater.py"
+download_file "docker/update-local.sh" "${INSTALL_DIR}/update-local.sh"
+chmod 755 "${INSTALL_DIR}/host-updater.py" "${INSTALL_DIR}/update-local.sh"
+
 echo "🐳 Pulling latest Synapsis image"
 compose_cmd pull
 
 echo "🚀 Restarting Synapsis"
 compose_cmd up -d --remove-orphans
+
+if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files synapsis-updater.service >/dev/null 2>&1; then
+    systemctl restart synapsis-updater.service >/dev/null 2>&1 || true
+fi
 
 echo ""
 echo "✅ Synapsis has been updated to the latest published image."

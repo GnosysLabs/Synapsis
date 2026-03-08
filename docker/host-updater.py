@@ -6,6 +6,7 @@ import signal
 import socketserver
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
@@ -67,7 +68,10 @@ def is_authorized(headers):
 
 
 def watch_process(process):
+    global current_process
     exit_code = process.wait()
+    with status_lock:
+        current_process = None
     update_status(
         status="success" if exit_code == 0 else "error",
         message="Synapsis update completed." if exit_code == 0 else "Synapsis update failed.",
@@ -76,6 +80,32 @@ def watch_process(process):
         lastError=None if exit_code == 0 else f"Updater exited with code {exit_code}",
         pid=None,
     )
+
+
+def start_update_process():
+    global current_process
+
+    # Give the app enough time to return the 202 response before the container restarts.
+    time.sleep(2)
+
+    with status_lock:
+        log_handle = open(LOG_FILE, "a", encoding="utf-8")
+        current_process = subprocess.Popen(
+            [UPDATE_SCRIPT],
+            cwd=INSTALL_DIR,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env={
+                **os.environ,
+                "INSTALL_DIR": INSTALL_DIR,
+            },
+        )
+
+        update_status(pid=current_process.pid)
+
+        thread = threading.Thread(target=watch_process, args=(current_process,), daemon=True)
+        thread.start()
 
 
 class ThreadedUnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
@@ -133,30 +163,17 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
 
-            log_handle = open(LOG_FILE, "a", encoding="utf-8")
-            current_process = subprocess.Popen(
-                [UPDATE_SCRIPT],
-                cwd=INSTALL_DIR,
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                env={
-                    **os.environ,
-                    "INSTALL_DIR": INSTALL_DIR,
-                },
-            )
-
             update_status(
                 status="updating",
-                message="Synapsis update started.",
+                message="Synapsis update scheduled.",
                 lastStartedAt=now_iso(),
                 lastFinishedAt=None,
                 lastExitCode=None,
                 lastError=None,
-                pid=current_process.pid,
+                pid=None,
             )
 
-            thread = threading.Thread(target=watch_process, args=(current_process,), daemon=True)
+            thread = threading.Thread(target=start_update_process, daemon=True)
             thread.start()
 
         self.send_json(
@@ -164,7 +181,7 @@ class Handler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "status": "updating",
-                "message": "Synapsis update started.",
+                "message": "Synapsis update scheduled. The node will restart shortly.",
             },
         )
 
