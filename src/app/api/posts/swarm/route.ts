@@ -5,8 +5,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { db, posts } from '@/db';
 import { fetchSwarmTimeline } from '@/lib/swarm/timeline';
 import { getSession } from '@/lib/auth';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 /**
  * GET /api/posts/swarm
@@ -31,9 +33,30 @@ export async function GET(request: NextRequest) {
 
     // Fetch swarm timeline (no caching - user preferences vary)
     const timeline = await fetchSwarmTimeline(10, 15, { includeNsfw, cursor });
+    const swarmReplyIds = timeline.posts.map(post => `swarm:${post.nodeDomain}:${post.id}`);
+    const localReplyCounts = db && swarmReplyIds.length > 0
+      ? await db.select({
+          swarmReplyToId: posts.swarmReplyToId,
+          count: sql<number>`count(*)::int`,
+        })
+          .from(posts)
+          .where(and(
+            inArray(posts.swarmReplyToId, swarmReplyIds),
+            eq(posts.isRemoved, false)
+          ))
+          .groupBy(posts.swarmReplyToId)
+      : [];
+    const localReplyCountMap = new Map(
+      localReplyCounts
+        .filter(row => row.swarmReplyToId)
+        .map(row => [row.swarmReplyToId as string, row.count])
+    );
 
     return NextResponse.json({
-      posts: timeline.posts,
+      posts: timeline.posts.map(post => ({
+        ...post,
+        replyCount: post.replyCount + (localReplyCountMap.get(`swarm:${post.nodeDomain}:${post.id}`) || 0),
+      })),
       sources: timeline.sources,
       cached: false,
       fetchedAt: timeline.fetchedAt,

@@ -117,14 +117,11 @@ export async function POST(request: Request) {
                 .where(eq(posts.id, data.replyToId));
         }
 
-        // DEPRECATED: Push-based federation disabled
-        // Swarm now uses real-time pull-based federation
-        // Replies are fetched in real-time from the origin node
-        /*
         if (data.swarmReplyTo) {
             (async () => {
                 try {
-                    const targetUrl = `https://${data.swarmReplyTo!.nodeDomain}/api/swarm/replies`;
+                    const protocol = data.swarmReplyTo!.nodeDomain.includes('localhost') ? 'http' : 'https';
+                    const targetUrl = `${protocol}://${data.swarmReplyTo!.nodeDomain}/api/swarm/replies`;
 
                     const replyPayload = {
                         postId: data.swarmReplyTo!.postId,
@@ -142,10 +139,17 @@ export async function POST(request: Request) {
                         },
                     };
 
+                    const { createSignedPayload } = await import('@/lib/swarm/signature');
+                    const { payload, signature } = await createSignedPayload(replyPayload);
+
                     const response = await fetch(targetUrl, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(replyPayload),
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Swarm-Source-Domain': nodeDomain,
+                            'X-Swarm-Signature': signature,
+                        },
+                        body: JSON.stringify(payload),
                     });
 
                     if (response.ok) {
@@ -158,7 +162,6 @@ export async function POST(request: Request) {
                 }
             })();
         }
-        */
 
         // Handle local mentions (create notifications for users on this node)
         (async () => {

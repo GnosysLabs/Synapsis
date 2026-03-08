@@ -348,6 +348,16 @@ export default function AdminPage() {
         return date.toLocaleString();
     };
 
+    const updateStatusLabel = (() => {
+        if (loadingUpdateStatus) return 'Checking...';
+        if (!updateStatus) return 'Unavailable';
+        if (!updateStatus.updater.available) return updateStatus.updater.message || 'Updater unavailable';
+        if (updateStatus.updater.status === 'updating') return updateStatus.updater.message || 'Update in progress';
+        if (updateStatus.updater.status === 'error') return updateStatus.updater.message || 'Last update failed';
+        if (updateStatus.updateAvailable) return 'Update available';
+        return 'Up to date';
+    })();
+
     return (
         <>
             <header style={{
@@ -703,7 +713,7 @@ export default function AdminPage() {
                                     </div>
                                     <div>
                                         <strong>Status:</strong>{' '}
-                                        {loadingUpdateStatus ? 'Checking…' : updateStatus?.updater.message || 'Ready'}
+                                        {updateStatusLabel}
                                     </div>
                                     {updateStatus?.updater.lastStartedAt && (
                                         <div>

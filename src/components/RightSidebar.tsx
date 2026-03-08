@@ -21,9 +21,7 @@ export function RightSidebar() {
     });
     const [version, setVersion] = useState<{
         version: string;
-        commit: string | null;
         buildDate: string | null;
-        githubUrl: string | null;
     } | null>(null);
 
     const [loading, setLoading] = useState(true);
@@ -50,7 +48,7 @@ export function RightSidebar() {
         fetch('/api/version')
             .then(res => res.json())
             .then(data => setVersion(data))
-            .catch(() => setVersion({ version: 'unknown', commit: null, buildDate: null, githubUrl: null }));
+            .catch(() => setVersion({ version: 'unknown', buildDate: null }));
     }, []);
 
     if (loading) {
@@ -123,20 +121,6 @@ export function RightSidebar() {
                     Running{' '}
                     <a href="https://synapsis.social" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Synapsis</a>
                     {version?.version ? ` ${version.version}` : ''}
-                    {version?.githubUrl && version?.commit && (
-                        <>
-                            {' • '}
-                            <a
-                                href={version.githubUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title={version.commit}
-                                style={{ color: 'var(--accent)' }}
-                            >
-                                {version.commit.slice(0, 7)}
-                            </a>
-                        </>
-                    )}
                 </p>
 
                 {nodeInfo.admins.length > 0 && (

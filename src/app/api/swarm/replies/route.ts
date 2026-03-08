@@ -6,9 +6,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, users, media } from '@/db';
+import { db, posts, users, media, notifications } from '@/db';
 import { eq, desc, and } from 'drizzle-orm';
 import { z } from 'zod';
+import { verifySwarmRequest } from '@/lib/swarm/signature';
+import { upsertRemoteUser } from '@/lib/swarm/user-cache';
 
 // Schema for incoming swarm reply
 const swarmReplySchema = z.object({
@@ -19,7 +21,7 @@ const swarmReplySchema = z.object({
     createdAt: z.string(),
     author: z.object({
       handle: z.string(),
-      displayName: z.string(),
+      displayName: z.string().optional().nullable(),
       avatarUrl: z.string().optional(),
     }),
     nodeDomain: z.string(),
@@ -30,13 +32,122 @@ const swarmReplySchema = z.object({
 /**
  * POST /api/swarm/replies
  * 
- * DEPRECATED: This endpoint is disabled.
- * We now use real-time pull-based federation instead of push-based caching.
+ * Receives a signed reply from another swarm node and stores it locally
+ * against the target post so reply counts, thread views, and notifications work.
  */
 export async function POST(request: NextRequest) {
-  return NextResponse.json({
-    error: 'This endpoint is deprecated. Swarm uses real-time pull-based federation.',
-  }, { status: 410 }); // 410 Gone
+  try {
+    if (!db) {
+      return NextResponse.json({ error: 'Database not available' }, { status: 503 });
+    }
+
+    const body = await request.json();
+    const validation = swarmReplySchema.safeParse(body);
+    if (!validation.success) {
+      return NextResponse.json({ error: 'Invalid request', details: validation.error.issues }, { status: 400 });
+    }
+
+    const signature = request.headers.get('X-Swarm-Signature');
+    const sourceDomain = request.headers.get('X-Swarm-Source-Domain');
+
+    if (!signature || !sourceDomain) {
+      return NextResponse.json({ error: 'Missing swarm signature headers' }, { status: 401 });
+    }
+
+    const isValid = await verifySwarmRequest(validation.data, signature, sourceDomain);
+    if (!isValid) {
+      return NextResponse.json({ error: 'Invalid node signature' }, { status: 403 });
+    }
+
+    const data = validation.data;
+    if (data.reply.nodeDomain !== sourceDomain) {
+      return NextResponse.json({ error: 'Source domain mismatch' }, { status: 400 });
+    }
+
+    const parentPost = await db.query.posts.findFirst({
+      where: and(
+        eq(posts.id, data.postId),
+        eq(posts.isRemoved, false)
+      ),
+      with: {
+        author: true,
+      },
+    });
+
+    if (!parentPost) {
+      return NextResponse.json({ error: 'Post not found' }, { status: 404 });
+    }
+
+    const remoteHandle = `${data.reply.author.handle}@${sourceDomain}`;
+    const remoteDid = `did:swarm:${sourceDomain}:${data.reply.author.handle}`;
+
+    await upsertRemoteUser({
+      handle: remoteHandle,
+      displayName: data.reply.author.displayName || data.reply.author.handle,
+      avatarUrl: data.reply.author.avatarUrl || null,
+      did: remoteDid,
+    });
+
+    const remoteUser = await db.query.users.findFirst({
+      where: eq(users.handle, remoteHandle),
+    });
+
+    if (!remoteUser) {
+      return NextResponse.json({ error: 'Failed to resolve remote author' }, { status: 500 });
+    }
+
+    const replyApId = `swarm:${sourceDomain}:${data.reply.id}`;
+    const existingReply = await db.query.posts.findFirst({
+      where: eq(posts.apId, replyApId),
+    });
+
+    if (existingReply) {
+      return NextResponse.json({ success: true, message: 'Reply already received' });
+    }
+
+    const [createdReply] = await db.insert(posts).values({
+      userId: remoteUser.id,
+      content: data.reply.content,
+      replyToId: data.postId,
+      apId: replyApId,
+      apUrl: `https://${sourceDomain}/posts/${data.reply.id}`,
+      createdAt: new Date(data.reply.createdAt),
+      updatedAt: new Date(data.reply.createdAt),
+    }).returning();
+
+    if (data.reply.mediaUrls?.length) {
+      await db.insert(media).values(
+        data.reply.mediaUrls.map((url, index) => ({
+          userId: remoteUser.id,
+          postId: createdReply.id,
+          url,
+          altText: `Remote reply attachment ${index + 1}`,
+        }))
+      );
+    }
+
+    await db.update(posts)
+      .set({ repliesCount: parentPost.repliesCount + 1 })
+      .where(eq(posts.id, data.postId));
+
+    if (parentPost.userId !== remoteUser.id) {
+      await db.insert(notifications).values({
+        userId: parentPost.userId,
+        actorHandle: data.reply.author.handle,
+        actorDisplayName: data.reply.author.displayName || data.reply.author.handle,
+        actorAvatarUrl: data.reply.author.avatarUrl || null,
+        actorNodeDomain: sourceDomain,
+        postId: data.postId,
+        postContent: data.reply.content.slice(0, 200),
+        type: 'reply',
+      });
+    }
+
+    return NextResponse.json({ success: true, message: 'Reply received' });
+  } catch (error) {
+    console.error('[Swarm] Receive reply error:', error);
+    return NextResponse.json({ error: 'Failed to receive reply' }, { status: 500 });
+  }
 }
 
 /**

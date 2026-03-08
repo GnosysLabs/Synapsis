@@ -19,7 +19,7 @@ interface NotificationPost {
 
 interface Notification {
     id: string;
-    type: 'follow' | 'like' | 'repost' | 'mention';
+    type: 'follow' | 'like' | 'repost' | 'mention' | 'reply';
     createdAt: string;
     readAt: string | null;
     actor: NotificationActor | null;
@@ -77,6 +77,8 @@ export default function NotificationsPage() {
                 return 'reposted your post';
             case 'mention':
                 return 'mentioned you';
+            case 'reply':
+                return 'replied to your post';
             default:
                 return 'interacted with you';
         }

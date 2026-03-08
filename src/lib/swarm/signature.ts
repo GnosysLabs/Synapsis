@@ -9,16 +9,30 @@
 import crypto from 'crypto';
 import { db, users } from '@/db';
 import { eq } from 'drizzle-orm';
+import { canonicalize } from '@/lib/crypto/user-signing';
 
 /**
  * Sign a payload with the node's private key
  */
 export function signPayload(payload: any, privateKey: string): string {
-  const canonicalPayload = JSON.stringify(payload, Object.keys(payload).sort());
+  const canonicalPayload = canonicalize(payload);
   const sign = crypto.createSign('SHA256');
   sign.update(canonicalPayload);
   sign.end();
   return sign.sign(privateKey, 'base64');
+}
+
+function normalizePublicKey(publicKey: string): crypto.KeyObject | string {
+  if (publicKey.includes('BEGIN PUBLIC KEY')) {
+    return publicKey;
+  }
+
+  const cleanKey = publicKey.replace(/[\s\n\r]/g, '');
+  return crypto.createPublicKey({
+    key: Buffer.from(cleanKey, 'base64'),
+    format: 'der',
+    type: 'spki',
+  });
 }
 
 /**
@@ -26,11 +40,11 @@ export function signPayload(payload: any, privateKey: string): string {
  */
 export function verifySignature(payload: any, signature: string, publicKey: string): boolean {
   try {
-    const canonicalPayload = JSON.stringify(payload, Object.keys(payload).sort());
+    const canonicalPayload = canonicalize(payload);
     const verify = crypto.createVerify('SHA256');
     verify.update(canonicalPayload);
     verify.end();
-    return verify.verify(publicKey, signature, 'base64');
+    return verify.verify(normalizePublicKey(publicKey), signature, 'base64');
   } catch (error) {
     console.error('[Signature] Verification failed:', error);
     return false;
@@ -112,7 +126,7 @@ export async function verifyUserInteraction(
 
     let publicKey: string | null = null;
 
-    if (user?.publicKey && user.publicKey.startsWith('-----BEGIN')) {
+    if (user?.publicKey) {
       publicKey = user.publicKey;
     } else {
       // Fetch from remote node
