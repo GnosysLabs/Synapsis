@@ -8,6 +8,7 @@ import { Post } from '@/lib/types';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { Bot, Network, Server, EyeOff } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { signedAPI } from '@/lib/api/signed-fetch';
 
 interface User {
     id: string;
@@ -81,7 +82,7 @@ interface SwarmPost {
 }
 
 export default function ExplorePage() {
-    const { user } = useAuth();
+    const { user, did, handle } = useAuth();
     const [query, setQuery] = useState('');
     const [activeTab, setActiveTab] = useState<'node' | 'swarm' | 'users' | 'search'>('node');
     const [nodePosts, setNodePosts] = useState<Post[]>([]);
@@ -268,8 +269,13 @@ export default function ExplorePage() {
     };
 
     const handleLike = async (postId: string, currentLiked: boolean) => {
-        const method = currentLiked ? 'DELETE' : 'POST';
-        const res = await fetch(`/api/posts/${postId}/like`, { method });
+        if (!did || !handle) {
+            throw new Error('Please log in again.');
+        }
+
+        const res = currentLiked
+            ? await signedAPI.unlikePost(postId, did, handle)
+            : await signedAPI.likePost(postId, did, handle);
 
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
@@ -278,8 +284,13 @@ export default function ExplorePage() {
     };
 
     const handleRepost = async (postId: string, currentReposted: boolean) => {
-        const method = currentReposted ? 'DELETE' : 'POST';
-        const res = await fetch(`/api/posts/${postId}/repost`, { method });
+        if (!did || !handle) {
+            throw new Error('Please log in again.');
+        }
+
+        const res = currentReposted
+            ? await signedAPI.unrepostPost(postId, did, handle)
+            : await signedAPI.repostPost(postId, did, handle);
 
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));

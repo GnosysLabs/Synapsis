@@ -45,10 +45,13 @@ services:
       ALLOW_LOCALHOST: ${ALLOW_LOCALHOST:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS}
       BOT_MAX_PER_USER: ${BOT_MAX_PER_USER:-5}
+      HOST_UPDATER_SOCKET: ${HOST_UPDATER_SOCKET:-/var/run/synapsis-updater/updater.sock}
+      HOST_UPDATER_TOKEN: ${HOST_UPDATER_TOKEN:-}
       PORT: ${PORT:-3000}
       NODE_ENV: production
     volumes:
       - uploads_data:/app/uploads
+      - /var/run/synapsis-updater:/var/run/synapsis-updater
     networks:
       - synapsis-network
     depends_on:

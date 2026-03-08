@@ -33,8 +33,21 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Set environment variables for build
+ARG APP_VERSION=dev
+ARG APP_COMMIT=unknown
+ARG APP_BUILD_DATE=
+ARG APP_GITHUB_URL=
+ARG APP_IMAGE_REPO=ghcr.io/gnosyslabs/synapsis
+ARG APP_SOURCE_REPO=https://github.com/GnosysLabs/Synapsis
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV APP_VERSION=${APP_VERSION}
+ENV APP_COMMIT=${APP_COMMIT}
+ENV APP_BUILD_DATE=${APP_BUILD_DATE}
+ENV APP_GITHUB_URL=${APP_GITHUB_URL}
+ENV APP_IMAGE_REPO=${APP_IMAGE_REPO}
+ENV APP_SOURCE_REPO=${APP_SOURCE_REPO}
 
 # Build the Next.js application
 RUN npm run build
@@ -47,8 +60,18 @@ RUN apk add --no-cache libc6-compat openssl netcat-openbsd wget
 
 WORKDIR /app
 
-LABEL org.opencontainers.image.source="https://github.com/GnosysLabs/Synapsis"
+ARG APP_VERSION=dev
+ARG APP_COMMIT=unknown
+ARG APP_BUILD_DATE=
+ARG APP_GITHUB_URL=
+ARG APP_IMAGE_REPO=ghcr.io/gnosyslabs/synapsis
+ARG APP_SOURCE_REPO=https://github.com/GnosysLabs/Synapsis
+
+LABEL org.opencontainers.image.source="${APP_SOURCE_REPO}"
 LABEL org.opencontainers.image.description="Synapsis self-hosted social node"
+LABEL org.opencontainers.image.version="${APP_VERSION}"
+LABEL org.opencontainers.image.revision="${APP_COMMIT}"
+LABEL org.opencontainers.image.created="${APP_BUILD_DATE}"
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \
@@ -62,6 +85,12 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV APP_VERSION=${APP_VERSION}
+ENV APP_COMMIT=${APP_COMMIT}
+ENV APP_BUILD_DATE=${APP_BUILD_DATE}
+ENV APP_GITHUB_URL=${APP_GITHUB_URL}
+ENV APP_IMAGE_REPO=${APP_IMAGE_REPO}
+ENV APP_SOURCE_REPO=${APP_SOURCE_REPO}
 
 # Copy public assets
 COPY --from=builder /app/public ./public

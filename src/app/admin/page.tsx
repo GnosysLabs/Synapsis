@@ -38,6 +38,22 @@ export default function AdminPage() {
     const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
     const [isUploadingFavicon, setIsUploadingFavicon] = useState(false);
     const [faviconUploadError, setFaviconUploadError] = useState<string | null>(null);
+    const [updateStatus, setUpdateStatus] = useState<{
+        current: { version: string; commit: string | null; buildDate: string | null };
+        latest: { version: string; commit: string | null; buildDate: string | null } | null;
+        updateAvailable: boolean;
+        updater: {
+            available: boolean;
+            status: string;
+            message?: string;
+            lastStartedAt?: string | null;
+            lastFinishedAt?: string | null;
+            lastExitCode?: number | null;
+            lastError?: string | null;
+        };
+    } | null>(null);
+    const [loadingUpdateStatus, setLoadingUpdateStatus] = useState(false);
+    const [triggeringUpdate, setTriggeringUpdate] = useState(false);
 
     useEffect(() => {
         fetch('/api/admin/me')
@@ -71,10 +87,40 @@ export default function AdminPage() {
         }
     };
 
+    const loadUpdateStatus = async () => {
+        setLoadingUpdateStatus(true);
+        try {
+            const res = await fetch('/api/admin/update', { cache: 'no-store' });
+            if (!res.ok) {
+                throw new Error('Failed to load update status');
+            }
+
+            const data = await res.json();
+            setUpdateStatus(data);
+        } catch {
+            setUpdateStatus(null);
+        } finally {
+            setLoadingUpdateStatus(false);
+        }
+    };
+
     useEffect(() => {
         if (isAdmin) {
             loadNodeSettings();
+            loadUpdateStatus();
         }
+    }, [isAdmin]);
+
+    useEffect(() => {
+        if (!isAdmin) {
+            return;
+        }
+
+        const interval = window.setInterval(() => {
+            loadUpdateStatus();
+        }, 30000);
+
+        return () => window.clearInterval(interval);
     }, [isAdmin]);
 
     const handleSaveSettings = async (override?: typeof nodeSettings) => {
@@ -182,6 +228,25 @@ export default function AdminPage() {
         setBannerPromptError('');
     };
 
+    const handleTriggerUpdate = async () => {
+        setTriggeringUpdate(true);
+        try {
+            const res = await fetch('/api/admin/update', { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                throw new Error(data.error || 'Failed to start update');
+            }
+
+            showToast(data.message || 'Update started. Synapsis will restart shortly.', 'success');
+            await loadUpdateStatus();
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : 'Failed to start update', 'error');
+        } finally {
+            setTriggeringUpdate(false);
+        }
+    };
+
     const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         event.target.value = '';
@@ -275,6 +340,13 @@ export default function AdminPage() {
             </div>
         );
     }
+
+    const formatTimestamp = (value?: string | null) => {
+        if (!value) return 'Never';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString();
+    };
 
     return (
         <>
@@ -438,33 +510,19 @@ export default function AdminPage() {
                                 </div>
                                 {nodeSettings.bannerUrl && (
                                     <div style={{ marginTop: '12px' }}>
-                                        <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', marginBottom: '8px' }}>
-                                            Sidebar preview
-                                        </div>
-                                        <div
-                                            className="card"
+                                        <img
+                                            src={nodeSettings.bannerUrl}
+                                            alt="Banner preview"
                                             style={{
-                                                padding: 0,
-                                                overflow: 'hidden',
-                                                maxWidth: '360px',
+                                                width: '100%',
+                                                maxWidth: '520px',
+                                                maxHeight: '220px',
+                                                borderRadius: '12px',
+                                                border: '1px solid var(--border)',
+                                                objectFit: 'cover',
+                                                display: 'block',
                                             }}
-                                        >
-                                            <div
-                                                style={{
-                                                    height: '140px',
-                                                    background: `url(${nodeSettings.bannerUrl}) center/cover no-repeat`,
-                                                    borderBottom: '1px solid var(--border)',
-                                                }}
-                                            />
-                                            <div style={{ padding: '16px' }}>
-                                                <h3 style={{ fontWeight: 600, marginBottom: '12px' }}>
-                                                    Welcome to {nodeSettings.name || 'Your Node'}
-                                                </h3>
-                                                <p style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.6 }}>
-                                                    {nodeSettings.description || 'A brief tagline for your node.'}
-                                                </p>
-                                            </div>
-                                        </div>
+                                        />
                                     </div>
                                 )}
                             </div>
@@ -604,7 +662,92 @@ export default function AdminPage() {
                                 <button className="btn btn-primary" onClick={() => handleSaveSettings()} disabled={savingSettings}>
                                     {savingSettings ? 'Saving...' : 'Save Settings'}
                                 </button>
-                    </div>
+                            </div>
+
+                            <div style={{
+                                padding: '16px',
+                                background: 'var(--background-secondary)',
+                                borderRadius: '8px',
+                                border: '1px solid var(--border)',
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+                                    <div>
+                                        <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px' }}>System Update</h2>
+                                        <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', margin: 0 }}>
+                                            Keep this node on the latest published Synapsis build.
+                                        </p>
+                                    </div>
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={handleTriggerUpdate}
+                                        disabled={
+                                            triggeringUpdate ||
+                                            loadingUpdateStatus ||
+                                            updateStatus?.updater.available === false ||
+                                            updateStatus?.updater.status === 'updating' ||
+                                            !updateStatus?.updateAvailable
+                                        }
+                                    >
+                                        {triggeringUpdate || updateStatus?.updater.status === 'updating' ? 'Updating...' : 'Update Now'}
+                                    </button>
+                                </div>
+
+                                <div style={{ display: 'grid', gap: '8px', marginTop: '16px', fontSize: '13px' }}>
+                                    <div>
+                                        <strong>Current build:</strong>{' '}
+                                        {updateStatus?.current?.version || 'Unknown'}
+                                    </div>
+                                    <div>
+                                        <strong>Latest build:</strong>{' '}
+                                        {updateStatus?.latest?.version || 'Unavailable'}
+                                    </div>
+                                    <div>
+                                        <strong>Status:</strong>{' '}
+                                        {loadingUpdateStatus ? 'Checking…' : updateStatus?.updater.message || 'Ready'}
+                                    </div>
+                                    {updateStatus?.updater.lastStartedAt && (
+                                        <div>
+                                            <strong>Last started:</strong>{' '}
+                                            {formatTimestamp(updateStatus.updater.lastStartedAt)}
+                                        </div>
+                                    )}
+                                    {updateStatus?.updater.lastFinishedAt && (
+                                        <div>
+                                            <strong>Last finished:</strong>{' '}
+                                            {formatTimestamp(updateStatus.updater.lastFinishedAt)}
+                                        </div>
+                                    )}
+                                    {typeof updateStatus?.updater.lastExitCode === 'number' && (
+                                        <div>
+                                            <strong>Last exit code:</strong>{' '}
+                                            {updateStatus.updater.lastExitCode}
+                                        </div>
+                                    )}
+                                    {updateStatus?.updater.lastError && (
+                                        <div style={{ color: 'var(--danger)' }}>
+                                            <strong>Last error:</strong>{' '}
+                                            {updateStatus.updater.lastError}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {!updateStatus?.updater.available && (
+                                    <div style={{
+                                        marginTop: '16px',
+                                        padding: '12px',
+                                        borderRadius: '8px',
+                                        border: '1px solid var(--border)',
+                                        background: 'var(--background)',
+                                        fontSize: '12px',
+                                        color: 'var(--foreground-secondary)',
+                                    }}>
+                                        One-click updates are unavailable on this host. Use:
+                                        <div style={{ marginTop: '8px', fontFamily: 'monospace', color: 'var(--foreground)' }}>
+                                            curl -fsSL https://synapsis.social/update.sh | bash
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                 </div>
             )}
 

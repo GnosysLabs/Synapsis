@@ -81,6 +81,14 @@ cleanup_named_resources() {
         echo "🗑️  Removing network synapsis_synapsis-network"
         docker network rm synapsis_synapsis-network >/dev/null 2>&1 || true
     fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl disable --now synapsis-updater.service >/dev/null 2>&1 || true
+        rm -f /etc/systemd/system/synapsis-updater.service
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+
+    rm -rf /var/run/synapsis-updater
 }
 
 cleanup_images() {

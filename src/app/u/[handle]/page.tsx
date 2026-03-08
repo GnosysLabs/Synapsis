@@ -12,6 +12,7 @@ import { Rocket, MoreHorizontal, Mail } from 'lucide-react';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { Bot } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { signedAPI } from '@/lib/api/signed-fetch';
 
 interface BotOwner {
     id: string;
@@ -81,7 +82,7 @@ export default function ProfilePage() {
     const params = useParams();
     const router = useRouter();
     const handle = (params.handle as string)?.replace(/^@/, '') || '';
-    const { isIdentityUnlocked, signUserAction } = useAuth();
+    const { did, handle: currentHandle, isIdentityUnlocked, signUserAction } = useAuth();
 
     const [user, setUser] = useState<User | null>(null);
     const userFullHandle = user ? useFormattedHandle(user.handle) : '';
@@ -207,8 +208,13 @@ export default function ProfilePage() {
     }, [activeTab, postsCursor, repliesCursor, postsLoadingMore, repliesLoadingMore, loadMorePosts, loadMoreReplies]);
 
     const handleLike = async (postId: string, currentLiked: boolean) => {
-        const method = currentLiked ? 'DELETE' : 'POST';
-        const res = await fetch(`/api/posts/${postId}/like`, { method });
+        if (!did || !currentHandle) {
+            throw new Error('Please log in again.');
+        }
+
+        const res = currentLiked
+            ? await signedAPI.unlikePost(postId, did, currentHandle)
+            : await signedAPI.likePost(postId, did, currentHandle);
 
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
@@ -217,8 +223,13 @@ export default function ProfilePage() {
     };
 
     const handleRepost = async (postId: string, currentReposted: boolean) => {
-        const method = currentReposted ? 'DELETE' : 'POST';
-        const res = await fetch(`/api/posts/${postId}/repost`, { method });
+        if (!did || !currentHandle) {
+            throw new Error('Please log in again.');
+        }
+
+        const res = currentReposted
+            ? await signedAPI.unrepostPost(postId, did, currentHandle)
+            : await signedAPI.repostPost(postId, did, currentHandle);
 
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
@@ -322,8 +333,14 @@ export default function ProfilePage() {
             return;
         }
 
-        const method = isFollowing ? 'DELETE' : 'POST';
-        const res = await fetch(`/api/users/${handle}/follow`, { method });
+        if (!did || !currentHandle) {
+            alert('Session expired. Please log in again.');
+            return;
+        }
+
+        const res = isFollowing
+            ? await signedAPI.unfollowUser(handle, did, currentHandle)
+            : await signedAPI.followUser(handle, did, currentHandle);
 
         if (res.ok && user) {
             setIsFollowing(!isFollowing);

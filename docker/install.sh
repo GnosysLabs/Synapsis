@@ -7,6 +7,7 @@ REF="${REF:-main}"
 INSTALL_DIR="${1:-${INSTALL_DIR:-/opt/synapsis}}"
 PUBLIC_INSTALL_URL="${PUBLIC_INSTALL_URL:-https://synapsis.social/install.sh}"
 PROXY="${PROXY:-caddy}"
+HOST_UPDATER_SOCKET_PATH="${HOST_UPDATER_SOCKET_PATH:-/var/run/synapsis-updater/updater.sock}"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -79,6 +80,19 @@ set_env_value() {
     rm -f "${file}.bak"
 }
 
+ensure_env_value() {
+    file="$1"
+    key="$2"
+    value="$3"
+
+    if grep -q "^${key}=" "$file" 2>/dev/null; then
+        set_env_value "$file" "$key" "$value"
+        return
+    fi
+
+    printf '%s=%s\n' "$key" "$value" >> "$file"
+}
+
 get_env_value() {
     file="$1"
     key="$2"
@@ -92,6 +106,15 @@ get_env_value() {
 
 generate_db_password() {
     openssl rand -base64 24 | tr -d '\n' | tr '/+' '_-' | cut -c1-32
+}
+
+generate_token() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+        return
+    fi
+
+    date +%s | sha256sum | awk '{print $1}'
 }
 
 find_available_port() {
@@ -151,6 +174,103 @@ install_docker_if_needed() {
         echo "⚠️  Docker was installed, but 'docker compose' is not available yet." >&2
         echo "   Install the Docker Compose plugin before starting Synapsis." >&2
     fi
+}
+
+install_python3_if_needed() {
+    if command -v python3 >/dev/null 2>&1; then
+        return
+    fi
+
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update
+        apt-get install -y python3
+        return
+    fi
+
+    if command -v apk >/dev/null 2>&1; then
+        apk add --no-cache python3
+        return
+    fi
+
+    if command -v dnf >/dev/null 2>&1; then
+        dnf install -y python3
+        return
+    fi
+
+    if command -v yum >/dev/null 2>&1; then
+        yum install -y python3
+        return
+    fi
+
+    echo "⚠️  Could not install python3 automatically. Host updater will be unavailable." >&2
+}
+
+install_host_updater() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "⚠️  Host updater installation requires root. Skipping one-click updater setup."
+        return
+    fi
+
+    download_file "docker/host-updater.py" "${INSTALL_DIR}/host-updater.py"
+    download_file "docker/update-local.sh" "${INSTALL_DIR}/update-local.sh"
+    chmod 755 "${INSTALL_DIR}/host-updater.py" "${INSTALL_DIR}/update-local.sh"
+
+    mkdir -p "$(dirname "${HOST_UPDATER_SOCKET_PATH}")"
+
+    updater_token="$(get_env_value "${INSTALL_DIR}/.env" "HOST_UPDATER_TOKEN" || true)"
+    if [ -z "${updater_token}" ]; then
+        updater_token="$(generate_token)"
+        ensure_env_value "${INSTALL_DIR}/.env" "HOST_UPDATER_TOKEN" "${updater_token}"
+    fi
+
+    ensure_env_value "${INSTALL_DIR}/.env" "HOST_UPDATER_SOCKET" "${HOST_UPDATER_SOCKET_PATH}"
+
+    if ! command -v systemctl >/dev/null 2>&1; then
+        echo "⚠️  systemd not found. Admin one-click updates will be unavailable on this host."
+        return
+    fi
+
+    install_python3_if_needed
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "⚠️  python3 is unavailable. Admin one-click updates will be unavailable."
+        return
+    fi
+
+    cat > "${INSTALL_DIR}/updater.env" <<EOF
+HOST_UPDATER_TOKEN=${updater_token}
+REPO=${REPO}
+REF=${REF}
+EOF
+    chmod 600 "${INSTALL_DIR}/updater.env"
+
+    cat > /etc/systemd/system/synapsis-updater.service <<EOF
+[Unit]
+Description=Synapsis Host Updater
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=${INSTALL_DIR}
+Environment=INSTALL_DIR=${INSTALL_DIR}
+Environment=HOST_UPDATER_SOCKET=${HOST_UPDATER_SOCKET_PATH}
+Environment=HOST_UPDATER_STATUS_FILE=${INSTALL_DIR}/updater-status.json
+Environment=HOST_UPDATER_LOG_FILE=${INSTALL_DIR}/updater.log
+Environment=HOST_UPDATER_SCRIPT=${INSTALL_DIR}/update-local.sh
+EnvironmentFile=${INSTALL_DIR}/updater.env
+ExecStart=/usr/bin/env python3 ${INSTALL_DIR}/host-updater.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now synapsis-updater.service >/dev/null 2>&1 || true
+    systemctl restart synapsis-updater.service >/dev/null 2>&1 || true
 }
 
 require_command curl
@@ -227,6 +347,8 @@ else
         fi
     fi
 fi
+
+install_host_updater
 
 echo ""
 echo "Next steps:"

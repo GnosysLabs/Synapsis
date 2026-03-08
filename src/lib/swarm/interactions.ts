@@ -58,12 +58,9 @@ export interface SwarmLikePayload {
     actorDisplayName: string;
     actorAvatarUrl?: string;
     actorNodeDomain: string;
-    actorDid: string; // User's DID
-    actorPublicKey: string; // User's public key for verification
     interactionId: string;
     timestamp: string;
   };
-  userSignature: string; // User's cryptographic signature
 }
 
 export interface SwarmUnlikePayload {

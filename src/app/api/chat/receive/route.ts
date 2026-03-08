@@ -7,25 +7,55 @@ import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { fetchAndCacheRemoteKey, logKeyChange } from '@/lib/swarm/identity-cache';
 import { z } from 'zod';
 
-// Schema for direct signed action (legacy)
-const chatReceiveSchema = z.object({
+const signedChatActionSchema = z.object({
+    action: z.string().min(1),
+    did: z.string().regex(/^did:/, 'Must be a valid DID'),
+    handle: z.string().min(3).max(30),
+    ts: z.number(),
+    nonce: z.string().min(1),
+    sig: z.string().min(1),
+    data: z.object({
+        recipientDid: z.string().regex(/^did:/, 'Must be a valid DID'),
+        content: z.string().min(1).max(5000),
+    }),
+});
+
+// Backward compatibility for older nodes that sent legacy field names.
+const legacyChatActionSchema = z.object({
     did: z.string().regex(/^did:/, 'Must be a valid DID'),
     handle: z.string().min(3).max(30),
     data: z.object({
         recipientDid: z.string().regex(/^did:/, 'Must be a valid DID'),
         content: z.string().min(1).max(5000),
     }),
-    signature: z.string(),
-    timestamp: z.number().optional(),
+    signature: z.string().min(1),
+    timestamp: z.number(),
 });
 
-// Schema for federated envelope
+const incomingChatActionSchema = z.union([signedChatActionSchema, legacyChatActionSchema]);
+
 const federatedEnvelopeSchema = z.object({
-    userAction: chatReceiveSchema,
+    userAction: incomingChatActionSchema,
     fullSenderHandle: z.string().min(3).max(60),
     sourceDomain: z.string().min(1),
     ts: z.number(),
 });
+
+function normalizeSignedAction(action: z.infer<typeof incomingChatActionSchema>): SignedAction {
+    if ('sig' in action) {
+        return action;
+    }
+
+    return {
+        action: 'chat',
+        data: action.data,
+        did: action.did,
+        handle: action.handle,
+        ts: action.timestamp,
+        nonce: `legacy:${action.did}:${action.timestamp}`,
+        sig: action.signature,
+    };
+}
 
 /**
  * POST /api/chat/receive
@@ -67,19 +97,19 @@ export async function POST(request: NextRequest) {
             }
 
             // Extract user's signed action and full handle from envelope
-            signedAction = body.userAction;
+            signedAction = normalizeSignedAction(body.userAction);
             fullSenderHandle = body.fullSenderHandle;
             console.log(`[Chat Receive] Federated envelope from node: ${sourceDomain}, full handle: ${fullSenderHandle}`);
         } else {
             // Legacy format - direct user signed action
-            const actionValidation = chatReceiveSchema.safeParse(body);
+            const actionValidation = incomingChatActionSchema.safeParse(body);
             if (!actionValidation.success) {
                 return NextResponse.json(
                     { error: 'Invalid action payload', details: actionValidation.error.issues },
                     { status: 400 }
                 );
             }
-            signedAction = body;
+            signedAction = normalizeSignedAction(actionValidation.data);
         }
 
         const { did, handle, data } = signedAction;

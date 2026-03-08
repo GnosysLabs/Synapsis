@@ -7,6 +7,8 @@ import { useFormattedHandle } from '@/lib/utils/handle';
 import { PostCard } from '@/components/PostCard';
 import { Post } from '@/lib/types';
 import { Bot } from 'lucide-react';
+import { useAuth } from '@/lib/contexts/AuthContext';
+import { signedAPI } from '@/lib/api/signed-fetch';
 
 interface User {
     id: string;
@@ -132,6 +134,7 @@ export default function SearchPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const initialQuery = searchParams.get('q') || '';
+    const { did, handle } = useAuth();
 
     const [query, setQuery] = useState(initialQuery);
     const [users, setUsers] = useState<User[]>([]);
@@ -181,8 +184,13 @@ export default function SearchPage() {
     };
 
     const handleLike = async (postId: string, currentLiked: boolean) => {
-        const method = currentLiked ? 'DELETE' : 'POST';
-        const res = await fetch(`/api/posts/${postId}/like`, { method });
+        if (!did || !handle) {
+            throw new Error('Please log in again.');
+        }
+
+        const res = currentLiked
+            ? await signedAPI.unlikePost(postId, did, handle)
+            : await signedAPI.likePost(postId, did, handle);
 
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
@@ -191,8 +199,13 @@ export default function SearchPage() {
     };
 
     const handleRepost = async (postId: string, currentReposted: boolean) => {
-        const method = currentReposted ? 'DELETE' : 'POST';
-        const res = await fetch(`/api/posts/${postId}/repost`, { method });
+        if (!did || !handle) {
+            throw new Error('Please log in again.');
+        }
+
+        const res = currentReposted
+            ? await signedAPI.unrepostPost(postId, did, handle)
+            : await signedAPI.repostPost(postId, did, handle);
 
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));

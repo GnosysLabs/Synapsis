@@ -63,6 +63,7 @@ export async function GET(request: NextRequest) {
     // Local posts may have apId if they've been federated, so we check nodeId instead
     let whereCondition = and(
       isNull(posts.replyToId), // Not a reply
+      isNull(posts.swarmReplyToId), // Not a swarm reply
       eq(posts.isRemoved, false), // Not removed
       isNull(users.nodeId) // Local user (not from another swarm node)
     );

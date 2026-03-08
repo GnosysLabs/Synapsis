@@ -19,7 +19,12 @@ export function RightSidebar() {
         bannerUrl: '',
         admins: [] as Admin[],
     });
-    const [version, setVersion] = useState<{ count: number | null; hash: string; fullHash: string | null; githubUrl: string | null } | null>(null);
+    const [version, setVersion] = useState<{
+        version: string;
+        commit: string | null;
+        buildDate: string | null;
+        githubUrl: string | null;
+    } | null>(null);
 
     const [loading, setLoading] = useState(true);
 
@@ -45,7 +50,7 @@ export function RightSidebar() {
         fetch('/api/version')
             .then(res => res.json())
             .then(data => setVersion(data))
-            .catch(() => setVersion({ count: null, hash: 'unknown', fullHash: null, githubUrl: null }));
+            .catch(() => setVersion({ version: 'unknown', commit: null, buildDate: null, githubUrl: null }));
     }, []);
 
     if (loading) {
@@ -115,25 +120,21 @@ export function RightSidebar() {
             <div className="card" style={{ marginTop: '16px' }}>
                 <h3 style={{ fontWeight: 600, marginBottom: '12px' }}>Network Info</h3>
                 <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px' }}>
-                    Running <a href="https://synapsis.social" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Synapsis</a>
-                    {version && version.count !== null && (
+                    Running{' '}
+                    <a href="https://synapsis.social" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Synapsis</a>
+                    {version?.version ? ` ${version.version}` : ''}
+                    {version?.githubUrl && version?.commit && (
                         <>
                             {' • '}
-                            {version.githubUrl ? (
-                                <a 
-                                    href={version.githubUrl} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    title={`${version.hash} (${version.fullHash})`}
-                                    style={{ color: 'var(--accent)' }}
-                                >
-                                    Commit {version.count}
-                                </a>
-                            ) : (
-                                <span title={`${version.hash} (${version.fullHash})`}>
-                                    Commit {version.count}
-                                </span>
-                            )}
+                            <a
+                                href={version.githubUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={version.commit}
+                                style={{ color: 'var(--accent)' }}
+                            >
+                                {version.commit.slice(0, 7)}
+                            </a>
                         </>
                     )}
                 </p>

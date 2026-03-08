@@ -66,6 +66,8 @@ services:
 
       # Optional settings
       BOT_MAX_PER_USER: ${BOT_MAX_PER_USER:-5}
+      HOST_UPDATER_SOCKET: ${HOST_UPDATER_SOCKET:-/var/run/synapsis-updater/updater.sock}
+      HOST_UPDATER_TOKEN: ${HOST_UPDATER_TOKEN:-}
 
       # Port configuration (auto or specific port)
       PORT: ${PORT:-3000}
@@ -77,6 +79,7 @@ services:
       - uploads_data:/app/uploads
       # Shared volume for port coordination with Caddy
       - port_data:/var/run/synapsis
+      - /var/run/synapsis-updater:/var/run/synapsis-updater
     networks:
       - synapsis-network
     depends_on:

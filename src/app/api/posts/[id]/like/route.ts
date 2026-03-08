@@ -79,12 +79,9 @@ export async function POST(request: Request, context: RouteContext) {
                     actorDisplayName: user.displayName || user.handle,
                     actorAvatarUrl: user.avatarUrl || undefined,
                     actorNodeDomain: nodeDomain,
-                    actorDid: user.did,
-                    actorPublicKey: user.publicKey,
                     interactionId: crypto.randomUUID(),
                     timestamp: new Date().toISOString(),
                 },
-                userSignature: signedAction.sig,
             });
 
             if (!result.success) {
@@ -181,12 +178,9 @@ export async function POST(request: Request, context: RouteContext) {
                                 actorDisplayName: user.displayName || user.handle,
                                 actorAvatarUrl: user.avatarUrl || undefined,
                                 actorNodeDomain: nodeDomain,
-                                actorDid: user.did,
-                                actorPublicKey: user.publicKey,
                                 interactionId: crypto.randomUUID(),
                                 timestamp: new Date().toISOString(),
                             },
-                            userSignature: signedAction.sig,
                         });
 
                         if (result.success) {
