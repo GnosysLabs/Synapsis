@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, nodes } from '@/db';
 import { eq } from 'drizzle-orm';
 import { requireAdmin } from '@/lib/auth/admin';
+import { getVersionedNodeAssetUrl } from '@/lib/node/assets';
 
 // Logo constraints
 const MAX_LOGO_SIZE = 2 * 1024 * 1024; // 2MB
@@ -112,9 +113,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Update the appropriate field
-    const updateData = isLogo 
-      ? { logoData: dataUrl, logoUrl: `/api/node/logo`, updatedAt: new Date() }
-      : { faviconData: dataUrl, faviconUrl: `/api/node/favicon`, updatedAt: new Date() };
+    const updatedAt = new Date();
+    const assetUrl = isLogo
+      ? getVersionedNodeAssetUrl('/api/node/logo', updatedAt)
+      : getVersionedNodeAssetUrl('/api/node/favicon', updatedAt);
+
+    const updateData = isLogo
+      ? { logoData: dataUrl, logoUrl: assetUrl, updatedAt }
+      : { faviconData: dataUrl, faviconUrl: assetUrl, updatedAt };
 
     await db.update(nodes)
       .set(updateData)
@@ -122,7 +128,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      url: isLogo ? '/api/node/logo' : '/api/node/favicon',
+      url: assetUrl,
       type,
       size: file.size,
     });

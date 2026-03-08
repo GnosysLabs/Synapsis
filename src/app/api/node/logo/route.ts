@@ -48,7 +48,9 @@ export async function GET() {
       status: 200,
       headers: {
         'Content-Type': mimeType,
-        'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400',
+        'Cache-Control': 'no-store, max-age=0',
+        Pragma: 'no-cache',
+        Expires: '0',
         'Content-Length': buffer.length.toString(),
       },
     });

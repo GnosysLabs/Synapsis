@@ -65,6 +65,12 @@ export async function PATCH(req: NextRequest) {
             if (data.faviconData !== undefined) {
                 updateData.faviconData = data.faviconData;
             }
+            if (data.logoUrl === '') {
+                updateData.logoData = null;
+            }
+            if (data.faviconUrl === '') {
+                updateData.faviconData = null;
+            }
 
             [node] = await db.update(nodes)
                 .set(updateData)

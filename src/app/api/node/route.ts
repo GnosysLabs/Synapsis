@@ -3,6 +3,7 @@ import { db } from '@/db';
 import { nodes, users } from '@/db';
 import { eq, inArray } from 'drizzle-orm';
 import { getNodePublicKey } from '@/lib/swarm/node-keys';
+import { getVersionedNodeAssetUrl } from '@/lib/node/assets';
 
 export async function GET() {
     try {
@@ -58,8 +59,17 @@ export async function GET() {
             });
         }
 
+        const logoUrl = node.logoData
+            ? getVersionedNodeAssetUrl('/api/node/logo', node.updatedAt)
+            : node.logoUrl;
+        const faviconUrl = node.faviconData
+            ? getVersionedNodeAssetUrl('/api/node/favicon', node.updatedAt)
+            : node.faviconUrl;
+
         return NextResponse.json({
             ...node,
+            logoUrl,
+            faviconUrl,
             publicKey, // Always include the public key
             admins,
             // Don't expose the secret keys
