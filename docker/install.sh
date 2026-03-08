@@ -79,13 +79,24 @@ set_env_value() {
     rm -f "${file}.bak"
 }
 
+get_env_value() {
+    file="$1"
+    key="$2"
+
+    if [ ! -f "$file" ]; then
+        return 1
+    fi
+
+    sed -n -E "s/^${key}=(.*)$/\\1/p" "$file" | head -n 1
+}
+
 generate_db_password() {
     openssl rand -base64 24 | tr -d '\n' | tr '/+' '_-' | cut -c1-32
 }
 
-resolve_proxyless_host_port() {
-    if [ -n "${APP_HOST_PORT:-}" ]; then
-        printf '%s\n' "${APP_HOST_PORT}"
+resolve_proxyless_port() {
+    if [ -n "${PORT:-}" ] && [ "${PORT}" != "auto" ]; then
+        printf '%s\n' "${PORT}"
         return
     fi
 
@@ -131,7 +142,7 @@ require_command cp
 
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
 PROXY="$(normalize_proxy_mode "${PROXY}")"
-PROXYLESS_HOST_PORT="$(resolve_proxyless_host_port)"
+PROXYLESS_PORT="$(resolve_proxyless_port)"
 
 echo "========================================"
 echo "  Synapsis Docker Installer"
@@ -182,8 +193,21 @@ if [ ! -f "${INSTALL_DIR}/.env" ]; then
         set_env_value "${INSTALL_DIR}/.env" "ADMIN_EMAILS" "${ADMIN_EMAILS}"
         echo "📧 Set ADMIN_EMAILS=${ADMIN_EMAILS}"
     fi
+
+    if [ "${PROXY}" = "none" ]; then
+        set_env_value "${INSTALL_DIR}/.env" "PORT" "${PROXYLESS_PORT}"
+        echo "📡 Set PORT=${PROXYLESS_PORT} for proxyless mode"
+    fi
 else
     echo "📝 Existing ${INSTALL_DIR}/.env found, leaving it unchanged"
+
+    if [ "${PROXY}" = "none" ]; then
+        current_port="$(get_env_value "${INSTALL_DIR}/.env" "PORT" || true)"
+        if [ -z "${current_port}" ] || [ "${current_port}" = "auto" ]; then
+            set_env_value "${INSTALL_DIR}/.env" "PORT" "${PROXYLESS_PORT}"
+            echo "📡 Updated PORT=${PROXYLESS_PORT} for proxyless mode"
+        fi
+    fi
 fi
 
 echo ""
@@ -196,6 +220,6 @@ else
     echo "  2. Start Synapsis:"
     echo "     cd ${INSTALL_DIR} && docker compose up -d"
     echo "  3. Configure your existing reverse proxy to forward to:"
-    echo "     http://127.0.0.1:${PROXYLESS_HOST_PORT}"
-    echo "     (change APP_HOST_PORT in ${INSTALL_DIR}/.env if you want a different localhost port)"
+    echo "     http://127.0.0.1:${PROXYLESS_PORT}"
+    echo "     (change PORT in ${INSTALL_DIR}/.env if you want a different localhost port)"
 fi

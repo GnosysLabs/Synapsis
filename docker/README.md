@@ -49,7 +49,6 @@ Optional (advanced):
 **Port Configuration:**
 - `PORT=auto` (default) — Automatically finds an available port between 3000-3020
 - `PORT=3000` — Use a specific port instead
-- `APP_HOST_PORT=3000` — Only used in advanced `PROXY=none` installs
 
 ---
 
@@ -66,8 +65,10 @@ docker compose up -d
 
 This mode:
 - skips the bundled Caddy service
-- binds Synapsis to `127.0.0.1:${APP_HOST_PORT:-3000}`
+- binds Synapsis to `127.0.0.1:${PORT:-3000}`
 - expects your existing reverse proxy to forward traffic there
+
+In `PROXY=none` mode, `PORT` is the localhost port your reverse proxy should target. The installer automatically changes `PORT=auto` to `PORT=3000` unless you override it.
 
 Example nginx site:
 
@@ -152,8 +153,8 @@ For the application port itself, `PORT=auto` (default) automatically finds an av
 # Check what's using the port
 sudo netstat -tlnp | grep :3000
 
-# Switch back to auto or choose a different port
-# Edit .env: PORT=auto
+# Choose a different fixed port in /opt/synapsis/.env
+# Example: PORT=3013
 ```
 
 ### Database connection failed
