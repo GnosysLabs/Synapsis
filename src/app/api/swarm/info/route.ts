@@ -26,6 +26,7 @@ export async function GET() {
       softwareVersion: announcement.softwareVersion,
       userCount: announcement.userCount,
       postCount: announcement.postCount,
+      isNsfw: announcement.isNsfw,
       capabilities: announcement.capabilities,
       lastSeenAt: new Date().toISOString(),
     });

@@ -31,6 +31,7 @@ const announcementSchema = z.object({
   softwareVersion: z.string().optional(),
   userCount: z.number().optional(),
   postCount: z.number().optional(),
+  isNsfw: z.boolean().optional(),
   capabilities: z.array(z.enum(['handles', 'gossip', 'relay', 'search', 'interactions'])).optional(),
   timestamp: z.string().optional(),
 });
@@ -85,6 +86,7 @@ export async function POST(request: Request) {
       softwareVersion: data.softwareVersion,
       userCount: data.userCount,
       postCount: data.postCount,
+      isNsfw: data.isNsfw,
       capabilities: data.capabilities,
       lastSeenAt: new Date().toISOString(),
     };
@@ -105,6 +107,7 @@ export async function POST(request: Request) {
       softwareVersion: ourAnnouncement.softwareVersion,
       userCount: ourAnnouncement.userCount,
       postCount: ourAnnouncement.postCount,
+      isNsfw: ourAnnouncement.isNsfw,
       capabilities: ourAnnouncement.capabilities,
       lastSeenAt: new Date().toISOString(),
     });
