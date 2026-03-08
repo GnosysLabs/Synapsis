@@ -1,6 +1,10 @@
 # Caddyfile for Synapsis
 # Automatic HTTPS via Let's Encrypt
 
+www.{$DOMAIN} {
+    redir https://{$DOMAIN}{uri} permanent
+}
+
 {$DOMAIN} {
     # Reverse proxy to Synapsis app (port is set via APP_PORT env var)
     reverse_proxy app:{$APP_PORT:3000}

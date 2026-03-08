@@ -41,6 +41,9 @@ Edit `.env` and set these required values (domain should be host only, no scheme
 | `AUTH_SECRET` | Run: `openssl rand -hex 32` |
 | `ADMIN_EMAILS` | Your email address |
 
+Use the bare/canonical host in `DOMAIN`. Example: set `DOMAIN=synapsis.example.com`, not `www.synapsis.example.com`.
+If you also want `www.synapsis.example.com` to work, create a DNS record for `www` pointing to the same server. The bundled Caddy config will redirect `www` to the canonical `DOMAIN`.
+
 Optional (advanced):
 - `NEXT_PUBLIC_NODE_DOMAIN` to override the node domain (defaults to `DOMAIN`)
 - `NEXT_PUBLIC_APP_URL` to override the public app URL used by background jobs (auto-derived from the node domain)

@@ -25,6 +25,8 @@ docker compose up -d
 Done! Your node is live at `https://your-domain.com` with automatic SSL. No build step. No dependencies. No fuss.
 Database migrations run automatically on startup and during updates.
 
+Set `DOMAIN` to the canonical host you want Synapsis to live on. If you also create a `www` DNS record, the bundled Caddy setup will redirect `www` to that canonical domain automatically.
+
 If your server already has nginx or another reverse proxy using `80/443`, use the advanced mode instead:
 
 ```bash
