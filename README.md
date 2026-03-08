@@ -11,19 +11,14 @@ Synapsis is an open-source, federated social network built for the decentralized
 Run your personal Synapsis node with a single command:
 
 ```bash
-# 1. Download and start
-mkdir -p /opt/synapsis && cd /opt/synapsis
-curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker/Caddyfile
-curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker/caddy-entrypoint.sh
-curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker/.env.example
-cp .env.example .env
+# 1. Bootstrap the deployment directory
+curl -fsSL https://synapsis.social/install.sh | bash
 
-# 2. Edit .env with your domain and secrets (takes 2 minutes)
-nano .env
-# Use a host-only domain (no scheme), e.g. synapsis.example.com
+# 2. Edit /opt/synapsis/.env with your domain and admin email
+nano /opt/synapsis/.env
 
 # 3. Start your node
+cd /opt/synapsis
 docker compose up -d
 ```
 
@@ -117,7 +112,7 @@ Want to hack on Synapsis? Here's how to run it locally:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/cyph3rasi/synapsis.git
+git clone https://github.com/GnosysLabs/Synapsis.git
 cd synapsis
 
 # 2. Install dependencies
@@ -128,13 +123,13 @@ cp .env.example .env
 # Edit .env with your local database and storage settings
 
 # 4. Set up the database
-npx drizzle-kit push
+npm run db:push
 
 # 5. Run the development server
 npm run dev
 ```
 
-Visit `http://localhost:3000` — the app will redirect you to `/install` for initial setup.
+Visit `http://localhost:3000` and register with an email listed in `ADMIN_EMAILS`. Local setup no longer uses a dedicated `/install` route.
 
 ### Tech Stack
 

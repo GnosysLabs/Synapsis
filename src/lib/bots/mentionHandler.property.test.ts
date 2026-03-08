@@ -52,6 +52,9 @@ export const __addBot = (handle: string, userId: string) => {
     id,
     userId,
     handle: handle.toLowerCase(),
+    user: {
+      handle: handle.toLowerCase(),
+    },
     name: `Bot ${handle}`,
     personalityConfig: JSON.stringify({
       systemPrompt: 'Test bot',

@@ -750,11 +750,13 @@ describe('Feature: bot-system, Property 14: Multiple Source Types Per Bot', () =
       );
     });
 
-    it('SUPPORTED_SOURCE_TYPES contains all three types', () => {
+    it('SUPPORTED_SOURCE_TYPES contains the core and extended source types', () => {
       expect(SUPPORTED_SOURCE_TYPES).toContain('rss');
       expect(SUPPORTED_SOURCE_TYPES).toContain('reddit');
       expect(SUPPORTED_SOURCE_TYPES).toContain('news_api');
-      expect(SUPPORTED_SOURCE_TYPES.length).toBe(3);
+      expect(SUPPORTED_SOURCE_TYPES).toContain('brave_news');
+      expect(SUPPORTED_SOURCE_TYPES).toContain('youtube');
+      expect(SUPPORTED_SOURCE_TYPES.length).toBe(5);
     });
   });
 

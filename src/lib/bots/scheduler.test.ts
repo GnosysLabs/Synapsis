@@ -586,6 +586,22 @@ vi.mock('./rateLimiter', () => ({
   canPost: vi.fn(async () => ({ allowed: true })),
 }));
 
+// Mock post creation so scheduler tests stay unit-scoped
+vi.mock('./posting', () => ({
+  triggerPost: vi.fn(async () => ({
+    success: true,
+    post: {
+      id: 'post-1',
+      content: 'Generated post',
+    },
+  })),
+}));
+
+// Mock source fetching to avoid exercising fetcher behavior here
+vi.mock('./contentFetcher', () => ({
+  fetchAllSourcesForBot: vi.fn(async () => undefined),
+}));
+
 import {
   hasUnprocessedContent,
   getNextUnprocessedContent,
@@ -742,7 +758,7 @@ describe('processScheduledPosts', () => {
     expect(result.details[0].status).toBe('skipped_rate_limit');
   });
   
-  it('should skip bots when no content available', async () => {
+  it('should post original content when a bot has no active sources', async () => {
     const { db } = await import('@/db');
     const { canPost } = await import('./rateLimiter');
     
@@ -759,6 +775,32 @@ describe('processScheduledPosts', () => {
     
     vi.mocked(canPost).mockResolvedValue({ allowed: true });
     vi.mocked(db.query.botContentSources.findMany).mockResolvedValue([]);
+    
+    const result = await processScheduledPosts();
+    expect(result.processed).toBe(1);
+    expect(result.details[0].status).toBe('posted');
+  });
+  
+  it('should skip bots when active sources have no content available', async () => {
+    const { db } = await import('@/db');
+    const { canPost } = await import('./rateLimiter');
+    
+    vi.mocked(db.query.bots.findMany).mockResolvedValue([
+      {
+        id: 'bot-1',
+        scheduleConfig: JSON.stringify({
+          type: 'interval',
+          intervalMinutes: 30,
+        }),
+        lastPostAt: null,
+      } as any,
+    ]);
+    
+    vi.mocked(canPost).mockResolvedValue({ allowed: true });
+    vi.mocked(db.query.botContentSources.findMany).mockResolvedValue([
+      { id: 'source-1' } as any,
+    ]);
+    vi.mocked(db.query.botContentItems.findFirst).mockResolvedValue(undefined);
     
     const result = await processScheduledPosts();
     expect(result.skipped).toBe(1);

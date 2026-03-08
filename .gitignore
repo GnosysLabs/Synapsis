@@ -51,3 +51,6 @@ next-env.d.ts
 .vscode/
 .kiro/
 .env.dev
+
+# local website/docs mirrors
+site-work/

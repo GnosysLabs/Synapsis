@@ -433,7 +433,9 @@ describe('Constants', () => {
     expect(SUPPORTED_SOURCE_TYPES).toContain('rss');
     expect(SUPPORTED_SOURCE_TYPES).toContain('reddit');
     expect(SUPPORTED_SOURCE_TYPES).toContain('news_api');
-    expect(SUPPORTED_SOURCE_TYPES.length).toBe(4);
+    expect(SUPPORTED_SOURCE_TYPES).toContain('brave_news');
+    expect(SUPPORTED_SOURCE_TYPES).toContain('youtube');
+    expect(SUPPORTED_SOURCE_TYPES.length).toBe(5);
   });
 
 

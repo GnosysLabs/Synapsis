@@ -7,13 +7,9 @@ Production Docker deployment using pre-built images from GitHub Container Regist
 ## 🚀 Quick Start
 
 ```bash
-mkdir -p /opt/synapsis && cd /opt/synapsis
-curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker/Caddyfile
-curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker/caddy-entrypoint.sh
-curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker/.env.example
-cp .env.example .env
-nano .env  # Add your domain and secrets
+curl -fsSL https://synapsis.social/install.sh | bash
+nano /opt/synapsis/.env  # Add your domain and admin email
+cd /opt/synapsis
 docker compose up -d
 ```
 
@@ -27,14 +23,7 @@ Your node is live at `https://your-domain.com` with automatic SSL.
 |-------------|---------|
 | **Server** | 2GB RAM, 2 CPU cores, 20GB SSD (minimum) |
 | **Domain** | A domain or subdomain pointing to your server |
-| **Docker** | Version 24.0+ with Docker Compose 2.20+ |
-
-**Install Docker (Ubuntu/Debian):**
-```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-newgrp docker
-```
+| **Docker** | Installed automatically by `install.sh` when missing on supported Linux hosts |
 
 ---
 
@@ -53,6 +42,15 @@ Optional (advanced):
 - `NEXT_PUBLIC_NODE_DOMAIN` to override the node domain (defaults to `DOMAIN`)
 - `NEXT_PUBLIC_APP_URL` to override the public app URL used by background jobs (auto-derived from the node domain)
 - `ALLOW_LOCALHOST=1` to allow `localhost` in production containers for local testing
+- Shared S3 storage env vars are available if you want app-level fallback storage
+
+Optional shared storage env vars:
+- `STORAGE_ENDPOINT`
+- `STORAGE_REGION`
+- `STORAGE_BUCKET`
+- `STORAGE_ACCESS_KEY`
+- `STORAGE_SECRET_KEY`
+- `STORAGE_PUBLIC_BASE_URL`
 
 **Port Configuration:**
 - `PORT=auto` (default) — Automatically finds an available port between 3000-3020
@@ -131,8 +129,7 @@ docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
 # Verify image exists
 docker pull ghcr.io/cyph3rasi/synapsis:latest
 
-# Check available tags at:
-# https://github.com/cyph3rasi/synapsis/pkgs/container/synapsis
+# Check the published package tags in GitHub Container Registry
 ```
 
 ---
@@ -166,9 +163,9 @@ echo "0 2 * * * /opt/synapsis/backup.sh" | sudo crontab -
 To build locally instead of using pre-built images:
 
 ```bash
-git clone https://github.com/cyph3rasi/synapsis.git
+git clone https://github.com/GnosysLabs/Synapsis.git
 cd synapsis/docker
-docker compose -f docker-compose.build.yml up -d --build
+docker compose up -d --build
 ```
 
 ---

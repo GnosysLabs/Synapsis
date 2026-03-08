@@ -2,15 +2,10 @@
 # Uses pre-built image from GitHub Container Registry
 #
 # Quick Start:
-# 1. Download files to a new directory:
-#    mkdir -p /opt/synapsis && cd /opt/synapsis
-#    curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker-compose.yml
-#    curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker/Caddyfile
-#    curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker/caddy-entrypoint.sh
-#    curl -O https://raw.githubusercontent.com/cyph3rasi/synapsis/main/docker/.env.example
-#    cp .env.example .env
-# 2. Configure (edit with your domain and secrets): nano .env
-# 3. Start your node: docker compose up -d
+# 1. Bootstrap the deployment directory:
+#    curl -fsSL https://synapsis.social/install.sh | bash
+# 2. Configure (edit with your domain and admin email): nano /opt/synapsis/.env
+# 3. Start your node: cd /opt/synapsis && docker compose up -d
 #
 # Services:
 # - Synapsis Next.js application (from GHCR)
@@ -75,7 +70,12 @@ services:
       # Port configuration (auto or specific port)
       PORT: ${PORT:-3000}
 
-      # S3 Storage public URL (for custom S3 providers like R2, B2, Contabo)
+      # Shared S3 storage configuration
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-}
+      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-}
       STORAGE_PUBLIC_BASE_URL: ${STORAGE_PUBLIC_BASE_URL:-}
 
       # Node environment

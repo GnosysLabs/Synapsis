@@ -454,7 +454,7 @@ describe('Feature: bot-system, Property 38: Post Content Validation', () => {
 
   it('validation constants are properly defined (Requirement 11.5)', async () => {
     // Verify constants are reasonable
-    expect(POST_MAX_LENGTH).toBe(400);
+    expect(POST_MAX_LENGTH).toBe(600);
     expect(POST_MIN_LENGTH).toBe(1);
     expect(MAX_URLS_PER_POST).toBe(5);
     

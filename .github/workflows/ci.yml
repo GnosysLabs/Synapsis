@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Targeted bot regression checks
+        run: >
+          AUTH_SECRET=ci-test-secret
+          npx vitest run
+          src/lib/bots/encryption.test.ts
+          src/lib/bots/contentSource.test.ts
+          src/lib/bots/posting.property.test.ts
+          src/lib/bots/mentionHandler.property.test.ts
+          src/lib/bots/scheduler.test.ts
+
+      - name: Production build
+        run: npm run build
+
+  docker-validation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate production compose config
+        run: docker compose --env-file docker/.env.example config > /tmp/synapsis-compose.txt
+
+      - name: Validate source-build compose config
+        run: docker compose -f docker/docker-compose.yml --env-file docker/.env.example config > /tmp/synapsis-build-compose.txt
+
+      - name: Build application image
+        run: docker build -f docker/Dockerfile .
