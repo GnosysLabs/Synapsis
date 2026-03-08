@@ -49,6 +49,29 @@ def load_status():
         return json.load(handle)
 
 
+def normalize_status_on_startup():
+    status = load_status()
+
+    if status.get("status") == "error" and status.get("lastExitCode") == -15:
+        status.update({
+            "status": "success",
+            "message": "Synapsis update completed.",
+            "lastExitCode": 0,
+            "lastError": None,
+            "pid": None,
+        })
+        save_status(status)
+
+    if status.get("status") == "updating":
+        status.update({
+            "status": "idle",
+            "message": "Ready to update.",
+            "lastError": None,
+            "pid": None,
+        })
+        save_status(status)
+
+
 def save_status(status):
     with open(STATUS_FILE, "w", encoding="utf-8") as handle:
         json.dump(status, handle, indent=2)
@@ -199,6 +222,8 @@ def main():
 
     if os.path.exists(SOCKET_PATH):
         os.remove(SOCKET_PATH)
+
+    normalize_status_on_startup()
 
     signal.signal(signal.SIGTERM, cleanup_socket)
     signal.signal(signal.SIGINT, cleanup_socket)
