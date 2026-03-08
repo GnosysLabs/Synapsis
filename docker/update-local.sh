@@ -73,9 +73,5 @@ compose_cmd pull
 echo "🚀 Restarting Synapsis"
 compose_cmd up -d --remove-orphans
 
-if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files synapsis-updater.service >/dev/null 2>&1; then
-    systemctl restart synapsis-updater.service >/dev/null 2>&1 || true
-fi
-
 echo ""
 echo "✅ Synapsis has been updated to the latest published image."
