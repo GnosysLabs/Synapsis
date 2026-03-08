@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, media } from '@/db';
 import { requireAuth } from '@/lib/auth';
-import { uploadToUserStorage } from '@/lib/storage/s3';
+import { getStorageSession, createStorageSession } from '@/lib/storage/session';
+import { uploadWithStorageCredentials } from '@/lib/storage/s3';
 import { v4 as uuidv4 } from 'uuid';
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB for images
@@ -47,10 +48,13 @@ export async function POST(req: NextRequest) {
             }, { status: 400 });
         }
 
-        // Require password to decrypt storage credentials
-        if (!password) {
-            return NextResponse.json({ 
-                error: 'Password required to upload media. Your storage credentials are encrypted and need your password to decrypt.'
+        const storageSession =
+            (await getStorageSession(user.id)) ||
+            (password ? await createStorageSession(user, password) : null);
+
+        if (!storageSession) {
+            return NextResponse.json({
+                error: 'Upload session expired. Please sign in again.'
             }, { status: 401 });
         }
 
@@ -58,18 +62,17 @@ export async function POST(req: NextRequest) {
         const filename = `${uuidv4()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '')}`;
 
         // Upload to user's own S3-compatible storage
-        const uploadResult = await uploadToUserStorage(
+        const uploadResult = await uploadWithStorageCredentials(
             buffer,
             filename,
             file.type,
-            user.storageProvider as any,
-            user.storageEndpoint,
-            user.storagePublicBaseUrl,
-            user.storageRegion || 'us-east-1',
-            user.storageBucket || '',
-            user.storageAccessKeyEncrypted,
-            user.storageSecretKeyEncrypted,
-            password
+            storageSession.provider,
+            storageSession.endpoint,
+            storageSession.publicBaseUrl,
+            storageSession.region,
+            storageSession.bucket,
+            storageSession.accessKeyId,
+            storageSession.secretAccessKey
         );
 
         // Store media record with S3 URL

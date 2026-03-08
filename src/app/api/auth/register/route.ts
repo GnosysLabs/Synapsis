@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { registerUser, createSession } from '@/lib/auth';
+import { createStorageSession } from '@/lib/storage/session';
 import { db, nodes, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import { verifyTurnstileToken } from '@/lib/turnstile';
@@ -97,6 +98,7 @@ export async function POST(request: Request) {
 
         // Create session for new user
         await createSession(user.id);
+        await createStorageSession(user, data.password);
 
         return NextResponse.json({
             success: true,

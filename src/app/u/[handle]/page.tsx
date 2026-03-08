@@ -115,8 +115,6 @@ export default function ProfilePage() {
     const [isSaving, setIsSaving] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
-    const [storagePassword, setStoragePassword] = useState('');
-
     useEffect(() => {
         setIsEditing(false);
         setSaveError(null);
@@ -745,8 +743,6 @@ export default function ProfilePage() {
                                         setSaveError(null);
                                         setProfileForm({ ...profileForm, avatarUrl });
                                     }}
-                                    password={storagePassword}
-                                    onPasswordChange={setStoragePassword}
                                     previewWidth={48}
                                     previewHeight={48}
                                     previewBorderRadius="50%"
@@ -760,8 +756,6 @@ export default function ProfilePage() {
                                         setSaveError(null);
                                         setProfileForm({ ...profileForm, headerUrl });
                                     }}
-                                    password={storagePassword}
-                                    onPasswordChange={setStoragePassword}
                                     previewWidth={120}
                                     previewHeight={40}
                                     previewBorderRadius="4px"

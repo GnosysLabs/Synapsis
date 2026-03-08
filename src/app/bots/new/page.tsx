@@ -40,7 +40,6 @@ export default function NewBotPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [step, setStep] = useState<'identity' | 'personality' | 'sources' | 'schedule'>('identity');
-  const [storagePassword, setStoragePassword] = useState('');
 
   const [formData, setFormData] = useState({
     name: '',
@@ -183,7 +182,6 @@ export default function NewBotPage() {
           llmProvider: formData.llmProvider,
           llmModel: formData.llmModel,
           llmApiKey: formData.llmApiKey,
-          ownerPassword: storagePassword || undefined,
           autonomousMode: formData.autonomousMode,
           schedule: formData.autonomousMode ? {
             type: 'interval',
@@ -321,8 +319,6 @@ export default function NewBotPage() {
                 setError('');
                 setFormData(prev => ({ ...prev, avatarUrl }));
               }}
-              password={storagePassword}
-              onPasswordChange={setStoragePassword}
               previewWidth={48}
               previewHeight={48}
               previewBorderRadius="50%"
@@ -337,8 +333,6 @@ export default function NewBotPage() {
                 setError('');
                 setFormData(prev => ({ ...prev, headerUrl }));
               }}
-              password={storagePassword}
-              onPasswordChange={setStoragePassword}
               previewWidth={120}
               previewHeight={40}
               previewBorderRadius="4px"

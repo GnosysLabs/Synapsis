@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { authenticateUser, createSession } from '@/lib/auth';
+import { createStorageSession } from '@/lib/storage/session';
 import { verifyTurnstileToken } from '@/lib/turnstile';
 import { z } from 'zod';
 
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
 
         // Create session
         await createSession(user.id);
+        await createStorageSession(user, data.password);
 
         return NextResponse.json({
             success: true,

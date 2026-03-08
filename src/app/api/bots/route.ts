@@ -17,7 +17,8 @@ import {
   BotHandleTakenError,
   BotValidationError,
 } from '@/lib/bots/botManager';
-import { generateAndUploadAvatarToUserStorage, decryptS3Credentials } from '@/lib/storage/s3';
+import { generateAndUploadAvatarToUserStorage } from '@/lib/storage/s3';
+import { createStorageSession, getStorageSession } from '@/lib/storage/session';
 
 // Schema for creating a bot
 const createBotSchema = z.object({
@@ -43,7 +44,6 @@ const createBotSchema = z.object({
     timezone: z.string().optional(),
   }).optional(),
   autonomousMode: z.boolean().optional(),
-  // Optional: password to generate avatar using owner's S3 storage
   ownerPassword: z.string().optional(),
 });
 
@@ -61,28 +61,25 @@ export async function POST(request: Request) {
     const body = await request.json();
     const data = createBotSchema.parse(body);
 
-    // Generate bot avatar using owner's S3 storage if password provided and no avatar URL
+    const storageSession =
+      (await getStorageSession(user.id)) ||
+      (data.ownerPassword ? await createStorageSession(user, data.ownerPassword) : null);
+
+    // Generate bot avatar using owner's S3 storage if no avatar URL
     let botAvatarUrl: string | null | undefined = data.avatarUrl;
-    if (!botAvatarUrl && data.ownerPassword && user.storageAccessKeyEncrypted && user.storageSecretKeyEncrypted && user.storageBucket) {
+    if (!botAvatarUrl && storageSession) {
       try {
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
         const botHandle = `${data.handle.toLowerCase()}@${nodeDomain}`;
-        
-        // Decrypt the storage credentials
-        const { accessKeyId, secretAccessKey } = decryptS3Credentials(
-          user.storageAccessKeyEncrypted,
-          user.storageSecretKeyEncrypted,
-          data.ownerPassword
-        );
-        
+
         botAvatarUrl = await generateAndUploadAvatarToUserStorage(
           botHandle,
-          user.storageEndpoint || undefined,
-          user.storagePublicBaseUrl || undefined,
-          user.storageRegion || 'auto',
-          user.storageBucket,
-          accessKeyId,
-          secretAccessKey
+          storageSession.endpoint || undefined,
+          storageSession.publicBaseUrl || undefined,
+          storageSession.region || 'us-east-1',
+          storageSession.bucket,
+          storageSession.accessKeyId,
+          storageSession.secretAccessKey
         );
       } catch (err) {
         console.error('[Bot API] Failed to generate bot avatar:', err);

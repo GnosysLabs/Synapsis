@@ -22,6 +22,24 @@ interface StorageUploadResult {
   key: string;
 }
 
+function buildStorageUrl(
+  key: string,
+  endpoint: string | null | undefined,
+  publicBaseUrl: string | null | undefined,
+  region: string,
+  bucket: string
+): string {
+  if (publicBaseUrl) {
+    return `${publicBaseUrl.replace(/\/$/, '')}/${key}`;
+  }
+
+  if (endpoint) {
+    return `${endpoint}/${bucket}/${key}`;
+  }
+
+  return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+}
+
 /**
  * Decrypt S3 credentials from encrypted storage
  */
@@ -76,23 +94,48 @@ export async function uploadToUserStorage(
   encryptedSecretKey: string,
   password: string
 ): Promise<StorageUploadResult> {
-  // Decrypt credentials
   const { accessKeyId, secretAccessKey } = decryptS3Credentials(
     encryptedAccessKey,
     encryptedSecretKey,
     password
   );
 
-  // Create S3 client
+  return uploadWithStorageCredentials(
+    file,
+    filename,
+    mimeType,
+    provider,
+    endpoint,
+    publicBaseUrl,
+    region,
+    bucket,
+    accessKeyId,
+    secretAccessKey
+  );
+}
+
+export async function uploadWithStorageCredentials(
+  file: Buffer,
+  filename: string,
+  mimeType: string,
+  _provider: StorageProvider,
+  endpoint: string | null,
+  publicBaseUrl: string | null,
+  region: string,
+  bucket: string,
+  accessKeyId: string,
+  secretAccessKey: string
+): Promise<StorageUploadResult> {
+  const normalizedRegion = region || 'us-east-1';
+
   const s3 = createS3Client({
     endpoint: endpoint || undefined,
-    region,
+    region: normalizedRegion,
     accessKeyId,
     secretAccessKey,
     bucket,
   });
 
-  // Upload file
   const key = `synapsis/${filename}`;
 
   await s3.send(new PutObjectCommand({
@@ -102,19 +145,7 @@ export async function uploadToUserStorage(
     ContentType: mimeType,
   }));
 
-  // Construct URL based on provider
-  let url: string;
-
-  // Priority: user's publicBaseUrl > construct from endpoint > AWS format
-  if (publicBaseUrl) {
-    url = `${publicBaseUrl.replace(/\/$/, '')}/${key}`;
-  } else if (endpoint) {
-    // Custom endpoint (R2, B2, Contabo)
-    url = `${endpoint}/${bucket}/${key}`;
-  } else {
-    // AWS S3 standard URL
-    url = `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
-  }
+  const url = buildStorageUrl(key, endpoint, publicBaseUrl, normalizedRegion, bucket);
 
   return { url, key };
 }
@@ -193,33 +224,20 @@ export async function generateAndUploadAvatarToUserStorage(
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // 2. Upload to user's S3
-    const s3 = createS3Client({
-      endpoint: endpoint || undefined,
+    const result = await uploadWithStorageCredentials(
+      buffer,
+      `avatars/${handle.replace(/[^a-zA-Z0-9]/g, '')}-avatar.png`,
+      'image/png',
+      's3',
+      endpoint || null,
+      publicBaseUrl || null,
       region,
-      accessKeyId: accessKey,
-      secretAccessKey: secretKey,
       bucket,
-    });
+      accessKey,
+      secretKey
+    );
 
-    const key = `synapsis/avatars/${handle.replace(/[^a-zA-Z0-9]/g, '')}-avatar.png`;
-
-    await s3.send(new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      Body: buffer,
-      ContentType: 'image/png',
-    }));
-
-    // 3. Return URL
-    // Priority: user's publicBaseUrl > construct from endpoint > AWS format
-    if (publicBaseUrl) {
-      return `${publicBaseUrl.replace(/\/$/, '')}/${key}`;
-    }
-    if (endpoint) {
-      return `${endpoint}/${bucket}/${key}`;
-    }
-    return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+    return result.url;
 
   } catch (error) {
     console.error('Error generating/uploading avatar:', error);

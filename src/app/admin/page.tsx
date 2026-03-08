@@ -121,7 +121,7 @@ export default function AdminPage() {
             await handleSaveSettings(nextSettings);
         } catch (error) {
             console.error('Banner upload failed', error);
-            setBannerUploadError('Upload failed. Please try again.');
+            setBannerUploadError(error instanceof Error ? error.message : 'Upload failed. Please try again.');
         } finally {
             setIsUploadingBanner(false);
         }
