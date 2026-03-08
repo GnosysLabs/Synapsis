@@ -83,6 +83,15 @@ generate_db_password() {
     openssl rand -base64 24 | tr -d '\n' | tr '/+' '_-' | cut -c1-32
 }
 
+resolve_proxyless_host_port() {
+    if [ -n "${APP_HOST_PORT:-}" ]; then
+        printf '%s\n' "${APP_HOST_PORT}"
+        return
+    fi
+
+    printf '%s\n' "3000"
+}
+
 install_docker_if_needed() {
     if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
         echo "🐳 Docker is already installed"
@@ -122,6 +131,7 @@ require_command cp
 
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
 PROXY="$(normalize_proxy_mode "${PROXY}")"
+PROXYLESS_HOST_PORT="$(resolve_proxyless_host_port)"
 
 echo "========================================"
 echo "  Synapsis Docker Installer"
@@ -186,5 +196,6 @@ else
     echo "  2. Start Synapsis:"
     echo "     cd ${INSTALL_DIR} && docker compose up -d"
     echo "  3. Configure your existing reverse proxy to forward to:"
-    echo "     http://127.0.0.1:\${APP_HOST_PORT:-3000}"
+    echo "     http://127.0.0.1:${PROXYLESS_HOST_PORT}"
+    echo "     (change APP_HOST_PORT in ${INSTALL_DIR}/.env if you want a different localhost port)"
 fi
