@@ -12,6 +12,7 @@ import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@/components/Icons';
+import { UserStorageImageUpload } from '@/components/UserStorageImageUpload';
 import { Bot, Sparkles, Rss, Clock, Trash2 } from 'lucide-react';
 
 interface ContentSource {
@@ -46,8 +47,7 @@ export default function EditBotPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [step, setStep] = useState<'identity' | 'personality' | 'sources' | 'schedule'>('identity');
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [uploadingBanner, setUploadingBanner] = useState(false);
+  const [storagePassword, setStoragePassword] = useState('');
 
   const [formData, setFormData] = useState({
     name: '',
@@ -364,119 +364,37 @@ export default function EditBotPage() {
               </p>
             </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>
-                Avatar
-              </label>
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
-                  {uploadingAvatar ? 'Uploading...' : 'Choose File'}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      setUploadingAvatar(true);
-                      try {
-                        const uploadData = new FormData();
-                        uploadData.append('file', file);
-                        const res = await fetch('/api/uploads', {
-                          method: 'POST',
-                          body: uploadData,
-                        });
-                        const data = await res.json();
-                        if (data.url) {
-                          setFormData(prev => ({ ...prev, avatarUrl: data.url }));
-                        }
-                      } catch (err) {
-                        console.error('Avatar upload failed:', err);
-                        setError('Avatar upload failed');
-                      } finally {
-                        setUploadingAvatar(false);
-                      }
-                    }}
-                    disabled={uploadingAvatar}
-                    style={{ display: 'none' }}
-                  />
-                </label>
-                {formData.avatarUrl && (
-                  <div style={{ width: '48px', height: '48px', borderRadius: '50%', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                    <img src={formData.avatarUrl} alt="Avatar preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  </div>
-                )}
-                {formData.avatarUrl && (
-                  <button
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, avatarUrl: '' }))}
-                    className="btn btn-ghost btn-sm"
-                    style={{ color: 'var(--error)' }}
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-              <p style={{ fontSize: '13px', color: 'var(--foreground-tertiary)', marginTop: '6px' }}>
-                Square image recommended (optional)
-              </p>
-            </div>
+            <UserStorageImageUpload
+              label="Avatar"
+              value={formData.avatarUrl}
+              onChange={(avatarUrl) => {
+                setError('');
+                setFormData(prev => ({ ...prev, avatarUrl }));
+              }}
+              password={storagePassword}
+              onPasswordChange={setStoragePassword}
+              previewWidth={48}
+              previewHeight={48}
+              previewBorderRadius="50%"
+              helperText="Square image recommended (optional)"
+              onError={setError}
+            />
 
-            <div>
-              <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>
-                Banner
-              </label>
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
-                  {uploadingBanner ? 'Uploading...' : 'Choose File'}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      setUploadingBanner(true);
-                      try {
-                        const uploadData = new FormData();
-                        uploadData.append('file', file);
-                        const res = await fetch('/api/uploads', {
-                          method: 'POST',
-                          body: uploadData,
-                        });
-                        const data = await res.json();
-                        if (data.url) {
-                          setFormData(prev => ({ ...prev, headerUrl: data.url }));
-                        }
-                      } catch (err) {
-                        console.error('Banner upload failed:', err);
-                        setError('Banner upload failed');
-                      } finally {
-                        setUploadingBanner(false);
-                      }
-                    }}
-                    disabled={uploadingBanner}
-                    style={{ display: 'none' }}
-                  />
-                </label>
-                {formData.headerUrl && (
-                  <div style={{ width: '120px', height: '40px', borderRadius: '4px', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                    <img src={formData.headerUrl} alt="Banner preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  </div>
-                )}
-                {formData.headerUrl && (
-                  <button
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, headerUrl: '' }))}
-                    className="btn btn-ghost btn-sm"
-                    style={{ color: 'var(--error)' }}
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-              <p style={{ fontSize: '13px', color: 'var(--foreground-tertiary)', marginTop: '6px' }}>
-                Wide image recommended, e.g. 1500x500 (optional)
-              </p>
-            </div>
+            <UserStorageImageUpload
+              label="Banner"
+              value={formData.headerUrl}
+              onChange={(headerUrl) => {
+                setError('');
+                setFormData(prev => ({ ...prev, headerUrl }));
+              }}
+              password={storagePassword}
+              onPasswordChange={setStoragePassword}
+              previewWidth={120}
+              previewHeight={40}
+              previewBorderRadius="4px"
+              helperText="Wide image recommended, e.g. 1500x500 (optional)"
+              onError={setError}
+            />
           </div>
         );
 

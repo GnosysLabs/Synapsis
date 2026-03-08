@@ -70,14 +70,6 @@ services:
       # Port configuration (auto or specific port)
       PORT: ${PORT:-3000}
 
-      # Shared S3 storage configuration
-      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-}
-      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
-      STORAGE_BUCKET: ${STORAGE_BUCKET:-}
-      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-}
-      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-}
-      STORAGE_PUBLIC_BASE_URL: ${STORAGE_PUBLIC_BASE_URL:-}
-
       # Node environment
       NODE_ENV: production
     volumes:

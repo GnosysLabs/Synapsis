@@ -30,15 +30,19 @@ export function decryptS3Credentials(
   encryptedSecretKey: string,
   password: string
 ): { accessKeyId: string; secretAccessKey: string } {
-  const accessKeyId = decryptPrivateKey(
-    deserializeEncryptedKey(encryptedAccessKey),
-    password
-  );
-  const secretAccessKey = decryptPrivateKey(
-    deserializeEncryptedKey(encryptedSecretKey),
-    password
-  );
-  return { accessKeyId, secretAccessKey };
+  try {
+    const accessKeyId = decryptPrivateKey(
+      deserializeEncryptedKey(encryptedAccessKey),
+      password
+    );
+    const secretAccessKey = decryptPrivateKey(
+      deserializeEncryptedKey(encryptedSecretKey),
+      password
+    );
+    return { accessKeyId, secretAccessKey };
+  } catch {
+    throw new Error('Invalid storage password');
+  }
 }
 
 /**

@@ -102,6 +102,11 @@ export async function POST(req: NextRequest) {
         if (error instanceof Error && error.message === 'Authentication required') {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
         }
+        if (error instanceof Error && error.message === 'Invalid storage password') {
+            return NextResponse.json({
+                error: 'Incorrect password. Please try again.'
+            }, { status: 401 });
+        }
         if (error instanceof Error && error.message.includes('Storage')) {
             return NextResponse.json({ error: error.message }, { status: 400 });
         }

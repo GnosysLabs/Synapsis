@@ -42,15 +42,6 @@ Optional (advanced):
 - `NEXT_PUBLIC_NODE_DOMAIN` to override the node domain (defaults to `DOMAIN`)
 - `NEXT_PUBLIC_APP_URL` to override the public app URL used by background jobs (auto-derived from the node domain)
 - `ALLOW_LOCALHOST=1` to allow `localhost` in production containers for local testing
-- Shared S3 storage env vars are available if you want app-level fallback storage
-
-Optional shared storage env vars:
-- `STORAGE_ENDPOINT`
-- `STORAGE_REGION`
-- `STORAGE_BUCKET`
-- `STORAGE_ACCESS_KEY`
-- `STORAGE_SECRET_KEY`
-- `STORAGE_PUBLIC_BASE_URL`
 
 **Port Configuration:**
 - `PORT=auto` (default) — Automatically finds an available port between 3000-3020

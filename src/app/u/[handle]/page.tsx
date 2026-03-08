@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeftIcon, CalendarIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
 import { User, Post } from '@/lib/types';
 import AutoTextarea from '@/components/AutoTextarea';
-import { Rocket, MoreHorizontal, Mail, Camera } from 'lucide-react';
+import { UserStorageImageUpload } from '@/components/UserStorageImageUpload';
+import { Rocket, MoreHorizontal, Mail } from 'lucide-react';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { Bot } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -114,68 +115,7 @@ export default function ProfilePage() {
     const [isSaving, setIsSaving] = useState(false);
     const [isBlocked, setIsBlocked] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
-
-    const avatarInputRef = useRef<HTMLInputElement>(null);
-    const headerInputRef = useRef<HTMLInputElement>(null);
-
-    const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, field: 'avatarUrl' | 'headerUrl') => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        // Reset inputs so change event fires again for same file
-        e.target.value = '';
-
-        setIsSaving(true);
-        try {
-            // 1. Upload the file
-            const formData = new FormData();
-            formData.append('file', file);
-            const uploadRes = await fetch('/api/uploads', {
-                method: 'POST',
-                body: formData,
-            });
-            const uploadData = await uploadRes.json();
-
-            if (!uploadData.url) throw new Error('Upload failed');
-            const imageUrl = uploadData.url;
-
-            // 2. Update local form state immediately for UI feedback
-            setProfileForm(prev => ({ ...prev, [field]: imageUrl }));
-
-            // 3. Auto-save the profile change
-            if (!isIdentityUnlocked) {
-                throw new Error('Session expired. Please log in again.');
-            }
-
-            // Create partial update payload
-            const updatePayload: any = { [field]: imageUrl };
-
-            // Sign the action
-            const signedPayload = await signUserAction('update_profile', updatePayload);
-
-            const saveRes = await fetch('/api/auth/me', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(signedPayload),
-            });
-
-            const saveData = await saveRes.json();
-
-            if (!saveRes.ok) {
-                throw new Error(saveData.error || 'Failed to update profile');
-            }
-
-            // Update user state with the returned updated user
-            setUser(saveData.user);
-            // We do NOT exit edit mode automatically, allowing them to edit other fields
-
-        } catch (err) {
-            console.error(err);
-            setSaveError(err instanceof Error ? err.message : 'Upload failed');
-        } finally {
-            setIsSaving(false);
-        }
-    };
+    const [storagePassword, setStoragePassword] = useState('');
 
     useEffect(() => {
         setIsEditing(false);
@@ -558,34 +498,8 @@ export default function ProfilePage() {
                             ? `url(${isEditing ? profileForm.headerUrl : user.headerUrl}) center/cover`
                             : 'linear-gradient(135deg, var(--accent-muted) 0%, var(--background-tertiary) 100%)',
                         position: 'relative',
-                        cursor: isEditing ? 'pointer' : 'default',
-                    }}
-                    onClick={() => {
-                        if (isEditing) {
-                            headerInputRef.current?.click();
-                        }
                     }}
                 >
-                    {isEditing && (
-                        <div style={{
-                            position: 'absolute',
-                            inset: 0,
-                            background: 'rgba(0,0,0,0.3)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: 'white'
-                        }}>
-                            <Camera size={32} />
-                            <input
-                                ref={headerInputRef}
-                                type="file"
-                                accept="image/*"
-                                onChange={(e) => handleUpload(e, 'headerUrl')}
-                                style={{ display: 'none' }}
-                            />
-                        </div>
-                    )}
                 </div>
 
                 {/* Avatar & Actions */}
@@ -604,40 +518,12 @@ export default function ProfilePage() {
                                 border: '4px solid var(--background)',
                                 marginTop: '-48px',
                                 position: 'relative',
-                                cursor: isEditing ? 'pointer' : 'default',
-                            }}
-                            onClick={() => {
-                                if (isEditing) {
-                                    avatarInputRef.current?.click();
-                                }
                             }}
                         >
                             {(isEditing ? profileForm.avatarUrl : user.avatarUrl) ? (
                                 <img src={(isEditing ? profileForm.avatarUrl : user.avatarUrl) || ''} alt={user.displayName || user.handle} />
                             ) : (
                                 (user.displayName || user.handle).charAt(0).toUpperCase()
-                            )}
-
-                            {isEditing && (
-                                <div style={{
-                                    position: 'absolute',
-                                    inset: 0,
-                                    background: 'rgba(0,0,0,0.3)',
-                                    borderRadius: '50%',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    color: 'white'
-                                }}>
-                                    <Camera size={24} />
-                                    <input
-                                        ref={avatarInputRef}
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={(e) => handleUpload(e, 'avatarUrl')}
-                                        style={{ display: 'none' }}
-                                    />
-                                </div>
                             )}
                         </div>
 
@@ -852,7 +738,36 @@ export default function ProfilePage() {
                                         maxLength={100}
                                     />
                                 </div>
-                                {/* File inputs removed, now click-to-upload on visual elements */}
+                                <UserStorageImageUpload
+                                    label="Avatar"
+                                    value={profileForm.avatarUrl}
+                                    onChange={(avatarUrl) => {
+                                        setSaveError(null);
+                                        setProfileForm({ ...profileForm, avatarUrl });
+                                    }}
+                                    password={storagePassword}
+                                    onPasswordChange={setStoragePassword}
+                                    previewWidth={48}
+                                    previewHeight={48}
+                                    previewBorderRadius="50%"
+                                    helperText="Square image recommended (optional)"
+                                    onError={(message) => setSaveError(message || null)}
+                                />
+                                <UserStorageImageUpload
+                                    label="Header"
+                                    value={profileForm.headerUrl}
+                                    onChange={(headerUrl) => {
+                                        setSaveError(null);
+                                        setProfileForm({ ...profileForm, headerUrl });
+                                    }}
+                                    password={storagePassword}
+                                    onPasswordChange={setStoragePassword}
+                                    previewWidth={120}
+                                    previewHeight={40}
+                                    previewBorderRadius="4px"
+                                    helperText="Wide image recommended, e.g. 1500x500 (optional)"
+                                    onError={(message) => setSaveError(message || null)}
+                                />
                                 {saveError && (
                                     <div style={{ color: 'var(--error)', fontSize: '13px' }}>{saveError}</div>
                                 )}

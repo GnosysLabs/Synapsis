@@ -47,6 +47,9 @@ RUN apk add --no-cache libc6-compat openssl netcat-openbsd wget
 
 WORKDIR /app
 
+LABEL org.opencontainers.image.source="https://github.com/GnosysLabs/Synapsis"
+LABEL org.opencontainers.image.description="Synapsis self-hosted social node"
+
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
