@@ -56,6 +56,16 @@ cd /opt/synapsis
 docker compose pull && docker compose up -d
 ```
 
+## 🗑️ Full Uninstall
+
+To remove Synapsis completely from a host and start over:
+
+```bash
+curl -fsSL https://synapsis.social/uninstall.sh | bash
+```
+
+The uninstaller destroys the Synapsis containers, volumes, network, cached Synapsis images, and `/opt/synapsis`. It requires typing `DELETE` unless you set `FORCE=1`.
+
 ---
 
 ## 🛠️ Common Commands

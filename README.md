@@ -30,6 +30,11 @@ Database migrations run automatically on startup and during updates.
 docker compose pull && docker compose up -d
 ```
 
+**Full uninstall:**
+```bash
+curl -fsSL https://synapsis.social/uninstall.sh | bash
+```
+
 For detailed Docker setup, see [docker/README.md](docker/README.md).
 
 ---
