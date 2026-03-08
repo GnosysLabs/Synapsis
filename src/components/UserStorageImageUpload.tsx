@@ -1,6 +1,8 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { StorageSessionPrompt } from '@/components/StorageSessionPrompt';
+import { refreshStorageSession } from '@/lib/storage/client';
 
 interface UserStorageImageUploadProps {
     label: string;
@@ -25,6 +27,11 @@ export function UserStorageImageUpload({
 }: UserStorageImageUploadProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const [isUploading, setIsUploading] = useState(false);
+    const [showSessionPrompt, setShowSessionPrompt] = useState(false);
+    const [pendingFile, setPendingFile] = useState<File | null>(null);
+    const [password, setPassword] = useState('');
+    const [promptError, setPromptError] = useState('');
+    const [isRefreshingSession, setIsRefreshingSession] = useState(false);
 
     const resetFileInput = () => {
         if (inputRef.current) {
@@ -32,7 +39,7 @@ export function UserStorageImageUpload({
         }
     };
 
-    const uploadFile = async (file: File) => {
+    const uploadFile = async (file: File, allowPrompt = true) => {
         setIsUploading(true);
 
         try {
@@ -48,8 +55,11 @@ export function UserStorageImageUpload({
             if (!res.ok || !data.url) {
                 const message = data.error || 'Upload failed';
 
-                if (res.status === 401) {
-                    throw new Error(message || 'Upload session expired. Please sign in again.');
+                if (res.status === 401 && allowPrompt) {
+                    setPendingFile(file);
+                    setPromptError('');
+                    setShowSessionPrompt(true);
+                    return;
                 }
 
                 throw new Error(message);
@@ -57,6 +67,10 @@ export function UserStorageImageUpload({
 
             onChange(data.media?.url || data.url);
             onError?.('');
+            setPendingFile(null);
+            setShowSessionPrompt(false);
+            setPassword('');
+            setPromptError('');
         } catch (error) {
             onError?.(error instanceof Error ? error.message : 'Upload failed');
         } finally {
@@ -71,70 +85,109 @@ export function UserStorageImageUpload({
         await uploadFile(file);
     };
 
+    const handlePromptSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+
+        if (!pendingFile) {
+            setShowSessionPrompt(false);
+            return;
+        }
+
+        if (!password.trim()) {
+            setPromptError('Please enter your password');
+            return;
+        }
+
+        setIsRefreshingSession(true);
+        setPromptError('');
+
+        try {
+            await refreshStorageSession(password.trim());
+            await uploadFile(pendingFile, false);
+        } catch (error) {
+            setPromptError(error instanceof Error ? error.message : 'Failed to confirm password');
+        } finally {
+            setIsRefreshingSession(false);
+        }
+    };
+
+    const handlePromptCancel = () => {
+        setShowSessionPrompt(false);
+        setPendingFile(null);
+        setPassword('');
+        setPromptError('');
+        resetFileInput();
+    };
+
     return (
-        <div>
-            <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>
-                {label}
-            </label>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <label className="btn btn-ghost btn-sm" style={{ cursor: isUploading ? 'default' : 'pointer' }}>
-                    {isUploading ? 'Uploading...' : 'Choose File'}
-                    <input
-                        ref={inputRef}
-                        type="file"
-                        accept="image/*"
-                        onChange={handleFileChange}
-                        disabled={isUploading}
-                        style={{ display: 'none' }}
-                    />
+        <>
+            <div>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>
+                    {label}
                 </label>
-
-                {value && (
-                    <div
-                        style={{
-                            width: `${previewWidth}px`,
-                            height: `${previewHeight}px`,
-                            borderRadius: previewBorderRadius,
-                            overflow: 'hidden',
-                            border: '1px solid var(--border)',
-                            background: 'var(--background-tertiary)',
-                        }}
-                    >
-                        <img
-                            src={value}
-                            alt={`${label} preview`}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <label className="btn btn-ghost btn-sm" style={{ cursor: isUploading ? 'default' : 'pointer' }}>
+                        {isUploading ? 'Uploading...' : 'Choose File'}
+                        <input
+                            ref={inputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleFileChange}
+                            disabled={isUploading}
+                            style={{ display: 'none' }}
                         />
-                    </div>
-                )}
+                    </label>
 
-                {value && (
-                    <button
-                        type="button"
-                        onClick={() => onChange('')}
-                        className="btn btn-ghost btn-sm"
-                        style={{ color: 'var(--error)' }}
-                    >
-                        Remove
-                    </button>
+                    {value && (
+                        <div
+                            style={{
+                                width: `${previewWidth}px`,
+                                height: `${previewHeight}px`,
+                                borderRadius: previewBorderRadius,
+                                overflow: 'hidden',
+                                border: '1px solid var(--border)',
+                                background: 'var(--background-tertiary)',
+                            }}
+                        >
+                            <img
+                                src={value}
+                                alt={`${label} preview`}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
+                        </div>
+                    )}
+
+                    {value && (
+                        <button
+                            type="button"
+                            onClick={() => onChange('')}
+                            className="btn btn-ghost btn-sm"
+                            style={{ color: 'var(--error)' }}
+                        >
+                            Remove
+                        </button>
+                    )}
+                </div>
+
+                {helperText && (
+                    <p style={{ fontSize: '13px', color: 'var(--foreground-tertiary)', marginTop: '6px' }}>
+                        {helperText}
+                    </p>
                 )}
             </div>
 
-            {helperText && (
-                <p style={{ fontSize: '13px', color: 'var(--foreground-tertiary)', marginTop: '6px' }}>
-                    {helperText}
-                </p>
-            )}
-
-            <p
-                style={{
-                    fontSize: '12px',
-                    color: 'var(--foreground-tertiary)',
-                    marginTop: '6px',
+            <StorageSessionPrompt
+                open={showSessionPrompt}
+                isSubmitting={isRefreshingSession}
+                password={password}
+                error={promptError}
+                onPasswordChange={(nextPassword) => {
+                    setPassword(nextPassword);
+                    setPromptError('');
                 }}
-            >
-                If uploads stop working after a long session, sign in again to refresh your upload access.
-            </p>
-        </div>
+                onSubmit={handlePromptSubmit}
+                onCancel={handlePromptCancel}
+            />
+        </>
     );
 }
