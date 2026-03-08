@@ -84,7 +84,7 @@ services:
         condition: service_healthy
     # Increased start period to allow migrations to run
     healthcheck:
-      test: ["CMD-SHELL", "PORT=$(cat /var/run/synapsis/port 2>/dev/null || echo 3000); case \"$PORT\" in ''|*[!0-9]*) PORT=3000;; esac; wget -q --spider http://127.0.0.1:${PORT}/api/health || exit 1"]
+      test: ["CMD-SHELL", "PORT=$$(cat /var/run/synapsis/port 2>/dev/null || echo 3000); case \"$$PORT\" in ''|*[!0-9]*) PORT=3000;; esac; wget -q --spider http://127.0.0.1:$$PORT/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
