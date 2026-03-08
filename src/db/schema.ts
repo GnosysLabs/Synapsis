@@ -354,6 +354,35 @@ export const remoteLikes = pgTable('remote_likes', {
 ]);
 
 // ============================================
+// USER SWARM LIKES (local users liking remote swarm posts)
+// ============================================
+
+export const userSwarmLikes = pgTable('user_swarm_likes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  nodeDomain: text('node_domain').notNull(),
+  originalPostId: text('original_post_id').notNull(),
+  authorHandle: text('author_handle').notNull(),
+  authorDisplayName: text('author_display_name'),
+  authorAvatarUrl: text('author_avatar_url'),
+  content: text('content').notNull(),
+  postCreatedAt: timestamp('post_created_at').notNull(),
+  likesCount: integer('likes_count').default(0).notNull(),
+  repostsCount: integer('reposts_count').default(0).notNull(),
+  repliesCount: integer('replies_count').default(0).notNull(),
+  linkPreviewUrl: text('link_preview_url'),
+  linkPreviewTitle: text('link_preview_title'),
+  linkPreviewDescription: text('link_preview_description'),
+  linkPreviewImage: text('link_preview_image'),
+  mediaJson: text('media_json'),
+  likedAt: timestamp('liked_at').defaultNow().notNull(),
+}, (table) => [
+  index('user_swarm_likes_user_idx').on(table.userId, table.likedAt),
+  index('user_swarm_likes_post_idx').on(table.nodeDomain, table.originalPostId),
+  uniqueIndex('user_swarm_likes_unique').on(table.userId, table.nodeDomain, table.originalPostId),
+]);
+
+// ============================================
 // REMOTE REPOSTS (reposts from federated users on local posts)
 // ============================================
 

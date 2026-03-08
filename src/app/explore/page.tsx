@@ -79,6 +79,7 @@ interface SwarmPost {
     linkPreviewTitle?: string;
     linkPreviewDescription?: string;
     linkPreviewImage?: string;
+    isLiked?: boolean;
 }
 
 export default function ExplorePage() {
@@ -466,6 +467,7 @@ export default function ExplorePage() {
                                         linkPreviewTitle: post.linkPreviewTitle || null,
                                         linkPreviewDescription: post.linkPreviewDescription || null,
                                         linkPreviewImage: post.linkPreviewImage || null,
+                                        isLiked: post.isLiked || false,
                                     };
                                     return (
                                         <PostCard

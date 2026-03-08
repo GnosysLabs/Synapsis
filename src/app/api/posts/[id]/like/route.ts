@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, posts, likes, users, notifications } from '@/db';
-import { requireAuth } from '@/lib/auth';
+import { db, posts, likes, users, notifications, userSwarmLikes } from '@/db';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -39,6 +38,44 @@ function extractSwarmPostId(apId: string): string | null {
     const lastColonIndex = apId.lastIndexOf(':');
     if (lastColonIndex === -1) return null;
     return apId.substring(lastColonIndex + 1);
+}
+
+async function fetchSwarmPostSnapshot(domain: string, originalPostId: string) {
+    try {
+        const protocol = domain.includes('localhost') ? 'http' : 'https';
+        const res = await fetch(`${protocol}://${domain}/api/swarm/posts/${originalPostId}`, {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(5000),
+        });
+
+        if (!res.ok) {
+            return null;
+        }
+
+        const data = await res.json();
+        const post = data.post;
+        if (!post) {
+            return null;
+        }
+
+        return {
+            authorHandle: post.author?.handle || 'unknown',
+            authorDisplayName: post.author?.displayName || post.author?.handle || 'Unknown',
+            authorAvatarUrl: post.author?.avatarUrl || null,
+            content: post.content || '',
+            postCreatedAt: new Date(post.createdAt || new Date().toISOString()),
+            likesCount: post.likesCount || 0,
+            repostsCount: post.repostsCount || 0,
+            repliesCount: post.repliesCount || 0,
+            linkPreviewUrl: post.linkPreviewUrl || null,
+            linkPreviewTitle: post.linkPreviewTitle || null,
+            linkPreviewDescription: post.linkPreviewDescription || null,
+            linkPreviewImage: post.linkPreviewImage || null,
+            mediaJson: post.media ? JSON.stringify(post.media) : null,
+        };
+    } catch {
+        return null;
+    }
 }
 
 // Like a post
@@ -87,6 +124,23 @@ export async function POST(request: Request, context: RouteContext) {
             if (!result.success) {
                 console.error(`[Swarm] Like delivery failed: ${result.error}`);
                 return NextResponse.json({ error: 'Failed to deliver like to remote node' }, { status: 502 });
+            }
+
+            const snapshot = await fetchSwarmPostSnapshot(targetDomain, originalPostId);
+            if (snapshot) {
+                await db.insert(userSwarmLikes).values({
+                    userId: user.id,
+                    nodeDomain: targetDomain,
+                    originalPostId,
+                    ...snapshot,
+                    likedAt: new Date(),
+                }).onConflictDoUpdate({
+                    target: [userSwarmLikes.userId, userSwarmLikes.nodeDomain, userSwarmLikes.originalPostId],
+                    set: {
+                        ...snapshot,
+                        likedAt: new Date(),
+                    },
+                });
             }
 
             console.log(`[Swarm] Like delivered to ${targetDomain} for post ${originalPostId}`);
@@ -242,7 +296,7 @@ export async function DELETE(request: Request, context: RouteContext) {
         // Handle swarm posts (format: swarm:domain:uuid)
         if (postId.startsWith('swarm:')) {
             const targetDomain = extractSwarmDomain(postId);
-            const originalPostId = postId.split(':')[2];
+            const originalPostId = extractSwarmPostId(postId);
 
             if (!targetDomain || !originalPostId) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
@@ -265,6 +319,12 @@ export async function DELETE(request: Request, context: RouteContext) {
                 console.error(`[Swarm] Unlike delivery failed: ${result.error}`);
                 return NextResponse.json({ error: 'Failed to deliver unlike to remote node' }, { status: 502 });
             }
+
+            await db.delete(userSwarmLikes).where(and(
+                eq(userSwarmLikes.userId, user.id),
+                eq(userSwarmLikes.nodeDomain, targetDomain),
+                eq(userSwarmLikes.originalPostId, originalPostId)
+            ));
 
             console.log(`[Swarm] Unlike delivered to ${targetDomain} for post ${originalPostId}`);
             return NextResponse.json({ success: true, liked: false });

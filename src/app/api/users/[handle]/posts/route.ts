@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { db, posts, users, likes } from '@/db';
-import { eq, desc, and, inArray, lt, sql } from 'drizzle-orm';
+import { eq, desc, and, inArray, lt, sql, isNull } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
+import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -14,6 +15,43 @@ const parseRemoteHandle = (handle: string) => {
     }
     return null;
 };
+
+async function populateViewerLikeState(
+    remotePosts: any[],
+    domain: string
+) {
+    if (!remotePosts.length) {
+        return remotePosts;
+    }
+
+    try {
+        const { getSession } = await import('@/lib/auth');
+        const session = await getSession();
+        const viewer = session?.user;
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+
+        if (!viewer) {
+            return remotePosts;
+        }
+
+        const likedIds = await getViewerSwarmLikedPostIds(
+            remotePosts.map((post) => ({
+                id: `swarm:${domain}:${post.originalPostId}`,
+                nodeDomain: domain,
+                originalPostId: post.originalPostId,
+            })),
+            viewer.handle,
+            nodeDomain
+        );
+
+        return remotePosts.map((post) => ({
+            ...post,
+            isLiked: likedIds.has(`swarm:${domain}:${post.originalPostId}`),
+        }));
+    } catch {
+        return remotePosts;
+    }
+}
 
 export async function GET(request: Request, context: RouteContext) {
     try {
@@ -54,6 +92,7 @@ export async function GET(request: Request, context: RouteContext) {
 
                 const remotePosts = profileData.posts.map((post: any) => ({
                     id: post.id,
+                    originalPostId: post.id,
                     content: post.content,
                     createdAt: post.createdAt,
                     likesCount: post.likesCount || 0,
@@ -67,10 +106,9 @@ export async function GET(request: Request, context: RouteContext) {
                     linkPreviewImage: post.linkPreviewImage || null,
                     isSwarm: true,
                     nodeDomain: remote.domain,
-                    originalPostId: post.id,
                 }));
 
-                return NextResponse.json({ posts: remotePosts, nextCursor: null });
+                return NextResponse.json({ posts: await populateViewerLikeState(remotePosts, remote.domain), nextCursor: null });
             }
 
             return NextResponse.json({ posts: [] });
@@ -132,6 +170,7 @@ export async function GET(request: Request, context: RouteContext) {
 
                 const remotePosts = profileData.posts.map((post: any) => ({
                     id: post.id,
+                    originalPostId: post.id,
                     content: post.content,
                     createdAt: post.createdAt,
                     likesCount: post.likesCount || 0,
@@ -145,10 +184,9 @@ export async function GET(request: Request, context: RouteContext) {
                     linkPreviewImage: post.linkPreviewImage || null,
                     isSwarm: true,
                     nodeDomain: remote.domain,
-                    originalPostId: post.id,
                 }));
 
-                return NextResponse.json({ posts: remotePosts, nextCursor: null });
+                return NextResponse.json({ posts: await populateViewerLikeState(remotePosts, remote.domain), nextCursor: null });
             }
 
             return NextResponse.json({ posts: [] });
@@ -159,7 +197,12 @@ export async function GET(request: Request, context: RouteContext) {
         }
 
         // Get user's posts with cursor-based pagination
-        let whereConditions = and(eq(posts.userId, user.id), eq(posts.isRemoved, false));
+        let whereConditions = and(
+            eq(posts.userId, user.id),
+            eq(posts.isRemoved, false),
+            isNull(posts.replyToId),
+            isNull(posts.swarmReplyToId)
+        );
         
         // If cursor provided, get posts older than the cursor
         if (cursor) {
@@ -170,6 +213,8 @@ export async function GET(request: Request, context: RouteContext) {
                 whereConditions = and(
                     eq(posts.userId, user.id),
                     eq(posts.isRemoved, false),
+                    isNull(posts.replyToId),
+                    isNull(posts.swarmReplyToId),
                     lt(posts.createdAt, cursorPost.createdAt)
                 );
             }

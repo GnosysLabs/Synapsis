@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, notifications } from '@/db';
 import { requireAuth } from '@/lib/auth';
-import { requireSignedAction } from '@/lib/auth/verify-signature';
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -120,15 +119,14 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
     try {
-        const signedAction = await request.json();
-        const user = await requireSignedAction(signedAction);
+        const user = await requireAuth();
 
         if (!db) {
             return NextResponse.json({ error: 'Database not available' }, { status: 503 });
         }
 
-        // We trust the signed action 'data' for the IDs
-        const body = signedAction.data;
+        const rawBody = await request.json();
+        const body = rawBody?.data && typeof rawBody.data === 'object' ? rawBody.data : rawBody;
         const data = markSchema.parse(body);
 
         if (!data.all && (!data.ids || data.ids.length === 0)) {

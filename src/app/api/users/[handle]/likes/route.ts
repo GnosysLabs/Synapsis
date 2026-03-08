@@ -1,8 +1,20 @@
 import { NextResponse } from 'next/server';
-import { db, likes, posts, users } from '@/db';
+import { db, likes, posts, users, userSwarmLikes } from '@/db';
 import { eq, desc, and, inArray } from 'drizzle-orm';
 
 type RouteContext = { params: Promise<{ handle: string }> };
+
+const parseMediaJson = (mediaJson: string | null) => {
+    if (!mediaJson) {
+        return [];
+    }
+
+    try {
+        return JSON.parse(mediaJson);
+    } catch {
+        return [];
+    }
+};
 
 export async function GET(request: Request, context: RouteContext) {
     try {
@@ -41,10 +53,50 @@ export async function GET(request: Request, context: RouteContext) {
             limit,
         });
 
-        // Filter out any likes where the post was removed and format response
-        let likedPosts = userLikes
+        const localLikedPosts = userLikes
             .filter(like => like.post && !like.post.isRemoved)
             .map(like => like.post);
+
+        const swarmLikedRows = await db.query.userSwarmLikes.findMany({
+            where: eq(userSwarmLikes.userId, user.id),
+            orderBy: [desc(userSwarmLikes.likedAt)],
+            limit,
+        });
+
+        const swarmLikedPosts = swarmLikedRows.map((like) => ({
+            id: `swarm:${like.nodeDomain}:${like.originalPostId}`,
+            originalPostId: like.originalPostId,
+            content: like.content,
+            createdAt: like.postCreatedAt.toISOString(),
+            likesCount: like.likesCount,
+            repostsCount: like.repostsCount,
+            repliesCount: like.repliesCount,
+            author: {
+                id: `swarm:${like.nodeDomain}:${like.authorHandle}`,
+                handle: `${like.authorHandle}@${like.nodeDomain}`,
+                displayName: like.authorDisplayName || like.authorHandle,
+                avatarUrl: like.authorAvatarUrl,
+            },
+            media: parseMediaJson(like.mediaJson),
+            linkPreviewUrl: like.linkPreviewUrl,
+            linkPreviewTitle: like.linkPreviewTitle,
+            linkPreviewDescription: like.linkPreviewDescription,
+            linkPreviewImage: like.linkPreviewImage,
+            isSwarm: true,
+            nodeDomain: like.nodeDomain,
+            likedAt: like.likedAt.toISOString(),
+            isLiked: false,
+        }));
+
+        let likedPosts: any[] = [
+            ...localLikedPosts.map((post) => ({
+                ...post,
+                likedAt: userLikes.find((like) => like.post?.id === post.id)?.createdAt?.toISOString() || post.createdAt.toISOString(),
+            })),
+            ...swarmLikedPosts,
+        ]
+            .sort((a, b) => new Date(b.likedAt).getTime() - new Date(a.likedAt).getTime())
+            .slice(0, limit);
 
         // Populate isLiked and isReposted for authenticated users
         try {
@@ -53,13 +105,17 @@ export async function GET(request: Request, context: RouteContext) {
 
             if (session?.user && likedPosts.length > 0) {
                 const viewer = session.user;
-                const postIds = likedPosts.map(p => p!.id).filter(Boolean);
+                const isOwnLikesView = viewer.id === user.id;
+                const localPostIds = likedPosts
+                    .filter((post: any) => !post.isSwarm)
+                    .map((post: any) => post.id)
+                    .filter(Boolean);
 
-                if (postIds.length > 0) {
+                if (localPostIds.length > 0) {
                     const viewerLikes = await db.query.likes.findMany({
                         where: and(
                             eq(likes.userId, viewer.id),
-                            inArray(likes.postId, postIds)
+                            inArray(likes.postId, localPostIds)
                         ),
                     });
                     const likedPostIds = new Set(viewerLikes.map(l => l.postId));
@@ -67,7 +123,7 @@ export async function GET(request: Request, context: RouteContext) {
                     const viewerReposts = await db.query.posts.findMany({
                         where: and(
                             eq(posts.userId, viewer.id),
-                            inArray(posts.repostOfId, postIds),
+                            inArray(posts.repostOfId, localPostIds),
                             eq(posts.isRemoved, false)
                         ),
                     });
@@ -75,8 +131,13 @@ export async function GET(request: Request, context: RouteContext) {
 
                     likedPosts = likedPosts.map(p => ({
                         ...p!,
-                        isLiked: likedPostIds.has(p!.id),
+                        isLiked: p!.isSwarm ? isOwnLikesView : likedPostIds.has(p!.id),
                         isReposted: repostedPostIds.has(p!.id),
+                    })) as any;
+                } else {
+                    likedPosts = likedPosts.map(p => ({
+                        ...p!,
+                        isLiked: p!.isSwarm ? isOwnLikesView : p!.isLiked,
                     })) as any;
                 }
             }

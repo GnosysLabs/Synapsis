@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { BellIcon } from '@/components/Icons';
 import Link from 'next/link';
-import Image from 'next/image';
+import { useAuth } from '@/lib/contexts/AuthContext';
 
 interface NotificationActor {
     id: string;
@@ -27,13 +27,17 @@ interface Notification {
 }
 
 export default function NotificationsPage() {
+    const { loading: authLoading } = useAuth();
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
+        if (authLoading) {
+            return;
+        }
         fetchNotifications();
-    }, []);
+    }, [authLoading]);
 
     const fetchNotifications = async () => {
         try {
@@ -56,11 +60,14 @@ export default function NotificationsPage() {
 
     const markAllRead = async () => {
         try {
-            await fetch('/api/notifications', {
+            const res = await fetch('/api/notifications', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ all: true }),
             });
+            if (!res.ok) {
+                throw new Error('Failed to mark notifications as read');
+            }
             setNotifications(prev => prev.map(n => ({ ...n, readAt: new Date().toISOString() })));
         } catch (err) {
             console.error('Failed to mark notifications as read:', err);

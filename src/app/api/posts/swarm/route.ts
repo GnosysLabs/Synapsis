@@ -9,6 +9,7 @@ import { db, posts } from '@/db';
 import { fetchSwarmTimeline } from '@/lib/swarm/timeline';
 import { getSession } from '@/lib/auth';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
 
 /**
  * GET /api/posts/swarm
@@ -52,10 +53,26 @@ export async function GET(request: NextRequest) {
         .map(row => [row.swarmReplyToId as string, row.count])
     );
 
+    const session = await getSession().catch(() => null);
+    const viewer = session?.user;
+    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+    const likedPostIds = viewer
+      ? await getViewerSwarmLikedPostIds(
+          timeline.posts.map(post => ({
+            id: `swarm:${post.nodeDomain}:${post.id}`,
+            nodeDomain: post.nodeDomain,
+            originalPostId: post.id,
+          })),
+          viewer.handle,
+          nodeDomain
+        )
+      : new Set<string>();
+
     return NextResponse.json({
       posts: timeline.posts.map(post => ({
         ...post,
         replyCount: post.replyCount + (localReplyCountMap.get(`swarm:${post.nodeDomain}:${post.id}`) || 0),
+        isLiked: likedPostIds.has(`swarm:${post.nodeDomain}:${post.id}`),
       })),
       sources: timeline.sources,
       cached: false,
