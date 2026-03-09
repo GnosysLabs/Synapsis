@@ -14,12 +14,15 @@ from http.server import BaseHTTPRequestHandler
 SOCKET_PATH = os.environ.get("HOST_UPDATER_SOCKET", "/var/run/synapsis-updater/updater.sock")
 TOKEN = os.environ.get("HOST_UPDATER_TOKEN", "")
 STATUS_FILE = os.environ.get("HOST_UPDATER_STATUS_FILE", "/opt/synapsis/updater-status.json")
+CONFIG_FILE = os.environ.get("HOST_UPDATER_CONFIG_FILE", "/opt/synapsis/updater-config.json")
 LOG_FILE = os.environ.get("HOST_UPDATER_LOG_FILE", "/opt/synapsis/updater.log")
 UPDATE_SCRIPT = os.environ.get("HOST_UPDATER_SCRIPT", "/opt/synapsis/update-local.sh")
 INSTALL_DIR = os.environ.get("INSTALL_DIR", "/opt/synapsis")
+AUTO_UPDATE_INTERVAL_MINUTES = max(5, int(os.environ.get("HOST_UPDATER_INTERVAL_MINUTES", "30")))
 
 status_lock = threading.RLock()
 current_process = None
+last_auto_trigger_at = 0.0
 
 
 def now_iso():
@@ -29,7 +32,46 @@ def now_iso():
 def ensure_parent_dirs():
     os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)
     os.makedirs(os.path.dirname(STATUS_FILE), exist_ok=True)
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+
+
+def default_config():
+    return {
+        "autoUpdateEnabled": True,
+        "intervalMinutes": AUTO_UPDATE_INTERVAL_MINUTES,
+    }
+
+
+def load_config():
+    if not os.path.exists(CONFIG_FILE):
+        config = default_config()
+        save_config(config)
+        return config
+
+    with open(CONFIG_FILE, "r", encoding="utf-8") as handle:
+        stored = json.load(handle)
+
+    config = default_config()
+    config.update({
+        "autoUpdateEnabled": bool(stored.get("autoUpdateEnabled", True)),
+        "intervalMinutes": max(5, int(stored.get("intervalMinutes", AUTO_UPDATE_INTERVAL_MINUTES))),
+    })
+    return config
+
+
+def save_config(config):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2)
+
+
+def update_config(**changes):
+    config = load_config()
+    config.update(changes)
+    config["autoUpdateEnabled"] = bool(config.get("autoUpdateEnabled", True))
+    config["intervalMinutes"] = max(5, int(config.get("intervalMinutes", AUTO_UPDATE_INTERVAL_MINUTES)))
+    save_config(config)
+    return config
 
 
 def load_status():
@@ -85,6 +127,12 @@ def update_status(**changes):
         return status
 
 
+def get_status_payload():
+    status = load_status()
+    status["config"] = load_config()
+    return status
+
+
 def is_authorized(headers):
     expected = f"Bearer {TOKEN}"
     return bool(TOKEN) and headers.get("Authorization", "") == expected
@@ -105,7 +153,7 @@ def watch_process(process):
         )
 
 
-def start_update_process():
+def start_update_process(trigger="manual"):
     global current_process
 
     # Give the app enough time to return the 202 response before the container restarts.
@@ -125,10 +173,67 @@ def start_update_process():
             },
         )
 
-        update_status(pid=current_process.pid)
+        update_status(pid=current_process.pid, trigger=trigger)
 
     thread = threading.Thread(target=watch_process, args=(current_process,), daemon=True)
     thread.start()
+
+
+def schedule_update(trigger="manual"):
+    with status_lock:
+        if current_process and current_process.poll() is None:
+            return False
+
+        update_status(
+            status="updating",
+            message="Synapsis update scheduled." if trigger == "manual" else "Automatic Synapsis update scheduled.",
+            lastStartedAt=now_iso(),
+            lastFinishedAt=None,
+            lastExitCode=None,
+            lastError=None,
+            pid=None,
+            trigger=trigger,
+        )
+
+        thread = threading.Thread(target=start_update_process, args=(trigger,), daemon=True)
+        thread.start()
+        return True
+
+
+def auto_update_loop():
+    global last_auto_trigger_at
+    while True:
+        time.sleep(60)
+        try:
+            config = load_config()
+            if not config.get("autoUpdateEnabled", True):
+                continue
+
+            interval_seconds = max(300, int(config.get("intervalMinutes", AUTO_UPDATE_INTERVAL_MINUTES)) * 60)
+            now = time.time()
+
+            with status_lock:
+                if current_process and current_process.poll() is None:
+                    continue
+
+                last_reference = last_auto_trigger_at
+                status = load_status()
+                if not last_reference:
+                    last_started = status.get("lastStartedAt")
+                    if last_started:
+                        try:
+                            last_reference = datetime.fromisoformat(last_started).timestamp()
+                        except Exception:
+                            last_reference = 0.0
+
+                if last_reference and (now - last_reference) < interval_seconds:
+                    continue
+
+                last_auto_trigger_at = now
+
+            schedule_update(trigger="auto")
+        except Exception as error:
+            update_status(lastError=f"Auto-update scheduler error: {error}")
 
 
 class ThreadedUnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
@@ -158,7 +263,7 @@ class Handler(BaseHTTPRequestHandler):
             if not is_authorized(self.headers):
                 self.send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized"})
                 return
-            self.send_json(HTTPStatus.OK, load_status())
+            self.send_json(HTTPStatus.OK, get_status_payload())
             return
 
         self.send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -174,30 +279,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized"})
             return
 
-        with status_lock:
-            if current_process and current_process.poll() is None:
-                self.send_json(
-                    HTTPStatus.CONFLICT,
-                    {
-                        "ok": False,
-                        "status": "updating",
-                        "message": "An update is already running.",
-                    },
-                )
-                return
-
-            update_status(
-                status="updating",
-                message="Synapsis update scheduled.",
-                lastStartedAt=now_iso(),
-                lastFinishedAt=None,
-                lastExitCode=None,
-                lastError=None,
-                pid=None,
+        if not schedule_update(trigger="manual"):
+            self.send_json(
+                HTTPStatus.CONFLICT,
+                {
+                    "ok": False,
+                    "status": "updating",
+                    "message": "An update is already running.",
+                },
             )
-
-            thread = threading.Thread(target=start_update_process, daemon=True)
-            thread.start()
+            return
 
         self.send_json(
             HTTPStatus.ACCEPTED,
@@ -207,6 +298,31 @@ class Handler(BaseHTTPRequestHandler):
                 "message": "Synapsis update scheduled. The node will restart shortly.",
             },
         )
+
+    def do_PATCH(self):
+        if self.path != "/config":
+            self.send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+            return
+
+        if not is_authorized(self.headers):
+            self.send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized"})
+            return
+
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+
+        try:
+            payload = json.loads(raw_body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid JSON"})
+            return
+
+        if "autoUpdateEnabled" not in payload:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": "autoUpdateEnabled is required"})
+            return
+
+        config = update_config(autoUpdateEnabled=payload.get("autoUpdateEnabled"))
+        self.send_json(HTTPStatus.OK, {"ok": True, "config": config})
 
 
 def cleanup_socket(*_args):
@@ -224,11 +340,13 @@ def main():
         os.remove(SOCKET_PATH)
 
     normalize_status_on_startup()
+    load_config()
 
     signal.signal(signal.SIGTERM, cleanup_socket)
     signal.signal(signal.SIGINT, cleanup_socket)
 
     update_status(available=True)
+    threading.Thread(target=auto_update_loop, daemon=True).start()
 
     with ThreadedUnixServer(SOCKET_PATH, Handler) as server:
         os.chmod(SOCKET_PATH, 0o666)

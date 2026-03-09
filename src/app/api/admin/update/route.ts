@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth/admin';
 import { getCurrentBuildInfo, getLatestPublishedBuild, compareBuildVersions } from '@/lib/version';
-import { getHostUpdaterStatus, triggerHostUpdate } from '@/lib/host-updater';
+import { getHostUpdaterStatus, triggerHostUpdate, updateHostUpdaterConfig } from '@/lib/host-updater';
 
 function isUpdateAvailable(currentVersion: string, latestVersion: string | null | undefined) {
   if (!latestVersion) {
@@ -52,6 +52,30 @@ export async function POST() {
     console.error('[Admin Update] Trigger error:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to trigger update' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    await requireAdmin();
+
+    const body = await request.json();
+    if (typeof body.autoUpdateEnabled !== 'boolean') {
+      return NextResponse.json({ error: 'autoUpdateEnabled must be a boolean' }, { status: 400 });
+    }
+
+    const result = await updateHostUpdaterConfig(body.autoUpdateEnabled);
+    return NextResponse.json(result);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Admin required') {
+      return NextResponse.json({ error: 'Admin required' }, { status: 403 });
+    }
+
+    console.error('[Admin Update] Config error:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to update auto-update settings' },
       { status: 500 }
     );
   }

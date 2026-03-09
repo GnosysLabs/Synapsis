@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, posts, users, media, nodes } from '@/db';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, isNull } from 'drizzle-orm';
 
 export interface SwarmUserProfile {
   handle: string;
@@ -116,7 +116,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
       .where(
         and(
           eq(posts.userId, user.id),
-          eq(posts.isRemoved, false)
+          eq(posts.isRemoved, false),
+          isNull(posts.replyToId),
+          isNull(posts.swarmReplyToId)
         )
       )
       .orderBy(desc(posts.createdAt))

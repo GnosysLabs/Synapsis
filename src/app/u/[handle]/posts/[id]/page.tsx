@@ -19,6 +19,7 @@ export default function PostDetailPage() {
 
     const [post, setPost] = useState<Post | null>(null);
     const [replies, setReplies] = useState<Post[]>([]);
+    const [replyingTo, setReplyingTo] = useState<Post | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -31,6 +32,7 @@ export default function PostDetailPage() {
             const data = await res.json();
             setPost(data.post);
             setReplies(data.replies || []);
+            setReplyingTo(data.post);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load post');
         } finally {
@@ -47,13 +49,13 @@ export default function PostDetailPage() {
         let swarmReplyTo: { postId: string; nodeDomain: string; content?: string; author?: any } | undefined;
         let localReplyToId: string | undefined = replyToId;
 
-        if (post?.isSwarm && post.nodeDomain && post.originalPostId) {
+        if (replyingTo?.isSwarm && replyingTo.nodeDomain && replyingTo.originalPostId) {
             // This is a reply to a swarm post - send to the origin node
             swarmReplyTo = {
-                postId: post.originalPostId,
-                nodeDomain: post.nodeDomain,
-                content: post.content,
-                author: post.author,
+                postId: replyingTo.originalPostId,
+                nodeDomain: replyingTo.nodeDomain,
+                content: replyingTo.content,
+                author: replyingTo.author,
             };
             localReplyToId = undefined; // Can't use UUID foreign key for swarm posts
         }
@@ -78,6 +80,7 @@ export default function PostDetailPage() {
             if (post) {
                 setPost({ ...post, repliesCount: post.repliesCount + 1 });
             }
+            setReplyingTo(post);
         }
     };
 
@@ -172,9 +175,10 @@ export default function PostDetailPage() {
                 <div style={{ borderBottom: '1px solid var(--border)' }}>
                     <Compose
                         onPost={handlePost}
-                        replyingTo={post}
+                        replyingTo={replyingTo}
                         isReply
                         placeholder="Post your reply"
+                        onCancelReply={() => setReplyingTo(post)}
                     />
                 </div>
             )}
@@ -188,10 +192,8 @@ export default function PostDetailPage() {
                         onRepost={handleRepost}
                         onDelete={handleDelete}
                         parentPostAuthorId={post.author.id}
-                        onComment={(p) => {
-                            // In detail view, commenting on a reply should probably just focus the main composer
-                            // but we could also implement nested replies later. 
-                            // For now, let's keep it simple.
+                        onComment={(replyTarget) => {
+                            setReplyingTo(replyTarget);
                             const composer = document.querySelector('.compose-input') as HTMLTextAreaElement;
                             composer?.focus();
                         }}

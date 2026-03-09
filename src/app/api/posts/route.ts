@@ -735,7 +735,9 @@ export async function GET(request: Request) {
                             );
                             if (!profileData?.posts) return [];
 
-                            return profileData.posts.map(post => ({
+                            return profileData.posts
+                                .filter((post: any) => !post.replyToId && !post.swarmReplyToId && !post.isReply)
+                                .map(post => ({
                                 id: `swarm:${domain}:${post.id}`,
                                 content: post.content,
                                 createdAt: new Date(post.createdAt),

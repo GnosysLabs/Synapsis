@@ -50,10 +50,16 @@ export default function AdminPage() {
             lastFinishedAt?: string | null;
             lastExitCode?: number | null;
             lastError?: string | null;
+            trigger?: 'manual' | 'auto' | null;
+            config?: {
+                autoUpdateEnabled: boolean;
+                intervalMinutes: number;
+            };
         };
     } | null>(null);
     const [loadingUpdateStatus, setLoadingUpdateStatus] = useState(false);
     const [triggeringUpdate, setTriggeringUpdate] = useState(false);
+    const [savingAutoUpdate, setSavingAutoUpdate] = useState(false);
 
     useEffect(() => {
         fetch('/api/admin/me')
@@ -288,6 +294,38 @@ export default function AdminPage() {
             setLogoUploadError(error instanceof Error ? error.message : 'Upload failed. Please try again.');
         } finally {
             setIsUploadingLogo(false);
+        }
+    };
+
+    const handleToggleAutoUpdate = async () => {
+        if (!updateStatus?.updater.available || !updateStatus.updater.config) return;
+
+        const nextValue = !updateStatus.updater.config.autoUpdateEnabled;
+        setSavingAutoUpdate(true);
+        try {
+            const res = await fetch('/api/admin/update', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ autoUpdateEnabled: nextValue }),
+            });
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                throw new Error(data.error || 'Failed to update auto-update setting');
+            }
+
+            setUpdateStatus((prev) => prev ? {
+                ...prev,
+                updater: {
+                    ...prev.updater,
+                    config: data.config,
+                },
+            } : prev);
+            showToast(nextValue ? 'Automatic updates enabled' : 'Automatic updates disabled', 'success');
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : 'Failed to update auto-update setting', 'error');
+        } finally {
+            setSavingAutoUpdate(false);
         }
     };
 
@@ -710,6 +748,41 @@ export default function AdminPage() {
                                     </button>
                                 </div>
 
+                                {updateStatus?.updater.available && updateStatus?.updater.config && (
+                                    <div style={{
+                                        marginTop: '16px',
+                                        padding: '12px',
+                                        borderRadius: '8px',
+                                        border: '1px solid var(--border)',
+                                        background: 'var(--background)',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'flex-start',
+                                        gap: '16px',
+                                    }}>
+                                        <div>
+                                            <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                                                Automatic updates
+                                            </div>
+                                            <div style={{ fontSize: '12px', color: 'var(--foreground-secondary)' }}>
+                                                Enabled by default. This node checks for updates every {updateStatus.updater.config.intervalMinutes} minutes and installs them automatically.
+                                            </div>
+                                        </div>
+                                        <button
+                                            className={`btn btn-sm ${updateStatus.updater.config.autoUpdateEnabled ? 'btn-primary' : 'btn-ghost'}`}
+                                            onClick={handleToggleAutoUpdate}
+                                            disabled={savingAutoUpdate}
+                                            style={{ flexShrink: 0 }}
+                                        >
+                                            {savingAutoUpdate
+                                                ? 'Saving...'
+                                                : updateStatus.updater.config.autoUpdateEnabled
+                                                    ? 'Disable'
+                                                    : 'Enable'}
+                                        </button>
+                                    </div>
+                                )}
+
                                 <div style={{ display: 'grid', gap: '8px', marginTop: '16px', fontSize: '13px' }}>
                                     <div>
                                         <strong>Current build:</strong>{' '}
@@ -739,6 +812,12 @@ export default function AdminPage() {
                                         <div>
                                             <strong>Last exit code:</strong>{' '}
                                             {updateStatus.updater.lastExitCode}
+                                        </div>
+                                    )}
+                                    {updateStatus?.updater.trigger && (
+                                        <div>
+                                            <strong>Last trigger:</strong>{' '}
+                                            {updateStatus.updater.trigger === 'auto' ? 'Automatic update' : 'Manual update'}
                                         </div>
                                     )}
                                     {updateStatus?.updater.lastError && (

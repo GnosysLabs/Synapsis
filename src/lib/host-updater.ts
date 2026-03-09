@@ -12,6 +12,11 @@ export interface HostUpdaterStatus {
   lastExitCode?: number | null;
   lastError?: string | null;
   pid?: number | null;
+  trigger?: 'manual' | 'auto' | null;
+  config?: {
+    autoUpdateEnabled: boolean;
+    intervalMinutes: number;
+  };
 }
 
 function getUpdaterConfig() {
@@ -25,7 +30,7 @@ function getUpdaterConfig() {
   };
 }
 
-function requestUpdater<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+function requestUpdater<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
   const { socketPath, token, enabled } = getUpdaterConfig();
 
   if (!enabled) {
@@ -113,4 +118,12 @@ export async function getHostUpdaterStatus(): Promise<HostUpdaterStatus> {
 
 export async function triggerHostUpdate() {
   return requestUpdater<{ ok: boolean; status: string; message?: string }>('POST', '/update');
+}
+
+export async function updateHostUpdaterConfig(autoUpdateEnabled: boolean) {
+  return requestUpdater<{ ok: boolean; config: { autoUpdateEnabled: boolean; intervalMinutes: number } }>(
+    'PATCH',
+    '/config',
+    { autoUpdateEnabled }
+  );
 }
