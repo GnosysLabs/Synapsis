@@ -46,6 +46,8 @@ export default function EditBotPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [sourceError, setSourceError] = useState('');
+  const [validatingSource, setValidatingSource] = useState(false);
   const [step, setStep] = useState<'identity' | 'personality' | 'sources' | 'schedule'>('identity');
 
   const [formData, setFormData] = useState({
@@ -79,6 +81,12 @@ export default function EditBotPage() {
   useEffect(() => {
     fetchBot();
   }, [botId]);
+
+  useEffect(() => {
+    if (sourceError) {
+      setSourceError('');
+    }
+  }, [newSource]);
 
   const fetchBot = async () => {
     try {
@@ -147,46 +155,94 @@ export default function EditBotPage() {
     }
   };
 
-  const handleAddSource = () => {
-    // Validate based on type
-    if (newSource.type === 'brave_news') {
-      if (!newSource.braveQuery || !newSource.apiKey) return;
-      // Build URL from config
+  const buildSourcePayload = (source: ContentSource) => {
+    const payload: Record<string, unknown> = {
+      type: source.type,
+      url: source.url,
+      subreddit: source.subreddit,
+      apiKey: source.apiKey,
+    };
+
+    if (source.type === 'brave_news' && source.braveQuery) {
       const url = new URL('https://api.search.brave.com/res/v1/news/search');
-      url.searchParams.set('q', newSource.braveQuery);
-      if (newSource.braveFreshness) url.searchParams.set('freshness', newSource.braveFreshness);
-      if (newSource.braveCountry) url.searchParams.set('country', newSource.braveCountry);
-      setSources([...sources, { ...newSource, url: url.toString() }]);
-    } else if (newSource.type === 'news_api') {
-      if (!newSource.newsQuery || !newSource.apiKey) return;
-      // Build URL from config
+      url.searchParams.set('q', source.braveQuery);
+      if (source.braveFreshness) url.searchParams.set('freshness', source.braveFreshness);
+      if (source.braveCountry) url.searchParams.set('country', source.braveCountry);
+      payload.url = url.toString();
+      payload.braveNewsConfig = {
+        query: source.braveQuery,
+        freshness: source.braveFreshness,
+        country: source.braveCountry || undefined,
+      };
+    } else if (source.type === 'news_api' && source.newsQuery) {
       let baseUrl: string;
       const params = new URLSearchParams();
-      switch (newSource.newsProvider) {
+      switch (source.newsProvider) {
         case 'gnews':
           baseUrl = 'https://gnews.io/api/v4/search';
-          params.set('q', newSource.newsQuery);
-          if (newSource.newsCountry) params.set('country', newSource.newsCountry);
-          if (newSource.newsLanguage) params.set('lang', newSource.newsLanguage);
-          if (newSource.newsCategory) params.set('topic', newSource.newsCategory);
+          params.set('q', source.newsQuery);
+          if (source.newsCountry) params.set('country', source.newsCountry);
+          if (source.newsLanguage) params.set('lang', source.newsLanguage);
+          if (source.newsCategory) params.set('topic', source.newsCategory);
           break;
         case 'newsdata':
           baseUrl = 'https://newsdata.io/api/1/news';
-          params.set('q', newSource.newsQuery);
-          if (newSource.newsCountry) params.set('country', newSource.newsCountry);
-          if (newSource.newsLanguage) params.set('language', newSource.newsLanguage);
-          if (newSource.newsCategory) params.set('category', newSource.newsCategory);
+          params.set('q', source.newsQuery);
+          if (source.newsCountry) params.set('country', source.newsCountry);
+          if (source.newsLanguage) params.set('language', source.newsLanguage);
+          if (source.newsCategory) params.set('category', source.newsCategory);
           break;
         default:
           baseUrl = 'https://newsapi.org/v2/everything';
-          params.set('q', newSource.newsQuery);
-          if (newSource.newsLanguage) params.set('language', newSource.newsLanguage);
+          params.set('q', source.newsQuery);
+          if (source.newsLanguage) params.set('language', source.newsLanguage);
       }
-      setSources([...sources, { ...newSource, url: `${baseUrl}?${params.toString()}` }]);
-    } else {
-      if (!newSource.url) return;
-      setSources([...sources, { ...newSource }]);
+      payload.url = `${baseUrl}?${params.toString()}`;
+      payload.newsApiConfig = {
+        provider: source.newsProvider,
+        query: source.newsQuery,
+        category: source.newsCategory || undefined,
+        country: source.newsCountry || undefined,
+        language: source.newsLanguage || undefined,
+      };
     }
+
+    return {
+      payload,
+      source: {
+        ...source,
+        url: payload.url as string,
+      },
+    };
+  };
+
+  const handleAddSource = async () => {
+    const { payload, source } = buildSourcePayload(newSource);
+
+    setSourceError('');
+    setValidatingSource(true);
+
+    try {
+      const response = await fetch('/api/bots/validate-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const details = Array.isArray(data.details) ? data.details.join(', ') : '';
+        throw new Error(details || data.error || 'Source validation failed');
+      }
+
+      setSources([...sources, source]);
+    } catch (err) {
+      setSourceError(err instanceof Error ? err.message : 'Source validation failed');
+      return;
+    } finally {
+      setValidatingSource(false);
+    }
+
     setNewSource({
       type: 'rss',
       url: '',
@@ -695,11 +751,17 @@ export default function EditBotPage() {
                     </>
                   )}
 
+                  {sourceError && (
+                    <div style={{ fontSize: '13px', color: 'var(--error)' }}>
+                      {sourceError}
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     onClick={handleAddSource}
                     className="btn btn-primary"
-                    disabled={
+                    disabled={validatingSource ||
                       (newSource.type === 'rss' && !newSource.url) ||
                       (newSource.type === 'reddit' && !newSource.subreddit) ||
                       (newSource.type === 'youtube' && !newSource.youtubeChannelId && !newSource.youtubePlaylistId) ||
@@ -707,7 +769,7 @@ export default function EditBotPage() {
                       (newSource.type === 'news_api' && (!newSource.newsQuery || !newSource.apiKey))
                     }
                   >
-                    Add Source
+                    {validatingSource ? 'Validating Source...' : 'Add Source'}
                   </button>
                 </div>
               </div>

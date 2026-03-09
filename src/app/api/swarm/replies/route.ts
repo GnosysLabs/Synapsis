@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, posts, users, media, notifications } from '@/db';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { upsertRemoteUser } from '@/lib/swarm/user-cache';
@@ -30,6 +30,20 @@ const swarmReplySchema = z.object({
     mediaUrls: z.array(z.string()).optional(),
   }),
 });
+
+async function syncParentReplyCount(postId: string) {
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(posts)
+    .where(and(
+      eq(posts.replyToId, postId),
+      eq(posts.isRemoved, false)
+    ));
+
+  await db.update(posts)
+    .set({ repliesCount: Number(count || 0) })
+    .where(eq(posts.id, postId));
+}
 
 /**
  * POST /api/swarm/replies
@@ -129,9 +143,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await db.update(posts)
-      .set({ repliesCount: parentPost.repliesCount + 1 })
-      .where(eq(posts.id, data.postId));
+    await syncParentReplyCount(data.postId);
 
     if (parentPost.userId !== remoteUser.id) {
       await db.insert(notifications).values({
@@ -183,20 +195,14 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: true, message: 'Reply not found or already deleted' });
     }
 
-    // Decrement parent's reply count
-    if (existingReply.replyToId) {
-      const parentPost = await db.query.posts.findFirst({
-        where: eq(posts.id, existingReply.replyToId),
-      });
-      if (parentPost && parentPost.repliesCount > 0) {
-        await db.update(posts)
-          .set({ repliesCount: parentPost.repliesCount - 1 })
-          .where(eq(posts.id, existingReply.replyToId));
-      }
-    }
+    const parentReplyToId = existingReply.replyToId;
 
     // Delete the reply
     await db.delete(posts).where(eq(posts.id, existingReply.id));
+
+    if (parentReplyToId) {
+      await syncParentReplyCount(parentReplyToId);
+    }
 
     console.log(`[Swarm] Deleted reply ${swarmReplyId} from ${nodeDomain}`);
 

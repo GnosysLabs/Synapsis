@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Bot } from 'lucide-react';
+import { getProfilePath } from '@/lib/utils/handle';
 
 type AdminUser = {
     id: string;
@@ -440,7 +441,7 @@ export default function ModerationPage() {
                                                 )}
                                             </div>
                                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                                <Link href={`/@${user.handle}`} className="btn btn-ghost btn-sm">
+                                                <Link href={getProfilePath(user.handle)} className="btn btn-ghost btn-sm">
                                                     View
                                                 </Link>
                                                 {user.isSuspended ? (

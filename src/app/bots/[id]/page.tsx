@@ -205,7 +205,8 @@ export default function BotDetailPage() {
         fetchSources();
       } else {
         const data = await response.json();
-        showToast(`Failed to add source: ${data.error || 'Unknown error'}`, 'error');
+        const details = Array.isArray(data.details) ? ` ${data.details.join(', ')}` : '';
+        showToast(`Failed to add source: ${data.error || 'Unknown error'}${details}`, 'error');
       }
     } catch (error) {
       showToast('Failed to add source', 'error');

@@ -12,6 +12,9 @@ export interface SwarmPost {
   id: string;
   content: string;
   createdAt: string;
+  isReply?: boolean;
+  replyToId?: string | null;
+  swarmReplyToId?: string | null;
   author: {
     handle: string;
     displayName: string;
@@ -84,6 +87,8 @@ export async function GET(request: NextRequest) {
         id: posts.id,
         content: posts.content,
         createdAt: posts.createdAt,
+        replyToId: posts.replyToId,
+        swarmReplyToId: posts.swarmReplyToId,
         isNsfw: posts.isNsfw,
         likesCount: posts.likesCount,
         repostsCount: posts.repostsCount,
@@ -120,6 +125,9 @@ export async function GET(request: NextRequest) {
         id: post.id,
         content: post.content,
         createdAt: post.createdAt.toISOString(),
+        isReply: Boolean(post.replyToId || post.swarmReplyToId),
+        replyToId: post.replyToId,
+        swarmReplyToId: post.swarmReplyToId,
         author: {
           handle: post.authorHandle,
           displayName: post.authorDisplayName || post.authorHandle,

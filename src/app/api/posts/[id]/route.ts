@@ -103,59 +103,7 @@ export async function GET(
                             })) || [],
                         }));
 
-                        const localSwarmReplyId = `swarm:${originDomain}:${originalPostId}`;
-                        const localReplies = await db.query.posts.findMany({
-                            where: and(
-                                eq(posts.swarmReplyToId, localSwarmReplyId),
-                                eq(posts.isRemoved, false)
-                            ),
-                            with: {
-                                author: true,
-                                media: true,
-                            },
-                            orderBy: [desc(posts.createdAt)],
-                        });
-
-                        if (localReplies.length > 0) {
-                            let likedReplyIds = new Set<string>();
-                            let repostedReplyIds = new Set<string | null>();
-
-                            try {
-                                const { requireAuth } = await import('@/lib/auth');
-                                const { likes } = await import('@/db');
-                                const viewer = await requireAuth();
-                                const localReplyIds = localReplies.map(reply => reply.id);
-
-                                const viewerLikes = await db.query.likes.findMany({
-                                    where: and(
-                                        eq(likes.userId, viewer.id),
-                                        inArray(likes.postId, localReplyIds)
-                                    ),
-                                });
-                                likedReplyIds = new Set(viewerLikes.map(like => like.postId));
-
-                                const viewerReposts = await db.query.posts.findMany({
-                                    where: and(
-                                        eq(posts.userId, viewer.id),
-                                        inArray(posts.repostOfId, localReplyIds),
-                                        eq(posts.isRemoved, false)
-                                    ),
-                                });
-                                repostedReplyIds = new Set(viewerReposts.map(reply => reply.repostOfId));
-                            } catch {
-                            }
-
-                            const formattedLocalReplies = localReplies.map((reply: any) => ({
-                                ...reply,
-                                isLiked: likedReplyIds.has(reply.id),
-                                isReposted: repostedReplyIds.has(reply.id),
-                            }));
-
-                            replyPosts = [...formattedLocalReplies, ...replyPosts]
-                                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-                            mainPost.repliesCount = (mainPost.repliesCount || 0) + localReplies.length;
-                        }
+                        mainPost.repliesCount = replyPosts.length;
 
                         // Check if current user has liked this post
                         try {
@@ -214,6 +162,11 @@ export async function GET(
                 orderBy: [desc(posts.createdAt)],
             });
 
+            mainPost = {
+                ...post,
+                repliesCount: replies.length,
+            };
+
             let allPostIds = [post.id, ...replies.map(r => r.id)];
 
             try {
@@ -243,7 +196,7 @@ export async function GET(
                     const repostedPostIds = new Set(viewerReposts.map(r => r.repostOfId));
 
                     mainPost = {
-                        ...post,
+                        ...mainPost,
                         isLiked: likedPostIds.has(post.id),
                         isReposted: repostedPostIds.has(post.id),
                     } as any;

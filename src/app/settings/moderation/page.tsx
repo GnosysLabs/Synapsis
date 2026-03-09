@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { getProfilePath } from '@/lib/utils/handle';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { UserX, Globe, Trash2 } from 'lucide-react';
 
@@ -179,7 +180,7 @@ export default function ModerationSettingsPage() {
                                     }}
                                 >
                                     <Link
-                                        href={`/@${user.handle}`}
+                                        href={getProfilePath(user.handle)}
                                         style={{
                                             display: 'flex',
                                             alignItems: 'center',

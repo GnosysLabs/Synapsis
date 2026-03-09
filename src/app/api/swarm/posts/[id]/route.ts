@@ -70,7 +70,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         createdAt: post.createdAt.toISOString(),
         likesCount: post.likesCount,
         repostsCount: post.repostsCount,
-        repliesCount: post.repliesCount,
+        repliesCount: replies.length,
         author: {
           handle: author.handle,
           displayName: author.displayName,

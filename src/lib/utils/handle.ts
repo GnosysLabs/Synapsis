@@ -27,6 +27,15 @@ export function formatFullHandle(handle: string, nodeDomain?: string | null): st
     return `@${cleanHandle}@${domain}`;
 }
 
+export function getProfilePath(handle: string): string {
+    if (!handle) {
+        return '/u';
+    }
+
+    const cleanHandle = handle.startsWith('@') ? handle.slice(1) : handle;
+    return `/u/${cleanHandle}`;
+}
+
 /**
  * React hook that formats a handle using the runtime domain config.
  * Use this in client components instead of formatFullHandle for local handles.

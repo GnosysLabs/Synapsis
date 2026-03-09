@@ -18,6 +18,16 @@ interface TimelineOptions {
   cursor?: string; // Timestamp cursor for pagination
 }
 
+function isReplyPost(post: SwarmPost): boolean {
+  return Boolean(
+    post.isReply ||
+    post.replyToId ||
+    post.swarmReplyToId ||
+    // Defensive against older or non-conforming node payloads.
+    (post as SwarmPost & { replyTo?: unknown }).replyTo
+  );
+}
+
 /**
  * Extract the first URL from post content
  */
@@ -183,16 +193,19 @@ export async function fetchSwarmTimeline(
   const sources: TimelineResult['sources'] = [];
 
   for (const result of results) {
+    const nonReplyPosts = result.posts.filter(post => !isReplyPost(post));
+
     // Filter NSFW posts only if user doesn't want NSFW content
     // A post is NSFW if it's explicitly marked OR comes from an NSFW node
     const filteredPosts = includeNsfw
-      ? result.posts
-      : result.posts.filter(p => !p.isNsfw && !p.nodeIsNsfw);
+      ? nonReplyPosts
+      : nonReplyPosts.filter(p => !p.isNsfw && !p.nodeIsNsfw);
 
     // Log filtering details for debugging
-    const nsfwPosts = result.posts.filter(p => p.isNsfw);
-    const nodeNsfwPosts = result.posts.filter(p => p.nodeIsNsfw);
-    console.log(`[Swarm Timeline] ${result.domain}: ${result.posts.length} posts fetched, ${nsfwPosts.length} marked NSFW, ${nodeNsfwPosts.length} from NSFW node, ${filteredPosts.length} after filter (includeNsfw: ${includeNsfw})`);
+    const nsfwPosts = nonReplyPosts.filter(p => p.isNsfw);
+    const nodeNsfwPosts = nonReplyPosts.filter(p => p.nodeIsNsfw);
+    const replyPosts = result.posts.length - nonReplyPosts.length;
+    console.log(`[Swarm Timeline] ${result.domain}: ${result.posts.length} posts fetched, ${replyPosts} replies filtered, ${nsfwPosts.length} marked NSFW, ${nodeNsfwPosts.length} from NSFW node, ${filteredPosts.length} after filter (includeNsfw: ${includeNsfw})`);
 
     sources.push({
       domain: result.domain,

@@ -86,16 +86,92 @@ export async function POST(request: Request) {
             linkPreviewImage: data.linkPreview?.image,
         }).returning();
 
-        let attachedMedia: typeof media.$inferSelect[] = [];
+        let unattachedMedia: typeof media.$inferSelect[] = [];
         if (data.mediaIds?.length) {
-            await db.update(media)
-                .set({ postId: post.id })
-                .where(and(
+            unattachedMedia = await db.query.media.findMany({
+                where: and(
                     inArray(media.id, data.mediaIds),
                     eq(media.userId, user.id),
                     isNull(media.postId),
-                ));
+                ),
+            });
+        }
 
+        try {
+            if (data.swarmReplyTo) {
+                const protocol = data.swarmReplyTo.nodeDomain.includes('localhost') ? 'http' : 'https';
+                const targetUrl = `${protocol}://${data.swarmReplyTo.nodeDomain}/api/swarm/replies`;
+
+                const replyPayload = {
+                    postId: data.swarmReplyTo.postId,
+                    reply: {
+                        id: post.id,
+                        content: post.content,
+                        createdAt: post.createdAt.toISOString(),
+                        author: {
+                            handle: user.handle,
+                            displayName: user.displayName || user.handle,
+                            avatarUrl: user.avatarUrl || undefined,
+                            did: user.did,
+                            publicKey: user.publicKey,
+                        },
+                        nodeDomain,
+                        mediaUrls: unattachedMedia.map(m => m.url),
+                    },
+                };
+
+                const { createSignedPayload } = await import('@/lib/swarm/signature');
+                const { payload, signature } = await createSignedPayload(replyPayload);
+
+                const response = await fetch(targetUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Swarm-Source-Domain': nodeDomain,
+                        'X-Swarm-Signature': signature,
+                    },
+                    body: JSON.stringify(payload),
+                    signal: AbortSignal.timeout(10000),
+                });
+
+                if (!response.ok) {
+                    const body = await response.text().catch(() => '');
+                    throw new Error(body || `Remote node rejected reply (${response.status})`);
+                }
+            }
+
+            if (data.mediaIds?.length) {
+                await db.update(media)
+                    .set({ postId: post.id })
+                    .where(and(
+                        inArray(media.id, data.mediaIds),
+                        eq(media.userId, user.id),
+                        isNull(media.postId),
+                    ));
+            }
+
+            // Update user's post count (atomic increment to prevent race conditions)
+            await db.update(users)
+                .set({ postsCount: sql`${users.postsCount} + 1` })
+                .where(eq(users.id, user.id));
+
+            // If this is a reply, update the parent's reply count (atomic increment)
+            if (data.replyToId) {
+                await db.update(posts)
+                    .set({ repliesCount: sql`${posts.repliesCount} + 1` })
+                    .where(eq(posts.id, data.replyToId));
+            }
+        } catch (err) {
+            await db.delete(posts).where(eq(posts.id, post.id));
+            console.error('[Swarm] Error creating synchronized reply:', err);
+            return NextResponse.json(
+                { error: err instanceof Error ? err.message : 'Failed to deliver reply to origin node' },
+                { status: 502 }
+            );
+        }
+
+        let attachedMedia: typeof media.$inferSelect[] = [];
+        if (data.mediaIds?.length) {
             attachedMedia = await db.query.media.findMany({
                 where: and(
                     inArray(media.id, data.mediaIds),
@@ -103,66 +179,6 @@ export async function POST(request: Request) {
                     eq(media.postId, post.id),
                 ),
             });
-        }
-
-        // Update user's post count (atomic increment to prevent race conditions)
-        await db.update(users)
-            .set({ postsCount: sql`${users.postsCount} + 1` })
-            .where(eq(users.id, user.id));
-
-        // If this is a reply, update the parent's reply count (atomic increment)
-        if (data.replyToId) {
-            await db.update(posts)
-                .set({ repliesCount: sql`${posts.repliesCount} + 1` })
-                .where(eq(posts.id, data.replyToId));
-        }
-
-        if (data.swarmReplyTo) {
-            (async () => {
-                try {
-                    const protocol = data.swarmReplyTo!.nodeDomain.includes('localhost') ? 'http' : 'https';
-                    const targetUrl = `${protocol}://${data.swarmReplyTo!.nodeDomain}/api/swarm/replies`;
-
-                    const replyPayload = {
-                        postId: data.swarmReplyTo!.postId,
-                        reply: {
-                            id: post.id,
-                            content: post.content,
-                            createdAt: post.createdAt.toISOString(),
-                            author: {
-                                handle: user.handle,
-                                displayName: user.displayName || user.handle,
-                                avatarUrl: user.avatarUrl || undefined,
-                                did: user.did,
-                                publicKey: user.publicKey,
-                            },
-                            nodeDomain,
-                            mediaUrls: attachedMedia.map(m => m.url),
-                        },
-                    };
-
-                    const { createSignedPayload } = await import('@/lib/swarm/signature');
-                    const { payload, signature } = await createSignedPayload(replyPayload);
-
-                    const response = await fetch(targetUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Swarm-Source-Domain': nodeDomain,
-                            'X-Swarm-Signature': signature,
-                        },
-                        body: JSON.stringify(payload),
-                    });
-
-                    if (response.ok) {
-                        console.log(`[Swarm] Reply delivered to ${data.swarmReplyTo!.nodeDomain}`);
-                    } else {
-                        console.error(`[Swarm] Failed to deliver reply: ${response.status}`);
-                    }
-                } catch (err) {
-                    console.error('[Swarm] Error delivering reply:', err);
-                }
-            })();
         }
 
         // Handle local mentions (create notifications for users on this node)
@@ -538,26 +554,6 @@ export async function GET(request: Request) {
                 includeNsfw,
             });
 
-            // Transform swarm posts to match local post format
-            const localSwarmReplyIds = swarmResult.posts.map(sp => `swarm:${sp.nodeDomain}:${sp.id}`);
-            const localReplyCounts = localSwarmReplyIds.length > 0
-                ? await db.select({
-                    swarmReplyToId: posts.swarmReplyToId,
-                    count: sql<number>`count(*)`,
-                })
-                    .from(posts)
-                    .where(and(
-                        inArray(posts.swarmReplyToId, localSwarmReplyIds),
-                        eq(posts.isRemoved, false)
-                    ))
-                    .groupBy(posts.swarmReplyToId)
-                : [];
-            const localReplyCountMap = new Map(
-                localReplyCounts
-                    .filter(row => row.swarmReplyToId)
-                    .map(row => [row.swarmReplyToId as string, Number(row.count || 0)])
-            );
-
             const swarmPosts = swarmResult.posts.map(sp => ({
                 id: `swarm:${sp.nodeDomain}:${sp.id}`,
                 originalPostId: sp.id, // Keep the original ID for replies
@@ -565,7 +561,7 @@ export async function GET(request: Request) {
                 createdAt: new Date(sp.createdAt),
                 likesCount: sp.likeCount,
                 repostsCount: sp.repostCount,
-                repliesCount: sp.replyCount + (localReplyCountMap.get(`swarm:${sp.nodeDomain}:${sp.id}`) || 0),
+                repliesCount: sp.replyCount,
                 isSwarm: true,
                 nodeDomain: sp.nodeDomain,
                 author: {

@@ -4,7 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { ArrowLeft, Send, Loader2, MessageCircle, Search, Plus, Trash2, MoreVertical } from 'lucide-react';
-import { useFormattedHandle } from '@/lib/utils/handle';
+import Link from 'next/link';
+import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 interface Conversation {
@@ -392,10 +393,20 @@ export default function ChatPage() {
                             )}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontWeight: 600, fontSize: '15px' }}>{selectedConversation.participant2.displayName}</div>
-                            <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {selectedHandle}
-                            </div>
+                            <Link
+                                href={getProfilePath(selectedConversation.participant2.handle)}
+                                style={{
+                                    display: 'block',
+                                    color: 'var(--foreground)',
+                                    textDecoration: 'none',
+                                    minWidth: 0,
+                                }}
+                            >
+                                <div style={{ fontWeight: 600, fontSize: '15px' }}>{selectedConversation.participant2.displayName}</div>
+                                <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {selectedHandle}
+                                </div>
+                            </Link>
                         </div>
                         <button
                             onClick={() => { setConversationToDelete(selectedConversation); setShowDeleteModal(true); }}

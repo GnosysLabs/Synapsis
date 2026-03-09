@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { BellIcon } from '@/components/Icons';
 import Link from 'next/link';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { getProfilePath } from '@/lib/utils/handle';
 
 interface NotificationActor {
     id: string;
@@ -183,6 +184,7 @@ function NotificationItem({
 }) {
     const isUnread = !notification.readAt;
     const actor = notification.actor;
+    const actorProfilePath = actor ? getProfilePath(actor.handle) : '#';
 
     return (
         <div
@@ -195,7 +197,7 @@ function NotificationItem({
                 alignItems: 'flex-start',
             }}
         >
-            <Link href={actor ? `/@${actor.handle}` : '#'} style={{ flexShrink: 0 }}>
+            <Link href={actorProfilePath} style={{ flexShrink: 0 }}>
                 {actor?.avatarUrl ? (
                     <img
                         src={actor.avatarUrl}
@@ -227,7 +229,7 @@ function NotificationItem({
             <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', gap: '4px', alignItems: 'baseline', flexWrap: 'wrap' }}>
                     <Link
-                        href={actor ? `/@${actor.handle}` : '#'}
+                        href={actorProfilePath}
                         style={{ fontWeight: 600, color: 'var(--foreground)', textDecoration: 'none' }}
                     >
                         {actor?.displayName || actor?.handle || 'Someone'} <span style={{ fontWeight: 400, color: 'var(--foreground-tertiary)' }}>@{actor?.handle}</span>

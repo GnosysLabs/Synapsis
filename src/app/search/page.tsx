@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { useFormattedHandle } from '@/lib/utils/handle';
+import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { PostCard } from '@/components/PostCard';
 import { Post } from '@/lib/types';
 import { Bot } from 'lucide-react';
@@ -70,7 +70,7 @@ function UserCard({ user }: { user: User }) {
     const fullHandle = useFormattedHandle(user.handle);
     return (
         <Link
-            href={`/@${user.handle}`}
+            href={getProfilePath(user.handle)}
             style={{
                 display: 'flex',
                 alignItems: 'center',

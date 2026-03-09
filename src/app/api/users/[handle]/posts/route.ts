@@ -146,28 +146,6 @@ export async function GET(request: Request, context: RouteContext) {
                     avatarUrl: profile.avatarUrl,
                 };
                 
-                const swarmPostIds = profileData.posts.map((post: any) => `swarm:${remote.domain}:${post.id}`);
-                let localReplyCounts = new Map<string, number>();
-
-                if (swarmPostIds.length > 0) {
-                    const counts = await db.select({
-                        swarmReplyToId: posts.swarmReplyToId,
-                        replyCount: sql<number>`count(*)::int`,
-                    })
-                        .from(posts)
-                        .where(and(
-                            inArray(posts.swarmReplyToId, swarmPostIds),
-                            eq(posts.isRemoved, false)
-                        ))
-                        .groupBy(posts.swarmReplyToId);
-
-                    localReplyCounts = new Map(
-                        counts
-                            .filter(row => row.swarmReplyToId)
-                            .map(row => [row.swarmReplyToId as string, row.replyCount])
-                    );
-                }
-
                 const remotePosts = profileData.posts.map((post: any) => ({
                     id: post.id,
                     originalPostId: post.id,
@@ -175,7 +153,7 @@ export async function GET(request: Request, context: RouteContext) {
                     createdAt: post.createdAt,
                     likesCount: post.likesCount || 0,
                     repostsCount: post.repostsCount || 0,
-                    repliesCount: (post.repliesCount || 0) + (localReplyCounts.get(`swarm:${remote.domain}:${post.id}`) || 0),
+                    repliesCount: post.repliesCount || 0,
                     author,
                     media: post.media || [],
                     linkPreviewUrl: post.linkPreviewUrl || null,

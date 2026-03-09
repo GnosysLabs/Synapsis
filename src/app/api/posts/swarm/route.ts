@@ -5,10 +5,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts } from '@/db';
 import { fetchSwarmTimeline } from '@/lib/swarm/timeline';
 import { getSession } from '@/lib/auth';
-import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
 
 /**
@@ -20,7 +18,6 @@ import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const refresh = searchParams.get('refresh') === 'true';
     const cursor = searchParams.get('cursor') || undefined;
 
     // Check user's NSFW preference
@@ -34,24 +31,6 @@ export async function GET(request: NextRequest) {
 
     // Fetch swarm timeline (no caching - user preferences vary)
     const timeline = await fetchSwarmTimeline(10, 15, { includeNsfw, cursor });
-    const swarmReplyIds = timeline.posts.map(post => `swarm:${post.nodeDomain}:${post.id}`);
-    const localReplyCounts = db && swarmReplyIds.length > 0
-      ? await db.select({
-          swarmReplyToId: posts.swarmReplyToId,
-          count: sql<number>`count(*)::int`,
-        })
-          .from(posts)
-          .where(and(
-            inArray(posts.swarmReplyToId, swarmReplyIds),
-            eq(posts.isRemoved, false)
-          ))
-          .groupBy(posts.swarmReplyToId)
-      : [];
-    const localReplyCountMap = new Map(
-      localReplyCounts
-        .filter(row => row.swarmReplyToId)
-        .map(row => [row.swarmReplyToId as string, row.count])
-    );
 
     const session = await getSession().catch(() => null);
     const viewer = session?.user;
@@ -71,7 +50,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       posts: timeline.posts.map(post => ({
         ...post,
-        replyCount: post.replyCount + (localReplyCountMap.get(`swarm:${post.nodeDomain}:${post.id}`) || 0),
         isLiked: likedPostIds.has(`swarm:${post.nodeDomain}:${post.id}`),
       })),
       sources: timeline.sources,

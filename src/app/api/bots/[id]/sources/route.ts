@@ -20,6 +20,7 @@ import {
   MAX_KEYWORDS,
   MAX_KEYWORD_LENGTH,
 } from '@/lib/bots/contentSource';
+import { validateSourceReachability } from '@/lib/bots/contentSourceValidation';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -114,6 +115,16 @@ export async function POST(request: Request, context: RouteContext) {
       }
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
+
+    await validateSourceReachability({
+      type: data.type,
+      url: data.url,
+      subreddit: data.subreddit,
+      apiKey: data.apiKey,
+      keywords: data.keywords,
+      braveNewsConfig: data.braveNewsConfig,
+      newsApiConfig: data.newsApiConfig,
+    });
 
     // Add the content source
     const source = await addSource(botId, {
