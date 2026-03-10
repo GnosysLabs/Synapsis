@@ -3,7 +3,7 @@
  */
 
 import { db, users, sessions } from '@/db';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
 import { generateKeyPair } from '@/lib/crypto/keys';
@@ -13,8 +13,107 @@ import { cookies } from 'next/headers';
 import { upsertHandleEntries } from '@/lib/federation/handles';
 import { generateAndUploadAvatarToUserStorage } from '@/lib/storage/s3';
 
-const SESSION_COOKIE_NAME = 'synapsis_session';
-const SESSION_EXPIRY_DAYS = 30;
+const ACTIVE_SESSION_COOKIE_NAME = 'synapsis_session';
+const SESSION_COOKIE_NAME = 'synapsis_sessions';
+const SESSION_EXPIRY_DAYS = 3650;
+
+type SessionRecord = typeof sessions.$inferSelect & {
+    user: typeof users.$inferSelect;
+};
+
+export interface AuthAccount {
+    id: string;
+    handle: string;
+    displayName: string | null;
+    avatarUrl: string | null;
+    did: string;
+    publicKey: string;
+    privateKeyEncrypted: string | null;
+    email: string | null;
+    isActive: boolean;
+}
+
+function parseSessionCookie(value: string | undefined): string[] {
+    if (!value) {
+        return [];
+    }
+
+    return value
+        .split(',')
+        .map(token => token.trim())
+        .filter(Boolean);
+}
+
+async function readSessionState() {
+    const cookieStore = await cookies();
+    return {
+        cookieStore,
+        activeToken: cookieStore.get(ACTIVE_SESSION_COOKIE_NAME)?.value ?? null,
+        tokens: parseSessionCookie(cookieStore.get(SESSION_COOKIE_NAME)?.value),
+    };
+}
+
+async function writeSessionState(tokens: string[], activeToken?: string | null) {
+    const cookieStore = await cookies();
+    const dedupedTokens = [...new Set(tokens.filter(Boolean))];
+
+    if (dedupedTokens.length === 0) {
+        cookieStore.delete(ACTIVE_SESSION_COOKIE_NAME);
+        cookieStore.delete(SESSION_COOKIE_NAME);
+        return;
+    }
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + SESSION_EXPIRY_DAYS);
+
+    const nextActiveToken = activeToken && dedupedTokens.includes(activeToken)
+        ? activeToken
+        : dedupedTokens[0];
+
+    const cookieOptions = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax' as const,
+        expires: expiresAt,
+        path: '/',
+    };
+
+    cookieStore.set(ACTIVE_SESSION_COOKIE_NAME, nextActiveToken, cookieOptions);
+    cookieStore.set(SESSION_COOKIE_NAME, dedupedTokens.join(','), cookieOptions);
+}
+
+async function loadSessionsByTokens(tokens: string[]): Promise<SessionRecord[]> {
+    const uniqueTokens = [...new Set(tokens.filter(Boolean))];
+    if (uniqueTokens.length === 0) {
+        return [];
+    }
+
+    const sessionRecords = await db.query.sessions.findMany({
+        where: inArray(sessions.token, uniqueTokens),
+        with: {
+            user: true,
+        },
+    });
+
+    const sessionMap = new Map(sessionRecords.map(session => [session.token, session]));
+    return uniqueTokens
+        .map(token => sessionMap.get(token))
+        .filter((session): session is SessionRecord => Boolean(session));
+}
+
+function toAuthAccount(session: SessionRecord, activeToken: string | null): AuthAccount {
+    return {
+        id: session.user.id,
+        handle: session.user.handle,
+        displayName: session.user.displayName,
+        avatarUrl: session.user.avatarUrl,
+        did: session.user.did,
+        publicKey: session.user.publicKey,
+        privateKeyEncrypted: session.user.privateKeyEncrypted,
+        email: session.user.email,
+        isActive: session.token === activeToken,
+    };
+}
 
 /**
  * Hash a password
@@ -55,6 +154,16 @@ export function generateLegacyDID(): string {
  * Create a new session for a user
  */
 export async function createSession(userId: string): Promise<string> {
+    const { tokens } = await readSessionState();
+    const existingSessions = await loadSessionsByTokens(tokens);
+    const existingUserTokens = existingSessions
+        .filter(session => session.userId === userId)
+        .map(session => session.token);
+
+    if (existingUserTokens.length > 0) {
+        await db.delete(sessions).where(inArray(sessions.token, existingUserTokens));
+    }
+
     const token = uuid();
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + SESSION_EXPIRY_DAYS);
@@ -65,15 +174,8 @@ export async function createSession(userId: string): Promise<string> {
         expiresAt,
     });
 
-    // Set the session cookie
-    const cookieStore = await cookies();
-    cookieStore.set(SESSION_COOKIE_NAME, token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        expires: expiresAt,
-        path: '/',
-    });
+    const filteredTokens = tokens.filter(existingToken => !existingUserTokens.includes(existingToken));
+    await writeSessionState([token, ...filteredTokens], token);
 
     return token;
 }
@@ -82,25 +184,50 @@ export async function createSession(userId: string): Promise<string> {
  * Get the current session from cookies
  */
 export async function getSession(): Promise<{ user: typeof users.$inferSelect } | null> {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+    const { activeToken, tokens } = await readSessionState();
+    const sessionRecords = await loadSessionsByTokens(tokens);
 
-    if (!token) {
+    if (sessionRecords.length === 0) {
+        await writeSessionState([], null);
         return null;
     }
 
-    const session = await db.query.sessions.findFirst({
-        where: eq(sessions.token, token),
-        with: {
-            user: true,
-        },
-    });
+    const activeSession = sessionRecords.find(session => session.token === activeToken) ?? sessionRecords[0];
+    await writeSessionState(sessionRecords.map(session => session.token), activeSession.token);
 
-    if (!session || session.expiresAt < new Date()) {
-        return null;
+    return { user: activeSession.user };
+}
+
+export async function getSessionAccounts(): Promise<AuthAccount[]> {
+    const { activeToken, tokens } = await readSessionState();
+    const sessionRecords = await loadSessionsByTokens(tokens);
+
+    if (sessionRecords.length === 0) {
+        await writeSessionState([], null);
+        return [];
     }
 
-    return { user: session.user };
+    const resolvedActiveToken = sessionRecords.some(session => session.token === activeToken)
+        ? activeToken
+        : sessionRecords[0].token;
+
+    await writeSessionState(sessionRecords.map(session => session.token), resolvedActiveToken);
+
+    return sessionRecords.map(session => toAuthAccount(session, resolvedActiveToken));
+}
+
+export async function switchSession(userId: string): Promise<{ user: typeof users.$inferSelect }> {
+    const { tokens } = await readSessionState();
+    const sessionRecords = await loadSessionsByTokens(tokens);
+    const matchingSession = sessionRecords.find(session => session.user.id === userId);
+
+    if (!matchingSession) {
+        throw new Error('Session not found');
+    }
+
+    await writeSessionState(sessionRecords.map(session => session.token), matchingSession.token);
+
+    return { user: matchingSession.user };
 }
 
 /**
@@ -119,14 +246,31 @@ export async function requireAuth(): Promise<typeof users.$inferSelect> {
 /**
  * Destroy the current session
  */
-export async function destroySession(): Promise<void> {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+export async function destroySession(userId?: string): Promise<void> {
+    const { activeToken, tokens } = await readSessionState();
+    const sessionRecords = await loadSessionsByTokens(tokens);
 
-    if (token) {
-        await db.delete(sessions).where(eq(sessions.token, token));
-        cookieStore.delete(SESSION_COOKIE_NAME);
+    if (sessionRecords.length === 0) {
+        await writeSessionState([], null);
+        return;
     }
+
+    const targetSession = userId
+        ? sessionRecords.find(session => session.user.id === userId)
+        : sessionRecords.find(session => session.token === activeToken) ?? sessionRecords[0];
+
+    if (!targetSession) {
+        return;
+    }
+
+    await db.delete(sessions).where(eq(sessions.token, targetSession.token));
+
+    const remainingSessions = sessionRecords.filter(session => session.token !== targetSession.token);
+    const nextActiveToken = targetSession.token === activeToken
+        ? remainingSessions[0]?.token ?? null
+        : activeToken;
+
+    await writeSessionState(remainingSessions.map(session => session.token), nextActiveToken);
 }
 
 /**

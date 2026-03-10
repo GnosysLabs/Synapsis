@@ -7,8 +7,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts } from '@/db';
-import { eq, sql } from 'drizzle-orm';
+import { db, posts, remoteReposts } from '@/db';
+import { eq, sql, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
@@ -60,10 +60,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
 
+    const existingRepost = await db.query.remoteReposts.findFirst({
+      where: and(
+        eq(remoteReposts.postId, data.postId),
+        eq(remoteReposts.actorHandle, data.unrepost.actorHandle),
+        eq(remoteReposts.actorNodeDomain, data.unrepost.actorNodeDomain),
+      ),
+    });
+
+    if (!existingRepost) {
+      return NextResponse.json({
+        success: true,
+        message: 'Repost already removed',
+      });
+    }
+
     // Decrement repost count
     await db.update(posts)
       .set({ repostsCount: sql`GREATEST(0, ${posts.repostsCount} - 1)` })
       .where(eq(posts.id, data.postId));
+
+    await db.delete(remoteReposts).where(eq(remoteReposts.id, existingRepost.id));
 
     console.log(`[Swarm] Received unrepost from ${data.unrepost.actorHandle}@${data.unrepost.actorNodeDomain} on post ${data.postId}`);
 

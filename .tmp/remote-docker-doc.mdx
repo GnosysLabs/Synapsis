@@ -1,0 +1,247 @@
+# Quick Start with Docker
+
+Get your Synapsis node running in under 10 minutes with Docker. This is the **recommended and easiest** way to self-host.
+
+## Prerequisites
+
+- A Linux server with a domain pointed to it
+- A domain name pointed to your server
+
+## Quick Start (5 Minutes)
+
+```bash
+# 1. Bootstrap the deployment directory
+curl -fsSL https://synapsis.social/install.sh | bash
+
+# 2. Review the generated config
+nano /opt/synapsis/.env
+
+# 3. Start your node
+cd /opt/synapsis
+docker compose up -d
+```
+
+Done! Your node is live at `https://your-domain.com` with automatic SSL.
+
+## Existing nginx / reverse proxy host
+
+If your server already has nginx, Traefik, or another reverse proxy using `80/443`, use proxyless mode instead:
+
+```bash
+curl -fsSL https://synapsis.social/install.sh | PROXY=none bash
+nano /opt/synapsis/.env
+cd /opt/synapsis
+docker compose up -d
+```
+
+In `PROXY=none` mode:
+
+- Synapsis skips the bundled Caddy service
+- the app binds to `127.0.0.1:${PORT}`
+- your existing reverse proxy should forward traffic to that localhost port
+
+Example nginx upstream:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+## Detailed Setup
+
+### 1. Bootstrap the Deployment Directory
+
+```bash
+curl -fsSL https://synapsis.social/install.sh | bash
+```
+
+If Docker is missing, the installer will install it for you on supported Linux hosts.
+
+This downloads:
+
+- `docker-compose.yml`
+- `Caddyfile`
+- `caddy-entrypoint.sh`
+- `.env.example`
+- `.env`
+
+The installer also generates `AUTH_SECRET` and `DB_PASSWORD` if `openssl` is available.
+
+### 2. Configure Environment
+
+Edit `/opt/synapsis/.env` with your settings:
+
+```bash
+nano /opt/synapsis/.env
+```
+
+**Required variables:**
+
+```env
+# Your domain
+DOMAIN=your-domain.com
+
+# Admin email(s)
+ADMIN_EMAILS=you@example.com
+
+# Generate with: openssl rand -hex 32
+AUTH_SECRET=your-secret-key-here
+
+# Database password
+DB_PASSWORD=your-secure-password
+```
+
+You can also set these before running the installer to prefill `.env`:
+
+```bash
+DOMAIN=your-domain.com
+ADMIN_EMAILS=you@example.com
+```
+
+That’s it. Save and exit.
+
+### 3. Start Synapsis
+
+```bash
+cd /opt/synapsis
+docker compose up -d
+```
+
+This starts:
+- **PostgreSQL** database
+- **Synapsis** app (pre-built image from GitHub Container Registry)
+- **Caddy** reverse proxy with automatic SSL
+
+Visit `https://your-domain.com` to create your admin account.
+
+## Storage Model
+
+### Node installation
+
+The node itself only needs Docker, PostgreSQL, and a domain to start.
+
+### User media storage
+
+At the moment, new user registration requires each account to provide **its own S3-compatible storage credentials** for media uploads. That requirement is enforced in the app today, so plan onboarding accordingly.
+
+## Configuration Reference
+
+### Core Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DOMAIN` | Yes | Your domain name |
+| `AUTH_SECRET` | Yes | Generate with `openssl rand -hex 32` |
+| `ADMIN_EMAILS` | Yes | Comma-separated admin emails |
+| `DB_PASSWORD` | Yes | Database password |
+
+### Optional Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BOT_MAX_PER_USER` | 5 | Max AI bots per user |
+| `PORT` | auto | Application port. Default installs use `auto` to scan 3000-3020. In `PROXY=none` mode this is the localhost port your reverse proxy should target. |
+| `NEXT_PUBLIC_NODE_DOMAIN` | `DOMAIN` | Override node domain if needed |
+| `NEXT_PUBLIC_APP_URL` | Derived from domain | Public URL used by background jobs |
+
+## Updating Synapsis
+
+Updating is a single command:
+
+```bash
+cd /opt/synapsis
+docker compose pull
+docker compose up -d
+```
+
+This will:
+- Pull the latest pre-built image from GitHub Container Registry
+- Recreate containers if needed
+- Run database migrations automatically
+- Keep your data volumes intact
+
+### Check Update Status
+
+```bash
+# See running containers
+docker compose ps
+
+# View logs
+docker compose logs -f app
+```
+
+## Troubleshooting
+
+### Container won't start
+
+```bash
+# Check logs
+docker compose logs app
+
+# Common issues:
+# - Missing required env vars
+# - Port 3000 already in use
+```
+
+### Database connection errors
+
+```bash
+# Check database container
+docker compose logs postgres
+
+# Verify env vars are loaded
+docker compose exec app env | grep DATABASE
+```
+
+### Port already in use
+
+If `80` or `443` is already in use, your server already has another reverse proxy bound there. Use `PROXY=none` instead of the default Caddy install:
+
+```bash
+curl -fsSL https://synapsis.social/install.sh | PROXY=none bash
+```
+
+For the application port itself, Synapsis uses `PORT=auto` by default, which automatically finds an available port between 3000-3020. If you need to use a specific port:
+
+```bash
+# Edit .env and set a specific port
+PORT=3001
+
+# Restart
+docker compose down
+docker compose up -d
+```
+
+### Reset everything (data loss!)
+
+```bash
+docker compose down -v  # Remove containers AND volumes
+docker compose up -d    # Start fresh
+```
+
+### View all logs
+
+```bash
+# All services
+docker compose logs -f
+
+# Just the app
+docker compose logs -f app
+
+# Just the database
+docker compose logs -f postgres
+```
+
+## Next Steps
+
+- [Configure your node settings](/user-guide)
+- [Learn about the Swarm](/swarm)
+- [Learn how Synapsis differs from traditional federation](/user-guide/synapsis-difference)

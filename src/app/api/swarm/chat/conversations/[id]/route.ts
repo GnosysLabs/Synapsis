@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, chatConversations, chatMessages, users } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
+import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 import { z } from 'zod';
 
 // Schema for conversation ID parameter
@@ -73,10 +74,14 @@ export async function DELETE(
 
       if (isRemote) {
         // Extract domain from handle (format: handle@domain)
-        const domain = participant2Handle.split('@')[1];
+        const domain = normalizeNodeDomain(participant2Handle.split('@')[1]);
         const handle = participant2Handle.split('@')[0];
 
         try {
+          if (await isNodeBlocked(domain)) {
+            return NextResponse.json({ success: true });
+          }
+
           const protocol = domain.includes('localhost') ? 'http' : 'https';
           const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
 

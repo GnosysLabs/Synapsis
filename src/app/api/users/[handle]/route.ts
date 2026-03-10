@@ -51,6 +51,15 @@ export async function GET(request: Request, context: RouteContext) {
                     const profileData = await fetchSwarmUserProfile(remoteHandle, remoteDomain, 0);
                     if (profileData?.profile) {
                         const profile = profileData.profile;
+                        const rawBotOwnerHandle = profile.botOwnerHandle?.toLowerCase().replace(/^@/, '') || null;
+                        const normalizedBotOwnerHandle = rawBotOwnerHandle
+                            ? rawBotOwnerHandle.includes('@')
+                                ? rawBotOwnerHandle
+                                : `${rawBotOwnerHandle}@${remoteDomain}`
+                            : null;
+                        const botOwnerLocalHandle = rawBotOwnerHandle
+                            ? rawBotOwnerHandle.split('@')[0]
+                            : null;
 
                         // CACHE: Upsert the remote user into our local database
                         const { upsertRemoteUser } = await import('@/lib/swarm/user-cache');
@@ -80,6 +89,12 @@ export async function GET(request: Request, context: RouteContext) {
                                 isSwarm: true,
                                 nodeDomain: remoteDomain,
                                 isBot: profile.isBot || false,
+                                botOwner: normalizedBotOwnerHandle && botOwnerLocalHandle ? {
+                                    id: `swarm:${remoteDomain}:${botOwnerLocalHandle}`,
+                                    handle: normalizedBotOwnerHandle,
+                                    displayName: botOwnerLocalHandle,
+                                    avatarUrl: null,
+                                } : null,
                                 did: profile.did,
                             }
                         });

@@ -12,6 +12,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import { buildNotificationTarget } from '@/lib/notifications';
 
 const swarmMentionSchema = z.object({
   mentionedHandle: localHandleSchema,
@@ -73,6 +74,7 @@ export async function POST(request: NextRequest) {
         actorAvatarUrl: data.mention.actorAvatarUrl || null,
         actorNodeDomain: data.mention.actorNodeDomain,
         postContent: data.mention.postContent.slice(0, 200),
+        ...(mentionedUser.isBot ? buildNotificationTarget(mentionedUser) : {}),
         type: 'mention',
       });
       console.log(`[Swarm] Created mention notification for @${data.mentionedHandle} from ${data.mention.actorHandle}@${data.mention.actorNodeDomain}`);
@@ -90,6 +92,7 @@ export async function POST(request: NextRequest) {
           actorAvatarUrl: data.mention.actorAvatarUrl || null,
           actorNodeDomain: data.mention.actorNodeDomain,
           postContent: data.mention.postContent.slice(0, 200),
+          ...buildNotificationTarget(mentionedUser),
           type: 'mention',
         });
       } catch (err) {

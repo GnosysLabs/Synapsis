@@ -34,8 +34,9 @@ const updateBotSchema = z.object({
     maxTokens: z.number().int().min(1).max(100000),
     responseStyle: z.string().optional(),
   }).optional(),
-  llmProvider: z.enum(['openrouter', 'openai', 'anthropic']).optional(),
+  llmProvider: z.enum(['openrouter', 'openai', 'anthropic', 'custom']).optional(),
   llmModel: z.string().min(1).optional(),
+  llmEndpoint: z.string().url().optional().nullable(),
   llmApiKey: z.string().min(1).optional(),
   schedule: z.object({
     type: z.enum(['interval', 'times', 'cron']),
@@ -91,6 +92,7 @@ export async function GET(request: Request, context: RouteContext) {
         personalityConfig: bot.personalityConfig,
         llmProvider: bot.llmProvider,
         llmModel: bot.llmModel,
+        llmEndpoint: bot.llmEndpoint,
         scheduleConfig: bot.scheduleConfig,
         autonomousMode: bot.autonomousMode,
         isActive: bot.isActive,
@@ -162,6 +164,7 @@ async function handleUpdate(request: Request, context: RouteContext) {
     if (data.personality !== undefined) updateInput.personality = data.personality;
     if (data.llmProvider !== undefined) updateInput.llmProvider = data.llmProvider;
     if (data.llmModel !== undefined) updateInput.llmModel = data.llmModel;
+    if (data.llmEndpoint !== undefined) updateInput.llmEndpoint = data.llmEndpoint;
     if (data.llmApiKey !== undefined) updateInput.llmApiKey = data.llmApiKey;
     if (data.schedule !== undefined) updateInput.schedule = data.schedule;
     if (data.autonomousMode !== undefined) updateInput.autonomousMode = data.autonomousMode;
@@ -183,6 +186,7 @@ async function handleUpdate(request: Request, context: RouteContext) {
         personalityConfig: updatedBot.personalityConfig,
         llmProvider: updatedBot.llmProvider,
         llmModel: updatedBot.llmModel,
+        llmEndpoint: updatedBot.llmEndpoint,
         scheduleConfig: updatedBot.scheduleConfig,
         autonomousMode: updatedBot.autonomousMode,
         isActive: updatedBot.isActive,

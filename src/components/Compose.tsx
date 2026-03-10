@@ -36,6 +36,13 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
     const [isNsfwNode, setIsNsfwNode] = useState(false);
     const maxLength = 600;
     const remaining = maxLength - content.length;
+    const previewMedia = linkPreview?.media?.length
+        ? linkPreview.media
+        : linkPreview?.image
+            ? [{ url: linkPreview.image }]
+            : [];
+    const previewImage = previewMedia[0]?.url || linkPreview?.image || null;
+    const isEmbeddedVideo = Boolean(linkPreview?.url?.match(/(youtube\.com|youtu\.be|vimeo\.com)/));
 
     // Check if user can post NSFW content and if node is NSFW
     useEffect(() => {
@@ -210,11 +217,32 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
                         x
                     </button>
                     <VideoEmbed url={linkPreview.url} />
-                    {!linkPreview.url.match(/(youtube\.com|youtu\.be|vimeo\.com)/) && (
+                    {!isEmbeddedVideo && (
                         <div className="link-preview-card mini">
-                            {linkPreview.image && (
+                            {linkPreview.type === 'video' && linkPreview.videoUrl ? (
                                 <div className="link-preview-image">
-                                    <img src={linkPreview.image} alt="" />
+                                    <video
+                                        src={linkPreview.videoUrl}
+                                        poster={previewImage || undefined}
+                                        muted
+                                        playsInline
+                                        preload="metadata"
+                                    />
+                                </div>
+                            ) : linkPreview.type === 'gallery' && previewMedia.length > 0 ? (
+                                <div className="link-preview-gallery compact">
+                                    {previewMedia.slice(0, 3).map((item: { url: string }, index: number) => (
+                                        <div className="link-preview-gallery-item" key={`${item.url}-${index}`}>
+                                            <img src={item.url} alt="" />
+                                            {index === Math.min(previewMedia.length, 3) - 1 && previewMedia.length > 3 && (
+                                                <span className="link-preview-gallery-more">+{previewMedia.length - 3}</span>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : previewImage && (
+                                <div className="link-preview-image">
+                                    <img src={previewImage} alt="" />
                                 </div>
                             )}
                             <div className="link-preview-info">

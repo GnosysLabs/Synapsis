@@ -3,8 +3,8 @@ import { cookies } from 'next/headers';
 import type { users } from '@/db';
 import { decryptS3Credentials, type StorageProvider } from '@/lib/storage/s3';
 
-const STORAGE_SESSION_COOKIE = 'synapsis_storage_session';
-const STORAGE_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const STORAGE_SESSION_COOKIE = 'synapsis_storage_sessions';
+const STORAGE_SESSION_TTL_MS = 3650 * 24 * 60 * 60 * 1000;
 
 interface StorageSessionPayload {
   userId: string;
@@ -17,6 +17,8 @@ interface StorageSessionPayload {
   secretAccessKey: string;
   expiresAt: number;
 }
+
+type StorageSessionMap = Record<string, StorageSessionPayload>;
 
 function getEncryptionKey(): Buffer {
   const secret = process.env.AUTH_SECRET;
@@ -63,6 +65,55 @@ function decryptPayload(token: string): StorageSessionPayload {
   return JSON.parse(decrypted) as StorageSessionPayload;
 }
 
+function encryptPayloadMap(payload: StorageSessionMap): string {
+  return encryptPayload(payload as unknown as StorageSessionPayload);
+}
+
+function decryptPayloadMap(token: string): StorageSessionMap {
+  return decryptPayload(token) as unknown as StorageSessionMap;
+}
+
+async function readStorageSessionMap(): Promise<StorageSessionMap> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(STORAGE_SESSION_COOKIE)?.value;
+
+  if (!token) {
+    return {};
+  }
+
+  try {
+    const payload = decryptPayloadMap(token);
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      await clearStorageSession();
+      return {};
+    }
+
+    return payload;
+  } catch {
+    await clearStorageSession();
+    return {};
+  }
+}
+
+async function writeStorageSessionMap(payload: StorageSessionMap): Promise<void> {
+  const cookieStore = await cookies();
+
+  if (Object.keys(payload).length === 0) {
+    cookieStore.delete(STORAGE_SESSION_COOKIE);
+    return;
+  }
+
+  const maxExpiresAt = Math.max(...Object.values(payload).map(session => session.expiresAt));
+
+  cookieStore.set(STORAGE_SESSION_COOKIE, encryptPayloadMap(payload), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    expires: new Date(maxExpiresAt),
+  });
+}
+
 export async function createStorageSession(
   user: typeof users.$inferSelect,
   password: string
@@ -73,7 +124,7 @@ export async function createStorageSession(
     !user.storageSecretKeyEncrypted ||
     !user.storageBucket
   ) {
-    await clearStorageSession();
+    await clearStorageSession(user.id);
     return null;
   }
 
@@ -95,42 +146,42 @@ export async function createStorageSession(
     expiresAt: Date.now() + STORAGE_SESSION_TTL_MS,
   };
 
-  const cookieStore = await cookies();
-  cookieStore.set(STORAGE_SESSION_COOKIE, encryptPayload(payload), {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    expires: new Date(payload.expiresAt),
-  });
+  const existingSessions = await readStorageSessionMap();
+  existingSessions[user.id] = payload;
+  await writeStorageSessionMap(existingSessions);
 
   return payload;
 }
 
 export async function getStorageSession(userId: string): Promise<StorageSessionPayload | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(STORAGE_SESSION_COOKIE)?.value;
+  const sessions = await readStorageSessionMap();
+  const payload = sessions[userId];
 
-  if (!token) {
+  if (!payload) {
     return null;
   }
 
-  try {
-    const payload = decryptPayload(token);
-
-    if (payload.userId !== userId || payload.expiresAt <= Date.now()) {
-      await clearStorageSession();
-      return null;
-    }
-
-    return payload;
-  } catch {
-    await clearStorageSession();
+  if (payload.expiresAt <= Date.now()) {
+    delete sessions[userId];
+    await writeStorageSessionMap(sessions);
     return null;
   }
+
+  return payload;
 }
 
-export async function clearStorageSession(): Promise<void> {
-  const cookieStore = await cookies();
-  cookieStore.delete(STORAGE_SESSION_COOKIE);
+export async function clearStorageSession(userId?: string): Promise<void> {
+  if (!userId) {
+    const cookieStore = await cookies();
+    cookieStore.delete(STORAGE_SESSION_COOKIE);
+    return;
+  }
+
+  const sessions = await readStorageSessionMap();
+  if (!(userId in sessions)) {
+    return;
+  }
+
+  delete sessions[userId];
+  await writeStorageSessionMap(sessions);
 }

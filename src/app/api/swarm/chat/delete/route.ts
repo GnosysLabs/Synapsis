@@ -12,6 +12,7 @@ import { db, users, chatConversations } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 
 const deletionSchema = z.object({
   senderHandle: z.string(),
@@ -30,6 +31,11 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const data = deletionSchema.parse(body);
+    const senderNodeDomain = normalizeNodeDomain(data.senderNodeDomain);
+
+    if (await isNodeBlocked(senderNodeDomain)) {
+      return NextResponse.json({ error: 'Blocked node' }, { status: 403 });
+    }
 
     // SECURITY: Verify the signature
     const { signature, ...payload } = data;
@@ -37,7 +43,7 @@ export async function POST(request: NextRequest) {
       payload,
       signature,
       data.senderHandle,
-      data.senderNodeDomain
+      senderNodeDomain
     );
 
     if (!isValid) {
@@ -55,7 +61,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Find the conversation with the sender
-    const senderFullHandle = `${data.senderHandle}@${data.senderNodeDomain}`;
+    const senderFullHandle = `${data.senderHandle}@${senderNodeDomain}`;
     const conversation = await db.query.chatConversations.findFirst({
       where: and(
         eq(chatConversations.participant1Id, recipient.id),

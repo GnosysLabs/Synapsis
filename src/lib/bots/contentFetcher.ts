@@ -41,6 +41,7 @@ export interface ContentItemInput {
   title: string;
   content: string | null;
   url: string;
+  url_overridden_by_dest?: string;
   publishedAt: Date;
 }
 
@@ -325,16 +326,39 @@ export async function fetchRedditPosts(
   subreddit: string,
   options: FetchOptions = {}
 ): Promise<FeedItem[]> {
-  // Use RSS feed instead of JSON API - more reliable and doesn't require auth
-  const rssUrl = `https://www.reddit.com/r/${subreddit}/hot.rss`;
-  
+  const requestedMaxItems = options.maxItems ?? DEFAULT_MAX_ITEMS;
+  const fetchLimit = Math.min(Math.max(requestedMaxItems + 10, requestedMaxItems), 100);
+  const url = new URL(`${REDDIT_API_BASE}/r/${subreddit}/hot.json`);
+  url.searchParams.set('raw_json', '1');
+  url.searchParams.set('limit', String(fetchLimit));
+
+  const responseText = await fetchUrl(url.toString(), {
+    timeout: options.timeout,
+    headers: {
+      'Accept': 'application/json',
+    },
+  });
+
+  let response: RedditListingResponse;
   try {
-    return await fetchRSSFeed(rssUrl, options);
-  } catch (error) {
-    // If RSS fails, try the old.reddit.com RSS which sometimes works better
-    const oldRedditUrl = `https://old.reddit.com/r/${subreddit}/hot.rss`;
-    return await fetchRSSFeed(oldRedditUrl, options);
+    response = JSON.parse(responseText) as RedditListingResponse;
+  } catch {
+    throw new ParseError('Failed to parse Reddit JSON response');
   }
+
+  const posts = response.data?.children
+    ?.map((child) => child.data)
+    .filter((post): post is RedditListingChildData => Boolean(post)) || [];
+
+  const filteredPosts = posts.filter((post) => !shouldExcludeRedditPost(post));
+
+  return filteredPosts.slice(0, requestedMaxItems).map((post): FeedItem => ({
+    id: post.name || post.id,
+    title: post.title,
+    content: post.selftext || '',
+    url: `${REDDIT_API_BASE}${post.permalink}`,
+    publishedAt: new Date(post.created_utc * 1000),
+  }));
 }
 
 // ============================================
@@ -382,6 +406,31 @@ interface BraveNewsResult {
 interface BraveNewsResponse {
   type: string;
   results?: BraveNewsResult[];
+}
+
+interface RedditListingChildData {
+  id: string;
+  name?: string;
+  title: string;
+  selftext?: string;
+  permalink: string;
+  url: string;
+  url_overridden_by_dest?: string;
+  created_utc: number;
+  stickied?: boolean;
+  pinned?: boolean;
+}
+
+interface RedditListingResponse {
+  data?: {
+    children?: Array<{
+      data?: RedditListingChildData;
+    }>;
+  };
+}
+
+export function shouldExcludeRedditPost(post: RedditListingChildData): boolean {
+  return Boolean(post.stickied || post.pinned);
 }
 
 /**

@@ -12,7 +12,7 @@ import { db, botContentItems, bots } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { ContentGenerator, type Bot as ContentGeneratorBot, type ContentItem } from './contentGenerator';
 import { canPost } from './rateLimiter';
-import { decryptApiKey, deserializeEncryptedData } from './encryption';
+import { decryptApiKey, deserializeEncryptedData, type LLMProvider } from './encryption';
 import { parseScheduleConfig, isDue } from './scheduler';
 import { triggerPost } from './posting';
 
@@ -213,8 +213,9 @@ function toContentGeneratorBot(bot: typeof bots.$inferSelect, handle: string): C
     name: bot.name,
     handle: handle,
     personalityConfig: JSON.parse(bot.personalityConfig),
-    llmProvider: bot.llmProvider as 'openrouter' | 'openai' | 'anthropic',
+    llmProvider: bot.llmProvider as LLMProvider,
     llmModel: bot.llmModel,
+    llmEndpoint: bot.llmEndpoint,
     llmApiKeyEncrypted: bot.llmApiKeyEncrypted,
   };
 }

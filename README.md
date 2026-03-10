@@ -35,7 +35,7 @@ curl -fsSL https://synapsis.social/install.sh | PROXY=none bash
 
 **Updating (migrations run automatically):**
 ```bash
-docker compose pull && docker compose up -d
+curl -fsSL https://synapsis.social/update.sh | bash
 ```
 
 **Full uninstall:**

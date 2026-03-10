@@ -24,6 +24,7 @@ export interface LLMConfig {
   provider: LLMProvider;
   apiKey: string; // Encrypted before storage
   model: string;
+  endpoint?: string | null;
 }
 
 /**
@@ -123,6 +124,7 @@ export const PROVIDER_ENDPOINTS: Record<LLMProvider, string> = {
   openrouter: 'https://openrouter.ai/api/v1/chat/completions',
   openai: 'https://api.openai.com/v1/chat/completions',
   anthropic: 'https://api.anthropic.com/v1/messages',
+  custom: '',
 };
 
 /**
@@ -132,6 +134,7 @@ export const DEFAULT_MODELS: Record<LLMProvider, string> = {
   openrouter: 'openai/gpt-3.5-turbo',
   openai: 'gpt-3.5-turbo',
   anthropic: 'claude-3-haiku-20240307',
+  custom: 'gpt-4o-mini',
 };
 
 // ============================================
@@ -299,7 +302,8 @@ export function parseOpenRouterResponse(
  */
 export function parseOpenAIResponse(
   data: Record<string, unknown>,
-  model: string
+  model: string,
+  provider: LLMProvider = 'openai'
 ): LLMCompletionResponse {
   const choices = data.choices as Array<{ message: { content: string } }>;
   const usage = data.usage as { prompt_tokens: number; completion_tokens: number; total_tokens: number };
@@ -312,7 +316,7 @@ export function parseOpenAIResponse(
       total: usage?.total_tokens ?? 0,
     },
     model: (data.model as string) ?? model,
-    provider: 'openai',
+    provider,
   };
 }
 
@@ -359,6 +363,7 @@ export function buildHeaders(provider: LLMProvider, apiKey: string): Record<stri
       headers['X-Title'] = 'Synapsis Bot';
       break;
     case 'openai':
+    case 'custom':
       headers['Authorization'] = `Bearer ${apiKey}`;
       break;
     case 'anthropic':
@@ -386,6 +391,7 @@ export class LLMClient {
   private provider: LLMProvider;
   private apiKey: string;
   private model: string;
+  private endpoint: string | null;
   private retryConfig: RetryConfig;
   private timeoutMs: number;
   
@@ -403,6 +409,7 @@ export class LLMClient {
   ) {
     this.provider = config.provider;
     this.model = config.model || DEFAULT_MODELS[config.provider];
+    this.endpoint = config.endpoint || null;
     this.retryConfig = retryConfig;
     this.timeoutMs = timeoutMs;
     
@@ -480,7 +487,16 @@ export class LLMClient {
    * @throws LLMClientError if the request fails
    */
   private async makeRequest(request: LLMCompletionRequest): Promise<LLMCompletionResponse> {
-    const endpoint = PROVIDER_ENDPOINTS[this.provider];
+    const endpoint = this.provider === 'custom' ? this.endpoint : PROVIDER_ENDPOINTS[this.provider];
+    if (!endpoint) {
+      throw new LLMClientError(
+        'Custom provider requires an endpoint',
+        'INVALID_REQUEST',
+        this.provider,
+        undefined,
+        false
+      );
+    }
     const headers = buildHeaders(this.provider, this.apiKey);
     const body = this.buildRequestBody(request);
     
@@ -566,6 +582,7 @@ export class LLMClient {
       case 'openrouter':
         return buildOpenRouterRequest(request, this.model);
       case 'openai':
+      case 'custom':
         return buildOpenAIRequest(request, this.model);
       case 'anthropic':
         return buildAnthropicRequest(request, this.model);
@@ -580,7 +597,9 @@ export class LLMClient {
       case 'openrouter':
         return parseOpenRouterResponse(data, this.model);
       case 'openai':
-        return parseOpenAIResponse(data, this.model);
+        return parseOpenAIResponse(data, this.model, 'openai');
+      case 'custom':
+        return parseOpenAIResponse(data, this.model, 'custom');
       case 'anthropic':
         return parseAnthropicResponse(data, this.model);
     }
@@ -618,12 +637,14 @@ export function createLLMClient(
 export function createLLMClientFromBot(
   provider: LLMProvider,
   encryptedApiKey: string,
-  model: string
+  model: string,
+  endpoint?: string | null
 ): LLMClient {
   return new LLMClient({
     provider,
     apiKey: encryptedApiKey,
     model,
+    endpoint,
   });
 }
 
@@ -643,7 +664,7 @@ export function validateLLMConfig(config: unknown): { valid: boolean; errors: st
   const configObj = config as Record<string, unknown>;
   
   // Validate provider
-  const validProviders: LLMProvider[] = ['openrouter', 'openai', 'anthropic'];
+  const validProviders: LLMProvider[] = ['openrouter', 'openai', 'anthropic', 'custom'];
   if (!configObj.provider || !validProviders.includes(configObj.provider as LLMProvider)) {
     errors.push(`Provider must be one of: ${validProviders.join(', ')}`);
   }
@@ -656,6 +677,10 @@ export function validateLLMConfig(config: unknown): { valid: boolean; errors: st
   // Validate model (optional but must be string if provided)
   if (configObj.model !== undefined && typeof configObj.model !== 'string') {
     errors.push('Model must be a string');
+  }
+
+  if (configObj.provider === 'custom' && (!configObj.endpoint || typeof configObj.endpoint !== 'string')) {
+    errors.push('Endpoint is required for custom provider');
   }
   
   return { valid: errors.length === 0, errors };

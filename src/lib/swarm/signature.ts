@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import { db, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import { canonicalize } from '@/lib/crypto/user-signing';
+import { isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
 
 /**
  * Sign a payload with the node's private key
@@ -56,14 +57,21 @@ export function verifySignature(payload: any, signature: string, publicKey: stri
  */
 export async function getNodePublicKey(domain: string): Promise<string | null> {
   try {
+    const normalizedDomain = normalizeNodeDomain(domain);
+    if (await isNodeBlocked(normalizedDomain)) {
+      console.warn(`[Signature] Refusing public key fetch for blocked node ${normalizedDomain}`);
+      return null;
+    }
+
     // Check if we have a cached node info
-    const protocol = domain.includes('localhost') ? 'http' : 'https';
-    const response = await fetch(`${protocol}://${domain}/api/node`, {
+    const protocol = normalizedDomain.includes('localhost') ? 'http' : 'https';
+    const response = await fetch(`${protocol}://${normalizedDomain}/api/node`, {
       headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(5000),
     });
 
     if (!response.ok) {
-      console.error(`[Signature] Failed to fetch node info from ${domain}: ${response.status}`);
+      console.error(`[Signature] Failed to fetch node info from ${normalizedDomain}: ${response.status}`);
       return null;
     }
 
@@ -88,8 +96,14 @@ export async function verifySwarmRequest(
   signature: string,
   senderDomain: string
 ): Promise<boolean> {
+  const normalizedDomain = normalizeNodeDomain(senderDomain);
+  if (await isNodeBlocked(normalizedDomain)) {
+    console.warn(`[Signature] Rejected blocked node ${normalizedDomain}`);
+    return false;
+  }
+
   // Get the sender node's public key
-  const publicKey = await getNodePublicKey(senderDomain);
+  const publicKey = await getNodePublicKey(normalizedDomain);
   
   if (!publicKey) {
     console.error(`[Signature] Could not get public key for ${senderDomain}`);
@@ -118,8 +132,14 @@ export async function verifyUserInteraction(
   userDomain: string
 ): Promise<boolean> {
   try {
+    const normalizedDomain = normalizeNodeDomain(userDomain);
+    if (await isNodeBlocked(normalizedDomain)) {
+      console.warn(`[Signature] Rejected user interaction from blocked node ${normalizedDomain}`);
+      return false;
+    }
+
     // Try to get cached user
-    const fullHandle = `${userHandle}@${userDomain}`;
+    const fullHandle = `${userHandle}@${normalizedDomain}`;
     let user = await db?.query.users.findFirst({
       where: eq(users.handle, fullHandle),
     });
@@ -130,11 +150,14 @@ export async function verifyUserInteraction(
       publicKey = user.publicKey;
     } else {
       // Fetch from remote node
-      const protocol = userDomain.includes('localhost') ? 'http' : 'https';
-      const response = await fetch(`${protocol}://${userDomain}/api/users/${userHandle}`);
+      const protocol = normalizedDomain.includes('localhost') ? 'http' : 'https';
+      const response = await fetch(`${protocol}://${normalizedDomain}/api/users/${userHandle}`, {
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
       
       if (!response.ok) {
-        console.error(`[Signature] Failed to fetch user ${userHandle}@${userDomain}: ${response.status}`);
+        console.error(`[Signature] Failed to fetch user ${userHandle}@${normalizedDomain}: ${response.status}`);
         return false;
       }
 
@@ -144,7 +167,7 @@ export async function verifyUserInteraction(
       // Cache the user if we don't have them
       if (!user && publicKey && db) {
         await db.insert(users).values({
-          did: userData.user?.did || `did:swarm:${userDomain}:${userHandle}`,
+          did: userData.user?.did || `did:swarm:${normalizedDomain}:${userHandle}`,
           handle: fullHandle,
           displayName: userData.user?.displayName || userHandle,
           avatarUrl: userData.user?.avatarUrl,

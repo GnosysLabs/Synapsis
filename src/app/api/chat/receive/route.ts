@@ -6,6 +6,7 @@ import { verifyActionSignature, type SignedAction } from '@/lib/auth/verify-sign
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { fetchAndCacheRemoteKey, logKeyChange } from '@/lib/swarm/identity-cache';
 import { z } from 'zod';
+import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 
 const signedChatActionSchema = z.object({
     action: z.string().min(1),
@@ -76,6 +77,11 @@ export async function POST(request: NextRequest) {
         let fullSenderHandle: string | null = null;
 
         if (swarmSignature && sourceDomain && body.userAction) {
+            const normalizedSourceDomain = normalizeNodeDomain(sourceDomain);
+            if (await isNodeBlocked(normalizedSourceDomain)) {
+                return NextResponse.json({ error: 'Blocked node' }, { status: 403 });
+            }
+
             // Federated envelope format - validate and verify node signature
             const envelopeValidation = federatedEnvelopeSchema.safeParse(body);
             if (!envelopeValidation.success) {
@@ -117,6 +123,12 @@ export async function POST(request: NextRequest) {
 
         // Use full handle if provided in envelope, otherwise fall back to signed handle
         const senderHandle = fullSenderHandle || handle;
+        const senderDomainFromHandle = senderHandle.includes('@')
+            ? normalizeNodeDomain(senderHandle.split('@').pop() || '')
+            : null;
+        if (senderDomainFromHandle && await isNodeBlocked(senderDomainFromHandle)) {
+            return NextResponse.json({ error: 'Blocked node' }, { status: 403 });
+        }
         console.log(`[Chat Receive] From: ${senderHandle} (DID: ${did}), To: ${recipientDid}`);
 
         // 1. Resolve Sender Public Key
@@ -134,19 +146,23 @@ export async function POST(request: NextRequest) {
             // Derive domain from full sender handle if possible
             if (senderHandle.includes('@')) {
                 const parts = senderHandle.split('@');
-                senderNodeDomain = parts[parts.length - 1];
+                senderNodeDomain = normalizeNodeDomain(parts[parts.length - 1]);
             } else {
                 // Try to get from header first
                 const sourceDomainHeader = request.headers.get('X-Swarm-Source-Domain');
                 if (sourceDomainHeader) {
-                    senderNodeDomain = sourceDomainHeader;
+                    senderNodeDomain = normalizeNodeDomain(sourceDomainHeader);
                 } else {
                     // Try handle registry (though we likely don't have it if we don't have the user)
                     const registryEntry = await db.query.handleRegistry.findFirst({
                         where: eq(handleRegistry.did, did)
                     });
-                    if (registryEntry) senderNodeDomain = registryEntry.nodeDomain;
+                    if (registryEntry) senderNodeDomain = normalizeNodeDomain(registryEntry.nodeDomain);
                 }
+            }
+
+            if (senderNodeDomain && await isNodeBlocked(senderNodeDomain)) {
+                return NextResponse.json({ error: 'Blocked node' }, { status: 403 });
             }
 
             if (senderNodeDomain) {

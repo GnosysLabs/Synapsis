@@ -12,6 +12,7 @@ import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import { buildNotificationTarget } from '@/lib/notifications';
 
 const swarmLikeSchema = z.object({
   postId: z.string().uuid(),
@@ -88,6 +89,8 @@ export async function POST(request: NextRequest) {
       .set({ likesCount: post.likesCount + 1 })
       .where(eq(posts.id, data.postId));
 
+    const author = post.author as { isBot?: boolean; botOwnerId?: string; handle?: string; displayName?: string | null; avatarUrl?: string | null } | null;
+
     // Create notification with actor info stored directly
     try {
       await db.insert(notifications).values({
@@ -98,6 +101,7 @@ export async function POST(request: NextRequest) {
         actorNodeDomain: data.like.actorNodeDomain,
         postId: data.postId,
         postContent: post.content?.slice(0, 200) || null,
+        ...(author?.isBot ? buildNotificationTarget(author as any) : {}),
         type: 'like',
       });
       console.log(`[Swarm] Created like notification for post ${data.postId} from ${data.like.actorHandle}@${data.like.actorNodeDomain}`);
@@ -108,7 +112,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Also notify bot owner if this is a bot's post
-    const author = post.author as { isBot?: boolean; botOwnerId?: string } | null;
     if (author?.isBot && author.botOwnerId) {
       try {
         await db.insert(notifications).values({
@@ -119,6 +122,7 @@ export async function POST(request: NextRequest) {
           actorNodeDomain: data.like.actorNodeDomain,
           postId: data.postId,
           postContent: post.content?.slice(0, 200) || null,
+          ...buildNotificationTarget(author as any),
           type: 'like',
         });
       } catch (err) {

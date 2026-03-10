@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db, posts, users, media, remotePosts } from '@/db';
 import { eq, desc, and, sql, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
 // Schema for local post ID (UUID)
 const localPostIdSchema = z.string().uuid('Invalid post ID format');
@@ -14,6 +15,69 @@ const swarmPostIdSchema = z.string().regex(
 
 // Combined schema that accepts either format
 const postIdSchema = z.union([localPostIdSchema, swarmPostIdSchema]);
+
+const embeddedPostRelations = {
+    author: true,
+    bot: true,
+    media: true,
+    replyTo: {
+        with: {
+            author: true,
+            bot: true,
+            media: true,
+        },
+    },
+} as const;
+
+const postDetailRelations = {
+    ...embeddedPostRelations,
+    repostOf: {
+        with: embeddedPostRelations,
+    },
+} as const;
+
+function mapSwarmDetailPost(post: any, fallbackDomain: string): any {
+    const effectiveDomain = post.nodeDomain || fallbackDomain;
+    const rawId = post.originalPostId || post.id;
+
+    return {
+        id: post.id?.startsWith('swarm:') ? post.id : `swarm:${effectiveDomain}:${rawId}`,
+        originalPostId: rawId,
+        content: post.content,
+        createdAt: post.createdAt,
+        likesCount: post.likesCount || 0,
+        repostsCount: post.repostsCount || 0,
+        repliesCount: post.repliesCount || 0,
+        isSwarm: true,
+        nodeDomain: effectiveDomain,
+        repostOfId: post.repostOf
+            ? (post.repostOf.id?.startsWith('swarm:')
+                ? post.repostOf.id
+                : `swarm:${post.repostOf.nodeDomain || effectiveDomain}:${post.repostOf.originalPostId || post.repostOf.id}`)
+            : (post.repostOfId ? `swarm:${effectiveDomain}:${post.repostOfId}` : null),
+        repostOf: post.repostOf ? mapSwarmDetailPost(post.repostOf, post.repostOf.nodeDomain || effectiveDomain) : null,
+        author: post.author ? {
+            id: `swarm:${effectiveDomain}:${post.author.handle}`,
+            handle: post.author.handle.includes('@') ? post.author.handle : `${post.author.handle}@${effectiveDomain}`,
+            displayName: post.author.displayName,
+            avatarUrl: post.author.avatarUrl,
+            isSwarm: true,
+            nodeDomain: effectiveDomain,
+        } : null,
+        media: post.media?.map((m: any, idx: number) => ({
+            id: m.id || `swarm:${effectiveDomain}:${rawId}:media:${idx}`,
+            url: m.url,
+            altText: m.altText || null,
+        })) || [],
+        linkPreviewUrl: post.linkPreviewUrl,
+        linkPreviewTitle: post.linkPreviewTitle,
+        linkPreviewDescription: post.linkPreviewDescription,
+        linkPreviewImage: post.linkPreviewImage,
+        linkPreviewType: post.linkPreviewType || null,
+        linkPreviewVideoUrl: post.linkPreviewVideoUrl || null,
+        linkPreviewMedia: post.linkPreviewMedia || null,
+    };
+}
 
 export async function GET(
     request: Request,
@@ -47,67 +111,25 @@ export async function GET(
                     if (res.ok) {
                         const data = await res.json();
 
-                        // Transform to match expected format
-                        mainPost = {
-                            id: id,
-                            originalPostId: originalPostId,
-                            content: data.post.content,
-                            createdAt: data.post.createdAt,
-                            likesCount: data.post.likesCount || 0,
-                            repostsCount: data.post.repostsCount || 0,
-                            repliesCount: data.post.repliesCount || 0,
-                            isSwarm: true,
+                        mainPost = mapSwarmDetailPost({
+                            ...data.post,
+                            id,
+                            originalPostId,
                             nodeDomain: originDomain,
-                            author: {
-                                id: `swarm:${originDomain}:${data.post.author.handle}`,
-                                handle: data.post.author.handle,
-                                displayName: data.post.author.displayName,
-                                avatarUrl: data.post.author.avatarUrl,
-                                isSwarm: true,
-                                nodeDomain: originDomain,
-                            },
-                            media: data.post.media?.map((m: any, idx: number) => ({
-                                id: `swarm:${originDomain}:${originalPostId}:media:${idx}`,
-                                url: m.url,
-                                altText: m.altText || null,
-                            })) || [],
-                            linkPreviewUrl: data.post.linkPreviewUrl,
-                            linkPreviewTitle: data.post.linkPreviewTitle,
-                            linkPreviewDescription: data.post.linkPreviewDescription,
-                            linkPreviewImage: data.post.linkPreviewImage,
-                        };
+                        }, originDomain);
 
                         // Transform replies from the origin node
-                        replyPosts = (data.replies || []).map((r: any) => ({
-                            id: `swarm:${originDomain}:${r.id}`,
-                            originalPostId: r.id,
-                            content: r.content,
-                            createdAt: r.createdAt,
-                            likesCount: r.likesCount || 0,
-                            repostsCount: r.repostsCount || 0,
-                            repliesCount: r.repliesCount || 0,
-                            isSwarm: true,
+                        replyPosts = (data.replies || []).map((reply: any) => mapSwarmDetailPost({
+                            ...reply,
                             nodeDomain: originDomain,
-                            author: {
-                                id: `swarm:${originDomain}:${r.author.handle}`,
-                                handle: r.author.handle,
-                                displayName: r.author.displayName,
-                                avatarUrl: r.author.avatarUrl,
-                                isSwarm: true,
-                                nodeDomain: originDomain,
-                            },
-                            media: r.media?.map((m: any, idx: number) => ({
-                                id: `swarm:${originDomain}:${r.id}:media:${idx}`,
-                                url: m.url,
-                                altText: m.altText || null,
-                            })) || [],
-                        }));
+                        }, originDomain));
 
                         mainPost.repliesCount = replyPosts.length;
 
                         // Check if current user has liked this post
                         try {
                             const { requireAuth } = await import('@/lib/auth');
+                            const { getViewerSwarmRepostedPostIds } = await import('@/lib/swarm/reposts');
                             const viewer = await requireAuth();
 
                             const likeCheckRes = await fetch(
@@ -119,6 +141,15 @@ export async function GET(
                                 const likeData = await likeCheckRes.json();
                                 mainPost.isLiked = likeData.isLiked;
                             }
+
+                            const repostedIds = await getViewerSwarmRepostedPostIds([
+                                {
+                                    id,
+                                    nodeDomain: originDomain,
+                                    originalPostId,
+                                },
+                            ], viewer.id);
+                            mainPost.isReposted = repostedIds.has(id);
                         } catch {
                             // Not logged in or timeout
                         }
@@ -138,13 +169,7 @@ export async function GET(
 
         const post = await db.query.posts.findFirst({
             where: eq(posts.id, id),
-            with: {
-                author: true,
-                media: true,
-                replyTo: {
-                    with: { author: true },
-                },
-            },
+            with: postDetailRelations,
         });
 
         if (post) {
@@ -155,10 +180,7 @@ export async function GET(
                     eq(posts.replyToId, id),
                     eq(posts.isRemoved, false)
                 ),
-                with: {
-                    author: true,
-                    media: true,
-                },
+                with: postDetailRelations,
                 orderBy: [desc(posts.createdAt)],
             });
 
@@ -235,6 +257,9 @@ export async function GET(
                     linkPreviewTitle: cached.linkPreviewTitle,
                     linkPreviewDescription: cached.linkPreviewDescription,
                     linkPreviewImage: cached.linkPreviewImage,
+                    linkPreviewType: cached.linkPreviewType,
+                    linkPreviewVideoUrl: cached.linkPreviewVideoUrl,
+                    linkPreviewMedia: parseLinkPreviewMediaJson(cached.linkPreviewMediaJson) || null,
                     isLiked: false,
                     isReposted: false,
                 };

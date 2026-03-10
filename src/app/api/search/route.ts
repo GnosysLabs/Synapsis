@@ -4,6 +4,26 @@ import { ilike, or, desc, and, notInArray, eq, inArray } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 
+const embeddedPostRelations = {
+    author: true,
+    bot: true,
+    media: true,
+    replyTo: {
+        with: {
+            author: true,
+            bot: true,
+            media: true,
+        },
+    },
+} as const;
+
+const searchPostRelations = {
+    ...embeddedPostRelations,
+    repostOf: {
+        with: embeddedPostRelations,
+    },
+} as const;
+
 type SearchUser = {
     id: string;
     handle: string;
@@ -176,11 +196,7 @@ export async function GET(request: Request) {
             }
             const postResults = await db.query.posts.findMany({
                 where: and(...postConditions),
-                with: {
-                    author: true,
-                    media: true,
-                    bot: true,
-                },
+                with: searchPostRelations,
                 orderBy: [desc(posts.createdAt)],
                 limit,
             });

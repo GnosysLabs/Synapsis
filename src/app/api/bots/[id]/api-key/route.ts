@@ -24,7 +24,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 // Schema for setting API key
 const setApiKeySchema = z.object({
   apiKey: z.string().min(1, 'API key is required'),
-  provider: z.enum(['openrouter', 'openai', 'anthropic']).optional(),
+  provider: z.enum(['openrouter', 'openai', 'anthropic', 'custom']).optional(),
 });
 
 /**

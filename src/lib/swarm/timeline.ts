@@ -6,6 +6,8 @@
 
 import { getActiveSwarmNodes } from './registry';
 import type { SwarmPost } from '@/app/api/swarm/timeline/route';
+import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
+import type { LinkPreviewData } from '@/lib/media/linkPreview';
 
 interface TimelineResult {
   posts: SwarmPost[];
@@ -41,12 +43,7 @@ function extractFirstUrl(content: string): string | null {
 /**
  * Fetch link preview for a URL
  */
-async function fetchLinkPreview(url: string): Promise<{
-  url: string;
-  title: string | null;
-  description: string | null;
-  image: string | null;
-} | null> {
+async function fetchLinkPreview(url: string): Promise<LinkPreviewData | null> {
   try {
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
     const protocol = nodeDomain === 'localhost' ? 'http' : 'https';
@@ -70,6 +67,9 @@ async function fetchLinkPreview(url: string): Promise<{
       title: data.title || null,
       description: data.description || null,
       image: data.image || null,
+      type: data.type || null,
+      videoUrl: data.videoUrl || null,
+      media: data.media || null,
     };
   } catch {
     return null;
@@ -101,6 +101,9 @@ async function enrichPostsWithPreviews(posts: SwarmPost[]): Promise<SwarmPost[]>
       linkPreviewTitle: preview.title || undefined,
       linkPreviewDescription: preview.description || undefined,
       linkPreviewImage: preview.image || undefined,
+      linkPreviewType: preview.type || undefined,
+      linkPreviewVideoUrl: preview.videoUrl || undefined,
+      linkPreviewMedia: preview.media || undefined,
     };
   });
 
@@ -116,14 +119,19 @@ async function fetchNodeTimeline(
   cursor?: string
 ): Promise<{ posts: SwarmPost[]; nodeIsNsfw?: boolean; error?: string }> {
   try {
+    const normalizedDomain = normalizeNodeDomain(domain);
+    if (await isNodeBlocked(normalizedDomain)) {
+      return { posts: [], error: 'Blocked node' };
+    }
+
     // Determine protocol - use http for localhost, https for everything else
     let baseUrl: string;
     if (domain.startsWith('http')) {
       baseUrl = domain;
-    } else if (domain.startsWith('localhost') || domain.startsWith('127.0.0.1')) {
-      baseUrl = `http://${domain}`;
+    } else if (normalizedDomain.startsWith('localhost') || normalizedDomain.startsWith('127.0.0.1')) {
+      baseUrl = `http://${normalizedDomain}`;
     } else {
-      baseUrl = `https://${domain}`;
+      baseUrl = `https://${normalizedDomain}`;
     }
     const url = `${baseUrl}/api/swarm/timeline?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
 
@@ -166,13 +174,14 @@ export async function fetchSwarmTimeline(
   const nodes = await getActiveSwarmNodes(maxNodes);
 
   // Always include our own posts
-  const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
+  const ourDomain = normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost');
 
   // Always query all nodes - we filter posts, not nodes
-  const nodesToQuery = [
+  const candidateDomains = [
     ourDomain,
     ...nodes.map(n => n.domain).filter(d => d !== ourDomain)
-  ].slice(0, maxNodes);
+  ];
+  const nodesToQuery = (await filterBlockedDomains(candidateDomains)).slice(0, maxNodes);
 
   console.log(`[Swarm Timeline] Querying ${nodesToQuery.length} nodes: ${nodesToQuery.join(', ')}`);
   console.log(`[Swarm Timeline] includeNsfw: ${includeNsfw}, cursor: ${cursor || 'none'}`);

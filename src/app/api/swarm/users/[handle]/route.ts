@@ -5,8 +5,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, users, media, nodes } from '@/db';
+import { db, posts, users, userSwarmReposts } from '@/db';
 import { eq, desc, and, isNull } from 'drizzle-orm';
+import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
 export interface SwarmUserProfile {
   handle: string;
@@ -28,20 +29,143 @@ export interface SwarmUserProfile {
 
 export interface SwarmUserPost {
   id: string;
+  originalPostId?: string;
   content: string;
   createdAt: string;
   isNsfw: boolean;
   likesCount: number;
   repostsCount: number;
   repliesCount: number;
+  nodeDomain?: string;
+  author?: {
+    handle: string;
+    displayName?: string;
+    avatarUrl?: string;
+    isBot?: boolean;
+    nodeDomain?: string;
+  };
   media?: { url: string; mimeType?: string; altText?: string }[];
   linkPreviewUrl?: string;
   linkPreviewTitle?: string;
   linkPreviewDescription?: string;
   linkPreviewImage?: string;
+  linkPreviewType?: 'card' | 'image' | 'gallery' | 'video';
+  linkPreviewVideoUrl?: string;
+  linkPreviewMedia?: Array<{ url: string; width?: number | null; height?: number | null; mimeType?: string | null }>;
+  repostOfId?: string;
+  repostOf?: SwarmUserPost | null;
 }
 
 type RouteContext = { params: Promise<{ handle: string }> };
+
+const profilePostRelations = {
+  author: true,
+  media: true,
+  repostOf: {
+    with: {
+      author: true,
+      media: true,
+    },
+  },
+} as const;
+
+function parseMediaJson(mediaJson: string | null) {
+  if (!mediaJson) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(mediaJson);
+  } catch {
+    return [];
+  }
+}
+
+function mapLocalPostToSwarmPost(post: any, nodeDomain: string): SwarmUserPost {
+  return {
+    id: post.id,
+    originalPostId: post.id,
+    content: post.content,
+    createdAt: post.createdAt.toISOString(),
+    isNsfw: post.isNsfw,
+    likesCount: post.likesCount,
+    repostsCount: post.repostsCount,
+    repliesCount: post.repliesCount,
+    nodeDomain,
+    author: post.author ? {
+      handle: post.author.handle,
+      displayName: post.author.displayName || post.author.handle,
+      avatarUrl: post.author.avatarUrl || undefined,
+      isBot: post.author.isBot || undefined,
+      nodeDomain,
+    } : undefined,
+    media: (post.media || []).map((item: any) => ({
+      url: item.url,
+      mimeType: item.mimeType || undefined,
+      altText: item.altText || undefined,
+    })),
+    linkPreviewUrl: post.linkPreviewUrl || undefined,
+    linkPreviewTitle: post.linkPreviewTitle || undefined,
+    linkPreviewDescription: post.linkPreviewDescription || undefined,
+    linkPreviewImage: post.linkPreviewImage || undefined,
+    linkPreviewType: post.linkPreviewType || undefined,
+    linkPreviewVideoUrl: post.linkPreviewVideoUrl || undefined,
+    linkPreviewMedia: parseLinkPreviewMediaJson(post.linkPreviewMediaJson),
+    repostOfId: post.repostOfId || undefined,
+    repostOf: post.repostOf ? mapLocalPostToSwarmPost(post.repostOf, nodeDomain) : undefined,
+  };
+}
+
+function mapUserSwarmRepostToSwarmPost(
+  row: typeof userSwarmReposts.$inferSelect,
+  author: typeof users.$inferSelect,
+  nodeDomain: string
+): SwarmUserPost {
+  return {
+    id: row.id,
+    originalPostId: row.id,
+    content: '',
+    createdAt: row.repostedAt.toISOString(),
+    isNsfw: false,
+    likesCount: 0,
+    repostsCount: 0,
+    repliesCount: 0,
+    nodeDomain,
+    author: {
+      handle: author.handle,
+      displayName: author.displayName || author.handle,
+      avatarUrl: author.avatarUrl || undefined,
+      isBot: author.isBot || undefined,
+      nodeDomain,
+    },
+    repostOfId: row.originalPostId,
+    repostOf: {
+      id: row.originalPostId,
+      originalPostId: row.originalPostId,
+      content: row.content,
+      createdAt: row.postCreatedAt.toISOString(),
+      isNsfw: false,
+      likesCount: row.likesCount,
+      repostsCount: row.repostsCount,
+      repliesCount: row.repliesCount,
+      nodeDomain: row.nodeDomain,
+      author: {
+        handle: row.authorHandle.includes('@') ? row.authorHandle : `${row.authorHandle}@${row.nodeDomain}`,
+        displayName: row.authorDisplayName || row.authorHandle,
+        avatarUrl: row.authorAvatarUrl || undefined,
+        nodeDomain: row.nodeDomain,
+      },
+      media: parseMediaJson(row.mediaJson),
+      linkPreviewUrl: row.linkPreviewUrl || undefined,
+      linkPreviewTitle: row.linkPreviewTitle || undefined,
+      linkPreviewDescription: row.linkPreviewDescription || undefined,
+      linkPreviewImage: row.linkPreviewImage || undefined,
+      linkPreviewType: (row.linkPreviewType as SwarmUserPost['linkPreviewType']) || undefined,
+      linkPreviewVideoUrl: row.linkPreviewVideoUrl || undefined,
+      linkPreviewMedia: parseLinkPreviewMediaJson(row.linkPreviewMediaJson),
+    },
+  };
+}
 
 /**
  * GET /api/swarm/users/[handle]
@@ -97,61 +221,30 @@ export async function GET(request: NextRequest, context: RouteContext) {
       did: user.did || undefined,
     };
 
-    // Get user's recent posts
-    const userPosts = await db
-      .select({
-        id: posts.id,
-        content: posts.content,
-        createdAt: posts.createdAt,
-        isNsfw: posts.isNsfw,
-        likesCount: posts.likesCount,
-        repostsCount: posts.repostsCount,
-        repliesCount: posts.repliesCount,
-        linkPreviewUrl: posts.linkPreviewUrl,
-        linkPreviewTitle: posts.linkPreviewTitle,
-        linkPreviewDescription: posts.linkPreviewDescription,
-        linkPreviewImage: posts.linkPreviewImage,
-      })
-      .from(posts)
-      .where(
-        and(
-          eq(posts.userId, user.id),
-          eq(posts.isRemoved, false),
-          isNull(posts.replyToId),
-          isNull(posts.swarmReplyToId)
-        )
-      )
-      .orderBy(desc(posts.createdAt))
-      .limit(limit);
+    const localPosts = await db.query.posts.findMany({
+      where: and(
+        eq(posts.userId, user.id),
+        eq(posts.isRemoved, false),
+        isNull(posts.replyToId),
+        isNull(posts.swarmReplyToId)
+      ),
+      with: profilePostRelations,
+      orderBy: [desc(posts.createdAt)],
+      limit: limit * 2,
+    });
 
-    // Fetch media for each post
-    const swarmPosts: SwarmUserPost[] = [];
+    const remoteRepostRows = await db.query.userSwarmReposts.findMany({
+      where: eq(userSwarmReposts.userId, user.id),
+      orderBy: [desc(userSwarmReposts.repostedAt)],
+      limit: limit * 2,
+    });
 
-    for (const post of userPosts) {
-      const postMedia = await db
-        .select({ url: media.url, mimeType: media.mimeType, altText: media.altText })
-        .from(media)
-        .where(eq(media.postId, post.id));
-
-      swarmPosts.push({
-        id: post.id,
-        content: post.content,
-        createdAt: post.createdAt.toISOString(),
-        isNsfw: post.isNsfw,
-        likesCount: post.likesCount,
-        repostsCount: post.repostsCount,
-        repliesCount: post.repliesCount,
-        media: postMedia.length > 0 ? postMedia.map(m => ({
-          url: m.url,
-          mimeType: m.mimeType || undefined,
-          altText: m.altText || undefined,
-        })) : undefined,
-        linkPreviewUrl: post.linkPreviewUrl || undefined,
-        linkPreviewTitle: post.linkPreviewTitle || undefined,
-        linkPreviewDescription: post.linkPreviewDescription || undefined,
-        linkPreviewImage: post.linkPreviewImage || undefined,
-      });
-    }
+    const swarmPosts: SwarmUserPost[] = [
+      ...localPosts.map((post) => mapLocalPostToSwarmPost(post, nodeDomain)),
+      ...remoteRepostRows.map((row) => mapUserSwarmRepostToSwarmPost(row, user, nodeDomain)),
+    ]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit);
 
     return NextResponse.json({
       profile,

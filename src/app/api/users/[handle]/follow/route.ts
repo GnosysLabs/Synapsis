@@ -6,6 +6,7 @@ import { requireAuth } from '@/lib/auth';
 import { requireSignedAction } from '@/lib/auth/verify-signature';
 import { isSwarmNode, deliverSwarmFollow, deliverSwarmUnfollow, cacheSwarmUserPosts } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
+import { buildNotificationTarget } from '@/lib/notifications';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -220,6 +221,7 @@ export async function POST(request: Request, context: RouteContext) {
                 actorDisplayName: currentUser.displayName,
                 actorAvatarUrl: currentUser.avatarUrl,
                 actorNodeDomain: null,
+                ...(targetUser.isBot ? buildNotificationTarget(targetUser) : {}),
                 type: 'follow',
             });
 
@@ -232,6 +234,7 @@ export async function POST(request: Request, context: RouteContext) {
                     actorDisplayName: currentUser.displayName,
                     actorAvatarUrl: currentUser.avatarUrl,
                     actorNodeDomain: null,
+                    ...buildNotificationTarget(targetUser),
                     type: 'follow',
                 });
             }

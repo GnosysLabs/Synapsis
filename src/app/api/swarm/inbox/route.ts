@@ -29,6 +29,14 @@ const swarmPostSchema = z.object({
     linkPreviewTitle: z.string().optional(),
     linkPreviewDescription: z.string().optional(),
     linkPreviewImage: z.string().optional(),
+    linkPreviewType: z.enum(['card', 'image', 'gallery', 'video']).optional(),
+    linkPreviewVideoUrl: z.string().optional(),
+    linkPreviewMedia: z.array(z.object({
+      url: z.string(),
+      width: z.number().nullable().optional(),
+      height: z.number().nullable().optional(),
+      mimeType: z.string().nullable().optional(),
+    })).optional(),
   }),
   author: z.object({
     handle: z.string(),

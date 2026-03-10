@@ -15,6 +15,7 @@ import { generateAndUploadAvatarToUserStorage } from '@/lib/storage/s3';
 import { decryptPrivateKey, deserializeEncryptedKey } from '@/lib/crypto/private-key';
 import { eq, and, count } from 'drizzle-orm';
 import { generateKeyPair } from '@/lib/crypto/keys';
+import { isIP } from 'net';
 import { 
   encryptApiKey, 
   decryptApiKey,
@@ -52,6 +53,7 @@ export interface BotCreateInput {
   personality: PersonalityConfig;
   llmProvider: LLMProvider;
   llmModel: string;
+  llmEndpoint?: string;
   llmApiKey: string;
   schedule?: ScheduleConfig;
   autonomousMode?: boolean;
@@ -65,6 +67,7 @@ export interface BotUpdateInput {
   personality?: PersonalityConfig;
   llmProvider?: LLMProvider;
   llmModel?: string;
+  llmEndpoint?: string | null;
   llmApiKey?: string;
   schedule?: ScheduleConfig | null;
   autonomousMode?: boolean;
@@ -83,6 +86,7 @@ export interface Bot {
   personalityConfig: PersonalityConfig;
   llmProvider: LLMProvider;
   llmModel: string;
+  llmEndpoint?: string | null;
   scheduleConfig: ScheduleConfig | null;
   autonomousMode: boolean;
   isActive: boolean;
@@ -248,6 +252,65 @@ export function validateScheduleConfig(config: ScheduleConfig): void {
   }
 }
 
+function isPrivateHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized.endsWith('.local')
+  ) {
+    return true;
+  }
+
+  const ipVersion = isIP(normalized);
+  if (ipVersion === 4) {
+    const octets = normalized.split('.').map(Number);
+    const [first, second] = octets;
+
+    return (
+      first === 10 ||
+      first === 127 ||
+      (first === 169 && second === 254) ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168)
+    );
+  }
+
+  if (ipVersion === 6) {
+    return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:');
+  }
+
+  return false;
+}
+
+export function normalizeAndValidateLlmEndpoint(endpoint: string): string {
+  if (!endpoint || typeof endpoint !== 'string') {
+    throw new BotValidationError('Custom endpoint is required');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint.trim());
+  } catch {
+    throw new BotValidationError('Custom endpoint must be a valid URL');
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new BotValidationError('Custom endpoint must use HTTPS');
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new BotValidationError('Custom endpoint cannot include embedded credentials');
+  }
+
+  if (isPrivateHostname(parsed.hostname)) {
+    throw new BotValidationError('Custom endpoint must be publicly reachable and cannot target localhost or a private network');
+  }
+
+  return parsed.toString();
+}
+
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
@@ -269,6 +332,7 @@ function dbBotToBot(dbBot: typeof bots.$inferSelect, botUser: typeof users.$infe
     personalityConfig: JSON.parse(dbBot.personalityConfig) as PersonalityConfig,
     llmProvider: dbBot.llmProvider as LLMProvider,
     llmModel: dbBot.llmModel,
+    llmEndpoint: dbBot.llmEndpoint,
     scheduleConfig: dbBot.scheduleConfig ? JSON.parse(dbBot.scheduleConfig) as ScheduleConfig : null,
     autonomousMode: dbBot.autonomousMode,
     isActive: dbBot.isActive,
@@ -308,6 +372,10 @@ export async function createBot(ownerId: string, config: BotCreateInput): Promis
   if (config.schedule) {
     validateScheduleConfig(config.schedule);
   }
+
+  const normalizedEndpoint = config.llmProvider === 'custom'
+    ? normalizeAndValidateLlmEndpoint(config.llmEndpoint || '')
+    : null;
   
   // Validate API key format
   const apiKeyValidation = validateApiKeyFormat(config.llmApiKey, config.llmProvider);
@@ -391,6 +459,7 @@ export async function createBot(ownerId: string, config: BotCreateInput): Promis
     personalityConfig: JSON.stringify(config.personality),
     llmProvider: config.llmProvider,
     llmModel: config.llmModel,
+    llmEndpoint: normalizedEndpoint,
     llmApiKeyEncrypted: serializeEncryptedData(encryptedApiKey),
     scheduleConfig: config.schedule ? JSON.stringify(config.schedule) : null,
     autonomousMode: config.autonomousMode ?? false,
@@ -443,15 +512,7 @@ export async function updateBot(botId: string, config: BotUpdateInput): Promise<
   if (config.schedule !== undefined && config.schedule !== null) {
     validateScheduleConfig(config.schedule);
   }
-  
-  // Validate API key if provided
-  if (config.llmApiKey !== undefined && config.llmProvider !== undefined) {
-    const apiKeyValidation = validateApiKeyFormat(config.llmApiKey, config.llmProvider);
-    if (!apiKeyValidation.valid) {
-      throw new BotValidationError(apiKeyValidation.error || 'Invalid API key');
-    }
-  }
-  
+
   // Check if bot exists and get its user account
   const existingBot = await db.query.bots.findFirst({
     where: eq(bots.id, botId),
@@ -468,6 +529,25 @@ export async function updateBot(botId: string, config: BotUpdateInput): Promise<
   
   if (!botUser) {
     throw new BotNotFoundError(botId);
+  }
+
+  const targetProvider = (config.llmProvider ?? existingBot.llmProvider) as LLMProvider;
+
+  if (targetProvider === 'custom') {
+    const endpointToValidate = config.llmEndpoint !== undefined ? config.llmEndpoint : existingBot.llmEndpoint;
+    if (!endpointToValidate) {
+      throw new BotValidationError('Custom endpoint is required');
+    }
+    config.llmEndpoint = normalizeAndValidateLlmEndpoint(endpointToValidate);
+  } else if (config.llmEndpoint !== undefined || config.llmProvider !== undefined) {
+    config.llmEndpoint = null;
+  }
+
+  if (config.llmApiKey !== undefined) {
+    const apiKeyValidation = validateApiKeyFormat(config.llmApiKey, targetProvider);
+    if (!apiKeyValidation.valid) {
+      throw new BotValidationError(apiKeyValidation.error || 'Invalid API key');
+    }
   }
   
   // Build update object for bot config
@@ -507,6 +587,12 @@ export async function updateBot(botId: string, config: BotUpdateInput): Promise<
   
   if (config.llmModel !== undefined) {
     botUpdateData.llmModel = config.llmModel;
+  }
+
+  if (config.llmEndpoint !== undefined) {
+    botUpdateData.llmEndpoint = config.llmEndpoint;
+  } else if (config.llmProvider !== undefined && config.llmProvider !== 'custom') {
+    botUpdateData.llmEndpoint = null;
   }
   
   if (config.llmApiKey !== undefined) {

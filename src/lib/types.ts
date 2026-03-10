@@ -40,6 +40,13 @@ export interface Attachment {
     altText?: string | null;
 }
 
+export interface LinkPreviewMediaItem {
+    url: string;
+    width?: number | null;
+    height?: number | null;
+    mimeType?: string | null;
+}
+
 export interface Post {
     id: string;
     content: string;
@@ -53,8 +60,13 @@ export interface Post {
     linkPreviewTitle?: string | null;
     linkPreviewDescription?: string | null;
     linkPreviewImage?: string | null;
+    linkPreviewType?: 'card' | 'image' | 'gallery' | 'video' | null;
+    linkPreviewVideoUrl?: string | null;
+    linkPreviewMedia?: LinkPreviewMediaItem[] | null;
     replyTo?: Post | null;
     replyToId?: string | null;
+    repostOf?: Post | null;
+    repostOfId?: string | null;
     // Swarm reply info (when replying to a post on another node)
     swarmReplyToId?: string | null;
     swarmReplyToContent?: string | null;

@@ -14,6 +14,8 @@
 
 import { getActiveSwarmNodes } from './registry';
 import type { SwarmNodeInfo } from './types';
+import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
+import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 
 // ============================================
 // TYPES
@@ -141,16 +143,24 @@ export interface SwarmMentionPayload {
  * Check if a domain is a known Synapsis swarm node
  */
 export async function isSwarmNode(domain: string): Promise<boolean> {
+  const normalizedDomain = normalizeNodeDomain(domain);
+  if (await isNodeBlocked(normalizedDomain)) {
+    return false;
+  }
   const nodes = await getActiveSwarmNodes(500);
-  return nodes.some(n => n.domain === domain);
+  return nodes.some(n => n.domain === normalizedDomain);
 }
 
 /**
  * Get swarm node info if the domain is a swarm node
  */
 export async function getSwarmNodeInfo(domain: string): Promise<SwarmNodeInfo | null> {
+  const normalizedDomain = normalizeNodeDomain(domain);
+  if (await isNodeBlocked(normalizedDomain)) {
+    return null;
+  }
   const nodes = await getActiveSwarmNodes(500);
-  return nodes.find(n => n.domain === domain) || null;
+  return nodes.find(n => n.domain === normalizedDomain) || null;
 }
 
 /**
@@ -257,11 +267,19 @@ async function deliverSwarmInteraction(
   payload: unknown
 ): Promise<SwarmInteractionResponse> {
   try {
+    const normalizedTargetDomain = normalizeNodeDomain(targetDomain);
+    if (await isNodeBlocked(normalizedTargetDomain)) {
+      return {
+        success: false,
+        error: `Blocked node: ${normalizedTargetDomain}`,
+      };
+    }
+
     const baseUrl = targetDomain.startsWith('http')
       ? targetDomain
-      : targetDomain.startsWith('localhost') || targetDomain.startsWith('127.0.0.1')
-        ? `http://${targetDomain}`
-        : `https://${targetDomain}`;
+      : normalizedTargetDomain.startsWith('localhost') || normalizedTargetDomain.startsWith('127.0.0.1')
+        ? `http://${normalizedTargetDomain}`
+        : `https://${normalizedTargetDomain}`;
 
     const url = `${baseUrl}${endpoint}`;
 
@@ -334,17 +352,31 @@ export interface SwarmUserProfile {
 
 export interface SwarmUserPost {
   id: string;
+  originalPostId?: string;
   content: string;
   createdAt: string;
   isNsfw: boolean;
   likesCount: number;
   repostsCount: number;
   repliesCount: number;
+  nodeDomain?: string;
+  author?: {
+    handle: string;
+    displayName?: string;
+    avatarUrl?: string;
+    isBot?: boolean;
+    nodeDomain?: string;
+  };
   media?: { url: string; mimeType?: string; altText?: string }[];
   linkPreviewUrl?: string;
   linkPreviewTitle?: string;
   linkPreviewDescription?: string;
   linkPreviewImage?: string;
+  linkPreviewType?: 'card' | 'image' | 'gallery' | 'video';
+  linkPreviewVideoUrl?: string;
+  linkPreviewMedia?: Array<{ url: string; width?: number | null; height?: number | null; mimeType?: string | null }>;
+  repostOfId?: string;
+  repostOf?: SwarmUserPost | null;
 }
 
 export interface SwarmProfileResponse {
@@ -363,11 +395,16 @@ export async function fetchSwarmUserProfile(
   postsLimit: number = 25
 ): Promise<SwarmProfileResponse | null> {
   try {
+    const normalizedDomain = normalizeNodeDomain(domain);
+    if (await isNodeBlocked(normalizedDomain)) {
+      return null;
+    }
+
     const baseUrl = domain.startsWith('http')
       ? domain
-      : domain.startsWith('localhost') || domain.startsWith('127.0.0.1')
-        ? `http://${domain}`
-        : `https://${domain}`;
+      : normalizedDomain.startsWith('localhost') || normalizedDomain.startsWith('127.0.0.1')
+        ? `http://${normalizedDomain}`
+        : `https://${normalizedDomain}`;
 
     const url = `${baseUrl}/api/swarm/users/${handle}?limit=${postsLimit}`;
 
@@ -449,6 +486,9 @@ export async function cacheSwarmUserPosts(
         linkPreviewTitle: post.linkPreviewTitle || null,
         linkPreviewDescription: post.linkPreviewDescription || null,
         linkPreviewImage: post.linkPreviewImage || null,
+        linkPreviewType: post.linkPreviewType || null,
+        linkPreviewVideoUrl: post.linkPreviewVideoUrl || null,
+        linkPreviewMediaJson: serializeLinkPreviewMedia(post.linkPreviewMedia),
         mediaJson: post.media ? JSON.stringify(post.media) : null,
       });
 
@@ -470,11 +510,16 @@ export async function fetchSwarmPost(
   domain: string
 ): Promise<SwarmUserPost | null> {
   try {
+    const normalizedDomain = normalizeNodeDomain(domain);
+    if (await isNodeBlocked(normalizedDomain)) {
+      return null;
+    }
+
     const baseUrl = domain.startsWith('http')
       ? domain
-      : domain.startsWith('localhost') || domain.startsWith('127.0.0.1')
-        ? `http://${domain}`
-        : `https://${domain}`;
+      : normalizedDomain.startsWith('localhost') || normalizedDomain.startsWith('127.0.0.1')
+        ? `http://${normalizedDomain}`
+        : `https://${normalizedDomain}`;
 
     const url = `${baseUrl}/api/swarm/posts/${postId}`;
 
@@ -591,6 +636,9 @@ export interface SwarmPostDeliveryPayload {
     linkPreviewTitle?: string;
     linkPreviewDescription?: string;
     linkPreviewImage?: string;
+    linkPreviewType?: 'card' | 'image' | 'gallery' | 'video';
+    linkPreviewVideoUrl?: string;
+    linkPreviewMedia?: Array<{ url: string; width?: number | null; height?: number | null; mimeType?: string | null }>;
   };
   author: {
     handle: string;
@@ -637,7 +685,7 @@ export async function getSwarmFollowerDomains(userId: string): Promise<string[]>
       return match ? match[1] : null;
     }).filter((d): d is string => d !== null);
 
-    return [...new Set(domains)];
+    return await filterBlockedDomains([...new Set(domains)]);
   } catch (error) {
     console.error('[Swarm] Error getting swarm follower domains:', error);
     return [];
@@ -660,6 +708,9 @@ export async function deliverPostToSwarmFollowers(
     linkPreviewTitle?: string | null;
     linkPreviewDescription?: string | null;
     linkPreviewImage?: string | null;
+    linkPreviewType?: string | null;
+    linkPreviewVideoUrl?: string | null;
+    linkPreviewMedia?: Array<{ url: string; width?: number | null; height?: number | null; mimeType?: string | null }> | null;
   },
   author: {
     handle: string;
@@ -693,6 +744,9 @@ export async function deliverPostToSwarmFollowers(
       linkPreviewTitle: post.linkPreviewTitle || undefined,
       linkPreviewDescription: post.linkPreviewDescription || undefined,
       linkPreviewImage: post.linkPreviewImage || undefined,
+      linkPreviewType: (post.linkPreviewType as SwarmPostDeliveryPayload['post']['linkPreviewType']) || undefined,
+      linkPreviewVideoUrl: post.linkPreviewVideoUrl || undefined,
+      linkPreviewMedia: post.linkPreviewMedia || undefined,
     },
     author: {
       handle: author.handle,

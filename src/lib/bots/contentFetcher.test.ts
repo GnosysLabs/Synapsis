@@ -12,6 +12,8 @@ import {
   calculateBackoffDelay,
   shouldRetrySource,
   isSourceDueForFetch,
+  shouldExcludeRedditPost,
+  fetchRedditPosts,
   BASE_BACKOFF_DELAY_MS,
   MAX_BACKOFF_DELAY_MS,
   MAX_CONSECUTIVE_ERRORS,
@@ -193,6 +195,88 @@ describe('isSourceDueForFetch', () => {
   });
 
 
+});
+
+describe('Reddit filtering', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('excludes stickied and pinned reddit posts', () => {
+    expect(shouldExcludeRedditPost({
+      id: 't3_stickied',
+      title: 'Community thread',
+      permalink: '/r/test/comments/stickied/community_thread/',
+      url: 'https://reddit.com/r/test/comments/stickied/community_thread/',
+      created_utc: 1710000000,
+      stickied: true,
+    })).toBe(true);
+
+    expect(shouldExcludeRedditPost({
+      id: 't3_pinned',
+      title: 'Pinned thread',
+      permalink: '/r/test/comments/pinned/pinned_thread/',
+      url: 'https://reddit.com/r/test/comments/pinned/pinned_thread/',
+      created_utc: 1710000000,
+      pinned: true,
+    })).toBe(true);
+
+    expect(shouldExcludeRedditPost({
+      id: 't3_normal',
+      title: 'Normal post',
+      permalink: '/r/test/comments/normal/normal_post/',
+      url: 'https://reddit.com/r/test/comments/normal/normal_post/',
+      created_utc: 1710000000,
+    })).toBe(false);
+  });
+
+  it('fetchRedditPosts removes community highlights before returning items', async () => {
+    const payload = {
+      data: {
+        children: [
+          {
+            data: {
+              id: 'abc123',
+              name: 't3_abc123',
+              title: 'Community Highlights',
+              selftext: 'Pinned moderator thread',
+              permalink: '/r/test/comments/abc123/community_highlights/',
+              url: 'https://www.reddit.com/r/test/comments/abc123/community_highlights/',
+              created_utc: 1710000000,
+              stickied: true,
+            },
+          },
+          {
+            data: {
+              id: 'def456',
+              name: 't3_def456',
+              title: 'Actual content post',
+              selftext: 'Useful content',
+              permalink: '/r/test/comments/def456/actual_content_post/',
+              url: 'https://example.com/article',
+              created_utc: 1710000100,
+              stickied: false,
+              pinned: false,
+            },
+          },
+        ],
+      },
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify(payload),
+    } as Response);
+
+    const items = await fetchRedditPosts('test', { maxItems: 10 });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.title).toBe('Actual content post');
+    expect(items[0]?.id).toBe('t3_def456');
+  });
 });
 
 // ============================================

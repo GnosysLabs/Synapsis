@@ -26,6 +26,7 @@ export interface Bot {
   personalityConfig: PersonalityConfig;
   llmProvider: LLMProvider;
   llmModel: string;
+  llmEndpoint?: string | null;
   llmApiKeyEncrypted: string;
 }
 
@@ -35,6 +36,7 @@ export interface Bot {
 export interface ContentItem {
   id: string;
   sourceId: string;
+  externalId?: string;
   title: string;
   content: string | null;
   url: string;
@@ -467,6 +469,7 @@ export class ContentGenerator {
       provider: bot.llmProvider,
       apiKey: bot.llmApiKeyEncrypted,
       model: bot.llmModel,
+      endpoint: bot.llmEndpoint,
     });
   }
   

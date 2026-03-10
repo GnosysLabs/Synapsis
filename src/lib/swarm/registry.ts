@@ -8,6 +8,7 @@ import { db, swarmNodes, swarmSeeds, swarmSyncLog } from '@/db';
 import { eq, desc, and, gt, lt, sql } from 'drizzle-orm';
 import type { SwarmNodeInfo, SwarmCapability, SwarmSyncResult } from './types';
 import { SWARM_CONFIG, DEFAULT_SEED_NODES } from './types';
+import { normalizeNodeDomain } from './node-blocklist';
 
 /**
  * Get or create a swarm node entry
@@ -21,14 +22,16 @@ export async function upsertSwarmNode(
   }
 
   const existing = await db.query.swarmNodes.findFirst({
-    where: eq(swarmNodes.domain, node.domain),
+    where: eq(swarmNodes.domain, normalizeNodeDomain(node.domain)),
   });
+
+  const normalizedDomain = normalizeNodeDomain(node.domain);
 
   const capabilities = node.capabilities ? JSON.stringify(node.capabilities) : null;
 
   if (!existing) {
     await db.insert(swarmNodes).values({
-      domain: node.domain,
+      domain: normalizedDomain,
       name: node.name,
       description: node.description,
       logoUrl: node.logoUrl,
@@ -58,10 +61,10 @@ export async function upsertSwarmNode(
       capabilities: capabilities ?? existing.capabilities,
       lastSeenAt: new Date(),
       consecutiveFailures: 0,
-      isActive: true,
+      isActive: existing.isBlocked ? false : true,
       updatedAt: new Date(),
     })
-    .where(eq(swarmNodes.domain, node.domain));
+    .where(eq(swarmNodes.domain, normalizedDomain));
 
   return { isNew: false };
 }
@@ -83,8 +86,10 @@ export async function upsertSwarmNodes(
   // Filter out our own domain
   const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
   const filteredNodes = nodes.filter(n => n.domain !== ourDomain);
+  const normalizedOurDomain = ourDomain ? normalizeNodeDomain(ourDomain) : null;
+  const safeNodes = filteredNodes.filter(n => normalizeNodeDomain(n.domain) !== normalizedOurDomain);
 
-  for (const node of filteredNodes) {
+  for (const node of safeNodes) {
     const result = await upsertSwarmNode(node, discoveredVia);
     if (result.isNew) {
       added++;
@@ -105,7 +110,10 @@ export async function getActiveSwarmNodes(limit = 100): Promise<SwarmNodeInfo[]>
   }
 
   const nodes = await db.query.swarmNodes.findMany({
-    where: eq(swarmNodes.isActive, true),
+    where: and(
+      eq(swarmNodes.isActive, true),
+      eq(swarmNodes.isBlocked, false),
+    ),
     orderBy: [desc(swarmNodes.lastSeenAt)],
     limit,
   });
@@ -125,6 +133,7 @@ export async function getNodesForGossip(count: number): Promise<SwarmNodeInfo[]>
   const nodes = await db.query.swarmNodes.findMany({
     where: and(
       eq(swarmNodes.isActive, true),
+      eq(swarmNodes.isBlocked, false),
       gt(swarmNodes.trustScore, 20)
     ),
     orderBy: sql`RANDOM()`,
@@ -143,7 +152,10 @@ export async function getNodesSince(since: Date, limit = 100): Promise<SwarmNode
   }
 
   const nodes = await db.query.swarmNodes.findMany({
-    where: gt(swarmNodes.updatedAt, since),
+    where: and(
+      gt(swarmNodes.updatedAt, since),
+      eq(swarmNodes.isBlocked, false),
+    ),
     orderBy: [desc(swarmNodes.updatedAt)],
     limit,
   });
@@ -177,7 +189,7 @@ export async function markNodeFailure(domain: string): Promise<void> {
       .set({
         consecutiveFailures: newFailures,
         trustScore: newTrust,
-        isActive,
+        isActive: node.isBlocked ? false : isActive,
         updatedAt: new Date(),
       })
       .where(eq(swarmNodes.domain, domain));
@@ -211,7 +223,7 @@ export async function markNodeSuccess(domain: string): Promise<void> {
       .set({
         consecutiveFailures: 0,
         trustScore: newTrust,
-        isActive: true,
+        isActive: node.isBlocked ? false : true,
         lastSeenAt: new Date(),
         lastSyncAt: new Date(),
         updatedAt: new Date(),

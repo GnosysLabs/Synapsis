@@ -7,12 +7,15 @@
  * Requirements: 5.4, 11.5, 11.6
  */
 
-import { db, posts, users, bots, botContentItems, botActivityLogs } from '@/db';
+import { db, posts, users, bots, botContentItems, botActivityLogs, botContentSources } from '@/db';
 import { eq, and, inArray } from 'drizzle-orm';
 import { ContentGenerator, type Bot as ContentGeneratorBot, type ContentItem } from './contentGenerator';
 import { canPost, recordPost } from './rateLimiter';
 import { getBotById } from './botManager';
-import { decryptApiKey, deserializeEncryptedData } from './encryption';
+import { decryptApiKey, deserializeEncryptedData, type LLMProvider } from './encryption';
+import { fetchRedditRichPreview } from '@/lib/media/redditPreview';
+import type { LinkPreviewData } from '@/lib/media/linkPreview';
+import { fetchGenericLinkPreview } from '@/lib/media/genericPreview';
 
 // ============================================
 // TYPES
@@ -139,8 +142,9 @@ function toContentGeneratorBot(bot: typeof bots.$inferSelect & { user: { handle:
     name: bot.name,
     handle: bot.user.handle,
     personalityConfig: JSON.parse(bot.personalityConfig),
-    llmProvider: bot.llmProvider as 'openrouter' | 'openai' | 'anthropic',
+    llmProvider: bot.llmProvider as LLMProvider,
     llmModel: bot.llmModel,
+    llmEndpoint: bot.llmEndpoint,
     llmApiKeyEncrypted: bot.llmApiKeyEncrypted,
   };
 }
@@ -175,6 +179,7 @@ async function getContentItemById(contentItemId: string): Promise<ContentItem | 
   return {
     id: item.id,
     sourceId: item.sourceId,
+    externalId: item.externalId,
     title: item.title,
     content: item.content,
     url: item.url,
@@ -250,6 +255,7 @@ async function getNextUnprocessedContentItem(botId: string): Promise<ContentItem
     return {
       id: item.id,
       sourceId: item.sourceId,
+      externalId: item.externalId,
       title: item.title,
       content: item.content,
       url: item.url,
@@ -630,62 +636,8 @@ function isRedditUrl(url: string): boolean {
  * Fetch link preview for Reddit URLs using their oEmbed API.
  * Reddit blocks regular scraping but provides oEmbed for embedding.
  */
-async function fetchRedditPreview(url: string): Promise<{
-  url: string;
-  title: string | null;
-  description: string | null;
-  image: string | null;
-} | null> {
-  try {
-    // Reddit's oEmbed endpoint
-    const oembedUrl = `https://www.reddit.com/oembed?url=${encodeURIComponent(url)}`;
-
-    const response = await fetch(oembedUrl, {
-      headers: {
-        'Accept': 'application/json',
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (!response.ok) {
-      console.log(`Reddit oEmbed returned ${response.status} for ${url}`);
-      return null;
-    }
-
-    const data = await response.json();
-
-    // Extract title - try title field first, then parse from HTML
-    let title = data.title || null;
-    if (!title && data.html) {
-      // Try to extract title from the embed HTML
-      const titleMatch = data.html.match(/href="[^"]+">([^<]+)<\/a>/);
-      if (titleMatch && titleMatch[1] && titleMatch[1] !== 'Comment') {
-        title = titleMatch[1];
-      }
-    }
-
-    // Build description from subreddit info if available
-    let description = null;
-    if (data.author_name) {
-      description = `Posted by ${data.author_name}`;
-    } else if (data.html) {
-      // Try to extract subreddit from HTML
-      const subredditMatch = data.html.match(/r\/([a-zA-Z0-9_]+)/);
-      if (subredditMatch) {
-        description = `r/${subredditMatch[1]}`;
-      }
-    }
-
-    return {
-      url,
-      title,
-      description,
-      image: data.thumbnail_url || null,
-    };
-  } catch (error) {
-    console.error('Failed to fetch Reddit oEmbed preview:', error);
-    return null;
-  }
+async function fetchRedditPreview(url: string): Promise<LinkPreviewData | null> {
+  return fetchRedditRichPreview(url);
 }
 
 /**
@@ -695,12 +647,7 @@ async function fetchRedditPreview(url: string): Promise<{
  * @param url - The URL to fetch preview for
  * @returns Link preview data or null
  */
-async function fetchLinkPreview(url: string): Promise<{
-  url: string;
-  title: string | null;
-  description: string | null;
-  image: string | null;
-} | null> {
+async function fetchLinkPreview(url: string): Promise<LinkPreviewData | null> {
   // Use Reddit-specific handler
   if (isRedditUrl(url)) {
     return fetchRedditPreview(url);
@@ -708,46 +655,59 @@ async function fetchLinkPreview(url: string): Promise<{
 
   // Generic OG tag scraping for other sites
   try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; SynapsisBot/1.0; +https://synapsis.social)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const html = await response.text();
-
-    // Simple regex extraction for OG tags
-    const getMeta = (property: string): string | null => {
-      const regex = new RegExp(`<meta[^>]+(?:property|name)=["'](?:og:)?${property}["'][^>]+content=["']([^"']+)["']`, 'i');
-      const match = html.match(regex);
-      if (match) return match[1];
-
-      const regexRev = new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:)?${property}["']`, 'i');
-      const matchRev = html.match(regexRev);
-      return matchRev ? matchRev[1] : null;
-    };
-
-    const title = getMeta('title') || html.match(/<title>([^<]+)<\/title>/i)?.[1];
-    const description = getMeta('description');
-    const image = getMeta('image');
-
-    return {
-      url,
-      title: title?.trim() || null,
-      description: description?.trim() || null,
-      image: image?.trim() || null,
-    };
+    return await fetchGenericLinkPreview(url);
   } catch (error) {
     console.error('Failed to fetch link preview:', error);
     return null;
   }
+}
+
+function extractRedditPostId(contentItem: ContentItem): string | null {
+  if (contentItem.externalId) {
+    const normalizedExternalId = contentItem.externalId.replace(/^t3_/, '');
+    if (/^[a-z0-9]+$/i.test(normalizedExternalId)) {
+      return normalizedExternalId;
+    }
+  }
+
+  if (contentItem.url) {
+    try {
+      const pathnameParts = new URL(contentItem.url).pathname.split('/').filter(Boolean);
+      const commentsIndex = pathnameParts.indexOf('comments');
+      if (commentsIndex >= 0 && pathnameParts[commentsIndex + 1]) {
+        return pathnameParts[commentsIndex + 1];
+      }
+    } catch {
+      // Fall back to returning null below.
+    }
+  }
+
+  return null;
+}
+
+async function resolveContentItemSourceUrl(contentItem?: ContentItem | null): Promise<string | undefined> {
+  if (!contentItem?.url) {
+    return contentItem?.url;
+  }
+
+  const source = await db.query.botContentSources.findFirst({
+    where: eq(botContentSources.id, contentItem.sourceId),
+    columns: {
+      type: true,
+      subreddit: true,
+    },
+  });
+
+  if (source?.type !== 'reddit' || !source.subreddit) {
+    return contentItem.url;
+  }
+
+  const postId = extractRedditPostId(contentItem);
+  if (!postId) {
+    return contentItem.url;
+  }
+
+  return `https://www.reddit.com/r/${source.subreddit}/comments/${postId}/`;
 }
 
 /**
@@ -762,7 +722,7 @@ async function fetchLinkPreview(url: string): Promise<{
 async function createPostInDatabase(
   botId: string,
   content: string,
-  sourceUrl?: string
+  contentItem?: ContentItem | null
 ): Promise<typeof posts.$inferSelect> {
   // Get bot config
   const bot = await db.query.bots.findFirst({
@@ -789,6 +749,7 @@ async function createPostInDatabase(
   }
 
   // Fetch link preview if source URL provided
+  const sourceUrl = await resolveContentItemSourceUrl(contentItem);
   let linkPreview: Awaited<ReturnType<typeof fetchLinkPreview>> = null;
   if (sourceUrl) {
     linkPreview = await fetchLinkPreview(sourceUrl);
@@ -809,6 +770,9 @@ async function createPostInDatabase(
       linkPreviewTitle: linkPreview?.title || null,
       linkPreviewDescription: linkPreview?.description || null,
       linkPreviewImage: linkPreview?.image || null,
+      linkPreviewType: linkPreview?.type || null,
+      linkPreviewVideoUrl: linkPreview?.videoUrl || null,
+      linkPreviewMediaJson: linkPreview?.media ? JSON.stringify(linkPreview.media) : null,
     }).returning();
 
     // Update bot user's post count
@@ -1079,7 +1043,7 @@ export async function triggerPost(
     }
 
     // Create post in database with source URL for link preview (if content item exists)
-    const post = await createPostInDatabase(botId, postContent, contentItem?.url);
+    const post = await createPostInDatabase(botId, postContent, contentItem);
 
     // Record post for rate limiting
     if (!skipRateLimitCheck) {

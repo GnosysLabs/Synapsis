@@ -175,7 +175,7 @@ export default function ProfilePage() {
         if (!repliesCursor || repliesLoadingMore || !user) return;
         setRepliesLoadingMore(true);
         try {
-            const res = await fetch(`/api/posts?type=replies&userId=${user.id}&cursor=${repliesCursor}`);
+            const res = await fetch(`/api/users/${handle}/replies?cursor=${repliesCursor}`);
             const data = await res.json();
             setRepliesPosts(prev => [...prev, ...(data.posts || [])]);
             setRepliesCursor(data.nextCursor || null);
@@ -266,7 +266,10 @@ export default function ProfilePage() {
     }, [user, currentUser]);
 
     useEffect(() => {
-        if (!currentUser || !user || currentUser.handle === user.handle) {
+        const ownerHandle = user?.botOwner?.handle?.replace(/^@/, '').split('@')[0];
+        const isOwnedBot = Boolean(user?.isBot && currentUser && ownerHandle === currentUser.handle);
+
+        if (!currentUser || !user || currentUser.handle === user.handle || isOwnedBot) {
             setIsFollowing(false);
             setIsBlocked(false);
             return;
@@ -314,7 +317,7 @@ export default function ProfilePage() {
         if (activeTab === 'replies' && user) {
             setRepliesLoading(true);
             setRepliesCursor(null);
-            fetch(`/api/posts?type=replies&userId=${user.id}`)
+            fetch(`/api/users/${handle}/replies`)
                 .then(res => res.json())
                 .then(data => {
                     setRepliesPosts(data.posts || []);
@@ -323,7 +326,13 @@ export default function ProfilePage() {
                 .catch(() => setRepliesPosts([]))
                 .finally(() => setRepliesLoading(false));
         }
-    }, [activeTab, handle, user]);
+            }, [activeTab, handle, user]);
+
+    useEffect(() => {
+        if (user?.isBot && activeTab === 'following') {
+            setActiveTab('posts');
+        }
+    }, [user?.isBot, activeTab]);
 
     const handleFollow = async () => {
         if (!currentUser) return;
@@ -447,6 +456,19 @@ export default function ProfilePage() {
     }
 
     const isOwnProfile = currentUser?.handle === user.handle;
+    const botOwner = user.botOwner as BotOwner | null | undefined;
+    const botOwnerLocalHandle = botOwner?.handle?.replace(/^@/, '').split('@')[0] || null;
+    const isOwnedBotProfile = Boolean(
+        user.isBot &&
+        currentUser &&
+        botOwner &&
+        (botOwner.id === currentUser.id || botOwnerLocalHandle === currentUser.handle)
+    );
+    const showFollowingUi = !user.isBot;
+    const visibleTabs = (user.isBot
+        ? ['posts', 'replies', 'followers'] as const
+        : ['posts', 'replies', 'likes', 'followers', 'following'] as const
+    );
 
     return (
         <div style={{ maxWidth: '600px', margin: '0 auto', minHeight: '100vh' }}>
@@ -518,7 +540,8 @@ export default function ProfilePage() {
                 {/* Banner */}
                 <div
                     style={{
-                        height: '150px',
+                        width: '100%',
+                        aspectRatio: '3 / 1',
                         background: (isEditing ? profileForm.headerUrl : user.headerUrl)
                             ? `url(${isEditing ? profileForm.headerUrl : user.headerUrl}) center/cover`
                             : 'linear-gradient(135deg, var(--accent-muted) 0%, var(--background-tertiary) 100%)',
@@ -553,7 +576,7 @@ export default function ProfilePage() {
                         </div>
 
                         <div style={{ paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            {!isOwnProfile && currentUser && (
+                            {!isOwnProfile && !isOwnedBotProfile && currentUser && (
                                 <>
                                     {!isBlocked && (
                                         <button
@@ -713,18 +736,20 @@ export default function ProfilePage() {
                                 <strong>{user.followersCount}</strong>{' '}
                                 <span style={{ color: 'var(--foreground-tertiary)' }}>Followers</span>
                             </button>
-                            <button
-                                onClick={() => setActiveTab('following')}
-                                style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    color: 'var(--foreground)',
-                                    cursor: 'pointer',
-                                }}
-                            >
-                                <strong>{user.followingCount}</strong>{' '}
-                                <span style={{ color: 'var(--foreground-tertiary)' }}>Following</span>
-                            </button>
+                            {showFollowingUi && (
+                                <button
+                                    onClick={() => setActiveTab('following')}
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        color: 'var(--foreground)',
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    <strong>{user.followingCount}</strong>{' '}
+                                    <span style={{ color: 'var(--foreground-tertiary)' }}>Following</span>
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -807,10 +832,7 @@ export default function ProfilePage() {
 
                 {/* Tabs */}
                 <div style={{ display: 'flex', borderTop: '1px solid var(--border)' }}>
-                    {(user?.isBot
-                        ? ['posts', 'replies', 'followers', 'following'] as const
-                        : ['posts', 'replies', 'likes', 'followers', 'following'] as const
-                    ).map(tab => (
+                    {visibleTabs.map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}

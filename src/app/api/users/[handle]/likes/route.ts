@@ -1,8 +1,33 @@
 import { NextResponse } from 'next/server';
 import { db, likes, posts, users, userSwarmLikes } from '@/db';
 import { eq, desc, and, inArray } from 'drizzle-orm';
+import { discoverNode } from '@/lib/swarm/discovery';
+import { isSwarmNode } from '@/lib/swarm/interactions';
+import { getRemoteBaseUrl, mapRemoteProfilePost, parseRemoteHandle } from '@/lib/swarm/remote-profile-posts';
+import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
+import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
 type RouteContext = { params: Promise<{ handle: string }> };
+
+const embeddedPostRelations = {
+    author: true,
+    bot: true,
+    media: true,
+    replyTo: {
+        with: {
+            author: true,
+            bot: true,
+            media: true,
+        },
+    },
+} as const;
+
+const likedPostRelations = {
+    ...embeddedPostRelations,
+    repostOf: {
+        with: embeddedPostRelations,
+    },
+} as const;
 
 const parseMediaJson = (mediaJson: string | null) => {
     if (!mediaJson) {
@@ -22,11 +47,88 @@ export async function GET(request: Request, context: RouteContext) {
         const cleanHandle = handle.toLowerCase().replace(/^@/, '');
         const { searchParams } = new URL(request.url);
         const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
+        const remote = parseRemoteHandle(handle);
+
+        const fetchRemoteLikesRoute = async () => {
+            if (!remote) {
+                return NextResponse.json({ posts: [], nextCursor: null });
+            }
+
+            const baseUrl = getRemoteBaseUrl(remote.domain);
+            const res = await fetch(`${baseUrl}/api/users/${remote.handle}/likes?limit=${limit}`, {
+                headers: { Accept: 'application/json' },
+                signal: AbortSignal.timeout(10000),
+            });
+
+            if (!res.ok) {
+                return NextResponse.json({ posts: [], nextCursor: null });
+            }
+
+            const data = await res.json();
+            const { getSession } = await import('@/lib/auth');
+            const session = await getSession();
+            const viewer = session?.user;
+            const mappedPosts = (data.posts || []).map((post: any) => mapRemoteProfilePost(post, remote.domain));
+            const repostedIds = viewer
+                ? await getViewerSwarmRepostedPostIds(
+                    mappedPosts.map((post: any) => ({
+                        id: post.id,
+                        nodeDomain: remote.domain,
+                        originalPostId: post.originalPostId || post.id.split(':').pop(),
+                    })),
+                    viewer.id
+                )
+                : new Set<string>();
+            return NextResponse.json({
+                posts: mappedPosts.map((post: any) => ({
+                    ...post,
+                    isReposted: repostedIds.has(post.id),
+                })),
+                nextCursor: null,
+            });
+        };
+
+        if (!db) {
+            if (!remote) {
+                return NextResponse.json({ posts: [], nextCursor: null });
+            }
+
+            let swarm = await isSwarmNode(remote.domain);
+            if (!swarm) {
+                const discovery = await discoverNode(remote.domain);
+                swarm = discovery.success;
+            }
+
+            if (!swarm) {
+                return NextResponse.json({ posts: [], nextCursor: null });
+            }
+
+            return await fetchRemoteLikesRoute();
+        }
 
         // Find the user
         const user = await db.query.users.findFirst({
             where: eq(users.handle, cleanHandle),
         });
+        const isRemotePlaceholder = user && cleanHandle.includes('@');
+
+        if (!user || isRemotePlaceholder) {
+            if (!remote) {
+                return NextResponse.json({ error: 'User not found' }, { status: 404 });
+            }
+
+            let swarm = await isSwarmNode(remote.domain);
+            if (!swarm) {
+                const discovery = await discoverNode(remote.domain);
+                swarm = discovery.success;
+            }
+
+            if (!swarm) {
+                return NextResponse.json({ posts: [], nextCursor: null });
+            }
+
+            return await fetchRemoteLikesRoute();
+        }
 
         if (!user) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
@@ -42,11 +144,7 @@ export async function GET(request: Request, context: RouteContext) {
             where: eq(likes.userId, user.id),
             with: {
                 post: {
-                    with: {
-                        author: true,
-                        media: true,
-                        bot: true,
-                    },
+                    with: likedPostRelations,
                 },
             },
             orderBy: [desc(likes.createdAt)],
@@ -82,6 +180,9 @@ export async function GET(request: Request, context: RouteContext) {
             linkPreviewTitle: like.linkPreviewTitle,
             linkPreviewDescription: like.linkPreviewDescription,
             linkPreviewImage: like.linkPreviewImage,
+            linkPreviewType: like.linkPreviewType,
+            linkPreviewVideoUrl: like.linkPreviewVideoUrl,
+            linkPreviewMedia: parseLinkPreviewMediaJson(like.linkPreviewMediaJson) || null,
             isSwarm: true,
             nodeDomain: like.nodeDomain,
             likedAt: like.likedAt.toISOString(),
@@ -110,6 +211,17 @@ export async function GET(request: Request, context: RouteContext) {
                     .filter((post: any) => !post.isSwarm)
                     .map((post: any) => post.id)
                     .filter(Boolean);
+                const swarmTargets = likedPosts
+                    .filter((post: any) => post.isSwarm)
+                    .map((post: any) => ({
+                        id: post.id,
+                        nodeDomain: post.nodeDomain,
+                        originalPostId: post.originalPostId,
+                    }))
+                    .filter((post: any) => post.nodeDomain && post.originalPostId);
+                const swarmRepostedIds = swarmTargets.length > 0
+                    ? await getViewerSwarmRepostedPostIds(swarmTargets as any, viewer.id)
+                    : new Set<string>();
 
                 if (localPostIds.length > 0) {
                     const viewerLikes = await db.query.likes.findMany({
@@ -132,12 +244,13 @@ export async function GET(request: Request, context: RouteContext) {
                     likedPosts = likedPosts.map(p => ({
                         ...p!,
                         isLiked: p!.isSwarm ? isOwnLikesView : likedPostIds.has(p!.id),
-                        isReposted: repostedPostIds.has(p!.id),
+                        isReposted: p!.isSwarm ? swarmRepostedIds.has(p!.id) : repostedPostIds.has(p!.id),
                     })) as any;
                 } else {
                     likedPosts = likedPosts.map(p => ({
                         ...p!,
                         isLiked: p!.isSwarm ? isOwnLikesView : p!.isLiked,
+                        isReposted: p!.isSwarm ? swarmRepostedIds.has(p!.id) : p!.isReposted,
                     })) as any;
                 }
             }

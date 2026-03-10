@@ -52,6 +52,7 @@ export default function NewBotPage() {
     systemPrompt: '',
     llmProvider: 'openai',
     llmModel: 'gpt-4',
+    llmEndpoint: '',
     llmApiKey: '',
     autonomousMode: false,
     postingFrequency: 'every_4_hours',
@@ -88,6 +89,7 @@ export default function NewBotPage() {
               ...prev,
               llmProvider: lastBot.llmProvider || 'openai',
               llmModel: lastBot.llmModel || 'gpt-4',
+              llmEndpoint: lastBot.llmEndpoint || '',
             }));
           }
         }
@@ -237,6 +239,7 @@ export default function NewBotPage() {
           },
           llmProvider: formData.llmProvider,
           llmModel: formData.llmModel,
+          llmEndpoint: formData.llmProvider === 'custom' ? formData.llmEndpoint : undefined,
           llmApiKey: formData.llmApiKey,
           autonomousMode: formData.autonomousMode,
           schedule: formData.autonomousMode ? {
@@ -430,8 +433,27 @@ export default function NewBotPage() {
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
                 <option value="openrouter">OpenRouter</option>
+                <option value="custom">Custom (OpenAI Compatible)</option>
               </select>
             </div>
+
+            {formData.llmProvider === 'custom' && (
+              <div>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>
+                  OpenAI-Compatible Endpoint
+                </label>
+                <input
+                  type="url"
+                  value={formData.llmEndpoint}
+                  onChange={(e) => setFormData({ ...formData, llmEndpoint: e.target.value })}
+                  className="input"
+                  placeholder="https://api.example.com/v1/chat/completions"
+                />
+                <p style={{ fontSize: '13px', color: 'var(--foreground-tertiary)', marginTop: '6px' }}>
+                  Enter the full chat completions endpoint for a public OpenAI-compatible API.
+                </p>
+              </div>
+            )}
 
             <div>
               <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>
@@ -445,7 +467,7 @@ export default function NewBotPage() {
                 placeholder="gpt-4"
               />
               <p style={{ fontSize: '13px', color: 'var(--foreground-tertiary)', marginTop: '6px' }}>
-                e.g., gpt-4, claude-3-opus, etc.
+                e.g., gpt-4, claude-3-opus, mistral-large, etc.
               </p>
             </div>
 
@@ -782,22 +804,23 @@ export default function NewBotPage() {
               </p>
             </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>
-                Posting Frequency
-              </label>
-              <select
-                value={formData.postingFrequency}
-                onChange={(e) => setFormData({ ...formData, postingFrequency: e.target.value })}
-                className="input"
-                disabled={!formData.autonomousMode}
-              >
-                <option value="every_2_hours">Every 2 Hours</option>
-                <option value="every_4_hours">Every 4 Hours</option>
-                <option value="every_6_hours">Every 6 Hours</option>
-                <option value="daily">Once Daily</option>
-              </select>
-            </div>
+            {formData.autonomousMode && (
+              <div>
+                <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>
+                  Posting Frequency
+                </label>
+                <select
+                  value={formData.postingFrequency}
+                  onChange={(e) => setFormData({ ...formData, postingFrequency: e.target.value })}
+                  className="input"
+                >
+                  <option value="every_2_hours">Every 2 Hours</option>
+                  <option value="every_4_hours">Every 4 Hours</option>
+                  <option value="every_6_hours">Every 6 Hours</option>
+                  <option value="daily">Once Daily</option>
+                </select>
+              </div>
+            )}
 
 
 
@@ -895,7 +918,7 @@ export default function NewBotPage() {
               className="btn btn-primary"
               disabled={
                 (step === 'identity' && (!formData.name || !formData.handle)) ||
-                (step === 'personality' && (!formData.systemPrompt || !formData.llmApiKey))
+                (step === 'personality' && (!formData.systemPrompt || !formData.llmModel || !formData.llmApiKey || (formData.llmProvider === 'custom' && !formData.llmEndpoint)))
               }
             >
               Next

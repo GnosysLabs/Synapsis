@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
 import { db, posts, likes, users, notifications, userSwarmLikes } from '@/db';
+import { requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import crypto from 'crypto';
+import { buildNotificationTarget } from '@/lib/notifications';
+import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -12,6 +15,25 @@ const postIdSchema = z.union([
     z.string().uuid(),
     z.string().regex(/^swarm:[^:]+:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, 'Invalid swarm post ID format'),
 ]);
+
+function isSignedActionPayload(payload: unknown): payload is SignedAction {
+    if (!payload || typeof payload !== 'object') return false;
+    const value = payload as Record<string, unknown>;
+    return typeof value.action === 'string'
+        && typeof value.did === 'string'
+        && typeof value.handle === 'string'
+        && typeof value.ts === 'number'
+        && typeof value.nonce === 'string'
+        && typeof value.sig === 'string'
+        && typeof value.data === 'object'
+        && value.data !== null;
+}
+
+async function readOptionalJson(request: Request) {
+    const rawBody = await request.text();
+    if (!rawBody.trim()) return null;
+    return JSON.parse(rawBody);
+}
 
 /**
  * Extract domain from a swarm post ID (swarm:domain:postId)
@@ -71,6 +93,9 @@ async function fetchSwarmPostSnapshot(domain: string, originalPostId: string) {
             linkPreviewTitle: post.linkPreviewTitle || null,
             linkPreviewDescription: post.linkPreviewDescription || null,
             linkPreviewImage: post.linkPreviewImage || null,
+            linkPreviewType: post.linkPreviewType || null,
+            linkPreviewVideoUrl: post.linkPreviewVideoUrl || null,
+            linkPreviewMediaJson: serializeLinkPreviewMedia(post.linkPreviewMedia),
             mediaJson: post.media ? JSON.stringify(post.media) : null,
         };
     } catch {
@@ -81,15 +106,19 @@ async function fetchSwarmPostSnapshot(domain: string, originalPostId: string) {
 // Like a post
 export async function POST(request: Request, context: RouteContext) {
     try {
-        // Parse the signed action from the request body
-        const signedAction: SignedAction = await request.json();
+        const body = await readOptionalJson(request);
+        const { id: paramId } = await context.params;
+        const decodedParamId = decodeURIComponent(paramId);
 
-        // Verify the signature and get the user
-        const user = await requireSignedAction(signedAction);
+        const user = isSignedActionPayload(body)
+            ? await requireSignedAction(body)
+            : await requireAuth();
 
-        // Extract and validate postId from the signed action data
-        const { postId: rawId } = signedAction.data;
-        const decodedId = decodeURIComponent(rawId);
+        if (isSignedActionPayload(body) && body.data?.postId && body.data.postId !== decodedParamId) {
+            return NextResponse.json({ error: 'Post ID mismatch' }, { status: 400 });
+        }
+
+        const decodedId = decodedParamId;
         const postId = postIdSchema.parse(decodedId);
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
 
@@ -183,6 +212,10 @@ export async function POST(request: Request, context: RouteContext) {
             .where(eq(posts.id, postId));
 
         if (post.userId !== user.id) {
+            const postAuthor = await db.query.users.findFirst({
+                where: eq(users.id, post.userId),
+            });
+
             // Create notification with actor info stored directly
             await db.insert(notifications).values({
                 userId: post.userId,
@@ -193,13 +226,11 @@ export async function POST(request: Request, context: RouteContext) {
                 actorNodeDomain: null, // Local user
                 postId,
                 postContent: post.content?.slice(0, 200) || null,
+                ...(postAuthor?.isBot ? buildNotificationTarget(postAuthor) : {}),
                 type: 'like',
             });
 
             // Also notify bot owner if this is a bot's post
-            const postAuthor = await db.query.users.findFirst({
-                where: eq(users.id, post.userId),
-            });
             if (postAuthor?.isBot && postAuthor.botOwnerId) {
                 await db.insert(notifications).values({
                     userId: postAuthor.botOwnerId,
@@ -210,6 +241,7 @@ export async function POST(request: Request, context: RouteContext) {
                     actorNodeDomain: null,
                     postId,
                     postContent: post.content?.slice(0, 200) || null,
+                    ...buildNotificationTarget(postAuthor),
                     type: 'like',
                 });
             }
@@ -277,15 +309,19 @@ export async function POST(request: Request, context: RouteContext) {
 // Unlike a post
 export async function DELETE(request: Request, context: RouteContext) {
     try {
-        // Parse the signed action from the request body
-        const signedAction: SignedAction = await request.json();
+        const body = await readOptionalJson(request);
+        const { id: paramId } = await context.params;
+        const decodedParamId = decodeURIComponent(paramId);
 
-        // Verify the signature and get the user
-        const user = await requireSignedAction(signedAction);
+        const user = isSignedActionPayload(body)
+            ? await requireSignedAction(body)
+            : await requireAuth();
 
-        // Extract and validate postId from the signed action data
-        const { postId: rawId } = signedAction.data;
-        const decodedId = decodeURIComponent(rawId);
+        if (isSignedActionPayload(body) && body.data?.postId && body.data.postId !== decodedParamId) {
+            return NextResponse.json({ error: 'Post ID mismatch' }, { status: 400 });
+        }
+
+        const decodedId = decodedParamId;
         const postId = postIdSchema.parse(decodedId);
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
 

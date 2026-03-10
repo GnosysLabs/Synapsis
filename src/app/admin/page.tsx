@@ -387,23 +387,6 @@ export default function AdminPage() {
         );
     }
 
-    const formatTimestamp = (value?: string | null) => {
-        if (!value) return 'Never';
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) return value;
-        return date.toLocaleString();
-    };
-
-    const updateStatusLabel = (() => {
-        if (loadingUpdateStatus) return 'Checking...';
-        if (!updateStatus) return 'Unavailable';
-        if (!updateStatus.updater.available) return updateStatus.updater.message || 'Updater unavailable';
-        if (updateStatus.updater.status === 'updating') return updateStatus.updater.message || 'Update in progress';
-        if (updateStatus.updater.status === 'error') return updateStatus.updater.message || 'Last update failed';
-        if (updateStatus.updateAvailable) return 'Update available';
-        return 'Up to date';
-    })();
-
     return (
         <>
             <header style={{
@@ -782,51 +765,6 @@ export default function AdminPage() {
                                         </button>
                                     </div>
                                 )}
-
-                                <div style={{ display: 'grid', gap: '8px', marginTop: '16px', fontSize: '13px' }}>
-                                    <div>
-                                        <strong>Current build:</strong>{' '}
-                                        {updateStatus?.current?.version || 'Unknown'}
-                                    </div>
-                                    <div>
-                                        <strong>Latest build:</strong>{' '}
-                                        {updateStatus?.latest?.version || 'Unavailable'}
-                                    </div>
-                                    <div>
-                                        <strong>Status:</strong>{' '}
-                                        {updateStatusLabel}
-                                    </div>
-                                    {updateStatus?.updater.lastStartedAt && (
-                                        <div>
-                                            <strong>Last started:</strong>{' '}
-                                            {formatTimestamp(updateStatus.updater.lastStartedAt)}
-                                        </div>
-                                    )}
-                                    {updateStatus?.updater.lastFinishedAt && (
-                                        <div>
-                                            <strong>Last finished:</strong>{' '}
-                                            {formatTimestamp(updateStatus.updater.lastFinishedAt)}
-                                        </div>
-                                    )}
-                                    {typeof updateStatus?.updater.lastExitCode === 'number' && (
-                                        <div>
-                                            <strong>Last exit code:</strong>{' '}
-                                            {updateStatus.updater.lastExitCode}
-                                        </div>
-                                    )}
-                                    {updateStatus?.updater.trigger && (
-                                        <div>
-                                            <strong>Last trigger:</strong>{' '}
-                                            {updateStatus.updater.trigger === 'auto' ? 'Automatic update' : 'Manual update'}
-                                        </div>
-                                    )}
-                                    {updateStatus?.updater.lastError && (
-                                        <div style={{ color: 'var(--danger)' }}>
-                                            <strong>Last error:</strong>{' '}
-                                            {updateStatus.updater.lastError}
-                                        </div>
-                                    )}
-                                </div>
 
                                 {!updateStatus?.updater.available && (
                                     <div style={{

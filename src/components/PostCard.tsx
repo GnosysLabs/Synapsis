@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { HeartIcon, RepeatIcon, MessageIcon, FlagIcon, TrashIcon } from '@/components/Icons';
 import { Bot, MoreHorizontal, UserX, VolumeX, Globe } from 'lucide-react';
-import { Post } from '@/lib/types';
+import { Post, LinkPreviewMediaItem } from '@/lib/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useToast } from '@/lib/contexts/ToastContext';
 import { VideoEmbed } from '@/components/VideoEmbed';
@@ -13,6 +13,7 @@ import BlurredVideo from '@/components/BlurredVideo';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useDomain } from '@/lib/contexts/ConfigContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
+import type { LinkPreviewData } from '@/lib/media/linkPreview';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -31,6 +32,65 @@ function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
     );
 }
 
+const EMBED_VIDEO_REGEX = /(youtube\.com|youtu\.be|vimeo\.com)/;
+
+function isPlaceholderPreview(post: Post): boolean {
+    if (!post.linkPreviewUrl) {
+        return false;
+    }
+
+    try {
+        const hostname = new URL(
+            post.linkPreviewUrl.startsWith('http') ? post.linkPreviewUrl : `https://${post.linkPreviewUrl}`
+        ).hostname.replace(/^www\./, '').toLowerCase();
+        const title = post.linkPreviewTitle?.trim().toLowerCase() || '';
+        const hasRichData = Boolean(
+            post.linkPreviewDescription ||
+            post.linkPreviewImage ||
+            post.linkPreviewVideoUrl ||
+            (post.linkPreviewMedia && post.linkPreviewMedia.length > 0)
+        );
+
+        if (hasRichData) {
+            return false;
+        }
+
+        return (
+            !title ||
+            title === 'reddit' ||
+            title === hostname ||
+            title === `www.${hostname}`
+        );
+    } catch {
+        return false;
+    }
+}
+
+function LinkPreviewGallery({
+    media,
+    alt,
+    compact = false,
+}: {
+    media: LinkPreviewMediaItem[];
+    alt: string;
+    compact?: boolean;
+}) {
+    const visibleMedia = media.slice(0, compact ? 3 : 4);
+
+    return (
+        <div className={`link-preview-gallery ${compact ? 'compact' : ''}`}>
+            {visibleMedia.map((item, index) => (
+                <div className="link-preview-gallery-item" key={`${item.url}-${index}`}>
+                    <img src={item.url} alt={alt} loading="lazy" />
+                    {index === visibleMedia.length - 1 && media.length > visibleMedia.length && (
+                        <span className="link-preview-gallery-more">+{media.length - visibleMedia.length}</span>
+                    )}
+                </div>
+            ))}
+        </div>
+    );
+}
+
 interface PostCardProps {
     post: Post;
     onLike?: (id: string, currentLiked: boolean) => void;
@@ -41,10 +101,11 @@ interface PostCardProps {
     isDetail?: boolean;
     showThread?: boolean; // Show parent post inline as a thread
     isThreadParent?: boolean; // This post is being shown as a parent in a thread
+    isEmbedded?: boolean;
     parentPostAuthorId?: string; // ID of the parent post's author (for allowing deletion of replies)
 }
 
-export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, parentPostAuthorId }: PostCardProps) {
+export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId }: PostCardProps) {
     const { user: currentUser, did, handle: currentUserHandle, isIdentityUnlocked } = useAuth();
     const { showToast } = useToast();
     const router = useRouter();
@@ -57,8 +118,25 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
     const [reporting, setReporting] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
+    const [hydratedPreview, setHydratedPreview] = useState<LinkPreviewData | null>(null);
     const domain = useDomain();
     const authorHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
+    const isOwnOrOwnedBotPost = Boolean(
+        currentUser && (
+            currentUser.id === post.author.id ||
+            (post.bot && currentUser.id === post.bot.ownerId) ||
+            (post.author.id.startsWith('swarm:') && (
+                post.author.handle === currentUser.handle ||
+                post.author.handle === `${currentUser.handle}@${domain}`
+            ))
+        )
+    );
+    const canDeletePost = Boolean(
+        currentUser && (
+            isOwnOrOwnedBotPost ||
+            (parentPostAuthorId && currentUser.id === parentPostAuthorId)
+        )
+    );
     // Sync state if post changes (e.g. after a re-render from parent)
     useEffect(() => {
         setLiked(post.isLiked || false);
@@ -66,6 +144,47 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
         setReposted(post.isReposted || false);
         setRepostsCount(post.repostsCount || 0);
     }, [post.isLiked, post.likesCount, post.isReposted, post.repostsCount, post.id]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const missingPreviewData = Boolean(
+            post.linkPreviewUrl &&
+            !post.linkPreviewTitle &&
+            !post.linkPreviewDescription &&
+            !post.linkPreviewImage &&
+            !post.linkPreviewVideoUrl &&
+            (!post.linkPreviewMedia || post.linkPreviewMedia.length === 0)
+        );
+        const placeholderPreviewData = isPlaceholderPreview(post);
+
+        if ((!missingPreviewData && !placeholderPreviewData) || !post.linkPreviewUrl) {
+            setHydratedPreview(null);
+            return;
+        }
+
+        (async () => {
+            try {
+                const res = await fetch(`/api/media/preview?url=${encodeURIComponent(post.linkPreviewUrl!)}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!cancelled) {
+                    setHydratedPreview(data);
+                }
+            } catch {
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        post.linkPreviewUrl,
+        post.linkPreviewTitle,
+        post.linkPreviewDescription,
+        post.linkPreviewImage,
+        post.linkPreviewVideoUrl,
+        post.linkPreviewMedia,
+    ]);
 
     const formatTime = (dateStr: string | Date) => {
         const date = new Date(dateStr);
@@ -431,11 +550,91 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
             : post.swarmReplyToAuthor)?.nodeDomain,
     } as Post : null);
     const replyToHandle = effectiveReplyTo?.author?.handle ? useFormattedHandle(effectiveReplyTo.author.handle, effectiveReplyTo.nodeDomain) : '';
+    const repostHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
+    const hasOwnContent = decodeHtmlEntities(post.content).trim().length > 0;
+    const isRepostEvent = Boolean(post.repostOf);
+    const effectivePreview = {
+        url: hydratedPreview?.url || post.linkPreviewUrl || null,
+        title: hydratedPreview?.title || post.linkPreviewTitle || null,
+        description: hydratedPreview?.description || post.linkPreviewDescription || null,
+        image: hydratedPreview?.image || post.linkPreviewImage || null,
+        type: hydratedPreview?.type || post.linkPreviewType || null,
+        videoUrl: hydratedPreview?.videoUrl || post.linkPreviewVideoUrl || null,
+        media: hydratedPreview?.media || post.linkPreviewMedia || null,
+    };
+    const rawPreviewMedia = (() => {
+        const mediaJson = (post as Post & { linkPreviewMediaJson?: string | null }).linkPreviewMediaJson;
+        if (!mediaJson) {
+            return [];
+        }
+        try {
+            const parsed = JSON.parse(mediaJson);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    })();
+    const previewMedia = (effectivePreview.media && effectivePreview.media.length > 0)
+        ? effectivePreview.media
+        : rawPreviewMedia.length > 0
+            ? rawPreviewMedia
+        : effectivePreview.image
+            ? [{ url: effectivePreview.image }]
+            : [];
+    const previewImage = previewMedia[0]?.url || effectivePreview.image || null;
+    const isEmbeddedVideo = Boolean(effectivePreview.url && effectivePreview.url.match(EMBED_VIDEO_REGEX));
+    const isRichVideoPreview = effectivePreview.type === 'video' && Boolean(effectivePreview.videoUrl);
+    const isGalleryPreview = effectivePreview.type === 'gallery' && previewMedia.length > 1;
+
+    const renderLinkPreviewCard = (compact = false) => {
+        if (!effectivePreview.url || isEmbeddedVideo) {
+            return null;
+        }
+
+        return (
+            <a
+                href={effectivePreview.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`link-preview-card ${compact ? 'mini' : ''}`}
+                onClick={(e) => e.stopPropagation()}
+            >
+                {isRichVideoPreview && effectivePreview.videoUrl ? (
+                    <div className="link-preview-video">
+                        <video
+                            src={effectivePreview.videoUrl}
+                            poster={previewImage || undefined}
+                            controls
+                            playsInline
+                            preload="metadata"
+                        />
+                    </div>
+                ) : isGalleryPreview ? (
+                    <LinkPreviewGallery
+                        media={previewMedia}
+                        alt={effectivePreview.title || 'Link preview'}
+                        compact={compact}
+                    />
+                ) : previewImage ? (
+                    <LinkPreviewImage src={previewImage} alt={effectivePreview.title || ''} />
+                ) : null}
+                <div className="link-preview-info">
+                    <div className="link-preview-title">{effectivePreview.title ? decodeHtmlEntities(effectivePreview.title) : ''}</div>
+                    {effectivePreview.description && (
+                        <div className="link-preview-description">{decodeHtmlEntities(effectivePreview.description)}</div>
+                    )}
+                    <div className="link-preview-url">
+                        {new URL(effectivePreview.url.startsWith('http') ? effectivePreview.url : `https://${effectivePreview.url}`).hostname}
+                    </div>
+                </div>
+            </a>
+        );
+    };
 
     // If this is a thread parent being rendered, just render the article
     if (isThreadParent) {
         return (
-            <article className="post thread-parent">
+            <article className={`post thread-parent ${isEmbedded ? 'embedded' : ''}`}>
                 <div className="post-header">
                     <Link href={`/u/${profileHandle}`} className="avatar-link" onClick={(e) => e.stopPropagation()}>
                         <div className="avatar">
@@ -458,6 +657,46 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
         );
     }
 
+    if (isRepostEvent && post.repostOf) {
+        return (
+            <>
+                <article className={`post repost-event ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''}`}>
+                    <div className="repost-event-header">
+                        <span className="repost-event-icon" aria-hidden="true">
+                            <RepeatIcon />
+                        </span>
+                        <span className="repost-event-text">
+                            <Link href={`/u/${profileHandle}`} onClick={(e) => e.stopPropagation()}>
+                                {post.author.displayName || post.author.handle}
+                            </Link>
+                            <span className="repost-event-copy"> reposted</span>
+                            <span className="post-time"> {repostHandle} · {formatTime(post.createdAt)}</span>
+                        </span>
+                    </div>
+
+                    {hasOwnContent && (
+                        <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
+                    )}
+
+                    <div className="repost-embed">
+                        <PostCard
+                            post={post.repostOf}
+                            onLike={onLike}
+                            onRepost={onRepost}
+                            onComment={onComment}
+                            onDelete={onDelete}
+                            onHide={onHide}
+                            isDetail={isDetail}
+                            showThread={false}
+                            isEmbedded={true}
+                            parentPostAuthorId={parentPostAuthorId}
+                        />
+                    </div>
+                </article>
+            </>
+        );
+    }
+
     return (
         <>
             {/* Show parent post as part of thread - only on detail page */}
@@ -475,7 +714,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                     />
                 </div>
             )}
-            <article className={`post ${isDetail ? 'detail' : ''}`}>
+            <article className={`post ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''}`}>
                 {!isDetail && <Link href={postUrl} className="post-link-overlay" aria-label="View post" />}
 
                 <div className="post-header">
@@ -515,7 +754,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                         </div>
                         <span className="post-time">{authorHandle} · {formatTime(post.createdAt)}</span>
                     </div>
-                    {currentUser && currentUser.id !== post.author.id && (
+                    {currentUser && !isOwnOrOwnedBotPost && (
                         <div style={{ position: 'relative', marginLeft: 'auto' }}>
                             <button
                                 className="post-menu-btn"
@@ -671,28 +910,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                     <VideoEmbed url={post.linkPreviewUrl} />
                 )}
 
-                {post.linkPreviewUrl && !post.linkPreviewUrl.match(/(youtube\.com|youtu\.be|vimeo\.com)/) && (
-                    <a
-                        href={post.linkPreviewUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="link-preview-card"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        {post.linkPreviewImage && (
-                            <LinkPreviewImage src={post.linkPreviewImage} alt={post.linkPreviewTitle || ''} />
-                        )}
-                        <div className="link-preview-info">
-                            <div className="link-preview-title">{post.linkPreviewTitle ? decodeHtmlEntities(post.linkPreviewTitle) : ''}</div>
-                            {post.linkPreviewDescription && (
-                                <div className="link-preview-description">{decodeHtmlEntities(post.linkPreviewDescription)}</div>
-                            )}
-                            <div className="link-preview-url">
-                                {new URL(post.linkPreviewUrl.startsWith('http') ? post.linkPreviewUrl : `https://${post.linkPreviewUrl}`).hostname}
-                            </div>
-                        </div>
-                    </a>
-                )}
+                {renderLinkPreviewCard()}
 
                 <div className="post-actions">
                     <button className="post-action" onClick={handleComment}>
@@ -707,20 +925,13 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                         <HeartIcon filled={liked} />
                         <span>{likesCount || ''}</span>
                     </button>
-                    <button className="post-action" onClick={handleReport} disabled={reporting}>
-                        <FlagIcon />
-                        <span>{reporting ? '...' : ''}</span>
-                    </button>
-                    {(currentUser && (
-                        currentUser.id === post.author.id ||
-                        (post.bot && currentUser.id === post.bot.ownerId) ||
-                        (parentPostAuthorId && currentUser.id === parentPostAuthorId) ||
-                        // Allow deleting own remote posts where handle might be username@node_domain
-                        (post.author.id.startsWith('swarm:') && (
-                            post.author.handle === currentUser.handle ||
-                            post.author.handle === `${currentUser.handle}@${domain}`
-                        ))
-                    )) && (
+                    {!isOwnOrOwnedBotPost && (
+                        <button className="post-action" onClick={handleReport} disabled={reporting}>
+                            <FlagIcon />
+                            <span>{reporting ? '...' : ''}</span>
+                        </button>
+                    )}
+                    {canDeletePost && (
                             <button className="post-action delete-action" onClick={handleDelete} disabled={deleting} title="Delete post">
                                 <TrashIcon />
                                 <span>{deleting ? '...' : ''}</span>

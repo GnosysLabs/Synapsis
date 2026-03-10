@@ -51,10 +51,14 @@ export function useUserIdentity() {
           setIsRestoring(false);
           return;
         }
-        
+
+        if (!globalIdentity?.did) {
+          return;
+        }
+
         // Try to restore from persistent storage
-        const restoredKeyBytes = await tryRestoreKey();
-        if (restoredKeyBytes && globalIdentity) {
+        const restoredKeyBytes = await tryRestoreKey(globalIdentity.did);
+        if (restoredKeyBytes) {
           // Import the restored key as non-extractable
           const cryptoKey = await importPrivateKey(restoredKeyBytes);
           keyStore.setPrivateKey(cryptoKey);
@@ -86,6 +90,8 @@ export function useUserIdentity() {
     publicKey: string;
     privateKeyEncrypted?: string;
   }) => {
+    keyStore.clear();
+
     const coreIdentity = {
       did: userData.did,
       handle: userData.handle,
@@ -94,7 +100,7 @@ export function useUserIdentity() {
     keyStore.setIdentity(coreIdentity);
     
     // Try to auto-restore if we have persisted key
-    const restoredKeyBytes = await tryRestoreKey();
+    const restoredKeyBytes = await tryRestoreKey(userData.did);
     if (restoredKeyBytes) {
       const cryptoKey = await importPrivateKey(restoredKeyBytes);
       keyStore.setPrivateKey(cryptoKey);
@@ -150,7 +156,11 @@ export function useUserIdentity() {
       
       // PERSIST: Save raw key bytes for auto-restore on refresh
       // We pass the raw bytes because the CryptoKey is non-extractable
-      await persistUnlockedKey(privateKeyBase64, password);
+      if (!userDid) {
+        throw new Error('User DID is required to persist the unlocked identity');
+      }
+
+      await persistUnlockedKey(privateKeyBase64, password, userDid);
       
       console.log('[Identity] Private key stored in memory and persisted');
 
@@ -171,8 +181,9 @@ export function useUserIdentity() {
    * Lock the identity (manual lock, keeps identity info)
    */
   const lockIdentity = useCallback(async () => {
+    const identifier = keyStore.getIdentity()?.did;
     keyStore.clear();
-    await clearPersistentKey();
+    await clearPersistentKey(identifier);
     setIsUnlocked(false);
     setIdentity(prev => prev ? { ...prev, isUnlocked: false } : null);
   }, []);
@@ -181,8 +192,9 @@ export function useUserIdentity() {
    * Clear the identity (logout)
    */
   const clearIdentity = useCallback(async () => {
+    const identifier = keyStore.getIdentity()?.did;
     keyStore.clear();
-    await clearPersistentKey();
+    await clearPersistentKey(identifier);
     setIdentity(null);
     setIsUnlocked(false);
   }, []);

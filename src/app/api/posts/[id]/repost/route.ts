@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, notifications } from '@/db';
+import { db, posts, users, notifications, userSwarmReposts } from '@/db';
 import { requireAuth } from '@/lib/auth';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import crypto from 'crypto';
+import { buildNotificationTarget } from '@/lib/notifications';
+import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -40,6 +42,47 @@ function extractSwarmPostId(apId: string): string | null {
     return apId.substring(lastColonIndex + 1);
 }
 
+async function fetchSwarmPostSnapshot(domain: string, originalPostId: string) {
+    try {
+        const protocol = domain.includes('localhost') ? 'http' : 'https';
+        const res = await fetch(`${protocol}://${domain}/api/swarm/posts/${originalPostId}`, {
+            headers: { Accept: 'application/json' },
+            signal: AbortSignal.timeout(5000),
+        });
+
+        if (!res.ok) {
+            return null;
+        }
+
+        const data = await res.json();
+        const post = data.post;
+        if (!post) {
+            return null;
+        }
+
+        return {
+            authorHandle: post.author?.handle || 'unknown',
+            authorDisplayName: post.author?.displayName || post.author?.handle || 'Unknown',
+            authorAvatarUrl: post.author?.avatarUrl || null,
+            content: post.content || '',
+            postCreatedAt: new Date(post.createdAt || new Date().toISOString()),
+            likesCount: post.likesCount || 0,
+            repostsCount: post.repostsCount || 0,
+            repliesCount: post.repliesCount || 0,
+            linkPreviewUrl: post.linkPreviewUrl || null,
+            linkPreviewTitle: post.linkPreviewTitle || null,
+            linkPreviewDescription: post.linkPreviewDescription || null,
+            linkPreviewImage: post.linkPreviewImage || null,
+            linkPreviewType: post.linkPreviewType || null,
+            linkPreviewVideoUrl: post.linkPreviewVideoUrl || null,
+            linkPreviewMediaJson: serializeLinkPreviewMedia(post.linkPreviewMedia),
+            mediaJson: post.media ? JSON.stringify(post.media) : null,
+        };
+    } catch {
+        return null;
+    }
+}
+
 // Repost a post
 export async function POST(request: Request, context: RouteContext) {
     try {
@@ -62,6 +105,18 @@ export async function POST(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
             }
 
+            const existingRepost = await db.query.userSwarmReposts.findFirst({
+                where: and(
+                    eq(userSwarmReposts.userId, user.id),
+                    eq(userSwarmReposts.nodeDomain, targetDomain),
+                    eq(userSwarmReposts.originalPostId, originalPostId),
+                ),
+            });
+
+            if (existingRepost) {
+                return NextResponse.json({ error: 'Already reposted' }, { status: 400 });
+            }
+
             // Deliver repost directly to the origin node
             const { deliverSwarmRepost } = await import('@/lib/swarm/interactions');
 
@@ -82,6 +137,27 @@ export async function POST(request: Request, context: RouteContext) {
                 console.error(`[Swarm] Repost delivery failed: ${result.error}`);
                 return NextResponse.json({ error: 'Failed to deliver repost to remote node' }, { status: 502 });
             }
+
+            const snapshot = await fetchSwarmPostSnapshot(targetDomain, originalPostId);
+            if (snapshot) {
+                await db.insert(userSwarmReposts).values({
+                    userId: user.id,
+                    nodeDomain: targetDomain,
+                    originalPostId,
+                    ...snapshot,
+                    repostedAt: new Date(),
+                }).onConflictDoUpdate({
+                    target: [userSwarmReposts.userId, userSwarmReposts.nodeDomain, userSwarmReposts.originalPostId],
+                    set: {
+                        ...snapshot,
+                        repostedAt: new Date(),
+                    },
+                });
+            }
+
+            await db.update(users)
+                .set({ postsCount: sql`${users.postsCount} + 1` })
+                .where(eq(users.id, user.id));
 
             console.log(`[Swarm] Repost delivered to ${targetDomain} for post ${originalPostId}`);
             return NextResponse.json({ success: true, reposted: true });
@@ -133,6 +209,10 @@ export async function POST(request: Request, context: RouteContext) {
             .where(eq(users.id, user.id));
 
         if (originalPost.userId !== user.id) {
+            const postAuthor = await db.query.users.findFirst({
+                where: eq(users.id, originalPost.userId),
+            });
+
             // Create notification with actor info stored directly
             await db.insert(notifications).values({
                 userId: originalPost.userId,
@@ -143,13 +223,11 @@ export async function POST(request: Request, context: RouteContext) {
                 actorNodeDomain: null, // Local user
                 postId,
                 postContent: originalPost.content?.slice(0, 200) || null,
+                ...(postAuthor?.isBot ? buildNotificationTarget(postAuthor) : {}),
                 type: 'repost',
             });
 
             // Also notify bot owner if this is a bot's post
-            const postAuthor = await db.query.users.findFirst({
-                where: eq(users.id, originalPost.userId),
-            });
             if (postAuthor?.isBot && postAuthor.botOwnerId) {
                 await db.insert(notifications).values({
                     userId: postAuthor.botOwnerId,
@@ -160,6 +238,7 @@ export async function POST(request: Request, context: RouteContext) {
                     actorNodeDomain: null,
                     postId,
                     postContent: originalPost.content?.slice(0, 200) || null,
+                    ...buildNotificationTarget(postAuthor),
                     type: 'repost',
                 });
             }
@@ -236,6 +315,18 @@ export async function DELETE(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
             }
 
+            const existingRepost = await db.query.userSwarmReposts.findFirst({
+                where: and(
+                    eq(userSwarmReposts.userId, user.id),
+                    eq(userSwarmReposts.nodeDomain, targetDomain),
+                    eq(userSwarmReposts.originalPostId, originalPostId),
+                ),
+            });
+
+            if (!existingRepost) {
+                return NextResponse.json({ error: 'Not reposted' }, { status: 400 });
+            }
+
             // Deliver unrepost directly to the origin node
             const { deliverSwarmUnrepost } = await import('@/lib/swarm/interactions');
 
@@ -253,6 +344,16 @@ export async function DELETE(request: Request, context: RouteContext) {
                 console.error(`[Swarm] Unrepost delivery failed: ${result.error}`);
                 return NextResponse.json({ error: 'Failed to deliver unrepost to remote node' }, { status: 502 });
             }
+
+            await db.delete(userSwarmReposts).where(and(
+                eq(userSwarmReposts.userId, user.id),
+                eq(userSwarmReposts.nodeDomain, targetDomain),
+                eq(userSwarmReposts.originalPostId, originalPostId),
+            ));
+
+            await db.update(users)
+                .set({ postsCount: sql`GREATEST(0, ${users.postsCount} - 1)` })
+                .where(eq(users.id, user.id));
 
             console.log(`[Swarm] Unrepost delivered to ${targetDomain} for post ${originalPostId}`);
             return NextResponse.json({ success: true, reposted: false });

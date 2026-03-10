@@ -5,9 +5,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts } from '@/db';
+import { db, posts, userSwarmReposts, users } from '@/db';
 import { eq, desc, and } from 'drizzle-orm';
 import { z } from 'zod';
+import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -43,7 +44,62 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
 
     if (!post || post.isRemoved) {
-      return NextResponse.json({ error: 'Post not found' }, { status: 404 });
+      const remoteRepost = await db.query.userSwarmReposts.findFirst({
+        where: eq(userSwarmReposts.id, postId),
+      });
+
+      if (!remoteRepost) {
+        return NextResponse.json({ error: 'Post not found' }, { status: 404 });
+      }
+
+      const repostAuthor = await db.query.users.findFirst({
+        where: eq(users.id, remoteRepost.userId),
+      });
+
+      return NextResponse.json({
+        post: {
+          id: remoteRepost.id,
+          apId: null,
+          content: '',
+          createdAt: remoteRepost.repostedAt.toISOString(),
+          likesCount: 0,
+          repostsCount: 0,
+          repliesCount: 0,
+          author: repostAuthor ? {
+            handle: repostAuthor.handle,
+            displayName: repostAuthor.displayName,
+            avatarUrl: repostAuthor.avatarUrl,
+          } : null,
+          media: [],
+          repostOfId: remoteRepost.originalPostId,
+          repostOf: {
+            id: remoteRepost.originalPostId,
+            originalPostId: remoteRepost.originalPostId,
+            content: remoteRepost.content,
+            createdAt: remoteRepost.postCreatedAt.toISOString(),
+            likesCount: remoteRepost.likesCount,
+            repostsCount: remoteRepost.repostsCount,
+            repliesCount: remoteRepost.repliesCount,
+            nodeDomain: remoteRepost.nodeDomain,
+            author: {
+              handle: remoteRepost.authorHandle.includes('@')
+                ? remoteRepost.authorHandle
+                : `${remoteRepost.authorHandle}@${remoteRepost.nodeDomain}`,
+              displayName: remoteRepost.authorDisplayName,
+              avatarUrl: remoteRepost.authorAvatarUrl,
+            },
+            media: remoteRepost.mediaJson ? JSON.parse(remoteRepost.mediaJson) : [],
+            linkPreviewUrl: remoteRepost.linkPreviewUrl,
+            linkPreviewTitle: remoteRepost.linkPreviewTitle,
+            linkPreviewDescription: remoteRepost.linkPreviewDescription,
+            linkPreviewImage: remoteRepost.linkPreviewImage,
+            linkPreviewType: remoteRepost.linkPreviewType,
+            linkPreviewVideoUrl: remoteRepost.linkPreviewVideoUrl,
+            linkPreviewMedia: parseLinkPreviewMediaJson(remoteRepost.linkPreviewMediaJson) || [],
+          },
+        },
+        replies: [],
+      });
     }
 
     // Get replies
@@ -84,6 +140,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
         linkPreviewTitle: post.linkPreviewTitle,
         linkPreviewDescription: post.linkPreviewDescription,
         linkPreviewImage: post.linkPreviewImage,
+        linkPreviewType: post.linkPreviewType,
+        linkPreviewVideoUrl: post.linkPreviewVideoUrl,
+        linkPreviewMedia: parseLinkPreviewMediaJson(post.linkPreviewMediaJson) || [],
       },
       replies: replies.map(r => {
         const replyAuthor = r.author as any;
@@ -103,6 +162,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
             url: m.url,
             altText: m.altText,
           })) || [],
+          linkPreviewUrl: r.linkPreviewUrl,
+          linkPreviewTitle: r.linkPreviewTitle,
+          linkPreviewDescription: r.linkPreviewDescription,
+          linkPreviewImage: r.linkPreviewImage,
+          linkPreviewType: r.linkPreviewType,
+          linkPreviewVideoUrl: r.linkPreviewVideoUrl,
+          linkPreviewMedia: parseLinkPreviewMediaJson(r.linkPreviewMediaJson) || [],
         };
       }),
     });

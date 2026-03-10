@@ -446,6 +446,7 @@ export async function processMention(mentionId: string): Promise<MentionResponse
       personalityConfig: JSON.parse(bot.personalityConfig),
       llmProvider: bot.llmProvider as any,
       llmModel: bot.llmModel,
+      llmEndpoint: bot.llmEndpoint,
       llmApiKeyEncrypted: bot.llmApiKeyEncrypted,
     };
 

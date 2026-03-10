@@ -7,11 +7,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, users, notifications } from '@/db';
-import { eq, sql } from 'drizzle-orm';
+import { db, posts, users, notifications, remoteReposts } from '@/db';
+import { eq, sql, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import { buildNotificationTarget } from '@/lib/notifications';
 
 const swarmRepostSchema = z.object({
   postId: z.string().uuid(),
@@ -64,10 +65,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
 
+    const existingRepost = await db.query.remoteReposts.findFirst({
+      where: and(
+        eq(remoteReposts.postId, data.postId),
+        eq(remoteReposts.actorHandle, data.repost.actorHandle),
+        eq(remoteReposts.actorNodeDomain, data.repost.actorNodeDomain),
+      ),
+    });
+
+    if (existingRepost) {
+      return NextResponse.json({
+        success: true,
+        message: 'Repost already recorded',
+      });
+    }
+
     // Increment repost count
     await db.update(posts)
       .set({ repostsCount: sql`${posts.repostsCount} + 1` })
       .where(eq(posts.id, data.postId));
+
+    await db.insert(remoteReposts).values({
+      postId: data.postId,
+      actorHandle: data.repost.actorHandle,
+      actorNodeDomain: data.repost.actorNodeDomain,
+    });
+
+    const author = post.author as { isBot?: boolean; botOwnerId?: string; handle?: string; displayName?: string | null; avatarUrl?: string | null } | null;
 
     // Create notification with actor info stored directly
     try {
@@ -79,6 +103,7 @@ export async function POST(request: NextRequest) {
         actorNodeDomain: data.repost.actorNodeDomain,
         postId: data.postId,
         postContent: post.content?.slice(0, 200) || null,
+        ...(author?.isBot ? buildNotificationTarget(author as any) : {}),
         type: 'repost',
       });
       console.log(`[Swarm] Created repost notification for post ${data.postId} from ${data.repost.actorHandle}@${data.repost.actorNodeDomain}`);
@@ -87,7 +112,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Also notify bot owner if this is a bot's post
-    const author = post.author as { isBot?: boolean; botOwnerId?: string } | null;
     if (author?.isBot && author.botOwnerId) {
       try {
         await db.insert(notifications).values({
@@ -98,6 +122,7 @@ export async function POST(request: NextRequest) {
           actorNodeDomain: data.repost.actorNodeDomain,
           postId: data.postId,
           postContent: post.content?.slice(0, 200) || null,
+          ...buildNotificationTarget(author as any),
           type: 'repost',
         });
       } catch (err) {

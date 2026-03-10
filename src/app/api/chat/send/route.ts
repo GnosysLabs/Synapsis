@@ -6,6 +6,7 @@ import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { createSignedPayload } from '@/lib/swarm/signature';
 import { federatedHandleSchema } from '@/lib/utils/federation';
+import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 
 const chatSendSchema = z.object({
     recipientDid: z.string().min(1).regex(/^did:/, 'Must be a valid DID (did:key:... or did:synapsis:...)'),
@@ -165,6 +166,11 @@ export async function POST(request: NextRequest) {
             if (!targetDomain) {
                 console.error('Recipient node domain not found for:', recipientHandle);
                 return NextResponse.json({ error: 'Recipient node not found' }, { status: 404 });
+            }
+
+            targetDomain = normalizeNodeDomain(targetDomain);
+            if (await isNodeBlocked(targetDomain)) {
+                return NextResponse.json({ error: 'This node is blocked by the server administrator' }, { status: 403 });
             }
 
             console.log(`[Remote Send] Sending to ${targetHandle} at ${targetDomain}`);

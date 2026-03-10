@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
+import { getSession, getSessionAccounts } from '@/lib/auth';
 import { db, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -22,9 +22,10 @@ export async function GET() {
         }
 
         const session = await getSession();
+        const accounts = await getSessionAccounts();
 
         if (!session) {
-            return NextResponse.json({ user: null });
+            return NextResponse.json({ user: null, accounts: [] });
         }
 
         return NextResponse.json({
@@ -40,10 +41,11 @@ export async function GET() {
                 publicKey: session.user.publicKey,
                 privateKeyEncrypted: session.user.privateKeyEncrypted,
             },
+            accounts,
         });
     } catch (error) {
         console.error('Session check error:', error);
-        return NextResponse.json({ user: null });
+        return NextResponse.json({ user: null, accounts: [] });
     }
 }
 

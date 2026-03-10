@@ -15,6 +15,7 @@ import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import { buildNotificationTarget } from '@/lib/notifications';
 
 const swarmFollowSchema = z.object({
   targetHandle: localHandleSchema,
@@ -107,6 +108,7 @@ export async function POST(request: NextRequest) {
         actorDisplayName: data.follow.followerDisplayName,
         actorAvatarUrl: data.follow.followerAvatarUrl || null,
         actorNodeDomain: data.follow.followerNodeDomain,
+        ...(targetUser.isBot ? buildNotificationTarget(targetUser) : {}),
         type: 'follow',
       });
       console.log(`[Swarm] Created follow notification for @${data.targetHandle} from ${data.follow.followerHandle}@${data.follow.followerNodeDomain}`);
@@ -125,6 +127,7 @@ export async function POST(request: NextRequest) {
           actorDisplayName: data.follow.followerDisplayName,
           actorAvatarUrl: data.follow.followerAvatarUrl || null,
           actorNodeDomain: data.follow.followerNodeDomain,
+          ...buildNotificationTarget(targetUser),
           type: 'follow',
         });
       } catch (err) {

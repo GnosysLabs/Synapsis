@@ -96,9 +96,20 @@ server {
 
 ## 🔄 Updates (migrations run automatically)
 
+Use the updater for existing installs. It preserves `.env`, refreshes the installed compose/proxy files, pulls the latest published image, and restarts the stack.
+
+```bash
+curl -fsSL https://synapsis.social/update.sh | bash
+```
+
+If the host was installed with `PROXY=none`, the updater detects that and keeps using the proxyless compose file automatically.
+
+Manual update still works if you only want to restart with the already-installed files:
+
 ```bash
 cd /opt/synapsis
-docker compose pull && docker compose up -d
+docker compose pull
+docker compose up -d
 ```
 
 ## 🗑️ Full Uninstall
@@ -221,6 +232,18 @@ git clone https://github.com/GnosysLabs/Synapsis.git
 cd synapsis/docker
 docker compose up -d --build
 ```
+
+To publish a stamped GHCR image with embedded app version, commit, and build date:
+
+```bash
+cd /path/to/Synapsis
+./scripts/docker-publish.sh
+```
+
+That script automatically publishes:
+- `ghcr.io/gnosyslabs/synapsis:latest`
+- `ghcr.io/gnosyslabs/synapsis:<YYYY.MM.DD.N>`
+- `ghcr.io/gnosyslabs/synapsis:<short-sha>`
 
 ---
 

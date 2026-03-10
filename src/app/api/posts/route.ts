@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, media, follows, mutes, blocks, likes, remoteFollows, remotePosts } from '@/db';
+import { db, posts, users, media, follows, mutes, blocks, likes, remoteFollows, remotePosts, userSwarmReposts, notifications } from '@/db';
 import { requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, desc, and, inArray, isNull, isNotNull, or, lt, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { z } from 'zod';
+import { buildNotificationTarget } from '@/lib/notifications';
+import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_WINDOW_HOURS = 72;
@@ -16,6 +18,138 @@ const buildWhere = (...conditions: Array<SQL | undefined>) => {
     if (filtered.length === 0) return undefined;
     return and(...filtered);
 };
+
+type FeedPostWithChildren = {
+    id: string;
+    repostOf?: FeedPostWithChildren | null;
+    replyTo?: FeedPostWithChildren | null;
+    isLiked?: boolean;
+    isReposted?: boolean;
+    nodeDomain?: string | null;
+    originalPostId?: string | null;
+};
+
+function mapUserSwarmRepostToFeedPost(
+    row: typeof userSwarmReposts.$inferSelect,
+    author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl' | 'isBot'>
+): FeedPostWithChildren {
+    const remoteAuthorHandle = row.authorHandle.includes('@')
+        ? row.authorHandle
+        : `${row.authorHandle}@${row.nodeDomain}`;
+    const remoteOriginalId = `swarm:${row.nodeDomain}:${row.originalPostId}`;
+
+    return {
+        id: `swarm-repost:${row.id}`,
+        content: '',
+        createdAt: row.repostedAt.toISOString(),
+        likesCount: 0,
+        repostsCount: 0,
+        repliesCount: 0,
+        author: {
+            id: author.id,
+            handle: author.handle,
+            displayName: author.displayName,
+            avatarUrl: author.avatarUrl,
+            isBot: author.isBot,
+        },
+        repostOfId: remoteOriginalId,
+        repostOf: {
+            id: remoteOriginalId,
+            originalPostId: row.originalPostId,
+            content: row.content,
+            createdAt: row.postCreatedAt.toISOString(),
+            likesCount: row.likesCount,
+            repostsCount: row.repostsCount,
+            repliesCount: row.repliesCount,
+            isSwarm: true,
+            nodeDomain: row.nodeDomain,
+            author: {
+                id: `swarm:${row.nodeDomain}:${row.authorHandle}`,
+                handle: remoteAuthorHandle,
+                displayName: row.authorDisplayName || row.authorHandle,
+                avatarUrl: row.authorAvatarUrl,
+                isRemote: true,
+                nodeDomain: row.nodeDomain,
+            },
+            media: row.mediaJson ? JSON.parse(row.mediaJson) : [],
+            linkPreviewUrl: row.linkPreviewUrl,
+            linkPreviewTitle: row.linkPreviewTitle,
+            linkPreviewDescription: row.linkPreviewDescription,
+            linkPreviewImage: row.linkPreviewImage,
+            linkPreviewType: row.linkPreviewType,
+            linkPreviewVideoUrl: row.linkPreviewVideoUrl,
+            linkPreviewMedia: parseLinkPreviewMediaJson(row.linkPreviewMediaJson) || null,
+        },
+    } as any;
+}
+
+async function getMixedFeedCursorDate(cursor: string | null) {
+    if (!cursor) {
+        return null;
+    }
+
+    if (cursor.startsWith('swarm-repost:')) {
+        const repostRow = await db.query.userSwarmReposts.findFirst({
+            where: eq(userSwarmReposts.id, cursor.replace('swarm-repost:', '')),
+        });
+        return repostRow?.repostedAt ?? null;
+    }
+
+    const cursorPost = await db.query.posts.findFirst({
+        where: eq(posts.id, cursor),
+    });
+    return cursorPost?.createdAt ?? null;
+}
+
+function collectNestedPosts(posts: FeedPostWithChildren[]): FeedPostWithChildren[] {
+    const collected: FeedPostWithChildren[] = [];
+    const seen = new Set<string>();
+
+    const visit = (post: FeedPostWithChildren | null | undefined) => {
+        if (!post || seen.has(post.id)) return;
+        seen.add(post.id);
+        collected.push(post);
+        visit(post.repostOf);
+        visit(post.replyTo);
+    };
+
+    posts.forEach(visit);
+    return collected;
+}
+
+function applyInteractionFlags(
+    posts: FeedPostWithChildren[],
+    likedIds: Set<string>,
+    repostedIds: Set<string>
+): FeedPostWithChildren[] {
+    return posts.map((post) => ({
+        ...post,
+        isLiked: likedIds.has(post.id),
+        isReposted: repostedIds.has(post.id),
+        repostOf: post.repostOf ? applyInteractionFlags([post.repostOf], likedIds, repostedIds)[0] : post.repostOf,
+        replyTo: post.replyTo ? applyInteractionFlags([post.replyTo], likedIds, repostedIds)[0] : post.replyTo,
+    }));
+}
+
+const embeddedPostRelations = {
+    author: true,
+    bot: true,
+    media: true,
+    replyTo: {
+        with: {
+            author: true,
+            bot: true,
+            media: true,
+        },
+    },
+} as const;
+
+const feedPostRelations = {
+    ...embeddedPostRelations,
+    repostOf: {
+        with: embeddedPostRelations,
+    },
+} as const;
 
 const createPostSchema = z.object({
     content: z.string().min(1).max(POST_MAX_LENGTH),
@@ -38,21 +172,40 @@ const createPostSchema = z.object({
         title: z.string().optional(),
         description: z.string().optional(),
         image: z.string().url().optional().nullable(),
+        type: z.enum(['card', 'image', 'gallery', 'video']).optional().nullable(),
+        videoUrl: z.string().url().optional().nullable(),
+        media: z.array(z.object({
+            url: z.string().url(),
+            width: z.number().optional().nullable(),
+            height: z.number().optional().nullable(),
+            mimeType: z.string().optional().nullable(),
+        })).optional().nullable(),
     }).optional().nullable(),
 });
+
+function isSignedActionPayload(payload: unknown): payload is SignedAction {
+    if (!payload || typeof payload !== 'object') return false;
+    const value = payload as Record<string, unknown>;
+    return typeof value.action === 'string'
+        && typeof value.did === 'string'
+        && typeof value.handle === 'string'
+        && typeof value.ts === 'number'
+        && typeof value.nonce === 'string'
+        && typeof value.sig === 'string'
+        && typeof value.data === 'object'
+        && value.data !== null;
+}
 
 // Create a new post
 export async function POST(request: Request) {
     try {
-        // Parse the signed action from the request body
-        const signedAction: SignedAction = await request.json();
-
-        // Strictly verify the signature and get the user
-        // This replaces requireAuth() - the signature proves identity AND intent
-        const user = await requireSignedAction(signedAction);
-
-        // Extract post data from the signed action
-        const data = createPostSchema.parse(signedAction.data);
+        const requestBody = await request.json();
+        const user = isSignedActionPayload(requestBody)
+            ? await requireSignedAction(requestBody)
+            : await requireAuth();
+        const data = createPostSchema.parse(
+            isSignedActionPayload(requestBody) ? requestBody.data : requestBody
+        );
 
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -84,6 +237,9 @@ export async function POST(request: Request) {
             linkPreviewTitle: data.linkPreview?.title,
             linkPreviewDescription: data.linkPreview?.description,
             linkPreviewImage: data.linkPreview?.image,
+            linkPreviewType: data.linkPreview?.type,
+            linkPreviewVideoUrl: data.linkPreview?.videoUrl,
+            linkPreviewMediaJson: serializeLinkPreviewMedia(data.linkPreview?.media),
         }).returning();
 
         let unattachedMedia: typeof media.$inferSelect[] = [];
@@ -181,12 +337,56 @@ export async function POST(request: Request) {
             });
         }
 
+        if (data.replyToId) {
+            try {
+                const parentPost = await db.query.posts.findFirst({
+                    where: eq(posts.id, data.replyToId),
+                    with: {
+                        author: true,
+                    },
+                });
+
+                if (parentPost && parentPost.userId !== user.id) {
+                    const parentAuthor = parentPost.author as typeof users.$inferSelect | undefined;
+
+                    await db.insert(notifications).values({
+                        userId: parentPost.userId,
+                        actorId: user.id,
+                        actorHandle: user.handle,
+                        actorDisplayName: user.displayName,
+                        actorAvatarUrl: user.avatarUrl,
+                        actorNodeDomain: null,
+                        postId: parentPost.id,
+                        postContent: post.content?.slice(0, 200) || null,
+                        ...(parentAuthor?.isBot ? buildNotificationTarget(parentAuthor) : {}),
+                        type: 'reply',
+                    });
+
+                    if (parentAuthor?.isBot && parentAuthor.botOwnerId) {
+                        await db.insert(notifications).values({
+                            userId: parentAuthor.botOwnerId,
+                            actorId: user.id,
+                            actorHandle: user.handle,
+                            actorDisplayName: user.displayName,
+                            actorAvatarUrl: user.avatarUrl,
+                            actorNodeDomain: null,
+                            postId: parentPost.id,
+                            postContent: post.content?.slice(0, 200) || null,
+                            ...buildNotificationTarget(parentAuthor),
+                            type: 'reply',
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('[Posts] Error creating reply notifications:', err);
+                console.error('[Posts] Context:', { postId: post.id, replyToId: data.replyToId, userId: user.id });
+            }
+        }
+
         // Handle local mentions (create notifications for users on this node)
         (async () => {
             try {
                 const { extractMentions } = await import('@/lib/swarm/interactions');
-                const { notifications } = await import('@/db');
-
                 const mentions = extractMentions(data.content);
 
                 for (const mention of mentions) {
@@ -209,6 +409,7 @@ export async function POST(request: Request) {
                             actorNodeDomain: null, // Local user
                             postId: post.id,
                             postContent: post.content?.slice(0, 200) || null,
+                            ...(mentionedUser.isBot ? buildNotificationTarget(mentionedUser) : {}),
                             type: 'mention',
                         });
 
@@ -223,6 +424,7 @@ export async function POST(request: Request) {
                                 actorNodeDomain: null,
                                 postId: post.id,
                                 postContent: post.content?.slice(0, 200) || null,
+                                ...buildNotificationTarget(mentionedUser),
                                 type: 'mention',
                             });
                         }
@@ -374,6 +576,9 @@ const transformRemotePosts = (remotePostsData: typeof remotePosts.$inferSelect[]
             linkPreviewTitle: rp.linkPreviewTitle,
             linkPreviewDescription: rp.linkPreviewDescription,
             linkPreviewImage: rp.linkPreviewImage,
+            linkPreviewType: rp.linkPreviewType,
+            linkPreviewVideoUrl: rp.linkPreviewVideoUrl,
+            linkPreviewMedia: parseLinkPreviewMediaJson(rp.linkPreviewMediaJson) || null,
             author: {
                 id: rp.authorActorUrl,
                 handle: rp.authorHandle,
@@ -437,14 +642,7 @@ export async function GET(request: Request) {
 
             feedPosts = await db.query.posts.findMany({
                 where: whereCondition,
-                with: {
-                    author: true,
-                    bot: true,
-                    media: true,
-                    replyTo: {
-                        with: { author: true, media: true },
-                    },
-                },
+                with: feedPostRelations,
                 orderBy: [desc(posts.createdAt)],
                 limit,
             });
@@ -452,14 +650,7 @@ export async function GET(request: Request) {
             // Public timeline - all local posts + all cached remote posts
             const localPosts = await db.query.posts.findMany({
                 where: baseFilter,
-                with: {
-                    author: true,
-                    bot: true,
-                    media: true,
-                    replyTo: {
-                        with: { author: true, media: true },
-                    },
-                },
+                with: feedPostRelations,
                 orderBy: [desc(posts.createdAt)],
                 limit: limit * 2,
             });
@@ -492,14 +683,7 @@ export async function GET(request: Request) {
 
             feedPosts = await db.query.posts.findMany({
                 where: whereCondition,
-                with: {
-                    author: true,
-                    bot: true,
-                    media: true,
-                    replyTo: {
-                        with: { author: true, media: true },
-                    },
-                },
+                with: feedPostRelations,
                 orderBy: [desc(posts.createdAt)],
                 limit,
             });
@@ -519,14 +703,7 @@ export async function GET(request: Request) {
 
             feedPosts = await db.query.posts.findMany({
                 where: whereCondition,
-                with: {
-                    author: true,
-                    bot: true,
-                    media: true,
-                    replyTo: {
-                        with: { author: true, media: true },
-                    },
-                },
+                with: feedPostRelations,
                 orderBy: [desc(posts.createdAt)],
                 limit,
             });
@@ -554,7 +731,7 @@ export async function GET(request: Request) {
                 includeNsfw,
             });
 
-            const swarmPosts = swarmResult.posts.map(sp => ({
+            const mapSwarmPostToFeedPost = (sp: (typeof swarmResult.posts)[number]): any => ({
                 id: `swarm:${sp.nodeDomain}:${sp.id}`,
                 originalPostId: sp.id, // Keep the original ID for replies
                 content: sp.content,
@@ -564,6 +741,8 @@ export async function GET(request: Request) {
                 repliesCount: sp.replyCount,
                 isSwarm: true,
                 nodeDomain: sp.nodeDomain,
+                repostOfId: sp.repostOfId ? `swarm:${sp.nodeDomain}:${sp.repostOfId}` : null,
+                repostOf: sp.repostOf ? mapSwarmPostToFeedPost(sp.repostOf) : null,
                 author: {
                     id: `swarm:${sp.nodeDomain}:${sp.author.handle}`,
                     handle: sp.author.handle,
@@ -583,8 +762,13 @@ export async function GET(request: Request) {
                 linkPreviewTitle: sp.linkPreviewTitle || null,
                 linkPreviewDescription: sp.linkPreviewDescription || null,
                 linkPreviewImage: sp.linkPreviewImage || null,
+                linkPreviewType: sp.linkPreviewType || null,
+                linkPreviewVideoUrl: sp.linkPreviewVideoUrl || null,
+                linkPreviewMedia: sp.linkPreviewMedia || null,
                 replyTo: null,
-            }));
+            });
+
+            const swarmPosts = swarmResult.posts.map(mapSwarmPostToFeedPost);
 
             let mutedIds = new Set<string>();
             let blockedIds = new Set<string>();
@@ -674,30 +858,47 @@ export async function GET(request: Request) {
 
                 // Build where condition with cursor support
                 let whereCondition = buildWhere(baseFilter, inArray(posts.userId, allowedUserIds));
+                const cursorDate = await getMixedFeedCursorDate(cursor);
 
-                if (cursor) {
-                    const cursorPost = await db.query.posts.findFirst({
-                        where: eq(posts.id, cursor),
-                    });
-                    if (cursorPost) {
-                        whereCondition = buildWhere(baseFilter, inArray(posts.userId, allowedUserIds), lt(posts.createdAt, cursorPost.createdAt));
-                    }
+                if (cursorDate) {
+                    whereCondition = buildWhere(baseFilter, inArray(posts.userId, allowedUserIds), lt(posts.createdAt, cursorDate));
                 }
 
                 // Get local posts from people the user follows + their own posts
                 const localPosts = await db.query.posts.findMany({
                     where: whereCondition,
-                    with: {
-                        author: true,
-                        bot: true,
-                        media: true,
-                        replyTo: {
-                            with: { author: true, media: true },
-                        },
-                    },
+                    with: feedPostRelations,
                     orderBy: [desc(posts.createdAt)],
                     limit: cursor ? limit : limit * 2, // Get more on first load to account for mixing with remote
                 });
+
+                const swarmRepostWhere = cursorDate
+                    ? and(
+                        inArray(userSwarmReposts.userId, allowedUserIds),
+                        lt(userSwarmReposts.repostedAt, cursorDate)
+                    )
+                    : inArray(userSwarmReposts.userId, allowedUserIds);
+                const swarmRepostRows = await db.query.userSwarmReposts.findMany({
+                    where: swarmRepostWhere,
+                    orderBy: [desc(userSwarmReposts.repostedAt)],
+                    limit: cursor ? limit : limit * 2,
+                });
+
+                const swarmRepostAuthors = swarmRepostRows.length > 0
+                    ? await db.query.users.findMany({
+                        where: inArray(users.id, Array.from(new Set(swarmRepostRows.map((row) => row.userId)))),
+                    })
+                    : [];
+                const swarmRepostAuthorMap = new Map(swarmRepostAuthors.map((author) => [author.id, author]));
+                const localRepostEvents = swarmRepostRows
+                    .map((row) => {
+                        const author = swarmRepostAuthorMap.get(row.userId);
+                        if (!author) {
+                            return null;
+                        }
+                        return mapUserSwarmRepostToFeedPost(row, author);
+                    })
+                    .filter(Boolean);
 
                 // Get handles of remote users we follow
                 const followedRemoteUsers = await db.query.remoteFollows.findMany({
@@ -708,6 +909,7 @@ export async function GET(request: Request) {
                 let liveRemotePosts: any[] = [];
                 if (followedRemoteUsers.length > 0) {
                     const { fetchSwarmUserProfile, isSwarmNode } = await import('@/lib/swarm/interactions');
+                    const { mapRemoteProfilePost } = await import('@/lib/swarm/remote-profile-posts');
 
                     // Wrap each fetch with a timeout to prevent slow nodes from blocking
                     const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T | null> => {
@@ -737,34 +939,15 @@ export async function GET(request: Request) {
 
                             return profileData.posts
                                 .filter((post: any) => !post.replyToId && !post.swarmReplyToId && !post.isReply)
-                                .map(post => ({
-                                id: `swarm:${domain}:${post.id}`,
-                                content: post.content,
-                                createdAt: new Date(post.createdAt),
-                                likesCount: post.likesCount || 0,
-                                repostsCount: post.repostsCount || 0,
-                                repliesCount: post.repliesCount || 0,
-                                isRemote: true,
-                                isNsfw: post.isNsfw,
-                                linkPreviewUrl: post.linkPreviewUrl,
-                                linkPreviewTitle: post.linkPreviewTitle,
-                                linkPreviewDescription: post.linkPreviewDescription,
-                                linkPreviewImage: post.linkPreviewImage,
-                                author: {
-                                    id: `swarm:${domain}:${handle}`,
-                                    handle: follow.targetHandle,
-                                    displayName: follow.displayName || profileData.profile?.displayName || handle,
-                                    avatarUrl: follow.avatarUrl || profileData.profile?.avatarUrl,
-                                    isRemote: true,
-                                    isBot: profileData.profile?.isBot,
-                                },
-                                media: post.media?.map((m: any, idx: number) => ({
-                                    id: `swarm:${domain}:${post.id}:media:${idx}`,
-                                    url: m.url,
-                                    altText: m.altText || null,
-                                })) || [],
-                                replyTo: null,
-                            }));
+                                .map((post: any) => mapRemoteProfilePost({
+                                    ...post,
+                                    author: post.author || {
+                                        handle,
+                                        displayName: follow.displayName || profileData.profile?.displayName || handle,
+                                        avatarUrl: follow.avatarUrl || profileData.profile?.avatarUrl,
+                                        isBot: profileData.profile?.isBot,
+                                    },
+                                }, domain));
                         } catch (error) {
                             console.error(`[Home] Error fetching posts from ${follow.targetHandle}:`, error);
                             return [];
@@ -776,7 +959,7 @@ export async function GET(request: Request) {
                 }
 
                 // Merge and sort by date
-                const allPosts = [...localPosts, ...liveRemotePosts]
+                const allPosts = [...localPosts, ...localRepostEvents, ...liveRemotePosts]
                     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
                     .slice(0, limit);
 
@@ -785,14 +968,7 @@ export async function GET(request: Request) {
                 // Not authenticated, return public timeline
                 feedPosts = await db.query.posts.findMany({
                     where: baseFilter,
-                    with: {
-                        author: true,
-                        bot: true,
-                        media: true,
-                        replyTo: {
-                            with: { author: true, media: true },
-                        },
-                    },
+                    with: feedPostRelations,
                     orderBy: [desc(posts.createdAt)],
                     limit,
                 });
@@ -807,12 +983,13 @@ export async function GET(request: Request) {
             if (session?.user && feedPosts && feedPosts.length > 0) {
                 const viewer = session.user;
                 const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+                const allFeedPosts = collectNestedPosts(feedPosts as FeedPostWithChildren[]);
 
                 // Separate local and swarm posts
                 const localPostIds: string[] = [];
                 const swarmPosts: Array<{ id: string; domain: string; originalId: string }> = [];
 
-                for (const p of feedPosts as Array<{ id: string }>) {
+                for (const p of allFeedPosts) {
                     if (p.id.startsWith('swarm:')) {
                         const parts = p.id.split(':');
                         if (parts.length >= 3) {
@@ -852,6 +1029,8 @@ export async function GET(request: Request) {
 
                 // Check swarm likes in real-time (query origin nodes)
                 if (swarmPosts.length > 0) {
+                    const { getViewerSwarmRepostedPostIds } = await import('@/lib/swarm/reposts');
+
                     const checkPromises = swarmPosts.map(async (sp) => {
                         try {
                             const protocol = sp.domain.includes('localhost') ? 'http' : 'https';
@@ -874,13 +1053,23 @@ export async function GET(request: Request) {
                     });
 
                     await Promise.all(checkPromises);
+
+                    const swarmRepostedIds = await getViewerSwarmRepostedPostIds(
+                        swarmPosts.map((sp) => ({
+                            id: sp.id,
+                            nodeDomain: sp.domain,
+                            originalPostId: sp.originalId,
+                        })),
+                        viewer.id
+                    );
+                    swarmRepostedIds.forEach((id) => repostedPostIds.add(id));
                 }
 
-                feedPosts = feedPosts.map((p: { id: string }) => ({
-                    ...p,
-                    isLiked: likedPostIds.has(p.id),
-                    isReposted: repostedPostIds.has(p.id),
-                })) as any;
+                feedPosts = applyInteractionFlags(
+                    feedPosts as FeedPostWithChildren[],
+                    likedPostIds,
+                    repostedPostIds
+                ) as any;
             }
         } catch (error) {
             console.error('Error populating interaction flags:', error);

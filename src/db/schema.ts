@@ -143,6 +143,9 @@ export const posts = pgTable('posts', {
   linkPreviewTitle: text('link_preview_title'),
   linkPreviewDescription: text('link_preview_description'),
   linkPreviewImage: text('link_preview_image'),
+  linkPreviewType: text('link_preview_type'),
+  linkPreviewVideoUrl: text('link_preview_video_url'),
+  linkPreviewMediaJson: text('link_preview_media_json'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => [
@@ -301,6 +304,9 @@ export const remotePosts = pgTable('remote_posts', {
   linkPreviewTitle: text('link_preview_title'),
   linkPreviewDescription: text('link_preview_description'),
   linkPreviewImage: text('link_preview_image'),
+  linkPreviewType: text('link_preview_type'),
+  linkPreviewVideoUrl: text('link_preview_video_url'),
+  linkPreviewMediaJson: text('link_preview_media_json'),
   // Media attachments stored as JSON
   mediaJson: text('media_json'), // JSON array of {url, altText}
   // Metadata
@@ -374,12 +380,47 @@ export const userSwarmLikes = pgTable('user_swarm_likes', {
   linkPreviewTitle: text('link_preview_title'),
   linkPreviewDescription: text('link_preview_description'),
   linkPreviewImage: text('link_preview_image'),
+  linkPreviewType: text('link_preview_type'),
+  linkPreviewVideoUrl: text('link_preview_video_url'),
+  linkPreviewMediaJson: text('link_preview_media_json'),
   mediaJson: text('media_json'),
   likedAt: timestamp('liked_at').defaultNow().notNull(),
 }, (table) => [
   index('user_swarm_likes_user_idx').on(table.userId, table.likedAt),
   index('user_swarm_likes_post_idx').on(table.nodeDomain, table.originalPostId),
   uniqueIndex('user_swarm_likes_unique').on(table.userId, table.nodeDomain, table.originalPostId),
+]);
+
+// ============================================
+// USER SWARM REPOSTS (local users reposting remote swarm posts)
+// ============================================
+
+export const userSwarmReposts = pgTable('user_swarm_reposts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  nodeDomain: text('node_domain').notNull(),
+  originalPostId: text('original_post_id').notNull(),
+  authorHandle: text('author_handle').notNull(),
+  authorDisplayName: text('author_display_name'),
+  authorAvatarUrl: text('author_avatar_url'),
+  content: text('content').notNull(),
+  postCreatedAt: timestamp('post_created_at').notNull(),
+  likesCount: integer('likes_count').default(0).notNull(),
+  repostsCount: integer('reposts_count').default(0).notNull(),
+  repliesCount: integer('replies_count').default(0).notNull(),
+  linkPreviewUrl: text('link_preview_url'),
+  linkPreviewTitle: text('link_preview_title'),
+  linkPreviewDescription: text('link_preview_description'),
+  linkPreviewImage: text('link_preview_image'),
+  linkPreviewType: text('link_preview_type'),
+  linkPreviewVideoUrl: text('link_preview_video_url'),
+  linkPreviewMediaJson: text('link_preview_media_json'),
+  mediaJson: text('media_json'),
+  repostedAt: timestamp('reposted_at').defaultNow().notNull(),
+}, (table) => [
+  index('user_swarm_reposts_user_idx').on(table.userId, table.repostedAt),
+  index('user_swarm_reposts_post_idx').on(table.nodeDomain, table.originalPostId),
+  uniqueIndex('user_swarm_reposts_unique').on(table.userId, table.nodeDomain, table.originalPostId),
 ]);
 
 // ============================================
@@ -411,6 +452,12 @@ export const notifications = pgTable('notifications', {
   actorDisplayName: text('actor_display_name'),
   actorAvatarUrl: text('actor_avatar_url'),
   actorNodeDomain: text('actor_node_domain'), // null for local actors
+  // Target info - used for owner-shadow notifications like interactions with owned bots
+  targetHandle: text('target_handle'),
+  targetDisplayName: text('target_display_name'),
+  targetAvatarUrl: text('target_avatar_url'),
+  targetNodeDomain: text('target_node_domain'),
+  targetIsBot: boolean('target_is_bot'),
   // Post reference
   postId: uuid('post_id').references(() => posts.id, { onDelete: 'cascade' }),
   postContent: text('post_content'), // Cached content for display
@@ -586,8 +633,9 @@ export const bots = pgTable('bots', {
   personalityConfig: text('personality_config').notNull(), // JSON
 
   // LLM configuration
-  llmProvider: text('llm_provider').notNull(), // openrouter, openai, anthropic
+  llmProvider: text('llm_provider').notNull(), // openrouter, openai, anthropic, custom
   llmModel: text('llm_model').notNull(),
+  llmEndpoint: text('llm_endpoint'),
   llmApiKeyEncrypted: text('llm_api_key_encrypted').notNull(),
 
   // Scheduling
@@ -840,6 +888,11 @@ export const swarmNodes = pgTable('swarm_nodes', {
   // Trust/reputation (for future spam prevention)
   trustScore: integer('trust_score').default(50).notNull(), // 0-100
 
+  // Admin moderation
+  isBlocked: boolean('is_blocked').default(false).notNull(),
+  blockReason: text('block_reason'),
+  blockedAt: timestamp('blocked_at'),
+
   // Capabilities
   capabilities: text('capabilities'), // JSON array: ["handles", "gossip", "relay"]
 
@@ -851,6 +904,7 @@ export const swarmNodes = pgTable('swarm_nodes', {
   index('swarm_nodes_last_seen_idx').on(table.lastSeenAt),
   index('swarm_nodes_trust_idx').on(table.trustScore),
   index('swarm_nodes_nsfw_idx').on(table.isNsfw),
+  index('swarm_nodes_blocked_idx').on(table.isBlocked),
 ]);
 
 /**

@@ -99,6 +99,15 @@ export async function GET(request: Request) {
                     avatarUrl: freshProfile?.avatarUrl || row.actorAvatarUrl,
                     nodeDomain: row.actorNodeDomain,
                 },
+                target: row.targetHandle ? {
+                    handle: row.targetNodeDomain
+                        ? `${row.targetHandle}@${row.targetNodeDomain}`
+                        : row.targetHandle,
+                    displayName: row.targetDisplayName,
+                    avatarUrl: row.targetAvatarUrl,
+                    nodeDomain: row.targetNodeDomain,
+                    isBot: row.targetIsBot,
+                } : null,
                 post: row.postId ? {
                     id: row.postId,
                     content: row.postContent,

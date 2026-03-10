@@ -68,21 +68,21 @@ git push origin main
 Then build and push the multi-arch image:
 
 ```bash
-docker buildx build \
-  --builder colima \
-  --platform linux/amd64,linux/arm64 \
-  -f docker/Dockerfile \
-  -t ghcr.io/gnosyslabs/synapsis:latest \
-  -t ghcr.io/gnosyslabs/synapsis:$(git rev-parse --short HEAD) \
-  --push \
-  .
+BUILDER=colima ./scripts/docker-publish.sh
 ```
 
 That publishes:
 - `ghcr.io/gnosyslabs/synapsis:latest`
+- `ghcr.io/gnosyslabs/synapsis:<YYYY.MM.DD.N>`
 - `ghcr.io/gnosyslabs/synapsis:<short-sha>`
 
-If you are not on a Mac/Colima setup, swap `--builder colima` for whatever local buildx builder you use.
+If you are not on a Mac/Colima setup, set `BUILDER` to your buildx builder or leave it empty to use the default builder.
+
+To force an explicit version instead of auto-incrementing:
+
+```bash
+APP_VERSION=2026.03.09.10 BUILDER=colima ./scripts/docker-publish.sh
+```
 
 ## 4. Update The Server
 Once a new image is published, update the server with:

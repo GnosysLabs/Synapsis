@@ -1,13 +1,12 @@
 name: Build and Push Docker Image to GHCR
 
 on:
-  # Manual trigger only - you decide when to build
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Image tag (default: latest)'
+        description: 'Optional explicit version tag (for example 2026.03.09.10). Leave blank to auto-increment.'
         required: false
-        default: 'latest'
+        default: ''
   # Also build on version tags
   push:
     tags:
@@ -42,26 +41,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,prefix=,suffix=,format=short
-            # Use input tag for manual runs, 'latest' for tag pushes
-            type=raw,value=${{ inputs.tag || 'latest' }}
-
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./docker/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          no-cache: true
-          platforms: linux/amd64,linux/arm64
+        env:
+          IMAGE_REPO: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          PLATFORMS: linux/amd64,linux/arm64
+          PRUNE_BUILD_CACHE: '0'
+          APP_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+          EXTRA_TAGS: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: |
+          if [ -n "$EXTRA_TAGS" ]; then
+            EXTRA_TAGS="${EXTRA_TAGS#v}"
+            export EXTRA_TAGS
+            if [ -z "$APP_VERSION" ]; then
+              APP_VERSION="$EXTRA_TAGS"
+              export APP_VERSION
+            fi
+          fi
+
+          chmod +x ./scripts/docker-publish.sh
+          ./scripts/docker-publish.sh

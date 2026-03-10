@@ -13,7 +13,7 @@ import * as crypto from 'crypto';
 // TYPES
 // ============================================
 
-export type LLMProvider = 'openrouter' | 'openai' | 'anthropic';
+export type LLMProvider = 'openrouter' | 'openai' | 'anthropic' | 'custom';
 
 export interface EncryptedData {
   encrypted: string;  // Base64 encoded ciphertext + auth tag
@@ -40,6 +40,7 @@ const API_KEY_PATTERNS: Record<LLMProvider, RegExp> = {
   openrouter: /^sk-or-[a-zA-Z0-9_-]+$/,
   anthropic: /^sk-ant-[a-zA-Z0-9_-]+$/,
   openai: /^sk-[a-zA-Z0-9_-]+$/,
+  custom: /^[\s\S]+$/,
 };
 
 /**
@@ -330,7 +331,7 @@ export function validateAndDetectApiKey(apiKey: string): ApiKeyValidationResult 
  * @returns True if the provider is supported
  */
 export function isSupportedProvider(provider: string): provider is LLMProvider {
-  return provider === 'openrouter' || provider === 'openai' || provider === 'anthropic';
+  return provider === 'openrouter' || provider === 'openai' || provider === 'anthropic' || provider === 'custom';
 }
 
 /**
@@ -339,5 +340,5 @@ export function isSupportedProvider(provider: string): provider is LLMProvider {
  * @returns Array of supported provider names
  */
 export function getSupportedProviders(): LLMProvider[] {
-  return ['openrouter', 'openai', 'anthropic'];
+  return ['openrouter', 'openai', 'anthropic', 'custom'];
 }

@@ -8,6 +8,51 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fetchSwarmTimeline } from '@/lib/swarm/timeline';
 import { getSession } from '@/lib/auth';
 import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
+import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
+
+type SwarmFeedPost = {
+  id: string;
+  nodeDomain: string;
+  repostOf?: SwarmFeedPost | null;
+  replyTo?: SwarmFeedPost | null;
+  isLiked?: boolean;
+  isReposted?: boolean;
+};
+
+function collectNestedSwarmPosts(posts: SwarmFeedPost[]): SwarmFeedPost[] {
+  const collected: SwarmFeedPost[] = [];
+  const seen = new Set<string>();
+
+  const visit = (post: SwarmFeedPost | null | undefined) => {
+    if (!post) return;
+    const key = `${post.nodeDomain}:${post.id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    collected.push(post);
+    visit(post.repostOf);
+    visit(post.replyTo);
+  };
+
+  posts.forEach(visit);
+  return collected;
+}
+
+function applyInteractionFlags(
+  posts: SwarmFeedPost[],
+  likedIds: Set<string>,
+  repostedIds: Set<string>
+): SwarmFeedPost[] {
+  return posts.map((post) => {
+    const normalizedId = `swarm:${post.nodeDomain}:${post.id}`;
+    return {
+      ...post,
+      isLiked: likedIds.has(normalizedId),
+      isReposted: repostedIds.has(normalizedId),
+      repostOf: post.repostOf ? applyInteractionFlags([post.repostOf], likedIds, repostedIds)[0] : post.repostOf,
+      replyTo: post.replyTo ? applyInteractionFlags([post.replyTo], likedIds, repostedIds)[0] : post.replyTo,
+    };
+  });
+}
 
 /**
  * GET /api/posts/swarm
@@ -35,9 +80,10 @@ export async function GET(request: NextRequest) {
     const session = await getSession().catch(() => null);
     const viewer = session?.user;
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+    const allTimelinePosts = collectNestedSwarmPosts(timeline.posts as SwarmFeedPost[]);
     const likedPostIds = viewer
       ? await getViewerSwarmLikedPostIds(
-          timeline.posts.map(post => ({
+          allTimelinePosts.map(post => ({
             id: `swarm:${post.nodeDomain}:${post.id}`,
             nodeDomain: post.nodeDomain,
             originalPostId: post.id,
@@ -46,12 +92,19 @@ export async function GET(request: NextRequest) {
           nodeDomain
         )
       : new Set<string>();
+    const repostedPostIds = viewer
+      ? await getViewerSwarmRepostedPostIds(
+          allTimelinePosts.map(post => ({
+            id: `swarm:${post.nodeDomain}:${post.id}`,
+            nodeDomain: post.nodeDomain,
+            originalPostId: post.id,
+          })),
+          viewer.id
+        )
+      : new Set<string>();
 
     return NextResponse.json({
-      posts: timeline.posts.map(post => ({
-        ...post,
-        isLiked: likedPostIds.has(`swarm:${post.nodeDomain}:${post.id}`),
-      })),
+      posts: applyInteractionFlags(timeline.posts as SwarmFeedPost[], likedPostIds, repostedPostIds),
       sources: timeline.sources,
       cached: false,
       fetchedAt: timeline.fetchedAt,

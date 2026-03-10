@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { TriangleAlert } from 'lucide-react';
+import { TriangleAlert, X } from 'lucide-react';
 import { decryptPrivateKey } from '@/lib/crypto/private-key-client';
 import { keyStore, importPrivateKey } from '@/lib/crypto/user-signing';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -24,7 +24,13 @@ declare global {
     }
 }
 
-export default function LoginPage() {
+interface AuthScreenProps {
+    modal?: boolean;
+    onClose?: () => void;
+    onSuccess?: () => void;
+}
+
+export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProps) {
     const router = useRouter();
     const [mode, setMode] = useState<'login' | 'register' | 'import'>('login');
     const [email, setEmail] = useState('');
@@ -204,7 +210,12 @@ export default function LoginPage() {
             setImportSuccess(data.message);
             // Soft navigation to preserve AuthContext/KeyStore state
             setTimeout(() => {
-                router.push('/');
+                router.refresh();
+                if (onSuccess) {
+                    onSuccess();
+                } else {
+                    router.push('/');
+                }
             }, 2000);
 
         } catch (err) {
@@ -319,7 +330,12 @@ export default function LoginPage() {
             }
 
             // Soft navigation to preserve AuthContext/KeyStore state
-            router.push('/');
+            router.refresh();
+            if (onSuccess) {
+                onSuccess();
+            } else {
+                router.push('/');
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
             // Reset Turnstile on error
@@ -332,15 +348,17 @@ export default function LoginPage() {
         }
     };
 
-    return (
+    const content = (
         <div style={{
-            minHeight: '100vh',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '24px',
+            padding: modal ? '0' : '24px',
         }}>
-            <div style={{ width: '100%', maxWidth: mode === 'register' ? '680px' : '400px' }}>
+            <div style={{
+                width: '100%',
+                maxWidth: mode === 'register' ? '680px' : '400px',
+            }}>
                 {/* Logo */}
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '32px', minHeight: '120px' }}>
                     {nodeInfoLoaded && (
@@ -984,10 +1002,86 @@ export default function LoginPage() {
                     </form>
                 )}
 
-                <p style={{ textAlign: 'center', marginTop: '24px', color: 'var(--foreground-tertiary)', fontSize: '14px' }}>
-                    <Link href="/">← Back to home</Link>
-                </p>
+                {!modal && (
+                    <p style={{ textAlign: 'center', marginTop: '24px', color: 'var(--foreground-tertiary)', fontSize: '14px' }}>
+                        <Link href="/">← Back to home</Link>
+                    </p>
+                )}
             </div>
         </div>
     );
+
+    if (modal) {
+        return (
+            <div
+                style={{
+                    position: 'fixed',
+                    inset: 0,
+                    background: 'rgba(0, 0, 0, 0.72)',
+                    backdropFilter: 'blur(10px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '24px',
+                    zIndex: 120,
+                }}
+                onClick={onClose}
+            >
+                <div
+                    style={{
+                        position: 'relative',
+                        width: 'min(760px, 100%)',
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    {onClose && (
+                        <button
+                            onClick={onClose}
+                            aria-label="Close"
+                            style={{
+                                position: 'absolute',
+                                top: '18px',
+                                right: '18px',
+                                width: '44px',
+                                height: '44px',
+                                borderRadius: '999px',
+                                border: '1px solid var(--border)',
+                                background: 'rgba(0, 0, 0, 0.78)',
+                                color: 'var(--foreground)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                zIndex: 3,
+                            }}
+                        >
+                            <X size={20} />
+                        </button>
+                    )}
+                    <div
+                    className="card"
+                    style={{
+                        maxHeight: 'calc(100vh - 48px)',
+                        overflowY: 'auto',
+                        padding: '28px',
+                        background: 'rgba(10, 10, 10, 0.98)',
+                        boxShadow: '0 30px 90px rgba(0, 0, 0, 0.55)',
+                    }}
+                    >
+                        {content}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ minHeight: '100vh' }}>
+            {content}
+        </div>
+    );
+}
+
+export default function LoginPage() {
+    return <AuthScreen />;
 }

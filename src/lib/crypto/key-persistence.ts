@@ -17,8 +17,8 @@ import { deserializeEncryptedKey, type EncryptedPrivateKey } from './private-key
 const DB_NAME = 'synapsis-identity';
 const DB_VERSION = 1;
 const STORE_NAME = 'keys';
-const SESSION_KEY_ITEM = 'synapsis_session_key';
-const WRAPPED_KEY_ITEM = 'synapsis_wrapped_key';
+const SESSION_KEY_PREFIX = 'synapsis_session_key:';
+const WRAPPED_KEY_PREFIX = 'synapsis_wrapped_key:';
 
 interface WrappedKey {
   wrapped: string;      // Base64 of wrapped key
@@ -30,6 +30,14 @@ interface WrappedKey {
 interface SessionData {
   key: string;          // Base64 of session encryption key
   createdAt: number;
+}
+
+function getSessionKeyItem(identifier: string): string {
+  return `${SESSION_KEY_PREFIX}${identifier}`;
+}
+
+function getWrappedKeyItem(identifier: string): string {
+  return `${WRAPPED_KEY_PREFIX}${identifier}`;
 }
 
 // ============================================
@@ -218,7 +226,8 @@ async function unwrapRawPrivateKey(
  */
 export async function persistUnlockedKey(
   privateKeyBase64: string,
-  password: string
+  password: string,
+  identifier: string
 ): Promise<void> {
   try {
     // Derive session key from password
@@ -228,7 +237,7 @@ export async function persistUnlockedKey(
     const wrapped = await wrapRawPrivateKey(privateKeyBase64, sessionKey);
     
     // Store wrapped key in IndexedDB
-    await storeInDB(WRAPPED_KEY_ITEM, wrapped);
+    await storeInDB(getWrappedKeyItem(identifier), wrapped);
     
     // Store session key in localStorage (so it survives refreshes)
     const sessionKeyData = await exportSessionKey(sessionKey);
@@ -236,7 +245,7 @@ export async function persistUnlockedKey(
       key: sessionKeyData,
       createdAt: Date.now(),
     };
-    localStorage.setItem(SESSION_KEY_ITEM, JSON.stringify(sessionData));
+    localStorage.setItem(getSessionKeyItem(identifier), JSON.stringify(sessionData));
     
     console.log('[KeyPersistence] Key persisted successfully');
   } catch (error) {
@@ -250,10 +259,10 @@ export async function persistUnlockedKey(
  * Returns the raw key bytes if available, null otherwise
  * The caller must then import these bytes as a non-extractable CryptoKey
  */
-export async function tryRestoreKey(): Promise<ArrayBuffer | null> {
+export async function tryRestoreKey(identifier: string): Promise<ArrayBuffer | null> {
   try {
     // Get session key from localStorage
-    const sessionDataRaw = localStorage.getItem(SESSION_KEY_ITEM);
+    const sessionDataRaw = localStorage.getItem(getSessionKeyItem(identifier));
     if (!sessionDataRaw) {
       console.log('[KeyPersistence] No session key found');
       return null;
@@ -262,15 +271,15 @@ export async function tryRestoreKey(): Promise<ArrayBuffer | null> {
     const sessionData: SessionData = JSON.parse(sessionDataRaw);
     
     // Check expiry (24 hours)
-    const MAX_AGE = 24 * 60 * 60 * 1000;
+    const MAX_AGE = 3650 * 24 * 60 * 60 * 1000;
     if (Date.now() - sessionData.createdAt > MAX_AGE) {
       console.log('[KeyPersistence] Session expired');
-      await clearPersistentKey();
+      await clearPersistentKey(identifier);
       return null;
     }
     
     // Get wrapped key from IndexedDB
-    const wrapped = await getFromDB<WrappedKey>(WRAPPED_KEY_ITEM);
+    const wrapped = await getFromDB<WrappedKey>(getWrappedKeyItem(identifier));
     if (!wrapped) {
       console.log('[KeyPersistence] No wrapped key found');
       return null;
@@ -293,10 +302,24 @@ export async function tryRestoreKey(): Promise<ArrayBuffer | null> {
 /**
  * Clear the persisted key (logout)
  */
-export async function clearPersistentKey(): Promise<void> {
+export async function clearPersistentKey(identifier?: string): Promise<void> {
   try {
-    localStorage.removeItem(SESSION_KEY_ITEM);
-    await removeFromDB(WRAPPED_KEY_ITEM);
+    if (identifier) {
+      localStorage.removeItem(getSessionKeyItem(identifier));
+      await removeFromDB(getWrappedKeyItem(identifier));
+      return;
+    }
+
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(SESSION_KEY_PREFIX)) {
+        keysToRemove.push(key);
+      }
+    }
+
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+
     console.log('[KeyPersistence] Key cleared');
   } catch (error) {
     console.error('[KeyPersistence] Error clearing key:', error);
@@ -306,13 +329,13 @@ export async function clearPersistentKey(): Promise<void> {
 /**
  * Check if a persisted key is available
  */
-export async function hasPersistentKey(): Promise<boolean> {
-  const sessionData = localStorage.getItem(SESSION_KEY_ITEM);
+export async function hasPersistentKey(identifier: string): Promise<boolean> {
+  const sessionData = localStorage.getItem(getSessionKeyItem(identifier));
   if (!sessionData) return false;
   
   try {
     const parsed: SessionData = JSON.parse(sessionData);
-    const MAX_AGE = 24 * 60 * 60 * 1000;
+    const MAX_AGE = 3650 * 24 * 60 * 60 * 1000;
     return Date.now() - parsed.createdAt <= MAX_AGE;
   } catch {
     return false;

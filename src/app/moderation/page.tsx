@@ -45,6 +45,20 @@ type Report = {
     target?: AdminPost | AdminUser | null;
 };
 
+type AdminNode = {
+    id: string;
+    domain: string;
+    name?: string | null;
+    description?: string | null;
+    isActive: boolean;
+    isBlocked: boolean;
+    blockReason?: string | null;
+    blockedAt?: string | null;
+    lastSeenAt?: string | null;
+    trustScore?: number | null;
+    isNsfw?: boolean;
+};
+
 const formatDate = (value: string) => {
     const date = new Date(value);
     return date.toLocaleString();
@@ -52,12 +66,15 @@ const formatDate = (value: string) => {
 
 export default function ModerationPage() {
     const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-    const [tab, setTab] = useState<'reports' | 'posts' | 'users'>('reports');
+    const [tab, setTab] = useState<'reports' | 'posts' | 'users' | 'nodes'>('reports');
     const [reports, setReports] = useState<Report[]>([]);
     const [posts, setPosts] = useState<AdminPost[]>([]);
     const [users, setUsers] = useState<AdminUser[]>([]);
+    const [nodes, setNodes] = useState<AdminNode[]>([]);
     const [loading, setLoading] = useState(false);
     const [reportStatus, setReportStatus] = useState<'open' | 'resolved' | 'all'>('open');
+    const [nodeDomain, setNodeDomain] = useState('');
+    const [nodeReason, setNodeReason] = useState('');
 
     useEffect(() => {
         fetch('/api/admin/me')
@@ -105,11 +122,25 @@ export default function ModerationPage() {
         }
     };
 
+    const loadNodes = async () => {
+        setLoading(true);
+        try {
+            const res = await fetch('/api/admin/nodes');
+            const data = await res.json();
+            setNodes(data.nodes || []);
+        } catch {
+            setNodes([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     useEffect(() => {
         if (!isAdmin) return;
         if (tab === 'reports') loadReports();
         if (tab === 'posts') loadPosts();
         if (tab === 'users') loadUsers();
+        if (tab === 'nodes') loadNodes();
     }, [tab, isAdmin, reportStatus]);
 
     const handleReportResolve = async (id: string, status: 'open' | 'resolved') => {
@@ -145,6 +176,17 @@ export default function ModerationPage() {
             body: JSON.stringify({ action, reason }),
         });
         loadUsers();
+    };
+
+    const handleNodeAction = async (action: 'block' | 'unblock', domain: string, reason?: string) => {
+        await fetch('/api/admin/nodes', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, domain, reason }),
+        });
+        setNodeDomain('');
+        setNodeReason('');
+        loadNodes();
     };
 
     const reportCounts = useMemo(() => {
@@ -208,6 +250,12 @@ export default function ModerationPage() {
                     onClick={() => setTab('users')}
                 >
                     Users
+                </button>
+                <button
+                    className={`btn btn-sm ${tab === 'nodes' ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setTab('nodes')}
+                >
+                    Nodes
                 </button>
             </div>
 
@@ -460,6 +508,114 @@ export default function ModerationPage() {
                                                 ) : (
                                                     <button className="btn btn-ghost btn-sm" onClick={() => handleUserAction(user.id, 'silence')}>
                                                         Silence
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+                {tab === 'nodes' && (
+                    <div style={{ padding: '16px' }}>
+                        <div className="card" style={{ padding: '16px', marginBottom: '16px' }}>
+                            <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Block node</h2>
+                            <p style={{ color: 'var(--foreground-secondary)', marginBottom: '12px' }}>
+                                Blocked nodes cannot deliver swarm interactions, appear in swarm feeds, or exchange chat with this node.
+                            </p>
+                            <div style={{ display: 'grid', gap: '12px' }}>
+                                <input
+                                    value={nodeDomain}
+                                    onChange={(e) => setNodeDomain(e.target.value)}
+                                    placeholder="node.example.com"
+                                    className="input"
+                                />
+                                <textarea
+                                    value={nodeReason}
+                                    onChange={(e) => setNodeReason(e.target.value)}
+                                    placeholder="Reason for blocking this node (optional)"
+                                    className="input"
+                                    style={{ minHeight: '88px', resize: 'vertical' }}
+                                />
+                                <div>
+                                    <button
+                                        className="btn btn-primary btn-sm"
+                                        onClick={() => handleNodeAction('block', nodeDomain, nodeReason)}
+                                        disabled={!nodeDomain.trim()}
+                                    >
+                                        Block node
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {loading ? (
+                            <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>Loading nodes...</div>
+                        ) : nodes.length === 0 ? (
+                            <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>No known nodes.</div>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '12px' }}>
+                                {nodes.map((node) => (
+                                    <div key={node.id} className="card" style={{ padding: '16px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start' }}>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap' }}>
+                                                    <span style={{
+                                                        fontSize: '11px',
+                                                        padding: '2px 8px',
+                                                        borderRadius: '4px',
+                                                        background: node.isBlocked ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+                                                        color: node.isBlocked ? 'rgb(239, 68, 68)' : 'rgb(34, 197, 94)',
+                                                        fontWeight: 600,
+                                                        textTransform: 'uppercase',
+                                                    }}>
+                                                        {node.isBlocked ? 'blocked' : 'allowed'}
+                                                    </span>
+                                                    {!node.isBlocked && !node.isActive && (
+                                                        <span style={{ fontSize: '11px', color: 'var(--foreground-tertiary)' }}>
+                                                            inactive
+                                                        </span>
+                                                    )}
+                                                    {node.isNsfw && (
+                                                        <span style={{ fontSize: '11px', color: 'rgb(245, 158, 11)' }}>
+                                                            NSFW
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div style={{ fontWeight: 600, marginBottom: '4px' }}>
+                                                    {node.name || node.domain}
+                                                </div>
+                                                <div style={{ color: 'var(--foreground-secondary)', marginBottom: '8px' }}>
+                                                    {node.domain}
+                                                </div>
+                                                {node.description && (
+                                                    <div style={{ fontSize: '14px', color: 'var(--foreground-secondary)', marginBottom: '8px' }}>
+                                                        {node.description}
+                                                    </div>
+                                                )}
+                                                <div style={{ fontSize: '13px', color: 'var(--foreground-tertiary)' }}>
+                                                    {node.blockedAt ? `Blocked ${formatDate(node.blockedAt)}` : node.lastSeenAt ? `Last seen ${formatDate(node.lastSeenAt)}` : 'Never seen'}
+                                                    {typeof node.trustScore === 'number' && <span> • Trust {node.trustScore}</span>}
+                                                </div>
+                                                {node.blockReason && (
+                                                    <div style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginTop: '6px' }}>
+                                                        Reason: {node.blockReason}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                                {node.isBlocked ? (
+                                                    <button className="btn btn-ghost btn-sm" onClick={() => handleNodeAction('unblock', node.domain)}>
+                                                        Unblock
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        className="btn btn-primary btn-sm"
+                                                        onClick={() => handleNodeAction('block', node.domain, window.prompt('Reason (optional):') || '')}
+                                                    >
+                                                        Block
                                                     </button>
                                                 )}
                                             </div>
