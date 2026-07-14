@@ -17,7 +17,7 @@ export async function isNodeBlocked(domain: string | null | undefined): Promise<
   if (!normalized) return false;
 
   const node = await db.query.swarmNodes.findFirst({
-    where: eq(swarmNodes.domain, normalized),
+    where: { domain: normalized },
     columns: {
       isBlocked: true,
     },
@@ -30,7 +30,7 @@ export async function getBlockedNodeDomains(): Promise<Set<string>> {
   if (!db) return new Set();
 
   const rows = await db.query.swarmNodes.findMany({
-    where: eq(swarmNodes.isBlocked, true),
+    where: { isBlocked: true },
     columns: {
       domain: true,
     },
@@ -46,10 +46,7 @@ export async function filterBlockedDomains(domains: string[]): Promise<string[]>
   if (normalized.length === 0) return [];
 
   const blocked = await db.query.swarmNodes.findMany({
-    where: and(
-      inArray(swarmNodes.domain, normalized),
-      eq(swarmNodes.isBlocked, true),
-    ),
+    where: { AND: [{ domain: { in: normalized } }, { isBlocked: true }] },
     columns: {
       domain: true,
     },
@@ -66,7 +63,7 @@ export async function upsertBlockedNode(domain: string, reason?: string | null) 
   if (!normalized) return null;
 
   const existing = await db.query.swarmNodes.findFirst({
-    where: eq(swarmNodes.domain, normalized),
+    where: { domain: normalized },
   });
 
   if (existing) {
@@ -105,7 +102,7 @@ export async function unblockNode(domain: string) {
   if (!normalized) return null;
 
   const existing = await db.query.swarmNodes.findFirst({
-    where: eq(swarmNodes.domain, normalized),
+    where: { domain: normalized },
   });
 
   if (!existing) return null;

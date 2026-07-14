@@ -22,7 +22,7 @@ export async function upsertSwarmNode(
   }
 
   const existing = await db.query.swarmNodes.findFirst({
-    where: eq(swarmNodes.domain, normalizeNodeDomain(node.domain)),
+    where: { domain: normalizeNodeDomain(node.domain) },
   });
 
   const normalizedDomain = normalizeNodeDomain(node.domain);
@@ -110,11 +110,8 @@ export async function getActiveSwarmNodes(limit = 100): Promise<SwarmNodeInfo[]>
   }
 
   const nodes = await db.query.swarmNodes.findMany({
-    where: and(
-      eq(swarmNodes.isActive, true),
-      eq(swarmNodes.isBlocked, false),
-    ),
-    orderBy: [desc(swarmNodes.lastSeenAt)],
+    where: { AND: [{ isActive: true }, { isBlocked: false }] },
+    orderBy: () => [desc(swarmNodes.lastSeenAt)],
     limit,
   });
 
@@ -131,12 +128,8 @@ export async function getNodesForGossip(count: number): Promise<SwarmNodeInfo[]>
 
   // Get active nodes with decent trust scores, ordered randomly
   const nodes = await db.query.swarmNodes.findMany({
-    where: and(
-      eq(swarmNodes.isActive, true),
-      eq(swarmNodes.isBlocked, false),
-      gt(swarmNodes.trustScore, 20)
-    ),
-    orderBy: sql`RANDOM()`,
+    where: { AND: [{ isActive: true }, { isBlocked: false }, { trustScore: { gt: 20 } }] },
+    orderBy: () => sql`RANDOM()`,
     limit: count,
   });
 
@@ -152,11 +145,8 @@ export async function getNodesSince(since: Date, limit = 100): Promise<SwarmNode
   }
 
   const nodes = await db.query.swarmNodes.findMany({
-    where: and(
-      gt(swarmNodes.updatedAt, since),
-      eq(swarmNodes.isBlocked, false),
-    ),
-    orderBy: [desc(swarmNodes.updatedAt)],
+    where: { AND: [{ updatedAt: { gt: since } }, { isBlocked: false }] },
+    orderBy: () => [desc(swarmNodes.updatedAt)],
     limit,
   });
 
@@ -173,7 +163,7 @@ export async function markNodeFailure(domain: string): Promise<void> {
 
   try {
     const node = await db.query.swarmNodes.findFirst({
-      where: eq(swarmNodes.domain, domain),
+      where: { domain: domain },
     });
 
     if (!node) return;
@@ -209,7 +199,7 @@ export async function markNodeSuccess(domain: string): Promise<void> {
 
   try {
     const node = await db.query.swarmNodes.findFirst({
-      where: eq(swarmNodes.domain, domain),
+      where: { domain: domain },
     });
 
     if (!node) return;
@@ -274,8 +264,8 @@ export async function getSeedNodes(): Promise<string[]> {
   }
 
   const seeds = await db.query.swarmSeeds.findMany({
-    where: eq(swarmSeeds.isEnabled, true),
-    orderBy: [swarmSeeds.priority],
+    where: { isEnabled: true },
+    orderBy: () => [swarmSeeds.priority],
   });
 
   if (seeds.length === 0) {

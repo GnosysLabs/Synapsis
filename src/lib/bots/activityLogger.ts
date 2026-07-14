@@ -95,26 +95,19 @@ export async function getLogsForBot(
   botId: string,
   options: LogQueryOptions = {}
 ): Promise<ActivityLog[]> {
-  const conditions = [eq(botActivityLogs.botId, botId)];
-  
-  // Filter by action types
-  if (options.actionTypes && options.actionTypes.length > 0) {
-    conditions.push(inArray(botActivityLogs.action, options.actionTypes));
-  }
-  
-  // Filter by date range
-  if (options.startDate) {
-    conditions.push(gte(botActivityLogs.createdAt, options.startDate));
-  }
-  
-  if (options.endDate) {
-    conditions.push(lte(botActivityLogs.createdAt, options.endDate));
-  }
-  
   // Build query
   let query = db.query.botActivityLogs.findMany({
-    where: and(...conditions),
-    orderBy: [desc(botActivityLogs.createdAt)], // Reverse chronological
+    where: {
+      botId,
+      ...(options.actionTypes?.length ? { action: { in: options.actionTypes } } : {}),
+      ...(options.startDate || options.endDate ? {
+        createdAt: {
+          ...(options.startDate ? { gte: options.startDate } : {}),
+          ...(options.endDate ? { lte: options.endDate } : {}),
+        },
+      } : {}),
+    },
+    orderBy: () => [desc(botActivityLogs.createdAt)], // Reverse chronological
     limit: options.limit || 100,
     offset: options.offset || 0,
   });
@@ -146,11 +139,8 @@ export async function getErrorLogs(
   limit: number = 50
 ): Promise<ActivityLog[]> {
   const logs = await db.query.botActivityLogs.findMany({
-    where: and(
-      eq(botActivityLogs.botId, botId),
-      eq(botActivityLogs.success, false)
-    ),
-    orderBy: [desc(botActivityLogs.createdAt)],
+    where: { AND: [{ botId: botId }, { success: false }] },
+    orderBy: () => [desc(botActivityLogs.createdAt)],
     limit,
   });
   

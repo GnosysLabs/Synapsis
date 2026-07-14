@@ -81,9 +81,9 @@ export async function POST(request: Request) {
         );
 
         // Check if this is an NSFW node and auto-enable NSFW settings
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const node = await db.query.nodes.findFirst({
-            where: eq(nodes.domain, nodeDomain),
+            where: { domain: nodeDomain },
         });
 
         if (node?.isNsfw) {

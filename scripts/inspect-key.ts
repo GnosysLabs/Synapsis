@@ -10,7 +10,7 @@ async function main() {
     console.log('--- Inspecting Remote Key ---');
 
     const entry = await db.query.handleRegistry.findFirst({
-        where: eq(handleRegistry.did, TARGET_DID),
+        where: { did: TARGET_DID },
     });
 
     if (!entry) {

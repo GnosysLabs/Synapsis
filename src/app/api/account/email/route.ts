@@ -48,7 +48,7 @@ export async function POST(request: Request) {
 
         // Check if email is already taken by another user
         const existingUser = await db.query.users.findFirst({
-            where: eq(users.email, newEmail.toLowerCase()),
+            where: { email: newEmail.toLowerCase() },
         });
 
         if (existingUser && existingUser.id !== user.id) {

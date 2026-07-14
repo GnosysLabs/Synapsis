@@ -9,10 +9,10 @@ export async function PATCH(req: NextRequest) {
         await requireAdmin();
         const data = await req.json();
 
-        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         let node = await db.query.nodes.findFirst({
-            where: eq(nodes.domain, domain),
+            where: { domain: domain },
         });
 
         // 2. Fallback: If not found, check if there is exactly ONE node in the system.

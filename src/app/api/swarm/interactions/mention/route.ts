@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
     // Find the mentioned user (local user)
     const mentionedUser = await db.query.users.findFirst({
-      where: eq(users.handle, data.mentionedHandle.toLowerCase()),
+      where: { handle: data.mentionedHandle.toLowerCase() },
     });
 
     if (!mentionedUser) {

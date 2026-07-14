@@ -156,11 +156,11 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'This account has already been migrated' }, { status: 400 });
         }
 
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         // Fetch user's posts
         const userPosts = await db.query.posts.findMany({
-            where: eq(posts.userId, user.id),
+            where: { userId: user.id },
             with: {
                 media: true,
             },
@@ -169,19 +169,19 @@ export async function POST(req: NextRequest) {
 
         // Fetch user's following list (local and remote)
         const userFollowing = await db.query.follows.findMany({
-            where: eq(follows.followerId, user.id),
+            where: { followerId: user.id },
             with: {
                 following: true,
             },
         });
 
         const userRemoteFollowing = await db.query.remoteFollows.findMany({
-            where: eq(remoteFollows.followerId, user.id),
+            where: { followerId: user.id },
         });
 
         // Fetch DMs
         const userConversations = await db.query.chatConversations.findMany({
-            where: eq(chatConversations.participant1Id, user.id),
+            where: { participant1Id: user.id },
             with: {
                 messages: true
             }
@@ -189,7 +189,7 @@ export async function POST(req: NextRequest) {
 
         // Fetch Bots
         const userBots = await db.query.bots.findMany({
-            where: eq(bots.ownerId, user.id),
+            where: { ownerId: user.id },
             with: {
                 user: true,
                 contentSources: true,

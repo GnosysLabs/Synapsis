@@ -133,7 +133,7 @@ export async function POST(request: NextRequest) {
 
         // 1. Resolve Sender Public Key
         let senderUser = await db.query.users.findFirst({
-            where: eq(users.did, did)
+            where: { did: did }
         });
 
         let publicKey = senderUser?.publicKey;
@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
                 } else {
                     // Try handle registry (though we likely don't have it if we don't have the user)
                     const registryEntry = await db.query.handleRegistry.findFirst({
-                        where: eq(handleRegistry.did, did)
+                        where: { did: did }
                     });
                     if (registryEntry) senderNodeDomain = normalizeNodeDomain(registryEntry.nodeDomain);
                 }
@@ -234,7 +234,7 @@ export async function POST(request: NextRequest) {
 
         // 3. Find Local Recipient
         const recipientUser = await db.query.users.findFirst({
-            where: eq(users.did, recipientDid)
+            where: { did: recipientDid }
         });
 
         if (!recipientUser) {
@@ -247,10 +247,7 @@ export async function POST(request: NextRequest) {
         const computedFullSenderHandle = senderHandle.includes('@') ? senderHandle : (senderNodeDomain ? `${senderHandle}@${senderNodeDomain}` : senderHandle);
 
         let conversation = await db.query.chatConversations.findFirst({
-            where: and(
-                eq(chatConversations.participant1Id, recipientUser.id),
-                eq(chatConversations.participant2Handle, computedFullSenderHandle)
-            )
+            where: { AND: [{ participant1Id: recipientUser.id }, { participant2Handle: computedFullSenderHandle }] }
         });
 
         if (!conversation) {

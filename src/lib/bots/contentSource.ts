@@ -592,7 +592,7 @@ export async function addSource(
   
   // Check if bot exists
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     columns: { id: true },
   });
   
@@ -646,7 +646,7 @@ export async function addSource(
 export async function removeSource(sourceId: string): Promise<void> {
   // Check if source exists
   const existingSource = await db.query.botContentSources.findFirst({
-    where: eq(botContentSources.id, sourceId),
+    where: { id: sourceId },
     columns: { id: true },
   });
   
@@ -666,7 +666,7 @@ export async function removeSource(sourceId: string): Promise<void> {
  */
 export async function getSourceById(sourceId: string): Promise<ContentSource | null> {
   const source = await db.query.botContentSources.findFirst({
-    where: eq(botContentSources.id, sourceId),
+    where: { id: sourceId },
   });
   
   if (!source) {
@@ -686,7 +686,7 @@ export async function getSourceById(sourceId: string): Promise<ContentSource | n
  */
 export async function getSourcesByBot(botId: string): Promise<ContentSource[]> {
   const sources = await db.query.botContentSources.findMany({
-    where: eq(botContentSources.botId, botId),
+    where: { botId: botId },
     orderBy: (sources, { desc }) => [desc(sources.createdAt)],
   });
   
@@ -701,10 +701,7 @@ export async function getSourcesByBot(botId: string): Promise<ContentSource[]> {
  */
 export async function getActiveSourcesByBot(botId: string): Promise<ContentSource[]> {
   const sources = await db.query.botContentSources.findMany({
-    where: and(
-      eq(botContentSources.botId, botId),
-      eq(botContentSources.isActive, true)
-    ),
+    where: { AND: [{ botId: botId }, { isActive: true }] },
     orderBy: (sources, { desc }) => [desc(sources.createdAt)],
   });
   
@@ -728,7 +725,7 @@ export async function updateSource(
 ): Promise<ContentSource> {
   // Check if source exists
   const existingSource = await db.query.botContentSources.findFirst({
-    where: eq(botContentSources.id, sourceId),
+    where: { id: sourceId },
   });
   
   if (!existingSource) {
@@ -811,10 +808,7 @@ export async function deactivateSource(sourceId: string): Promise<void> {
  */
 export async function botOwnsSource(botId: string, sourceId: string): Promise<boolean> {
   const source = await db.query.botContentSources.findFirst({
-    where: and(
-      eq(botContentSources.id, sourceId),
-      eq(botContentSources.botId, botId)
-    ),
+    where: { AND: [{ id: sourceId }, { botId: botId }] },
     columns: { id: true },
   });
   
@@ -829,7 +823,7 @@ export async function botOwnsSource(botId: string, sourceId: string): Promise<bo
  */
 export async function getSourceCountForBot(botId: string): Promise<number> {
   const sources = await db.query.botContentSources.findMany({
-    where: eq(botContentSources.botId, botId),
+    where: { botId: botId },
     columns: { id: true },
   });
   
@@ -850,10 +844,7 @@ export async function getSourcesByType(
   type: ContentSourceType
 ): Promise<ContentSource[]> {
   const sources = await db.query.botContentSources.findMany({
-    where: and(
-      eq(botContentSources.botId, botId),
-      eq(botContentSources.type, type)
-    ),
+    where: { AND: [{ botId: botId }, { type: type }] },
     orderBy: (sources, { desc }) => [desc(sources.createdAt)],
   });
   

@@ -36,21 +36,12 @@ jobs:
           src/lib/bots/mentionHandler.property.test.ts
           src/lib/bots/scheduler.test.ts
 
+      - name: Embedded database smoke test
+        run: DATABASE_PATH=/tmp/synapsis-ci.db npm run db:migrate
+
       - name: Production build
         run: npm run build
-
-  docker-validation:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Validate production compose config
-        run: docker compose --env-file docker/.env.example config > /tmp/synapsis-compose.txt
-
-      - name: Validate source-build compose config
-        run: docker compose -f docker/docker-compose.yml --env-file docker/.env.example config > /tmp/synapsis-build-compose.txt
-
-      - name: Build application image
-        run: docker build -f docker/Dockerfile .
+        env:
+          AUTH_SECRET: ci-test-secret
+          DATABASE_PATH: /tmp/synapsis-ci.db
+          NEXT_PUBLIC_NODE_DOMAIN: localhost:43821

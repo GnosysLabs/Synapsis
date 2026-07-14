@@ -54,10 +54,7 @@ export async function DELETE(
 
     // Verify the conversation belongs to this user
     const conversation = await db.query.chatConversations.findFirst({
-      where: and(
-        eq(chatConversations.id, id),
-        eq(chatConversations.participant1Id, session.user.id)
-      ),
+      where: { AND: [{ id: id }, { participant1Id: session.user.id }] },
     });
 
     if (!conversation) {
@@ -113,16 +110,13 @@ export async function DELETE(
       } else {
         // Local user - find and delete their conversation too
         const recipientUser = await db.query.users.findFirst({
-          where: eq(users.handle, participant2Handle),
+          where: { handle: participant2Handle },
         });
 
         if (recipientUser) {
           // Find their conversation with us
           const recipientConversation = await db.query.chatConversations.findFirst({
-            where: and(
-              eq(chatConversations.participant1Id, recipientUser.id),
-              eq(chatConversations.participant2Handle, session.user.handle)
-            ),
+            where: { AND: [{ participant1Id: recipientUser.id }, { participant2Handle: session.user.handle }] },
           });
 
           if (recipientConversation) {

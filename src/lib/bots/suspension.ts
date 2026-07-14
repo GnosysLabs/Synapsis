@@ -69,7 +69,7 @@ export async function reinstateBot(botId: string) {
  */
 export async function isBotSuspended(botId: string): Promise<boolean> {
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     columns: { isSuspended: true },
   });
   
@@ -86,7 +86,7 @@ export async function isBotSuspended(botId: string): Promise<boolean> {
  */
 export async function ensureBotNotSuspended(botId: string): Promise<void> {
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     columns: { isSuspended: true, suspensionReason: true },
   });
   

@@ -141,7 +141,7 @@ export async function verifyUserInteraction(
     // Try to get cached user
     const fullHandle = `${userHandle}@${normalizedDomain}`;
     let user = await db?.query.users.findFirst({
-      where: eq(users.handle, fullHandle),
+      where: { handle: fullHandle },
     });
 
     let publicKey: string | null = null;

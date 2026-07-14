@@ -90,7 +90,7 @@ export async function POST(request: Request, context: RouteContext) {
         const { id: rawId } = await context.params;
         const decodedId = decodeURIComponent(rawId);
         const postId = postIdSchema.parse(decodedId);
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -106,11 +106,7 @@ export async function POST(request: Request, context: RouteContext) {
             }
 
             const existingRepost = await db.query.userSwarmReposts.findFirst({
-                where: and(
-                    eq(userSwarmReposts.userId, user.id),
-                    eq(userSwarmReposts.nodeDomain, targetDomain),
-                    eq(userSwarmReposts.originalPostId, originalPostId),
-                ),
+                where: { AND: [{ userId: user.id }, { nodeDomain: targetDomain }, { originalPostId: originalPostId }] },
             });
 
             if (existingRepost) {
@@ -165,7 +161,7 @@ export async function POST(request: Request, context: RouteContext) {
 
         // Local post - check if it exists
         const originalPost = await db.query.posts.findFirst({
-            where: eq(posts.id, postId),
+            where: { id: postId },
         });
 
         if (!originalPost) {
@@ -177,11 +173,7 @@ export async function POST(request: Request, context: RouteContext) {
 
         // Check if already reposted by this user
         const existingRepost = await db.query.posts.findFirst({
-            where: and(
-                eq(posts.userId, user.id),
-                eq(posts.repostOfId, postId),
-                eq(posts.isRemoved, false)
-            ),
+            where: { AND: [{ userId: user.id }, { repostOfId: postId }, { isRemoved: false }] },
         });
 
         if (existingRepost) {
@@ -210,7 +202,7 @@ export async function POST(request: Request, context: RouteContext) {
 
         if (originalPost.userId !== user.id) {
             const postAuthor = await db.query.users.findFirst({
-                where: eq(users.id, originalPost.userId),
+                where: { id: originalPost.userId },
             });
 
             // Create notification with actor info stored directly
@@ -300,7 +292,7 @@ export async function DELETE(request: Request, context: RouteContext) {
         const { id: rawId } = await context.params;
         const decodedId = decodeURIComponent(rawId);
         const postId = postIdSchema.parse(decodedId);
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -316,11 +308,7 @@ export async function DELETE(request: Request, context: RouteContext) {
             }
 
             const existingRepost = await db.query.userSwarmReposts.findFirst({
-                where: and(
-                    eq(userSwarmReposts.userId, user.id),
-                    eq(userSwarmReposts.nodeDomain, targetDomain),
-                    eq(userSwarmReposts.originalPostId, originalPostId),
-                ),
+                where: { AND: [{ userId: user.id }, { nodeDomain: targetDomain }, { originalPostId: originalPostId }] },
             });
 
             if (!existingRepost) {
@@ -352,7 +340,7 @@ export async function DELETE(request: Request, context: RouteContext) {
             ));
 
             await db.update(users)
-                .set({ postsCount: sql`GREATEST(0, ${users.postsCount} - 1)` })
+                .set({ postsCount: sql`max(0, ${users.postsCount} - 1)` })
                 .where(eq(users.id, user.id));
 
             console.log(`[Swarm] Unrepost delivered to ${targetDomain} for post ${originalPostId}`);
@@ -361,16 +349,12 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Local post - check if original post exists
         const originalPost = await db.query.posts.findFirst({
-            where: eq(posts.id, postId),
+            where: { id: postId },
         });
 
         // Find the repost by this user
         const repost = await db.query.posts.findFirst({
-            where: and(
-                eq(posts.userId, user.id),
-                eq(posts.repostOfId, postId),
-                eq(posts.isRemoved, false)
-            ),
+            where: { AND: [{ userId: user.id }, { repostOfId: postId }, { isRemoved: false }] },
         });
 
         if (!repost) {
@@ -385,13 +369,13 @@ export async function DELETE(request: Request, context: RouteContext) {
         // Update original post's repost count
         if (originalPost) {
             await db.update(posts)
-                .set({ repostsCount: sql`GREATEST(0, ${posts.repostsCount} - 1)` })
+                .set({ repostsCount: sql`max(0, ${posts.repostsCount} - 1)` })
                 .where(eq(posts.id, postId));
         }
 
         // Update user's post count
         await db.update(users)
-            .set({ postsCount: sql`GREATEST(0, ${users.postsCount} - 1)` })
+            .set({ postsCount: sql`max(0, ${users.postsCount} - 1)` })
             .where(eq(users.id, user.id));
 
         return NextResponse.json({ success: true, reposted: false });

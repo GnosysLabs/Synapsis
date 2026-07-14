@@ -9,13 +9,13 @@ export async function getRuntimeConfig() {
     .then((res) => res.json())
     .then((data) => {
       cachedConfig = {
-        domain: data.domain || 'localhost:3000',
+        domain: data.domain || 'localhost:43821',
       };
       return cachedConfig;
     })
     .catch(() => {
       cachedConfig = {
-        domain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000',
+        domain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
       };
       return cachedConfig;
     });
@@ -24,7 +24,7 @@ export async function getRuntimeConfig() {
 }
 
 export function getDomain(): string {
-  return cachedConfig?.domain || process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+  return cachedConfig?.domain || process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 }
 
 export function clearCachedConfig() {

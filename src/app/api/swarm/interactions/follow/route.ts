@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
 
     // Find the target user (local user being followed)
     const targetUser = await db.query.users.findFirst({
-      where: eq(users.handle, data.targetHandle.toLowerCase()),
+      where: { handle: data.targetHandle.toLowerCase() },
     });
 
     if (!targetUser) {
@@ -73,10 +73,7 @@ export async function POST(request: NextRequest) {
 
     // Check if this follow already exists
     const existingFollow = await db.query.remoteFollowers.findFirst({
-      where: and(
-        eq(remoteFollowers.userId, targetUser.id),
-        eq(remoteFollowers.actorUrl, actorUrl)
-      ),
+      where: { AND: [{ userId: targetUser.id }, { actorUrl: actorUrl }] },
     });
 
     if (existingFollow) {

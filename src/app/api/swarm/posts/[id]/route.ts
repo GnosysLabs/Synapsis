@@ -36,7 +36,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     // Find the post
     const post = await db.query.posts.findFirst({
-      where: eq(posts.id, postId),
+      where: { id: postId },
       with: {
         author: true,
         media: true,
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     if (!post || post.isRemoved) {
       const remoteRepost = await db.query.userSwarmReposts.findFirst({
-        where: eq(userSwarmReposts.id, postId),
+        where: { id: postId },
       });
 
       if (!remoteRepost) {
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       }
 
       const repostAuthor = await db.query.users.findFirst({
-        where: eq(users.id, remoteRepost.userId),
+        where: { id: remoteRepost.userId },
       });
 
       return NextResponse.json({
@@ -104,15 +104,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     // Get replies
     const replies = await db.query.posts.findMany({
-      where: and(
-        eq(posts.replyToId, postId),
-        eq(posts.isRemoved, false)
-      ),
+      where: { AND: [{ replyToId: postId }, { isRemoved: false }] },
       with: {
         author: true,
         media: true,
       },
-      orderBy: [desc(posts.createdAt)],
+      orderBy: () => [desc(posts.createdAt)],
       limit: 50,
     });
 

@@ -3,7 +3,6 @@ import { db, posts, users, media, follows, mutes, blocks, likes, remoteFollows, 
 import { requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, desc, and, inArray, isNull, isNotNull, or, lt, sql } from 'drizzle-orm';
-import type { SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { buildNotificationTarget } from '@/lib/notifications';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
@@ -12,12 +11,6 @@ const POST_MAX_LENGTH = 600;
 const CURATION_WINDOW_HOURS = 72;
 const CURATION_SEED_MULTIPLIER = 5;
 const CURATION_SEED_CAP = 200;
-
-const buildWhere = (...conditions: Array<SQL | undefined>) => {
-    const filtered = conditions.filter(Boolean) as SQL[];
-    if (filtered.length === 0) return undefined;
-    return and(...filtered);
-};
 
 type FeedPostWithChildren = {
     id: string;
@@ -90,13 +83,13 @@ async function getMixedFeedCursorDate(cursor: string | null) {
 
     if (cursor.startsWith('swarm-repost:')) {
         const repostRow = await db.query.userSwarmReposts.findFirst({
-            where: eq(userSwarmReposts.id, cursor.replace('swarm-repost:', '')),
+            where: { id: cursor.replace('swarm-repost:', '') },
         });
         return repostRow?.repostedAt ?? null;
     }
 
     const cursorPost = await db.query.posts.findFirst({
-        where: eq(posts.id, cursor),
+        where: { id: cursor },
     });
     return cursorPost?.createdAt ?? null;
 }
@@ -211,7 +204,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
         }
 
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         // Build swarm reply fields if replying to a swarm post
         const swarmReplyFields = data.swarmReplyTo ? {
@@ -245,11 +238,7 @@ export async function POST(request: Request) {
         let unattachedMedia: typeof media.$inferSelect[] = [];
         if (data.mediaIds?.length) {
             unattachedMedia = await db.query.media.findMany({
-                where: and(
-                    inArray(media.id, data.mediaIds),
-                    eq(media.userId, user.id),
-                    isNull(media.postId),
-                ),
+                where: { AND: [{ id: { in: data.mediaIds } }, { userId: user.id }, { postId: { isNull: true } }] },
             });
         }
 
@@ -329,18 +318,14 @@ export async function POST(request: Request) {
         let attachedMedia: typeof media.$inferSelect[] = [];
         if (data.mediaIds?.length) {
             attachedMedia = await db.query.media.findMany({
-                where: and(
-                    inArray(media.id, data.mediaIds),
-                    eq(media.userId, user.id),
-                    eq(media.postId, post.id),
-                ),
+                where: { AND: [{ id: { in: data.mediaIds } }, { userId: user.id }, { postId: post.id }] },
             });
         }
 
         if (data.replyToId) {
             try {
                 const parentPost = await db.query.posts.findFirst({
-                    where: eq(posts.id, data.replyToId),
+                    where: { id: data.replyToId },
                     with: {
                         author: true,
                     },
@@ -395,7 +380,7 @@ export async function POST(request: Request) {
 
                     // Find the mentioned user
                     const mentionedUser = await db.query.users.findFirst({
-                        where: eq(users.handle, mention.handle.toLowerCase()),
+                        where: { handle: mention.handle.toLowerCase() },
                     });
 
                     if (mentionedUser && mentionedUser.id !== user.id && !mentionedUser.isSuspended) {
@@ -612,38 +597,41 @@ export async function GET(request: Request) {
 
         let feedPosts;
         // Base filter excludes removed posts and replies (replies only show on detail/profile)
-        const baseFilter = buildWhere(
-            eq(posts.isRemoved, false),
-            isNull(posts.replyToId),
-            isNull(posts.swarmReplyToId)
-        );
+        const baseFilter = {
+            isRemoved: false,
+            replyToId: { isNull: true as const },
+            swarmReplyToId: { isNull: true as const },
+        };
         // Filter for replies only
-        const repliesFilter = buildWhere(
-            eq(posts.isRemoved, false),
-            or(
-                isNotNull(posts.replyToId),
-                isNotNull(posts.swarmReplyToId)
-            )
-        );
+        const repliesFilter = {
+            isRemoved: false,
+            OR: [
+                { replyToId: { isNotNull: true as const } },
+                { swarmReplyToId: { isNotNull: true as const } },
+            ],
+        };
 
         if (type === 'local') {
             // Local node posts only
-            let whereCondition = baseFilter;
+            let whereCondition = {
+                ...baseFilter,
+                createdAt: undefined as { lt: Date } | undefined,
+            };
 
             // Apply cursor-based pagination
             if (cursor) {
                 const cursorPost = await db.query.posts.findFirst({
-                    where: eq(posts.id, cursor),
+                    where: { id: cursor },
                 });
                 if (cursorPost) {
-                    whereCondition = buildWhere(baseFilter, lt(posts.createdAt, cursorPost.createdAt));
+                    whereCondition = { ...baseFilter, createdAt: { lt: cursorPost.createdAt } };
                 }
             }
 
             feedPosts = await db.query.posts.findMany({
                 where: whereCondition,
                 with: feedPostRelations,
-                orderBy: [desc(posts.createdAt)],
+                orderBy: () => [desc(posts.createdAt)],
                 limit,
             });
         } else if (type === 'public') {
@@ -651,13 +639,13 @@ export async function GET(request: Request) {
             const localPosts = await db.query.posts.findMany({
                 where: baseFilter,
                 with: feedPostRelations,
-                orderBy: [desc(posts.createdAt)],
+                orderBy: () => [desc(posts.createdAt)],
                 limit: limit * 2,
             });
 
             // Get all cached remote posts
             const remotePostsData = await db.query.remotePosts.findMany({
-                orderBy: [desc(remotePosts.publishedAt)],
+                orderBy: () => [desc(remotePosts.publishedAt)],
                 limit: limit,
             });
 
@@ -669,42 +657,50 @@ export async function GET(request: Request) {
                 .slice(0, limit) as any;
         } else if (type === 'user' && userId) {
             // User's posts (excluding replies)
-            let whereCondition = buildWhere(baseFilter, eq(posts.userId, userId));
+            let whereCondition = {
+                ...baseFilter,
+                userId,
+                createdAt: undefined as { lt: Date } | undefined,
+            };
 
             // Apply cursor-based pagination
             if (cursor) {
                 const cursorPost = await db.query.posts.findFirst({
-                    where: eq(posts.id, cursor),
+                    where: { id: cursor },
                 });
                 if (cursorPost) {
-                    whereCondition = buildWhere(baseFilter, eq(posts.userId, userId), lt(posts.createdAt, cursorPost.createdAt));
+                    whereCondition = { ...baseFilter, userId, createdAt: { lt: cursorPost.createdAt } };
                 }
             }
 
             feedPosts = await db.query.posts.findMany({
                 where: whereCondition,
                 with: feedPostRelations,
-                orderBy: [desc(posts.createdAt)],
+                orderBy: () => [desc(posts.createdAt)],
                 limit,
             });
         } else if (type === 'replies' && userId) {
             // User's replies only
-            let whereCondition = buildWhere(repliesFilter, eq(posts.userId, userId));
+            let whereCondition = {
+                ...repliesFilter,
+                userId,
+                createdAt: undefined as { lt: Date } | undefined,
+            };
 
             // Apply cursor-based pagination
             if (cursor) {
                 const cursorPost = await db.query.posts.findFirst({
-                    where: eq(posts.id, cursor),
+                    where: { id: cursor },
                 });
                 if (cursorPost) {
-                    whereCondition = buildWhere(repliesFilter, eq(posts.userId, userId), lt(posts.createdAt, cursorPost.createdAt));
+                    whereCondition = { ...repliesFilter, userId, createdAt: { lt: cursorPost.createdAt } };
                 }
             }
 
             feedPosts = await db.query.posts.findMany({
                 where: whereCondition,
                 with: feedPostRelations,
-                orderBy: [desc(posts.createdAt)],
+                orderBy: () => [desc(posts.createdAt)],
                 limit,
             });
         } else if (type === 'curated') {
@@ -857,36 +853,38 @@ export async function GET(request: Request) {
                 const allowedUserIds = [user.id, ...followingIds];
 
                 // Build where condition with cursor support
-                let whereCondition = buildWhere(baseFilter, inArray(posts.userId, allowedUserIds));
+                let whereCondition = {
+                    ...baseFilter,
+                    userId: { in: allowedUserIds },
+                    createdAt: undefined as { lt: Date } | undefined,
+                };
                 const cursorDate = await getMixedFeedCursorDate(cursor);
 
                 if (cursorDate) {
-                    whereCondition = buildWhere(baseFilter, inArray(posts.userId, allowedUserIds), lt(posts.createdAt, cursorDate));
+                    whereCondition = { ...baseFilter, userId: { in: allowedUserIds }, createdAt: { lt: cursorDate } };
                 }
 
                 // Get local posts from people the user follows + their own posts
                 const localPosts = await db.query.posts.findMany({
                     where: whereCondition,
                     with: feedPostRelations,
-                    orderBy: [desc(posts.createdAt)],
+                    orderBy: () => [desc(posts.createdAt)],
                     limit: cursor ? limit : limit * 2, // Get more on first load to account for mixing with remote
                 });
 
-                const swarmRepostWhere = cursorDate
-                    ? and(
-                        inArray(userSwarmReposts.userId, allowedUserIds),
-                        lt(userSwarmReposts.repostedAt, cursorDate)
-                    )
-                    : inArray(userSwarmReposts.userId, allowedUserIds);
+                const swarmRepostWhere = {
+                    userId: { in: allowedUserIds },
+                    ...(cursorDate ? { repostedAt: { lt: cursorDate } } : {}),
+                };
                 const swarmRepostRows = await db.query.userSwarmReposts.findMany({
                     where: swarmRepostWhere,
-                    orderBy: [desc(userSwarmReposts.repostedAt)],
+                    orderBy: () => [desc(userSwarmReposts.repostedAt)],
                     limit: cursor ? limit : limit * 2,
                 });
 
                 const swarmRepostAuthors = swarmRepostRows.length > 0
                     ? await db.query.users.findMany({
-                        where: inArray(users.id, Array.from(new Set(swarmRepostRows.map((row) => row.userId)))),
+                        where: { id: { in: Array.from(new Set(swarmRepostRows.map((row) => row.userId))) } },
                     })
                     : [];
                 const swarmRepostAuthorMap = new Map(swarmRepostAuthors.map((author) => [author.id, author]));
@@ -902,7 +900,7 @@ export async function GET(request: Request) {
 
                 // Get handles of remote users we follow
                 const followedRemoteUsers = await db.query.remoteFollows.findMany({
-                    where: eq(remoteFollows.followerId, user.id),
+                    where: { followerId: user.id },
                 });
 
                 // Fetch posts LIVE from followed remote users (in parallel, with timeout)
@@ -969,7 +967,7 @@ export async function GET(request: Request) {
                 feedPosts = await db.query.posts.findMany({
                     where: baseFilter,
                     with: feedPostRelations,
-                    orderBy: [desc(posts.createdAt)],
+                    orderBy: () => [desc(posts.createdAt)],
                     limit,
                 });
             }
@@ -982,7 +980,7 @@ export async function GET(request: Request) {
 
             if (session?.user && feedPosts && feedPosts.length > 0) {
                 const viewer = session.user;
-                const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+                const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
                 const allFeedPosts = collectNestedPosts(feedPosts as FeedPostWithChildren[]);
 
                 // Separate local and swarm posts
@@ -1010,19 +1008,12 @@ export async function GET(request: Request) {
 
                 if (localPostIds.length > 0) {
                     const viewerLikes = await db.query.likes.findMany({
-                        where: and(
-                            eq(likes.userId, viewer.id),
-                            inArray(likes.postId, localPostIds)
-                        ),
+                        where: { AND: [{ userId: viewer.id }, { postId: { in: localPostIds } }] },
                     });
                     viewerLikes.forEach(l => likedPostIds.add(l.postId));
 
                     const viewerReposts = await db.query.posts.findMany({
-                        where: and(
-                            eq(posts.userId, viewer.id),
-                            inArray(posts.repostOfId, localPostIds),
-                            eq(posts.isRemoved, false)
-                        ),
+                        where: { AND: [{ userId: viewer.id }, { repostOfId: { in: localPostIds } }, { isRemoved: false }] },
                     });
                     viewerReposts.forEach(r => { if (r.repostOfId) repostedPostIds.add(r.repostOfId); });
                 }

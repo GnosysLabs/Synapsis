@@ -21,11 +21,7 @@ export async function getViewerSwarmRepostedPostIds(
   const originalPostIds = Array.from(new Set(targets.map((target) => target.originalPostId)));
 
   const rows = await db.query.userSwarmReposts.findMany({
-    where: and(
-      eq(userSwarmReposts.userId, viewerId),
-      inArray(userSwarmReposts.nodeDomain, domains),
-      inArray(userSwarmReposts.originalPostId, originalPostIds),
-    ),
+    where: { AND: [{ userId: viewerId }, { nodeDomain: { in: domains } }, { originalPostId: { in: originalPostIds } }] },
   });
 
   const rowKeys = new Set(rows.map((row) => `${row.nodeDomain}:${row.originalPostId}`));

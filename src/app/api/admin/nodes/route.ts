@@ -16,7 +16,7 @@ export async function GET() {
     await requireAdmin();
 
     const nodes = await db.query.swarmNodes.findMany({
-      orderBy: [desc(swarmNodes.isBlocked), desc(swarmNodes.blockedAt), desc(swarmNodes.lastSeenAt)],
+      orderBy: () => [desc(swarmNodes.isBlocked), desc(swarmNodes.blockedAt), desc(swarmNodes.lastSeenAt)],
     });
 
     return NextResponse.json({
@@ -47,7 +47,7 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     const data = mutateNodeSchema.parse(body);
     const domain = normalizeNodeDomain(data.domain);
-    const localDomain = normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000');
+    const localDomain = normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821');
 
     if (domain === localDomain) {
       return NextResponse.json({ error: 'Cannot block this node itself' }, { status: 400 });

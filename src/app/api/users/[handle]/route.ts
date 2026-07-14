@@ -32,7 +32,7 @@ export async function GET(request: Request, context: RouteContext) {
         }
 
         const user = await db.query.users.findFirst({
-            where: eq(users.handle, cleanHandle),
+            where: { handle: cleanHandle },
         });
 
         // If user exists but is a remote placeholder (handle contains @), fetch fresh data from remote
@@ -147,10 +147,7 @@ export async function GET(request: Request, context: RouteContext) {
                     canReceiveDms = true; // Can DM yourself
                 } else {
                     const isFollowingViewer = await db.query.follows.findFirst({
-                        where: and(
-                            eq(follows.followerId, user.id),
-                            eq(follows.followingId, session.user.id)
-                        )
+                        where: { AND: [{ followerId: user.id }, { followingId: session.user.id }] }
                     });
                     if (isFollowingViewer) {
                         canReceiveDms = true;
@@ -163,7 +160,7 @@ export async function GET(request: Request, context: RouteContext) {
         // If this is a bot, include owner info
         if (user.isBot && user.botOwnerId) {
             const owner = await db.query.users.findFirst({
-                where: eq(users.id, user.botOwnerId),
+                where: { id: user.botOwnerId },
             });
             if (owner) {
                 userResponse.botOwner = {

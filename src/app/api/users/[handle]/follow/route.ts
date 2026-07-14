@@ -37,10 +37,7 @@ export async function GET(request: Request, context: RouteContext) {
             }
             const targetHandle = `${remote.handle}@${remote.domain}`;
             const existingRemoteFollow = await db.query.remoteFollows.findFirst({
-                where: and(
-                    eq(remoteFollows.followerId, currentUser.id),
-                    eq(remoteFollows.targetHandle, targetHandle)
-                ),
+                where: { AND: [{ followerId: currentUser.id }, { targetHandle: targetHandle }] },
             });
             return NextResponse.json({ following: !!existingRemoteFollow, remote: true });
         }
@@ -50,7 +47,7 @@ export async function GET(request: Request, context: RouteContext) {
         }
 
         const targetUser = await db.query.users.findFirst({
-            where: eq(users.handle, cleanHandle),
+            where: { handle: cleanHandle },
         });
 
         if (!targetUser) {
@@ -65,10 +62,7 @@ export async function GET(request: Request, context: RouteContext) {
         }
 
         const existingFollow = await db.query.follows.findFirst({
-            where: and(
-                eq(follows.followerId, currentUser.id),
-                eq(follows.followingId, targetUser.id)
-            ),
+            where: { AND: [{ followerId: currentUser.id }, { followingId: targetUser.id }] },
         });
 
         return NextResponse.json({ following: !!existingFollow });
@@ -96,7 +90,7 @@ export async function POST(request: Request, context: RouteContext) {
         const { handle } = await context.params;
         const cleanHandle = handle.toLowerCase().replace(/^@/, '');
         const remote = parseRemoteHandle(handle);
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         if (currentUser.isSuspended || currentUser.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -107,10 +101,7 @@ export async function POST(request: Request, context: RouteContext) {
 
             // Check if already following
             const existingRemoteFollow = await db.query.remoteFollows.findFirst({
-                where: and(
-                    eq(remoteFollows.followerId, currentUser.id),
-                    eq(remoteFollows.targetHandle, targetHandle)
-                ),
+                where: { AND: [{ followerId: currentUser.id }, { targetHandle: targetHandle }] },
             });
             if (existingRemoteFollow) {
                 return NextResponse.json({ error: 'Already following' }, { status: 400 });
@@ -179,7 +170,7 @@ export async function POST(request: Request, context: RouteContext) {
 
         // Find target user
         const targetUser = await db.query.users.findFirst({
-            where: eq(users.handle, cleanHandle),
+            where: { handle: cleanHandle },
         });
 
         if (!targetUser) {
@@ -196,10 +187,7 @@ export async function POST(request: Request, context: RouteContext) {
 
         // Check if already following
         const existingFollow = await db.query.follows.findFirst({
-            where: and(
-                eq(follows.followerId, currentUser.id),
-                eq(follows.followingId, targetUser.id)
-            ),
+            where: { AND: [{ followerId: currentUser.id }, { followingId: targetUser.id }] },
         });
 
         if (existingFollow) {
@@ -268,7 +256,7 @@ export async function DELETE(request: Request, context: RouteContext) {
         const { handle } = await context.params;
         const cleanHandle = handle.toLowerCase().replace(/^@/, '');
         const remote = parseRemoteHandle(handle);
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         if (remote) {
             if (!db) {
@@ -276,10 +264,7 @@ export async function DELETE(request: Request, context: RouteContext) {
             }
             const targetHandle = `${remote.handle}@${remote.domain}`;
             const existingRemoteFollow = await db.query.remoteFollows.findFirst({
-                where: and(
-                    eq(remoteFollows.followerId, currentUser.id),
-                    eq(remoteFollows.targetHandle, targetHandle)
-                ),
+                where: { AND: [{ followerId: currentUser.id }, { targetHandle: targetHandle }] },
             });
             if (!existingRemoteFollow) {
                 return NextResponse.json({ error: 'Not following' }, { status: 400 });
@@ -306,7 +291,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
             // Update the user's following count (atomic decrement, clamped to 0)
             await db.update(users)
-                .set({ followingCount: sql`GREATEST(0, ${users.followingCount} - 1)` })
+                .set({ followingCount: sql`max(0, ${users.followingCount} - 1)` })
                 .where(eq(users.id, currentUser.id));
 
             console.log(`[Swarm] Unfollow delivered to ${remote.domain}`);
@@ -319,7 +304,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Find target user
         const targetUser = await db.query.users.findFirst({
-            where: eq(users.handle, cleanHandle),
+            where: { handle: cleanHandle },
         });
 
         if (!targetUser) {
@@ -331,10 +316,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Find existing follow
         const existingFollow = await db.query.follows.findFirst({
-            where: and(
-                eq(follows.followerId, currentUser.id),
-                eq(follows.followingId, targetUser.id)
-            ),
+            where: { AND: [{ followerId: currentUser.id }, { followingId: targetUser.id }] },
         });
 
         if (!existingFollow) {
@@ -346,11 +328,11 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Update counts (atomic decrements, clamped to 0)
         await db.update(users)
-            .set({ followingCount: sql`GREATEST(0, ${users.followingCount} - 1)` })
+            .set({ followingCount: sql`max(0, ${users.followingCount} - 1)` })
             .where(eq(users.id, currentUser.id));
 
         await db.update(users)
-            .set({ followersCount: sql`GREATEST(0, ${users.followersCount} - 1)` })
+            .set({ followersCount: sql`max(0, ${users.followersCount} - 1)` })
             .where(eq(users.id, targetUser.id));
 
         return NextResponse.json({ success: true, following: false });

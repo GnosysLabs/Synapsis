@@ -70,7 +70,7 @@ export async function POST(request: Request) {
     let botAvatarUrl: string | null | undefined = data.avatarUrl;
     if (!botAvatarUrl && storageSession) {
       try {
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const botHandle = `${data.handle.toLowerCase()}@${nodeDomain}`;
 
         botAvatarUrl = await generateAndUploadAvatarToUserStorage(

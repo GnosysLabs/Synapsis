@@ -21,14 +21,14 @@ export async function GET(req: NextRequest) {
     try {
         if (!db) {
             // Redirect to default favicon
-            const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+            const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
             const baseUrl = getRequestBaseUrl(req, domain);
             return NextResponse.redirect(new URL('/favicon.png', baseUrl));
         }
 
-        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const node = await db.query.nodes.findFirst({
-            where: eq(nodes.domain, domain),
+            where: { domain: domain },
             columns: { faviconUrl: true },
         });
 
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.redirect(new URL('/favicon.png', baseUrl));
     } catch (error) {
         console.error('Favicon error:', error);
-        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const baseUrl = getRequestBaseUrl(req, domain);
         return NextResponse.redirect(new URL('/favicon.png', baseUrl));
     }

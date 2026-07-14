@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
 
     // Find the recipient (local user)
     const recipient = await db.query.users.findFirst({
-      where: eq(users.handle, data.recipientHandle.toLowerCase()),
+      where: { handle: data.recipientHandle.toLowerCase() },
     });
 
     if (!recipient) {
@@ -63,10 +63,7 @@ export async function POST(request: NextRequest) {
     // Find the conversation with the sender
     const senderFullHandle = `${data.senderHandle}@${senderNodeDomain}`;
     const conversation = await db.query.chatConversations.findFirst({
-      where: and(
-        eq(chatConversations.participant1Id, recipient.id),
-        eq(chatConversations.participant2Handle, senderFullHandle)
-      ),
+      where: { AND: [{ participant1Id: recipient.id }, { participant2Handle: senderFullHandle }] },
     });
 
     if (!conversation) {

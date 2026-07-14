@@ -95,9 +95,9 @@ export async function POST(req: NextRequest) {
     const dataUrl = `data:${mimeType};base64,${base64Data}`;
 
     // Get current node
-    const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+    const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
     let node = await db.query.nodes.findFirst({
-      where: eq(nodes.domain, domain),
+      where: { domain: domain },
     });
 
     // Fallback: If not found, check if there is exactly ONE node in the system

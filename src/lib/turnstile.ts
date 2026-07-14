@@ -4,9 +4,9 @@ import { eq } from 'drizzle-orm';
 export async function verifyTurnstileToken(token: string, ip?: string): Promise<boolean> {
     try {
         // Get node settings to check if Turnstile is enabled
-        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const node = await db.query.nodes.findFirst({
-            where: eq(nodes.domain, domain),
+            where: { domain: domain },
         });
 
         // If no secret key is configured, skip verification (Turnstile is disabled)
@@ -38,9 +38,9 @@ export async function verifyTurnstileToken(token: string, ip?: string): Promise<
 
 export async function getTurnstileSiteKey(): Promise<string | null> {
     try {
-        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const node = await db.query.nodes.findFirst({
-            where: eq(nodes.domain, domain),
+            where: { domain: domain },
         });
 
         return node?.turnstileSiteKey || null;

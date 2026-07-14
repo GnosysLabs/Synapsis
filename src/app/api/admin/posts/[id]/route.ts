@@ -24,7 +24,7 @@ export async function PATCH(request: Request, context: RouteContext) {
         const data = moderationSchema.parse(body);
 
         const post = await db.query.posts.findFirst({
-            where: eq(posts.id, id),
+            where: { id: id },
         });
 
         if (!post) {

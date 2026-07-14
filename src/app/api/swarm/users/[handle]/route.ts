@@ -188,7 +188,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     // Find the user
     const user = await db.query.users.findFirst({
-      where: eq(users.handle, cleanHandle),
+      where: { handle: cleanHandle },
       with: {
         botOwner: true, // Include bot owner if this is a bot
       },
@@ -222,20 +222,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
     };
 
     const localPosts = await db.query.posts.findMany({
-      where: and(
-        eq(posts.userId, user.id),
-        eq(posts.isRemoved, false),
-        isNull(posts.replyToId),
-        isNull(posts.swarmReplyToId)
-      ),
+      where: { AND: [{ userId: user.id }, { isRemoved: false }, { replyToId: { isNull: true } }, { swarmReplyToId: { isNull: true } }] },
       with: profilePostRelations,
-      orderBy: [desc(posts.createdAt)],
+      orderBy: () => [desc(posts.createdAt)],
       limit: limit * 2,
     });
 
     const remoteRepostRows = await db.query.userSwarmReposts.findMany({
-      where: eq(userSwarmReposts.userId, user.id),
-      orderBy: [desc(userSwarmReposts.repostedAt)],
+      where: { userId: user.id },
+      orderBy: () => [desc(userSwarmReposts.repostedAt)],
       limit: limit * 2,
     });
 

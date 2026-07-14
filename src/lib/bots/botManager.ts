@@ -396,7 +396,7 @@ export async function createBot(ownerId: string, config: BotCreateInput): Promis
   
   // Check if handle is taken (in users table now)
   const existingUser = await db.query.users.findFirst({
-    where: eq(users.handle, config.handle.toLowerCase()),
+    where: { handle: config.handle.toLowerCase() },
   });
   
   if (existingUser) {
@@ -405,7 +405,7 @@ export async function createBot(ownerId: string, config: BotCreateInput): Promis
   
   // Get owner to access their S3 storage for bot avatar
   const owner = await db.query.users.findFirst({
-    where: eq(users.id, ownerId),
+    where: { id: ownerId },
   });
   
   if (!owner) {
@@ -420,7 +420,7 @@ export async function createBot(ownerId: string, config: BotCreateInput): Promis
   const encryptedPrivateKey = encryptApiKey(privateKey);
   
   // Generate a DID for the bot
-  const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+  const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
   const botDid = `did:web:${nodeDomain}:users:${config.handle.toLowerCase()}`;
   
   // Generate bot avatar using owner's S3 storage if no avatar provided
@@ -515,7 +515,7 @@ export async function updateBot(botId: string, config: BotUpdateInput): Promise<
 
   // Check if bot exists and get its user account
   const existingBot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
   });
   
   if (!existingBot) {
@@ -524,7 +524,7 @@ export async function updateBot(botId: string, config: BotUpdateInput): Promise<
   
   // Get the bot's user account
   const botUser = await db.query.users.findFirst({
-    where: eq(users.id, existingBot.userId),
+    where: { id: existingBot.userId },
   });
   
   if (!botUser) {
@@ -629,7 +629,7 @@ export async function updateBot(botId: string, config: BotUpdateInput): Promise<
   
   // Get updated user
   const updatedUser = await db.query.users.findFirst({
-    where: eq(users.id, existingBot.userId),
+    where: { id: existingBot.userId },
   });
   
   return dbBotToBot(updatedBot, updatedUser!);
@@ -647,7 +647,7 @@ export async function updateBot(botId: string, config: BotUpdateInput): Promise<
 export async function deleteBot(botId: string): Promise<void> {
   // Check if bot exists
   const existingBot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
   });
   
   if (!existingBot) {
@@ -671,14 +671,14 @@ export async function deleteBot(botId: string): Promise<void> {
  */
 export async function getBotsByUser(ownerId: string): Promise<Bot[]> {
   const userBots = await db.query.bots.findMany({
-    where: eq(bots.ownerId, ownerId),
+    where: { ownerId: ownerId },
     orderBy: (bots, { desc }) => [desc(bots.createdAt)],
   });
   
   // Get all bot user accounts
   const botUserIds = userBots.map(b => b.userId);
   const botUsers = await db.query.users.findMany({
-    where: (users, { inArray }) => inArray(users.id, botUserIds),
+    where: { id: { in: botUserIds } },
   });
   
   const userMap = new Map(botUsers.map(u => [u.id, u]));
@@ -702,7 +702,7 @@ export async function getBotsByUser(ownerId: string): Promise<Bot[]> {
  */
 export async function getBotById(botId: string): Promise<Bot | null> {
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
   });
   
   if (!bot) {
@@ -711,7 +711,7 @@ export async function getBotById(botId: string): Promise<Bot | null> {
   
   // Get the bot's user account
   const botUser = await db.query.users.findFirst({
-    where: eq(users.id, bot.userId),
+    where: { id: bot.userId },
   });
   
   if (!botUser) {
@@ -730,10 +730,7 @@ export async function getBotById(botId: string): Promise<Bot | null> {
 export async function getBotByHandle(handle: string): Promise<Bot | null> {
   // Find the user with this handle that is a bot
   const botUser = await db.query.users.findFirst({
-    where: and(
-      eq(users.handle, handle.toLowerCase()),
-      eq(users.isBot, true)
-    ),
+    where: { AND: [{ handle: handle.toLowerCase() }, { isBot: true }] },
   });
   
   if (!botUser) {
@@ -742,7 +739,7 @@ export async function getBotByHandle(handle: string): Promise<Bot | null> {
   
   // Find the bot config for this user
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.userId, botUser.id),
+    where: { userId: botUser.id },
   });
   
   if (!bot) {
@@ -789,7 +786,7 @@ export async function canUserCreateBot(ownerId: string): Promise<boolean> {
  */
 export async function userOwnsBot(ownerId: string, botId: string): Promise<boolean> {
   const bot = await db.query.bots.findFirst({
-    where: and(eq(bots.id, botId), eq(bots.ownerId, ownerId)),
+    where: { AND: [{ id: botId }, { ownerId: ownerId }] },
   });
   
   return bot !== undefined;
@@ -836,7 +833,7 @@ export async function setApiKey(
 ): Promise<void> {
   // Check if bot exists
   const existingBot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
   });
   
   if (!existingBot) {
@@ -885,7 +882,7 @@ export async function setApiKey(
 export async function removeApiKey(botId: string): Promise<void> {
   // Check if bot exists
   const existingBot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
   });
   
   if (!existingBot) {
@@ -930,7 +927,7 @@ export interface ApiKeyStatus {
 export async function getApiKeyStatus(botId: string): Promise<ApiKeyStatus> {
   // Get the bot with encrypted API key
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
   });
   
   if (!bot) {
@@ -984,7 +981,7 @@ export async function botHasApiKey(botId: string): Promise<boolean> {
 export async function getDecryptedApiKey(botId: string): Promise<string | null> {
   // Get the bot with encrypted API key
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
   });
   
   if (!bot) {

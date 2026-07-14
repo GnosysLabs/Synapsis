@@ -1,7 +1,7 @@
 import { useDomain } from '@/lib/contexts/ConfigContext';
 
 // Build-time domain fallback (for SSR/non-React contexts)
-export const NODE_DOMAIN = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+export const NODE_DOMAIN = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
 /**
  * Formats a handle into its full federated form: @user@domain

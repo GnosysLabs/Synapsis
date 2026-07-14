@@ -41,7 +41,7 @@ export async function POST(
     
     // Verify bot exists
     const bot = await db.query.bots.findFirst({
-      where: eq(bots.id, botId),
+      where: { id: botId },
       columns: { id: true, userId: true },
     });
     

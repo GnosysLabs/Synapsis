@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
         // Find the user on this node
         const user = await db.query.users.findFirst({
-            where: eq(users.handle, oldHandle.toLowerCase()),
+            where: { handle: oldHandle.toLowerCase() },
         });
 
         if (!user) {
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
 
         // Get all followers to notify
         const userFollowers = await db.query.follows.findMany({
-            where: eq(follows.followingId, user.id),
+            where: { followingId: user.id },
             with: {
                 follower: true,
             },

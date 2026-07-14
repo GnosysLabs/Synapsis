@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     // Find the target user
     const targetUser = await db.query.users.findFirst({
-      where: eq(users.handle, data.targetHandle.toLowerCase()),
+      where: { handle: data.targetHandle.toLowerCase() },
     });
 
     if (!targetUser) {
@@ -60,10 +60,7 @@ export async function POST(request: NextRequest) {
     const actorUrl = `swarm://${data.unfollow.followerNodeDomain}/${data.unfollow.followerHandle}`;
     
     const existingFollow = await db.query.remoteFollowers.findFirst({
-      where: and(
-        eq(remoteFollowers.userId, targetUser.id),
-        eq(remoteFollowers.actorUrl, actorUrl)
-      ),
+      where: { AND: [{ userId: targetUser.id }, { actorUrl: actorUrl }] },
     });
 
     if (!existingFollow) {
@@ -78,7 +75,7 @@ export async function POST(request: NextRequest) {
 
     // Update follower count
     await db.update(users)
-      .set({ followersCount: sql`GREATEST(0, ${users.followersCount} - 1)` })
+      .set({ followersCount: sql`max(0, ${users.followersCount} - 1)` })
       .where(eq(users.id, targetUser.id));
 
     console.log(`[Swarm] Received unfollow from ${data.unfollow.followerHandle}@${data.unfollow.followerNodeDomain} for @${data.targetHandle}`);

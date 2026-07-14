@@ -26,7 +26,7 @@ export async function upsertHandleEntries(entries: HandleEntry[]) {
         }
 
         const existing = await db.query.handleRegistry.findFirst({
-            where: eq(handleRegistry.handle, cleanHandle),
+            where: { handle: cleanHandle },
         });
 
         // If no timestamp provided, treat it as "now" but be careful

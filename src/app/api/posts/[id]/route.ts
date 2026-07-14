@@ -88,7 +88,7 @@ export async function GET(
         // Decode URL-encoded characters (e.g., %3A -> :)
         const id = decodeURIComponent(rawId);
 
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         let mainPost: any = null;
         let replyPosts: any[] = [];
@@ -168,7 +168,7 @@ export async function GET(
         }
 
         const post = await db.query.posts.findFirst({
-            where: eq(posts.id, id),
+            where: { id: id },
             with: postDetailRelations,
         });
 
@@ -176,12 +176,9 @@ export async function GET(
             mainPost = post;
 
             const replies = await db.query.posts.findMany({
-                where: and(
-                    eq(posts.replyToId, id),
-                    eq(posts.isRemoved, false)
-                ),
+                where: { AND: [{ replyToId: id }, { isRemoved: false }] },
                 with: postDetailRelations,
-                orderBy: [desc(posts.createdAt)],
+                orderBy: () => [desc(posts.createdAt)],
             });
 
             mainPost = {
@@ -201,19 +198,12 @@ export async function GET(
 
                 if (allPostIds.length > 0) {
                     const viewerLikes = await db.query.likes.findMany({
-                        where: and(
-                            eq(likes.userId, viewer.id),
-                            inArray(likes.postId, allPostIds)
-                        ),
+                        where: { AND: [{ userId: viewer.id }, { postId: { in: allPostIds } }] },
                     });
                     const likedPostIds = new Set(viewerLikes.map(l => l.postId));
 
                     const viewerReposts = await db.query.posts.findMany({
-                        where: and(
-                            eq(posts.userId, viewer.id),
-                            inArray(posts.repostOfId, allPostIds),
-                            eq(posts.isRemoved, false)
-                        ),
+                        where: { AND: [{ userId: viewer.id }, { repostOfId: { in: allPostIds } }, { isRemoved: false }] },
                     });
                     const repostedPostIds = new Set(viewerReposts.map(r => r.repostOfId));
 
@@ -233,7 +223,7 @@ export async function GET(
             }
         } else {
             const cached = await db.query.remotePosts.findFirst({
-                where: eq(remotePosts.apId, id),
+                where: { apId: id },
             });
 
             if (cached) {
@@ -296,7 +286,7 @@ export async function DELETE(
         const user = await requireAuth();
         const { id } = await params;
 
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         // Handle swarm post IDs (format: swarm:domain:uuid)
         if (id.startsWith('swarm:')) {
@@ -393,7 +383,7 @@ export async function DELETE(
         }
 
         const post = await db.query.posts.findFirst({
-            where: eq(posts.id, id),
+            where: { id: id },
             with: {
                 bot: true,
             },
@@ -412,7 +402,7 @@ export async function DELETE(
         let isParentPostOwner = false;
         if (post.replyToId) {
             const parentPost = await db.query.posts.findFirst({
-                where: eq(posts.id, post.replyToId),
+                where: { id: post.replyToId },
             });
             if (parentPost && parentPost.userId === user.id) {
                 isParentPostOwner = true;
@@ -426,7 +416,7 @@ export async function DELETE(
         // 1. If it's a reply, decrement parent's repliesCount
         if (post.replyToId) {
             const parentPost = await db.query.posts.findFirst({
-                where: eq(posts.id, post.replyToId),
+                where: { id: post.replyToId },
             });
             if (parentPost && parentPost.repliesCount > 0) {
                 await db.update(posts)
@@ -472,7 +462,7 @@ export async function DELETE(
 
         // 4. Decrement the post author's postsCount (atomic decrement, clamped to 0)
         await db.update(users)
-            .set({ postsCount: sql`GREATEST(0, ${users.postsCount} - 1)` })
+            .set({ postsCount: sql`max(0, ${users.postsCount} - 1)` })
             .where(eq(users.id, post.userId));
 
         return NextResponse.json({ success: true });

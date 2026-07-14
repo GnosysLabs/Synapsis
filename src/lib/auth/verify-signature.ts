@@ -96,7 +96,7 @@ export async function verifyUserAction(signedAction: SignedAction): Promise<{
 
   // 3. FETCH USER & KEY
   const user = await db.query.users.findFirst({
-    where: eq(users.did, payload.did),
+    where: { did: payload.did },
   });
 
   if (!user) {

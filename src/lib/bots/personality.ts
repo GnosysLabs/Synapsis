@@ -335,7 +335,7 @@ export function deserializePersonalityConfig(json: string): PersonalityConfig {
  */
 export async function getPersonalityConfig(botId: string): Promise<PersonalityConfig | null> {
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     columns: {
       personalityConfig: true,
     },
@@ -372,7 +372,7 @@ export async function updatePersonalityConfig(
   
   // Check if bot exists
   const existingBot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     columns: { id: true },
   });
   

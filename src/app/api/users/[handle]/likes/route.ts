@@ -108,7 +108,7 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Find the user
         const user = await db.query.users.findFirst({
-            where: eq(users.handle, cleanHandle),
+            where: { handle: cleanHandle },
         });
         const isRemotePlaceholder = user && cleanHandle.includes('@');
 
@@ -141,13 +141,13 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Get user's liked posts
         const userLikes = await db.query.likes.findMany({
-            where: eq(likes.userId, user.id),
+            where: { userId: user.id },
             with: {
                 post: {
                     with: likedPostRelations,
                 },
             },
-            orderBy: [desc(likes.createdAt)],
+            orderBy: () => [desc(likes.createdAt)],
             limit,
         });
 
@@ -156,8 +156,8 @@ export async function GET(request: Request, context: RouteContext) {
             .map(like => like.post);
 
         const swarmLikedRows = await db.query.userSwarmLikes.findMany({
-            where: eq(userSwarmLikes.userId, user.id),
-            orderBy: [desc(userSwarmLikes.likedAt)],
+            where: { userId: user.id },
+            orderBy: () => [desc(userSwarmLikes.likedAt)],
             limit,
         });
 
@@ -225,19 +225,12 @@ export async function GET(request: Request, context: RouteContext) {
 
                 if (localPostIds.length > 0) {
                     const viewerLikes = await db.query.likes.findMany({
-                        where: and(
-                            eq(likes.userId, viewer.id),
-                            inArray(likes.postId, localPostIds)
-                        ),
+                        where: { AND: [{ userId: viewer.id }, { postId: { in: localPostIds } }] },
                     });
                     const likedPostIds = new Set(viewerLikes.map(l => l.postId));
 
                     const viewerReposts = await db.query.posts.findMany({
-                        where: and(
-                            eq(posts.userId, viewer.id),
-                            inArray(posts.repostOfId, localPostIds),
-                            eq(posts.isRemoved, false)
-                        ),
+                        where: { AND: [{ userId: viewer.id }, { repostOfId: { in: localPostIds } }, { isRemoved: false }] },
                     });
                     const repostedPostIds = new Set(viewerReposts.map(r => r.repostOfId));
 

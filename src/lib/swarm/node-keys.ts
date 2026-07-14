@@ -68,11 +68,11 @@ export async function getNodeKeypair(): Promise<{ privateKey: string; publicKey:
     throw new Error('Database not available');
   }
 
-  const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+  const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
   // Try to get existing node
   let node = await db.query.nodes.findFirst({
-    where: eq(nodes.domain, domain),
+    where: { domain: domain },
   });
 
   // If node doesn't exist, create it
@@ -118,9 +118,9 @@ export async function getNodeKeypair(): Promise<{ privateKey: string; publicKey:
 export async function getNodePublicKey(): Promise<string | null> {
   if (!db) return null;
 
-  const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+  const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
   const node = await db.query.nodes.findFirst({
-    where: eq(nodes.domain, domain),
+    where: { domain: domain },
   });
 
   if (!node?.publicKey) {

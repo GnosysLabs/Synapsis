@@ -562,10 +562,7 @@ export async function contentItemExists(
   externalId: string
 ): Promise<boolean> {
   const existing = await db.query.botContentItems.findFirst({
-    where: and(
-      eq(botContentItems.sourceId, sourceId),
-      eq(botContentItems.externalId, externalId)
-    ),
+    where: { AND: [{ sourceId: sourceId }, { externalId: externalId }] },
     columns: { id: true },
   });
   
@@ -684,7 +681,7 @@ export async function recordFetchError(
 ): Promise<void> {
   // Get current consecutive errors
   const source = await db.query.botContentSources.findFirst({
-    where: eq(botContentSources.id, sourceId),
+    where: { id: sourceId },
     columns: { consecutiveErrors: true },
   });
   
@@ -768,7 +765,7 @@ export async function fetchContent(
       case 'news_api':
         // Decrypt API key
         const dbSource = await db.query.botContentSources.findFirst({
-          where: eq(botContentSources.id, sourceId),
+          where: { id: sourceId },
           columns: { apiKeyEncrypted: true },
         });
         
@@ -785,7 +782,7 @@ export async function fetchContent(
       case 'brave_news':
         // Decrypt API key
         const braveDbSource = await db.query.botContentSources.findFirst({
-          where: eq(botContentSources.id, sourceId),
+          where: { id: sourceId },
           columns: { apiKeyEncrypted: true, sourceConfig: true },
         });
         
@@ -945,10 +942,7 @@ export async function fetchAllSourcesForBot(
   options: FetchOptions = {}
 ): Promise<FetchResult[]> {
   const sources = await db.query.botContentSources.findMany({
-    where: and(
-      eq(botContentSources.botId, botId),
-      eq(botContentSources.isActive, true)
-    ),
+    where: { AND: [{ botId: botId }, { isActive: true }] },
   });
   
   const results: FetchResult[] = [];
@@ -994,10 +988,7 @@ export async function getUnprocessedItems(
   limit: number = 10
 ): Promise<StoredContentItem[]> {
   const items = await db.query.botContentItems.findMany({
-    where: and(
-      eq(botContentItems.sourceId, sourceId),
-      eq(botContentItems.isProcessed, false)
-    ),
+    where: { AND: [{ sourceId: sourceId }, { isProcessed: false }] },
     orderBy: (items, { asc }) => [asc(items.publishedAt)],
     limit,
   });

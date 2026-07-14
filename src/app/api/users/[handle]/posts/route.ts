@@ -151,13 +151,13 @@ async function getMixedProfileCursorDate(cursor: string | null) {
 
     if (cursor.startsWith('swarm-repost:')) {
         const repostRow = await db.query.userSwarmReposts.findFirst({
-            where: eq(userSwarmReposts.id, cursor.replace('swarm-repost:', '')),
+            where: { id: cursor.replace('swarm-repost:', '') },
         });
         return repostRow?.repostedAt ?? null;
     }
 
     const cursorPost = await db.query.posts.findFirst({
-        where: eq(posts.id, cursor),
+        where: { id: cursor },
     });
     return cursorPost?.createdAt ?? null;
 }
@@ -173,7 +173,7 @@ async function populateViewerLikeState(
         const { getSession } = await import('@/lib/auth');
         const session = await getSession();
         const viewer = session?.user;
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         if (!viewer) {
             return remotePosts;
@@ -301,7 +301,7 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Find the user
         const user = await db.query.users.findFirst({
-            where: eq(users.handle, cleanHandle),
+            where: { handle: cleanHandle },
         });
         const isRemotePlaceholder = user && cleanHandle.includes('@');
 
@@ -330,39 +330,28 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Get user's posts with cursor-based pagination
         const cursorDate = await getMixedProfileCursorDate(cursor);
-        let whereConditions = and(
-            eq(posts.userId, user.id),
-            eq(posts.isRemoved, false),
-            isNull(posts.replyToId),
-            isNull(posts.swarmReplyToId)
-        );
-
-        if (cursorDate) {
-            whereConditions = and(
-                eq(posts.userId, user.id),
-                eq(posts.isRemoved, false),
-                isNull(posts.replyToId),
-                isNull(posts.swarmReplyToId),
-                lt(posts.createdAt, cursorDate)
-            );
-        }
+        const whereConditions = {
+            userId: user.id,
+            isRemoved: false,
+            replyToId: { isNull: true as const },
+            swarmReplyToId: { isNull: true as const },
+            ...(cursorDate ? { createdAt: { lt: cursorDate } } : {}),
+        };
 
         const localPosts = await db.query.posts.findMany({
             where: whereConditions,
             with: userPostRelations,
-            orderBy: [desc(posts.createdAt)],
+            orderBy: () => [desc(posts.createdAt)],
             limit: cursor ? limit : limit * 2,
         });
 
-        const swarmRepostWhere = cursorDate
-            ? and(
-                eq(userSwarmReposts.userId, user.id),
-                lt(userSwarmReposts.repostedAt, cursorDate)
-            )
-            : eq(userSwarmReposts.userId, user.id);
+        const swarmRepostWhere = {
+            userId: user.id,
+            ...(cursorDate ? { repostedAt: { lt: cursorDate } } : {}),
+        };
         const swarmRepostRows = await db.query.userSwarmReposts.findMany({
             where: swarmRepostWhere,
-            orderBy: [desc(userSwarmReposts.repostedAt)],
+            orderBy: () => [desc(userSwarmReposts.repostedAt)],
             limit: cursor ? limit : limit * 2,
         });
         let userPosts: any[] = [
@@ -400,19 +389,12 @@ export async function GET(request: Request, context: RouteContext) {
 
                 if (localPostIds.length > 0) {
                     const viewerLikes = await db.query.likes.findMany({
-                        where: and(
-                            eq(likes.userId, viewer.id),
-                            inArray(likes.postId, localPostIds)
-                        ),
+                        where: { AND: [{ userId: viewer.id }, { postId: { in: localPostIds } }] },
                     });
                     viewerLikes.forEach((like) => likedPostIds.add(like.postId));
 
                     const viewerReposts = await db.query.posts.findMany({
-                        where: and(
-                            eq(posts.userId, viewer.id),
-                            inArray(posts.repostOfId, localPostIds),
-                            eq(posts.isRemoved, false)
-                        ),
+                        where: { AND: [{ userId: viewer.id }, { repostOfId: { in: localPostIds } }, { isRemoved: false }] },
                     });
                     viewerReposts.forEach((repost) => {
                         if (repost.repostOfId) {
@@ -422,7 +404,7 @@ export async function GET(request: Request, context: RouteContext) {
                 }
 
                 if (swarmTargets.length > 0) {
-                    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+                    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
                     const likedIds = await getViewerSwarmLikedPostIds(
                         swarmTargets.map((post) => ({
                             id: post.id,

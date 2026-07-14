@@ -61,7 +61,7 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Find the user
         const user = await db.query.users.findFirst({
-            where: eq(users.handle, cleanHandle),
+            where: { handle: cleanHandle },
         });
 
         if (!user) {
@@ -94,7 +94,7 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Get remote following
         const userRemoteFollowing = await db.query.remoteFollows.findMany({
-            where: eq(remoteFollows.followerId, user.id),
+            where: { followerId: user.id },
             limit,
         });
 

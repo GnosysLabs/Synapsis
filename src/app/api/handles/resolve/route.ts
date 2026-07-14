@@ -41,7 +41,7 @@ export async function GET(request: Request) {
         const parsed = parseHandleWithDomain(handleParam);
         const lookupHandle = parsed ? parsed.handle : normalizeHandle(handleParam);
         const localEntry = await db.query.handleRegistry.findFirst({
-            where: eq(handleRegistry.handle, lookupHandle),
+            where: { handle: lookupHandle },
         });
 
         if (localEntry) {
