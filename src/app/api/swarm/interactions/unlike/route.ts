@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     // Find the target post
     const post = await db.query.posts.findFirst({
-      where: eq(posts.id, data.postId),
+      where: { id: data.postId },
     });
 
     if (!post) {

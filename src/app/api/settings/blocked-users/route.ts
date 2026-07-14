@@ -10,7 +10,7 @@ export async function GET() {
         const currentUser = await requireAuth();
 
         const blocked = await db.query.blocks.findMany({
-            where: eq(blocks.userId, currentUser.id),
+            where: { userId: currentUser.id },
             with: {
                 blockedUser: true,
             },

@@ -45,14 +45,12 @@ export async function GET(request: Request) {
         const limit = Math.min(parseInt(searchParams.get('limit') || '30'), 50);
         const unreadOnly = searchParams.get('unread') === 'true';
 
-        const conditions = [eq(notifications.userId, user.id)];
-        if (unreadOnly) {
-            conditions.push(isNull(notifications.readAt));
-        }
-
         const rows = await db.query.notifications.findMany({
-            where: and(...conditions),
-            orderBy: [desc(notifications.createdAt)],
+            where: {
+                userId: user.id,
+                ...(unreadOnly ? { readAt: { isNull: true as const } } : {}),
+            },
+            orderBy: () => [desc(notifications.createdAt)],
             limit,
         });
 

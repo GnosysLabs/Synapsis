@@ -22,7 +22,7 @@ function normalizeOptionalUrl(value: string | null | undefined): string | undefi
  * Build this node's announcement payload
  */
 export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
-  const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+  const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
   
   let name = 'Synapsis Node';
   let description: string | undefined;
@@ -35,7 +35,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
   if (db) {
     // Get node info
     const node = await db.query.nodes.findFirst({
-      where: eq(nodes.domain, domain),
+      where: { domain: domain },
     });
 
     if (node) {

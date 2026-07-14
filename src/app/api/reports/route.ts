@@ -21,7 +21,7 @@ export async function POST(request: Request) {
 
         if (data.targetType === 'post') {
             const targetPost = await db.query.posts.findFirst({
-                where: eq(posts.id, data.targetId),
+                where: { id: data.targetId },
             });
             if (!targetPost || targetPost.isRemoved) {
                 return NextResponse.json({ error: 'Post not found' }, { status: 404 });
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
 
         if (data.targetType === 'user') {
             const targetUser = await db.query.users.findFirst({
-                where: eq(users.id, data.targetId),
+                where: { id: data.targetId },
             });
             if (!targetUser) {
                 return NextResponse.json({ error: 'User not found' }, { status: 404 });

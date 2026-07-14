@@ -26,13 +26,13 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       .then((res) => res.json())
       .then((data) => {
         setConfig({
-          domain: data.domain || 'localhost:3000',
+          domain: data.domain || 'localhost:43821',
         });
       })
       .catch(() => {
         // Fallback to build-time value if fetch fails
         setConfig({
-          domain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000',
+          domain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
         });
       })
       .finally(() => {
@@ -59,7 +59,7 @@ export function useDomain(): string {
   const { config, isLoading } = useRuntimeConfig();
   // Return runtime domain if loaded, otherwise fall back to build-time value
   if (isLoading || !config) {
-    return process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+    return process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
   }
   return config.domain;
 }

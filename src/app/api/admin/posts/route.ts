@@ -15,19 +15,16 @@ export async function GET(request: Request) {
         const status = searchParams.get('status') || 'active'; // active | removed | all
         const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
 
-        const where =
-            status === 'active'
-                ? eq(posts.isRemoved, false)
-                : status === 'removed'
-                    ? eq(posts.isRemoved, true)
-                    : undefined;
+        const where = status === 'all'
+            ? undefined
+            : { isRemoved: status === 'removed' };
 
         const results = await db.query.posts.findMany({
             where,
             with: {
                 author: true,
             },
-            orderBy: [desc(posts.createdAt)],
+            orderBy: () => [desc(posts.createdAt)],
             limit,
         });
 

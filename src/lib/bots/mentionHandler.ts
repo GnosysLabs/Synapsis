@@ -106,7 +106,7 @@ export async function detectMentions(botId: string): Promise<MentionDetectionRes
   try {
     // Get the bot's handle
     const bot = await db.query.bots.findFirst({
-      where: eq(bots.id, botId),
+      where: { id: botId },
       with: {
         user: {
           columns: { handle: true },
@@ -124,7 +124,7 @@ export async function detectMentions(botId: string): Promise<MentionDetectionRes
 
     // Get existing mention post IDs to avoid duplicates
     const existingMentions = await db.query.botMentions.findMany({
-      where: eq(botMentions.botId, botId),
+      where: { botId: botId },
       columns: { postId: true },
     });
 
@@ -140,9 +140,7 @@ export async function detectMentions(botId: string): Promise<MentionDetectionRes
     oneDayAgo.setDate(oneDayAgo.getDate() - 1);
 
     const recentPosts = await db.query.posts.findMany({
-      where: and(
-        eq(posts.isRemoved, false)
-      ),
+      where: { AND: [{ isRemoved: false }] },
       with: {
         author: {
           columns: {
@@ -152,7 +150,7 @@ export async function detectMentions(botId: string): Promise<MentionDetectionRes
           },
         },
       },
-      orderBy: [desc(posts.createdAt)],
+      orderBy: () => [desc(posts.createdAt)],
       limit: 1000, // Reasonable limit for scanning
     });
 
@@ -218,11 +216,8 @@ export async function detectMentions(botId: string): Promise<MentionDetectionRes
 export async function getUnprocessedMentions(botId: string): Promise<Mention[]> {
   try {
     const mentions = await db.query.botMentions.findMany({
-      where: and(
-        eq(botMentions.botId, botId),
-        eq(botMentions.isProcessed, false)
-      ),
-      orderBy: [asc(botMentions.createdAt)], // Chronological order (oldest first)
+      where: { AND: [{ botId: botId }, { isProcessed: false }] },
+      orderBy: () => [asc(botMentions.createdAt)], // Chronological order (oldest first)
     });
 
     return mentions.map(m => ({
@@ -256,8 +251,8 @@ export async function getUnprocessedMentions(botId: string): Promise<Mention[]> 
 export async function getAllMentions(botId: string): Promise<Mention[]> {
   try {
     const mentions = await db.query.botMentions.findMany({
-      where: eq(botMentions.botId, botId),
-      orderBy: [desc(botMentions.createdAt)],
+      where: { botId: botId },
+      orderBy: () => [desc(botMentions.createdAt)],
     });
 
     return mentions.map(m => ({
@@ -307,7 +302,7 @@ export async function getConversationContext(
 
     while (currentPostId && depth < maxDepth) {
       const post: any = await db.query.posts.findFirst({
-        where: eq(posts.id, currentPostId),
+        where: { id: currentPostId },
         with: {
           author: {
             columns: {
@@ -365,7 +360,7 @@ export async function processMention(mentionId: string): Promise<MentionResponse
   try {
     // Get the mention
     const mention = await db.query.botMentions.findFirst({
-      where: eq(botMentions.id, mentionId),
+      where: { id: mentionId },
     });
 
     if (!mention) {
@@ -394,7 +389,7 @@ export async function processMention(mentionId: string): Promise<MentionResponse
 
     // Get the bot
     const bot = await db.query.bots.findFirst({
-      where: eq(bots.id, mention.botId),
+      where: { id: mention.botId },
       with: {
         user: {
           columns: {
@@ -414,7 +409,7 @@ export async function processMention(mentionId: string): Promise<MentionResponse
 
     // Get the mentioning post with author info
     const mentionPost = await db.query.posts.findFirst({
-      where: eq(posts.id, mention.postId),
+      where: { id: mention.postId },
       with: {
         author: {
           columns: {
@@ -607,7 +602,7 @@ export async function storeMention(data: {
 export async function getMentionById(mentionId: string): Promise<Mention | null> {
   try {
     const mention = await db.query.botMentions.findFirst({
-      where: eq(botMentions.id, mentionId),
+      where: { id: mentionId },
     });
 
     if (!mention) {

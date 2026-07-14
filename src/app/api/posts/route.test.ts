@@ -85,7 +85,7 @@ describe('POST /api/posts', () => {
     };
 
     // Create a mock request
-    const request = new Request('http://localhost:3000/api/posts', {
+    const request = new Request('http://localhost:43821/api/posts', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -122,7 +122,7 @@ describe('POST /api/posts', () => {
       signature: 'invalid-signature',
     };
 
-    const request = new Request('http://localhost:3000/api/posts', {
+    const request = new Request('http://localhost:43821/api/posts', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -152,7 +152,7 @@ describe('POST /api/posts', () => {
       signature: 'test-signature',
     };
 
-    const request = new Request('http://localhost:3000/api/posts', {
+    const request = new Request('http://localhost:43821/api/posts', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -182,7 +182,7 @@ describe('POST /api/posts', () => {
       signature: 'test-signature',
     };
 
-    const request = new Request('http://localhost:3000/api/posts', {
+    const request = new Request('http://localhost:43821/api/posts', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -212,7 +212,7 @@ describe('POST /api/posts', () => {
       signature: 'test-signature',
     };
 
-    const request = new Request('http://localhost:3000/api/posts', {
+    const request = new Request('http://localhost:43821/api/posts', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -253,7 +253,7 @@ describe('POST /api/posts', () => {
       signature: 'test-signature',
     };
 
-    const request = new Request('http://localhost:3000/api/posts', {
+    const request = new Request('http://localhost:43821/api/posts', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -293,7 +293,7 @@ describe('POST /api/posts', () => {
       signature: 'test-signature',
     };
 
-    const request = new Request('http://localhost:3000/api/posts', {
+    const request = new Request('http://localhost:43821/api/posts', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -16,8 +16,8 @@ export async function GET(request: Request) {
         const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
 
         const reportRows = await db.query.reports.findMany({
-            where: status === 'all' ? undefined : eq(reports.status, status),
-            orderBy: [desc(reports.createdAt)],
+            where: status === 'all' ? undefined : { status: status },
+            orderBy: () => [desc(reports.createdAt)],
             limit,
             with: {
                 reporter: true,
@@ -34,13 +34,13 @@ export async function GET(request: Request) {
 
         const postTargetsRaw = postIds.length
             ? await db.query.posts.findMany({
-                where: inArray(posts.id, postIds),
+                where: { id: { in: postIds } },
                 with: { author: true },
             })
             : [];
         const userTargetsRaw = userIds.length
             ? await db.query.users.findMany({
-                where: inArray(users.id, userIds),
+                where: { id: { in: userIds } },
             })
             : [];
 

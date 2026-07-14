@@ -129,11 +129,7 @@ async function getOrCreateWindow(
 ): Promise<typeof botRateLimits.$inferSelect> {
   // Try to find existing window
   const existing = await db.query.botRateLimits.findFirst({
-    where: and(
-      eq(botRateLimits.botId, botId),
-      eq(botRateLimits.windowType, windowType),
-      eq(botRateLimits.windowStart, windowStart)
-    ),
+    where: { AND: [{ botId }, { windowType }, { windowStart: { eq: windowStart } }] },
   });
   
   if (existing) {
@@ -158,11 +154,7 @@ async function getOrCreateWindow(
 async function getDailyPostCount(botId: string): Promise<number> {
   const windowStart = getDailyWindowStart();
   const window = await db.query.botRateLimits.findFirst({
-    where: and(
-      eq(botRateLimits.botId, botId),
-      eq(botRateLimits.windowType, 'daily'),
-      eq(botRateLimits.windowStart, windowStart)
-    ),
+    where: { AND: [{ botId }, { windowType: 'daily' }, { windowStart: { eq: windowStart } }] },
   });
   
   return window?.postCount ?? 0;
@@ -174,11 +166,7 @@ async function getDailyPostCount(botId: string): Promise<number> {
 async function getHourlyReplyCount(botId: string): Promise<number> {
   const windowStart = getHourlyWindowStart();
   const window = await db.query.botRateLimits.findFirst({
-    where: and(
-      eq(botRateLimits.botId, botId),
-      eq(botRateLimits.windowType, 'hourly'),
-      eq(botRateLimits.windowStart, windowStart)
-    ),
+    where: { AND: [{ botId }, { windowType: 'hourly' }, { windowStart: { eq: windowStart } }] },
   });
   
   return window?.replyCount ?? 0;
@@ -189,7 +177,7 @@ async function getHourlyReplyCount(botId: string): Promise<number> {
  */
 async function getLastPostAt(botId: string): Promise<Date | null> {
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     columns: { lastPostAt: true },
   });
   
@@ -368,11 +356,7 @@ export async function getPostCount(botId: string, windowHours: number): Promise<
   
   // Get all daily windows that overlap with the requested time range
   const windows = await db.query.botRateLimits.findMany({
-    where: and(
-      eq(botRateLimits.botId, botId),
-      eq(botRateLimits.windowType, 'daily'),
-      gte(botRateLimits.windowStart, getDailyWindowStart(windowStart))
-    ),
+    where: { AND: [{ botId: botId }, { windowType: 'daily' }, { windowStart: { gte: getDailyWindowStart(windowStart) } }] },
   });
   
   return windows.reduce((sum, w) => sum + w.postCount, 0);

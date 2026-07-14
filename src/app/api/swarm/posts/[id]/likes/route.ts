@@ -59,7 +59,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     // Find the post
     const post = await db.query.posts.findFirst({
-      where: eq(posts.id, postId),
+      where: { id: postId },
     });
 
     if (!post || post.isRemoved) {
@@ -71,11 +71,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       // If domain is provided, check remote likes
       if (checkDomain) {
         const remoteLike = await db.query.remoteLikes.findFirst({
-          where: and(
-            eq(remoteLikes.postId, postId),
-            eq(remoteLikes.actorHandle, checkHandle),
-            eq(remoteLikes.actorNodeDomain, checkDomain)
-          ),
+          where: { AND: [{ postId: postId }, { actorHandle: checkHandle }, { actorNodeDomain: checkDomain }] },
         });
 
         return NextResponse.json({
@@ -89,15 +85,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
       // No domain = local user
       const localUser = await db.query.users.findFirst({
-        where: eq(users.handle, checkHandle),
+        where: { handle: checkHandle },
       });
 
       if (localUser) {
         const liked = await db.query.likes.findFirst({
-          where: and(
-            eq(likes.postId, postId),
-            eq(likes.userId, localUser.id)
-          ),
+          where: { AND: [{ postId: postId }, { userId: localUser.id }] },
         });
 
         return NextResponse.json({

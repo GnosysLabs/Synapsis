@@ -9,11 +9,11 @@ export async function GET() {
     try {
         if (!db) return NextResponse.json({});
 
-        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         // 1. Try exact match
         let node = await db.query.nodes.findFirst({
-            where: eq(nodes.domain, domain),
+            where: { domain: domain },
         });
 
         // 2. Fallback: If not found, check if there is exactly ONE node in the system.

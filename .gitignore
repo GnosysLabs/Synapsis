@@ -47,6 +47,12 @@ next-env.d.ts
 # uploads
 /public/uploads/
 
+# embedded Turso / SQLite data
+/data/
+*.db
+*.db-shm
+*.db-wal
+
 # IDE
 .vscode/
 .kiro/

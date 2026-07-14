@@ -128,7 +128,7 @@ export async function GET(request: NextRequest) {
 
     // Get node NSFW status
     const node = await db.query.nodes.findFirst({
-      where: eq(nodes.domain, nodeDomain),
+      where: { domain: nodeDomain },
     });
     const nodeIsNsfw = node?.isNsfw ?? false;
 

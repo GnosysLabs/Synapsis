@@ -120,7 +120,7 @@ export function startBackgroundTasks(origin?: string) {
   isStarted = true;
 
   // Default origin for remote sync (can be overridden)
-  const syncOrigin = origin || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const syncOrigin = origin || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:43821';
 
   log('STARTUP', 'Background task scheduler starting...');
   log('STARTUP', `Bot interval: ${BOT_INTERVAL_MS / 1000}s, Gossip interval: ${GOSSIP_INTERVAL_MS / 1000}s, Remote sync interval: ${REMOTE_SYNC_INTERVAL_MS / 1000}s`);

@@ -169,7 +169,7 @@ function getDecryptedApiKeyForBot(bot: typeof bots.$inferSelect): string {
  */
 async function getContentItemById(contentItemId: string): Promise<ContentItem | null> {
   const item = await db.query.botContentItems.findFirst({
-    where: eq(botContentItems.id, contentItemId),
+    where: { id: contentItemId },
   });
 
   if (!item) {
@@ -197,10 +197,10 @@ async function getContentItemById(contentItemId: string): Promise<ContentItem | 
 async function getNextUnprocessedContentItem(botId: string): Promise<ContentItem | null> {
   // Get bot's content sources
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     with: {
       contentSources: {
-        where: (sources, { eq }) => eq(sources.isActive, true),
+        where: { isActive: true },
       },
       user: true,
     },
@@ -214,7 +214,7 @@ async function getNextUnprocessedContentItem(botId: string): Promise<ContentItem
 
   // Get ALL posts by this bot to avoid duplicates (no time limit)
   const allBotPosts = await db.query.posts.findMany({
-    where: eq(posts.userId, bot.userId),
+    where: { userId: bot.userId },
     columns: {
       linkPreviewUrl: true,
     },
@@ -230,10 +230,7 @@ async function getNextUnprocessedContentItem(botId: string): Promise<ContentItem
 
   // Get unprocessed content items from this bot's sources
   const items = await db.query.botContentItems.findMany({
-    where: and(
-      eq(botContentItems.isProcessed, false),
-      inArray(botContentItems.sourceId, sourceIds)
-    ),
+    where: { AND: [{ isProcessed: false }, { sourceId: { in: sourceIds } }] },
     orderBy: (items, { asc }) => [asc(items.publishedAt)],
     limit: 100, // Get more items to have options after filtering
   });
@@ -278,7 +275,7 @@ async function getNextUnprocessedContentItem(botId: string): Promise<ContentItem
 async function getBotPreviousPosts(botId: string, limit: number = 40): Promise<string[]> {
   // Get bot to find its user ID
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
   });
 
   if (!bot) {
@@ -287,7 +284,7 @@ async function getBotPreviousPosts(botId: string, limit: number = 40): Promise<s
 
   // Get the bot's recent posts
   const recentPosts = await db.query.posts.findMany({
-    where: eq(posts.userId, bot.userId),
+    where: { userId: bot.userId },
     orderBy: (posts, { desc }) => [desc(posts.createdAt)],
     limit,
     columns: {
@@ -512,7 +509,7 @@ export async function selectContentForPosting(
 
     // Verify the content belongs to this bot's sources
     const bot = await db.query.bots.findFirst({
-      where: eq(bots.id, botId),
+      where: { id: botId },
       with: {
         contentSources: true,
         user: true,
@@ -691,7 +688,7 @@ async function resolveContentItemSourceUrl(contentItem?: ContentItem | null): Pr
   }
 
   const source = await db.query.botContentSources.findFirst({
-    where: eq(botContentSources.id, contentItem.sourceId),
+    where: { id: contentItem.sourceId },
     columns: {
       type: true,
       subreddit: true,
@@ -726,7 +723,7 @@ async function createPostInDatabase(
 ): Promise<typeof posts.$inferSelect> {
   // Get bot config
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
   });
 
   if (!bot) {
@@ -738,7 +735,7 @@ async function createPostInDatabase(
 
   // Get the bot's own user account (not the owner)
   const botUser = await db.query.users.findFirst({
-    where: eq(users.id, bot.userId),
+    where: { id: bot.userId },
   });
 
   if (!botUser) {
@@ -755,7 +752,7 @@ async function createPostInDatabase(
     linkPreview = await fetchLinkPreview(sourceUrl);
   }
 
-  const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+  const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
   const postUuid = crypto.randomUUID();
 
   try {
@@ -807,7 +804,7 @@ async function federatePost(
     try {
       // Get bot config
       const bot = await db.query.bots.findFirst({
-        where: eq(bots.id, botId),
+        where: { id: botId },
       });
 
       if (!bot) {
@@ -817,7 +814,7 @@ async function federatePost(
 
       // Get the bot's own user account
       const botUser = await db.query.users.findFirst({
-        where: eq(users.id, bot.userId),
+        where: { id: bot.userId },
       });
 
       if (!botUser) {
@@ -825,7 +822,7 @@ async function federatePost(
         return;
       }
 
-      const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+      const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
       // Use swarm delivery for bot posts
       const { deliverPostToSwarmFollowers } = await import('@/lib/swarm/interactions');
@@ -993,7 +990,7 @@ export async function triggerPost(
 
     // Get bot from database for generation
     const dbBot = await db.query.bots.findFirst({
-      where: eq(bots.id, botId),
+      where: { id: botId },
       with: { user: true }, // Required for generatePostContent
     });
 
@@ -1142,7 +1139,7 @@ export async function getPostingStats(botId: string): Promise<{
 }> {
   // Get bot
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     with: {
       contentSources: true,
     },
@@ -1160,7 +1157,7 @@ export async function getPostingStats(botId: string): Promise<{
 
   // Get user's post count
   const user = await db.query.users.findFirst({
-    where: eq(users.id, bot.userId),
+    where: { id: bot.userId },
   });
 
   const totalPosts = user?.postsCount || 0;
@@ -1170,10 +1167,7 @@ export async function getPostingStats(botId: string): Promise<{
   today.setUTCHours(0, 0, 0, 0);
 
   const postsToday = await db.query.posts.findMany({
-    where: and(
-      eq(posts.userId, bot.userId),
-      // Note: This is a simplified query. In production, you'd want to use a proper date comparison
-    ),
+    where: { AND: [{ userId: bot.userId }] },
   });
 
   // Get content item stats
@@ -1184,7 +1178,7 @@ export async function getPostingStats(botId: string): Promise<{
 
   if (sourceIds.length > 0) {
     const allItems = await db.query.botContentItems.findMany({
-      where: (items, { inArray }) => inArray(items.sourceId, sourceIds),
+      where: { sourceId: { in: sourceIds } },
     });
 
     contentItemsProcessed = allItems.filter(item => item.isProcessed).length;

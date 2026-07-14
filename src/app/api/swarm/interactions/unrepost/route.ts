@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     // Find the target post
     const post = await db.query.posts.findFirst({
-      where: eq(posts.id, data.postId),
+      where: { id: data.postId },
     });
 
     if (!post) {
@@ -61,11 +61,7 @@ export async function POST(request: NextRequest) {
     }
 
     const existingRepost = await db.query.remoteReposts.findFirst({
-      where: and(
-        eq(remoteReposts.postId, data.postId),
-        eq(remoteReposts.actorHandle, data.unrepost.actorHandle),
-        eq(remoteReposts.actorNodeDomain, data.unrepost.actorNodeDomain),
-      ),
+      where: { AND: [{ postId: data.postId }, { actorHandle: data.unrepost.actorHandle }, { actorNodeDomain: data.unrepost.actorNodeDomain }] },
     });
 
     if (!existingRepost) {
@@ -77,7 +73,7 @@ export async function POST(request: NextRequest) {
 
     // Decrement repost count
     await db.update(posts)
-      .set({ repostsCount: sql`GREATEST(0, ${posts.repostsCount} - 1)` })
+      .set({ repostsCount: sql`max(0, ${posts.repostsCount} - 1)` })
       .where(eq(posts.id, data.postId));
 
     await db.delete(remoteReposts).where(eq(remoteReposts.id, existingRepost.id));

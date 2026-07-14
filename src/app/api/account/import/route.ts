@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
 
         // Check if DID already exists on this node
         const existingDid = await db.query.users.findFirst({
-            where: eq(users.did, manifest.did),
+            where: { did: manifest.did },
         });
 
         if (existingDid) {
@@ -222,7 +222,7 @@ export async function POST(req: NextRequest) {
 
         // Check if handle is available
         const existingHandle = await db.query.users.findFirst({
-            where: eq(users.handle, handleClean),
+            where: { handle: handleClean },
         });
 
         if (existingHandle) {
@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
             }, { status: 409 });
         }
 
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const oldActorUrl = `https://${manifest.sourceNode}/users/${manifest.handle}`;
         const newActorUrl = `https://${nodeDomain}/users/${handleClean}`;
 
@@ -253,7 +253,7 @@ export async function POST(req: NextRequest) {
 
         // Check if this is an NSFW node and auto-enable NSFW settings
         const node = await db.query.nodes.findFirst({
-            where: eq(nodes.domain, nodeDomain),
+            where: { domain: nodeDomain },
         });
 
         if (node?.isNsfw) {
@@ -319,7 +319,7 @@ export async function POST(req: NextRequest) {
                 } else {
                     // Local follow - look up user and add to follows table
                     const targetUser = await db.query.users.findFirst({
-                        where: eq(users.handle, follow.handle.toLowerCase()),
+                        where: { handle: follow.handle.toLowerCase() },
                     });
                     if (targetUser) {
                         await db.insert(follows).values({

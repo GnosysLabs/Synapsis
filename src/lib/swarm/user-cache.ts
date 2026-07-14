@@ -21,10 +21,7 @@ export async function upsertRemoteUser(profile: RemoteProfile): Promise<void> {
     try {
         // Check if user already exists
         const existing = await db.query.users.findFirst({
-            where: or(
-                eq(users.did, profile.did),
-                eq(users.handle, profile.handle),
-            ),
+            where: { OR: [{ did: profile.did }, { handle: profile.handle }] },
         });
 
         if (existing) {

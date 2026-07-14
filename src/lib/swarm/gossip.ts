@@ -25,7 +25,7 @@ import { buildAnnouncement } from './discovery';
  * Build a gossip payload to send to another node
  */
 export async function buildGossipPayload(since?: string): Promise<SwarmGossipPayload> {
-  const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+  const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
   // Get nodes to share
   let nodes: SwarmNodeInfo[];
@@ -56,8 +56,8 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
   if (db) {
     const sinceDate = since ? new Date(since) : undefined;
     const handleEntries = await db.query.handleRegistry.findMany({
-      where: sinceDate ? gt(handleRegistry.updatedAt, sinceDate) : undefined,
-      orderBy: [desc(handleRegistry.updatedAt)],
+      where: sinceDate ? { updatedAt: { gt: sinceDate } } : undefined,
+      orderBy: () => [desc(handleRegistry.updatedAt)],
       limit: SWARM_CONFIG.maxHandlesPerGossip,
     });
 

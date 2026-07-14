@@ -20,7 +20,7 @@ interface IdentityCacheEntry {
  */
 export async function getCachedIdentity(did: string): Promise<IdentityCacheEntry | null> {
   const cached = await db.query.remoteIdentityCache.findFirst({
-    where: eq(remoteIdentityCache.did, did),
+    where: { did: did },
   });
   
   return cached || null;

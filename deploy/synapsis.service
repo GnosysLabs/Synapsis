@@ -1,0 +1,23 @@
+[Unit]
+Description=Synapsis node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=synapsis
+Group=synapsis
+WorkingDirectory=/opt/synapsis
+EnvironmentFile=/etc/synapsis.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/env npm start
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/synapsis /opt/synapsis/.next
+
+[Install]
+WantedBy=multi-user.target

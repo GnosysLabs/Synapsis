@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
 
     // Find the target post
     const post = await db.query.posts.findFirst({
-      where: eq(posts.id, data.postId),
+      where: { id: data.postId },
       with: { author: true },
     });
 
@@ -66,11 +66,7 @@ export async function POST(request: NextRequest) {
     }
 
     const existingRepost = await db.query.remoteReposts.findFirst({
-      where: and(
-        eq(remoteReposts.postId, data.postId),
-        eq(remoteReposts.actorHandle, data.repost.actorHandle),
-        eq(remoteReposts.actorNodeDomain, data.repost.actorNodeDomain),
-      ),
+      where: { AND: [{ postId: data.postId }, { actorHandle: data.repost.actorHandle }, { actorNodeDomain: data.repost.actorNodeDomain }] },
     });
 
     if (existingRepost) {

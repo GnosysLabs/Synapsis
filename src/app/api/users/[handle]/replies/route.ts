@@ -95,7 +95,7 @@ export async function GET(request: Request, context: RouteContext) {
     }
 
     const user = await db.query.users.findFirst({
-      where: eq(users.handle, cleanHandle),
+      where: { handle: cleanHandle },
     });
     const isRemotePlaceholder = user && cleanHandle.includes('@');
 
@@ -121,30 +121,29 @@ export async function GET(request: Request, context: RouteContext) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    let whereConditions = and(
-      eq(posts.userId, user.id),
-      eq(posts.isRemoved, false),
-      or(isNotNull(posts.replyToId), isNotNull(posts.swarmReplyToId)),
-    );
+    let cursorDate: Date | undefined;
 
     if (cursor) {
       const cursorPost = await db.query.posts.findFirst({
-        where: eq(posts.id, cursor),
+        where: { id: cursor },
       });
       if (cursorPost) {
-        whereConditions = and(
-          eq(posts.userId, user.id),
-          eq(posts.isRemoved, false),
-          or(isNotNull(posts.replyToId), isNotNull(posts.swarmReplyToId)),
-          lt(posts.createdAt, cursorPost.createdAt),
-        );
+        cursorDate = cursorPost.createdAt;
       }
     }
 
     let replyPosts: any[] = await db.query.posts.findMany({
-      where: whereConditions,
+      where: {
+        userId: user.id,
+        isRemoved: false,
+        OR: [
+          { replyToId: { isNotNull: true } },
+          { swarmReplyToId: { isNotNull: true } },
+        ],
+        ...(cursorDate ? { createdAt: { lt: cursorDate } } : {}),
+      },
       with: replyRelations,
-      orderBy: [desc(posts.createdAt)],
+      orderBy: () => [desc(posts.createdAt)],
       limit,
     });
 
@@ -158,21 +157,14 @@ export async function GET(request: Request, context: RouteContext) {
 
         const viewerLikes = postIds.length > 0
           ? await db.query.likes.findMany({
-              where: and(
-                eq(likes.userId, viewer.id),
-                inArray(likes.postId, postIds),
-              ),
+              where: { AND: [{ userId: viewer.id }, { postId: { in: postIds } }] },
             })
           : [];
         const likedPostIds = new Set(viewerLikes.map((like) => like.postId));
 
         const viewerReposts = postIds.length > 0
           ? await db.query.posts.findMany({
-              where: and(
-                eq(posts.userId, viewer.id),
-                inArray(posts.repostOfId, postIds),
-                eq(posts.isRemoved, false),
-              ),
+              where: { AND: [{ userId: viewer.id }, { repostOfId: { in: postIds } }, { isRemoved: false }] },
             })
           : [];
         const repostedPostIds = new Set(viewerReposts.map((post) => post.repostOfId));

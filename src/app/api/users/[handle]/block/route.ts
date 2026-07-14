@@ -13,7 +13,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
         const { handle } = await context.params;
 
         const targetUser = await db.query.users.findFirst({
-            where: eq(users.handle, handle),
+            where: { handle: handle },
         });
 
         if (!targetUser) {
@@ -21,10 +21,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
         }
 
         const block = await db.query.blocks.findFirst({
-            where: and(
-                eq(blocks.userId, currentUser.id),
-                eq(blocks.blockedUserId, targetUser.id)
-            ),
+            where: { AND: [{ userId: currentUser.id }, { blockedUserId: targetUser.id }] },
         });
 
         return NextResponse.json({ blocked: !!block });
@@ -44,7 +41,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
         const { handle } = await context.params;
 
         const targetUser = await db.query.users.findFirst({
-            where: eq(users.handle, handle),
+            where: { handle: handle },
         });
 
         if (!targetUser) {
@@ -57,10 +54,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
 
         // Check if already blocked
         const existing = await db.query.blocks.findFirst({
-            where: and(
-                eq(blocks.userId, currentUser.id),
-                eq(blocks.blockedUserId, targetUser.id)
-            ),
+            where: { AND: [{ userId: currentUser.id }, { blockedUserId: targetUser.id }] },
         });
 
         if (existing) {
@@ -104,7 +98,7 @@ export async function DELETE(req: NextRequest, context: RouteContext) {
         const { handle } = await context.params;
 
         const targetUser = await db.query.users.findFirst({
-            where: eq(users.handle, handle),
+            where: { handle: handle },
         });
 
         if (!targetUser) {

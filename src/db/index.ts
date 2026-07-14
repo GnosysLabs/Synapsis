@@ -1,26 +1,19 @@
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Pool } from 'pg';
-import * as schema from './schema';
+import { mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { drizzle } from 'drizzle-orm/tursodatabase/database';
+import { relations } from './relations';
 
-// Best Practice for VPS/Self-Hosting:
-// We use 'pg' (node-postgres) which connects via standard TCP.
-// This works for local Postgres, Docker, VPS, and managed clouds (AWS RDS, Neon, etc.).
+const configuredPath = process.env.DATABASE_PATH || './data/synapsis.db';
+const databasePath = configuredPath === ':memory:' ? configuredPath : resolve(configuredPath);
 
-const connectionString = process.env.DATABASE_URL || 'postgres://placeholder:placeholder@localhost:5432/placeholder';
+if (databasePath !== ':memory:') {
+    mkdirSync(dirname(databasePath), { recursive: true });
+}
 
-// Create a connection pool
-const pool = new Pool({
-    connectionString,
-    max: 20, // Adjust based on your server capacity
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-});
+export const db = drizzle(databasePath, { relations });
 
-// Create the Drizzle client
-export const db = drizzle(pool, { schema });
-
-// Helper to check if DB is configured
-export const isDbAvailable = () => !!process.env.DATABASE_URL;
+// Embedded Turso is always available; DATABASE_PATH only changes its location.
+export const isDbAvailable = () => true;
 
 // Export schema for use elsewhere
 export * from './schema';

@@ -38,29 +38,6 @@ export default function AdminPage() {
     const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
     const [isUploadingFavicon, setIsUploadingFavicon] = useState(false);
     const [faviconUploadError, setFaviconUploadError] = useState<string | null>(null);
-    const [updateStatus, setUpdateStatus] = useState<{
-        current: { version: string; commit: string | null; buildDate: string | null };
-        latest: { version: string; commit: string | null; buildDate: string | null } | null;
-        updateAvailable: boolean;
-        updater: {
-            available: boolean;
-            status: string;
-            message?: string;
-            lastStartedAt?: string | null;
-            lastFinishedAt?: string | null;
-            lastExitCode?: number | null;
-            lastError?: string | null;
-            trigger?: 'manual' | 'auto' | null;
-            config?: {
-                autoUpdateEnabled: boolean;
-                intervalMinutes: number;
-            };
-        };
-    } | null>(null);
-    const [loadingUpdateStatus, setLoadingUpdateStatus] = useState(false);
-    const [triggeringUpdate, setTriggeringUpdate] = useState(false);
-    const [savingAutoUpdate, setSavingAutoUpdate] = useState(false);
-
     useEffect(() => {
         fetch('/api/admin/me')
             .then((res) => res.json())
@@ -93,40 +70,10 @@ export default function AdminPage() {
         }
     };
 
-    const loadUpdateStatus = async () => {
-        setLoadingUpdateStatus(true);
-        try {
-            const res = await fetch('/api/admin/update', { cache: 'no-store' });
-            if (!res.ok) {
-                throw new Error('Failed to load update status');
-            }
-
-            const data = await res.json();
-            setUpdateStatus(data);
-        } catch {
-            setUpdateStatus(null);
-        } finally {
-            setLoadingUpdateStatus(false);
-        }
-    };
-
     useEffect(() => {
         if (isAdmin) {
             loadNodeSettings();
-            loadUpdateStatus();
         }
-    }, [isAdmin]);
-
-    useEffect(() => {
-        if (!isAdmin) {
-            return;
-        }
-
-        const interval = window.setInterval(() => {
-            loadUpdateStatus();
-        }, 30000);
-
-        return () => window.clearInterval(interval);
     }, [isAdmin]);
 
     const handleSaveSettings = async (override?: typeof nodeSettings) => {
@@ -234,33 +181,6 @@ export default function AdminPage() {
         setBannerPromptError('');
     };
 
-    const handleTriggerUpdate = async () => {
-        setTriggeringUpdate(true);
-        try {
-            const res = await fetch('/api/admin/update', { method: 'POST', keepalive: true });
-            const data = await res.json().catch(() => ({}));
-
-            if (!res.ok) {
-                throw new Error(data.error || 'Failed to start update');
-            }
-
-            showToast(data.message || 'Update started. Synapsis will restart shortly.', 'success');
-            await loadUpdateStatus();
-        } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to start update';
-            if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network')) {
-                showToast('Update likely started. The node is restarting, so this page may disconnect briefly.', 'success');
-                window.setTimeout(() => {
-                    window.location.reload();
-                }, 5000);
-            } else {
-                showToast(message, 'error');
-            }
-        } finally {
-            setTriggeringUpdate(false);
-        }
-    };
-
     const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         event.target.value = '';
@@ -294,38 +214,6 @@ export default function AdminPage() {
             setLogoUploadError(error instanceof Error ? error.message : 'Upload failed. Please try again.');
         } finally {
             setIsUploadingLogo(false);
-        }
-    };
-
-    const handleToggleAutoUpdate = async () => {
-        if (!updateStatus?.updater.available || !updateStatus.updater.config) return;
-
-        const nextValue = !updateStatus.updater.config.autoUpdateEnabled;
-        setSavingAutoUpdate(true);
-        try {
-            const res = await fetch('/api/admin/update', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ autoUpdateEnabled: nextValue }),
-            });
-            const data = await res.json().catch(() => ({}));
-
-            if (!res.ok) {
-                throw new Error(data.error || 'Failed to update auto-update setting');
-            }
-
-            setUpdateStatus((prev) => prev ? {
-                ...prev,
-                updater: {
-                    ...prev.updater,
-                    config: data.config,
-                },
-            } : prev);
-            showToast(nextValue ? 'Automatic updates enabled' : 'Automatic updates disabled', 'success');
-        } catch (error) {
-            showToast(error instanceof Error ? error.message : 'Failed to update auto-update setting', 'error');
-        } finally {
-            setSavingAutoUpdate(false);
         }
     };
 
@@ -703,86 +591,6 @@ export default function AdminPage() {
                                 </button>
                             </div>
 
-                            <div style={{
-                                padding: '16px',
-                                background: 'var(--background-secondary)',
-                                borderRadius: '8px',
-                                border: '1px solid var(--border)',
-                            }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
-                                    <div>
-                                        <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px' }}>System Update</h2>
-                                        <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', margin: 0 }}>
-                                            Keep this node on the latest published Synapsis build.
-                                        </p>
-                                    </div>
-                                    <button
-                                        className="btn btn-primary"
-                                        onClick={handleTriggerUpdate}
-                                        disabled={
-                                            triggeringUpdate ||
-                                            loadingUpdateStatus ||
-                                            updateStatus?.updater.available === false ||
-                                            updateStatus?.updater.status === 'updating' ||
-                                            !updateStatus?.updateAvailable
-                                        }
-                                    >
-                                        {triggeringUpdate || updateStatus?.updater.status === 'updating' ? 'Updating...' : 'Update Now'}
-                                    </button>
-                                </div>
-
-                                {updateStatus?.updater.available && updateStatus?.updater.config && (
-                                    <div style={{
-                                        marginTop: '16px',
-                                        padding: '12px',
-                                        borderRadius: '8px',
-                                        border: '1px solid var(--border)',
-                                        background: 'var(--background)',
-                                        display: 'flex',
-                                        justifyContent: 'space-between',
-                                        alignItems: 'flex-start',
-                                        gap: '16px',
-                                    }}>
-                                        <div>
-                                            <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                                                Automatic updates
-                                            </div>
-                                            <div style={{ fontSize: '12px', color: 'var(--foreground-secondary)' }}>
-                                                Enabled by default. This node checks for updates every {updateStatus.updater.config.intervalMinutes} minutes and installs them automatically.
-                                            </div>
-                                        </div>
-                                        <button
-                                            className={`btn btn-sm ${updateStatus.updater.config.autoUpdateEnabled ? 'btn-primary' : 'btn-ghost'}`}
-                                            onClick={handleToggleAutoUpdate}
-                                            disabled={savingAutoUpdate}
-                                            style={{ flexShrink: 0 }}
-                                        >
-                                            {savingAutoUpdate
-                                                ? 'Saving...'
-                                                : updateStatus.updater.config.autoUpdateEnabled
-                                                    ? 'Disable'
-                                                    : 'Enable'}
-                                        </button>
-                                    </div>
-                                )}
-
-                                {!updateStatus?.updater.available && (
-                                    <div style={{
-                                        marginTop: '16px',
-                                        padding: '12px',
-                                        borderRadius: '8px',
-                                        border: '1px solid var(--border)',
-                                        background: 'var(--background)',
-                                        fontSize: '12px',
-                                        color: 'var(--foreground-secondary)',
-                                    }}>
-                                        One-click updates are unavailable on this host. Use:
-                                        <div style={{ marginTop: '8px', fontFamily: 'monospace', color: 'var(--foreground)' }}>
-                                            curl -fsSL https://synapsis.social/update.sh | bash
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
                 </div>
             )}
 

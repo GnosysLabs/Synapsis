@@ -26,7 +26,7 @@ interface RemoteIdentity {
 export async function lookupRemoteKey(did: string): Promise<string> {
     // 1. Check Cache
     const cached = await db.query.remoteIdentityCache.findFirst({
-        where: eq(remoteIdentityCache.did, did),
+        where: { did: did },
     });
 
     const now = new Date();

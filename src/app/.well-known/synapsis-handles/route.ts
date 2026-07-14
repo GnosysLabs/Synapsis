@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, handleRegistry } from '@/db';
-import { desc, eq, gt } from 'drizzle-orm';
+import { desc } from 'drizzle-orm';
 import { normalizeHandle } from '@/lib/federation/handles';
 
 export async function GET(request: Request) {
@@ -17,7 +17,7 @@ export async function GET(request: Request) {
         if (handleParam) {
             const cleanHandle = normalizeHandle(handleParam);
             const entry = await db.query.handleRegistry.findFirst({
-                where: eq(handleRegistry.handle, cleanHandle),
+                where: { handle: cleanHandle },
             });
 
             if (!entry) {
@@ -36,8 +36,8 @@ export async function GET(request: Request) {
 
         const sinceDate = sinceParam ? new Date(sinceParam) : null;
         const entries = await db.query.handleRegistry.findMany({
-            where: sinceDate ? gt(handleRegistry.updatedAt, sinceDate) : undefined,
-            orderBy: [desc(handleRegistry.updatedAt)],
+            where: sinceDate ? { updatedAt: { gt: sinceDate } } : undefined,
+            orderBy: () => [desc(handleRegistry.updatedAt)],
             limit,
         });
 

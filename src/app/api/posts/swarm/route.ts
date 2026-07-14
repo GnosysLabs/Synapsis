@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
 
     const session = await getSession().catch(() => null);
     const viewer = session?.user;
-    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
     const allTimelinePosts = collectNestedSwarmPosts(timeline.posts as SwarmFeedPost[]);
     const likedPostIds = viewer
       ? await getViewerSwarmLikedPostIds(

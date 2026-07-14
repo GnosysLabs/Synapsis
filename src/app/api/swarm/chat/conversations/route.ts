@@ -22,11 +22,11 @@ export async function GET(request: NextRequest) {
 
     // Get all conversations for this user
     const conversations = await db.query.chatConversations.findMany({
-      where: eq(chatConversations.participant1Id, session.user.id),
-      orderBy: [desc(chatConversations.lastMessageAt)],
+      where: { participant1Id: session.user.id },
+      orderBy: () => [desc(chatConversations.lastMessageAt)],
       with: {
         messages: {
-          orderBy: [desc(chatMessages.createdAt)],
+          orderBy: () => [desc(chatMessages.createdAt)],
           limit: 1,
         },
       },
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
 
         // Try to get cached user info
         let cachedUser = await db.query.users.findFirst({
-          where: eq(users.handle, participant2Handle),
+          where: { handle: participant2Handle },
         });
 
         // If not found, check if it's a local user with a domain suffix
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
           const [handlePart, domainPart] = participant2Handle.split('@');
           if (!domainPart || domainPart === process.env.NEXT_PUBLIC_NODE_DOMAIN) {
             cachedUser = await db.query.users.findFirst({
-              where: eq(users.handle, handlePart),
+              where: { handle: handlePart },
             });
           }
         }
@@ -91,7 +91,7 @@ export async function GET(request: NextRequest) {
 
               // Re-query to get the new cached user
               cachedUser = await db.query.users.findFirst({
-                where: eq(users.handle, participant2Handle),
+                where: { handle: participant2Handle },
               }) as any;
             }
           } catch (e) {

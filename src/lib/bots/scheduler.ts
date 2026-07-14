@@ -679,10 +679,7 @@ export function isDue(
 export async function hasUnprocessedContent(botId: string): Promise<boolean> {
   // Get all content sources for the bot
   const sources = await db.query.botContentSources.findMany({
-    where: and(
-      eq(botContentSources.botId, botId),
-      eq(botContentSources.isActive, true)
-    ),
+    where: { AND: [{ botId: botId }, { isActive: true }] },
     columns: { id: true },
   });
   
@@ -693,10 +690,7 @@ export async function hasUnprocessedContent(botId: string): Promise<boolean> {
   // Check if any source has unprocessed content
   for (const source of sources) {
     const unprocessedItem = await db.query.botContentItems.findFirst({
-      where: and(
-        eq(botContentItems.sourceId, source.id),
-        eq(botContentItems.isProcessed, false)
-      ),
+      where: { AND: [{ sourceId: source.id }, { isProcessed: false }] },
       columns: { id: true },
     });
     
@@ -724,10 +718,7 @@ export async function getNextUnprocessedContent(botId: string): Promise<{
 } | null> {
   // Get all content sources for the bot
   const sources = await db.query.botContentSources.findMany({
-    where: and(
-      eq(botContentSources.botId, botId),
-      eq(botContentSources.isActive, true)
-    ),
+    where: { AND: [{ botId: botId }, { isActive: true }] },
     columns: { id: true },
   });
   
@@ -740,10 +731,7 @@ export async function getNextUnprocessedContent(botId: string): Promise<{
   
   for (const source of sources) {
     const item = await db.query.botContentItems.findFirst({
-      where: and(
-        eq(botContentItems.sourceId, source.id),
-        eq(botContentItems.isProcessed, false)
-      ),
+      where: { AND: [{ sourceId: source.id }, { isProcessed: false }] },
       orderBy: (items, { asc }) => [asc(items.publishedAt)],
     });
     
@@ -789,10 +777,7 @@ export async function processScheduledPosts(): Promise<ProcessScheduledPostsResu
   
   // Get all active bots with schedules
   const activeBots = await db.query.bots.findMany({
-    where: and(
-      eq(bots.isActive, true),
-      eq(bots.isSuspended, false)
-    ),
+    where: { AND: [{ isActive: true }, { isSuspended: false }] },
   });
   
   for (const bot of activeBots) {
@@ -933,10 +918,7 @@ export async function processScheduledPosts(): Promise<ProcessScheduledPostsResu
  */
 async function botHasActiveSources(botId: string): Promise<boolean> {
   const sources = await db.query.botContentSources.findMany({
-    where: and(
-      eq(botContentSources.botId, botId),
-      eq(botContentSources.isActive, true)
-    ),
+    where: { AND: [{ botId: botId }, { isActive: true }] },
     columns: { id: true },
   });
   
@@ -951,7 +933,7 @@ async function botHasActiveSources(botId: string): Promise<boolean> {
  */
 export async function getBotSchedule(botId: string): Promise<ScheduleConfig | null> {
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     columns: { scheduleConfig: true },
   });
   

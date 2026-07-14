@@ -51,10 +51,7 @@ export async function POST(request: Request) {
         // First get conversation IDs where user is participant1 (local user)
         // For participant2, we need to check by handle since it's stored as text (can be remote)
         const conversations = await db.query.chatConversations.findMany({
-            where: or(
-                eq(chatConversations.participant1Id, userId),
-                eq(chatConversations.participant2Handle, user.handle)
-            ),
+            where: { OR: [{ participant1Id: userId }, { participant2Handle: user.handle }] },
         });
 
         const conversationIds = conversations.map(c => c.id);

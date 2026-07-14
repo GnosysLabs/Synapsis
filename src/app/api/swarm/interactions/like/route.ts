@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
 
     // Find the target post
     const post = await db.query.posts.findFirst({
-      where: eq(posts.id, data.postId),
+      where: { id: data.postId },
       with: { author: true },
     });
 
@@ -66,11 +66,7 @@ export async function POST(request: NextRequest) {
 
     // Check if already liked by this remote user
     const existingLike = await db.query.remoteLikes.findFirst({
-      where: and(
-        eq(remoteLikes.postId, data.postId),
-        eq(remoteLikes.actorHandle, data.like.actorHandle),
-        eq(remoteLikes.actorNodeDomain, data.like.actorNodeDomain)
-      ),
+      where: { AND: [{ postId: data.postId }, { actorHandle: data.like.actorHandle }, { actorNodeDomain: data.like.actorNodeDomain }] },
     });
 
     if (existingLike) {

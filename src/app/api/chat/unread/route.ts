@@ -12,7 +12,7 @@ export async function GET() {
 
     // Get user's conversations
     const conversations = await db.query.chatConversations.findMany({
-      where: eq(chatConversations.participant1Id, session.user.id),
+      where: { participant1Id: session.user.id },
     });
 
     if (conversations.length === 0) {
@@ -23,10 +23,7 @@ export async function GET() {
     const conversationIds = conversations.map(c => c.id);
     
     const unreadMessages = await db.query.chatMessages.findMany({
-      where: and(
-        inArray(chatMessages.conversationId, conversationIds),
-        isNull(chatMessages.readAt)
-      ),
+      where: { AND: [{ conversationId: { in: conversationIds } }, { readAt: { isNull: true } }] },
     });
 
     // Filter out messages sent by the current user

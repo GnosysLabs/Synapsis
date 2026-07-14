@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
 
         // Check if recipient is local
         const recipientUser = await db.query.users.findFirst({
-            where: eq(users.did, recipientDid)
+            where: { did: recipientDid }
         });
 
         // Check if recipient is a local user (not remote/swarm cached)
@@ -55,10 +55,7 @@ export async function POST(request: NextRequest) {
             } else if (recipientUser.dmPrivacy === 'following') {
                 // Check if recipient follows the sender
                 const isFollowingSender = await db.query.follows.findFirst({
-                    where: and(
-                        eq(follows.followerId, recipientUser.id),
-                        eq(follows.followingId, user.id)
-                    )
+                    where: { AND: [{ followerId: recipientUser.id }, { followingId: user.id }] }
                 });
                 if (!isFollowingSender) {
                     return NextResponse.json({ error: 'This user only accepts messages from accounts they follow' }, { status: 403 });
@@ -69,10 +66,7 @@ export async function POST(request: NextRequest) {
             // Ensure conversations exist for both sides
             // 1. Recipient's Inbox (Recipient -> User)
             let recipientConv = await db.query.chatConversations.findFirst({
-                where: and(
-                    eq(chatConversations.participant1Id, recipientUser.id),
-                    eq(chatConversations.participant2Handle, user.handle)
-                )
+                where: { AND: [{ participant1Id: recipientUser.id }, { participant2Handle: user.handle }] }
             });
 
             if (!recipientConv) {
@@ -96,10 +90,7 @@ export async function POST(request: NextRequest) {
 
             // 2. Sender's Sent Box (User -> Recipient)
             let senderConv = await db.query.chatConversations.findFirst({
-                where: and(
-                    eq(chatConversations.participant1Id, user.id),
-                    eq(chatConversations.participant2Handle, recipientUser.handle)
-                )
+                where: { AND: [{ participant1Id: user.id }, { participant2Handle: recipientUser.handle }] }
             });
 
             if (!senderConv) {
@@ -151,7 +142,7 @@ export async function POST(request: NextRequest) {
 
             // 1. Resolve recipient node
             const registryEntry = await db.query.handleRegistry.findFirst({
-                where: eq(handleRegistry.did, recipientDid)
+                where: { did: recipientDid }
             });
 
             // If not in registry, try to parse from handle if it has domain
@@ -224,10 +215,7 @@ export async function POST(request: NextRequest) {
             // 3. Store "Sent" copy locally
             // Ensure conversation exists locally
             let senderConv = await db.query.chatConversations.findFirst({
-                where: and(
-                    eq(chatConversations.participant1Id, user.id),
-                    eq(chatConversations.participant2Handle, recipientHandle)
-                )
+                where: { AND: [{ participant1Id: user.id }, { participant2Handle: recipientHandle }] }
             });
 
             if (!senderConv) {

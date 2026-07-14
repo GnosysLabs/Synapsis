@@ -120,7 +120,7 @@ export async function POST(request: Request, context: RouteContext) {
 
         const decodedId = decodedParamId;
         const postId = postIdSchema.parse(decodedId);
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -178,7 +178,7 @@ export async function POST(request: Request, context: RouteContext) {
 
         // Local post - check if it exists
         const post = await db.query.posts.findFirst({
-            where: eq(posts.id, postId),
+            where: { id: postId },
         });
 
         if (!post) {
@@ -190,10 +190,7 @@ export async function POST(request: Request, context: RouteContext) {
 
         // Check if already liked
         const existingLike = await db.query.likes.findFirst({
-            where: and(
-                eq(likes.userId, user.id),
-                eq(likes.postId, postId)
-            ),
+            where: { AND: [{ userId: user.id }, { postId: postId }] },
         });
 
         if (existingLike) {
@@ -213,7 +210,7 @@ export async function POST(request: Request, context: RouteContext) {
 
         if (post.userId !== user.id) {
             const postAuthor = await db.query.users.findFirst({
-                where: eq(users.id, post.userId),
+                where: { id: post.userId },
             });
 
             // Create notification with actor info stored directly
@@ -323,7 +320,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         const decodedId = decodedParamId;
         const postId = postIdSchema.parse(decodedId);
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -368,7 +365,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Local post - check if it exists
         const post = await db.query.posts.findFirst({
-            where: eq(posts.id, postId),
+            where: { id: postId },
         });
 
         if (!post) {
@@ -380,10 +377,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Find the like
         const existingLike = await db.query.likes.findFirst({
-            where: and(
-                eq(likes.userId, user.id),
-                eq(likes.postId, postId)
-            ),
+            where: { AND: [{ userId: user.id }, { postId: postId }] },
         });
 
         if (!existingLike) {
@@ -395,7 +389,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Update post's like count (atomic decrement, clamped to 0)
         await db.update(posts)
-            .set({ likesCount: sql`GREATEST(0, ${posts.likesCount} - 1)` })
+            .set({ likesCount: sql`max(0, ${posts.likesCount} - 1)` })
             .where(eq(posts.id, postId));
 
         // SWARM-FIRST: Deliver unlike to swarm node

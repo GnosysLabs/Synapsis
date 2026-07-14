@@ -10,11 +10,11 @@ export async function GET() {
       return NextResponse.json({ error: 'Database not available' }, { status: 500 });
     }
 
-    const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+    const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
     // 1. Try exact match
     let node = await db.query.nodes.findFirst({
-      where: eq(nodes.domain, domain),
+      where: { domain: domain },
     });
 
     // 2. Fallback: If not found, check if there is exactly ONE node in the system

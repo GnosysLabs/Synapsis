@@ -52,10 +52,7 @@ export async function GET(request: NextRequest) {
 
     // Verify user has access to this conversation
     const conversation = await db.query.chatConversations.findFirst({
-      where: and(
-        eq(chatConversations.id, conversationId),
-        eq(chatConversations.participant1Id, session.user.id)
-      ),
+      where: { AND: [{ id: conversationId }, { participant1Id: session.user.id }] },
     });
 
     if (!conversation) {
@@ -63,15 +60,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Build query with cursor-based pagination
-    const baseCondition = eq(chatMessages.conversationId, conversationId);
     const whereCondition = cursor
-      ? and(baseCondition, lt(chatMessages.createdAt, new Date(cursor)))!
-      : baseCondition;
+      ? { conversationId, createdAt: { lt: new Date(cursor) } }
+      : { conversationId };
 
     // Get messages
     const messages = await db.query.chatMessages.findMany({
       where: whereCondition,
-      orderBy: [desc(chatMessages.createdAt)],
+      orderBy: () => [desc(chatMessages.createdAt)],
       limit,
     });
 
@@ -92,7 +88,7 @@ export async function GET(request: NextRequest) {
 
     if (senderDids.size > 0) {
       const found = await db.query.users.findMany({
-        where: inArray(users.did, Array.from(senderDids))
+        where: { did: { in: Array.from(senderDids) } }
       });
       found.forEach(u => usersByDid[u.did] = u);
     }
@@ -100,7 +96,7 @@ export async function GET(request: NextRequest) {
     // Also fetch local users by handle if needed
     if (senderHandles.size > 0) {
       const found = await db.query.users.findMany({
-        where: inArray(users.handle, Array.from(senderHandles))
+        where: { handle: { in: Array.from(senderHandles) } }
       });
       found.forEach(u => usersByHandle[u.handle] = u);
     }
@@ -164,10 +160,7 @@ export async function PATCH(request: NextRequest) {
 
     // Verify user has access to this conversation
     const conversation = await db.query.chatConversations.findFirst({
-      where: and(
-        eq(chatConversations.id, conversationId),
-        eq(chatConversations.participant1Id, session.user.id)
-      ),
+      where: { AND: [{ id: conversationId }, { participant1Id: session.user.id }] },
     });
 
     if (!conversation) {

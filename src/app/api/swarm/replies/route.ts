@@ -34,7 +34,7 @@ const swarmReplySchema = z.object({
 
 async function syncParentReplyCount(postId: string) {
   const [{ count }] = await db
-    .select({ count: sql<number>`count(*)::int` })
+    .select({ count: sql<number>`count(*)` })
     .from(posts)
     .where(and(
       eq(posts.replyToId, postId),
@@ -82,10 +82,7 @@ export async function POST(request: NextRequest) {
     }
 
     const parentPost = await db.query.posts.findFirst({
-      where: and(
-        eq(posts.id, data.postId),
-        eq(posts.isRemoved, false)
-      ),
+      where: { AND: [{ id: data.postId }, { isRemoved: false }] },
       with: {
         author: true,
       },
@@ -107,7 +104,7 @@ export async function POST(request: NextRequest) {
     });
 
     const remoteUser = await db.query.users.findFirst({
-      where: eq(users.handle, remoteHandle),
+      where: { handle: remoteHandle },
     });
 
     if (!remoteUser) {
@@ -116,7 +113,7 @@ export async function POST(request: NextRequest) {
 
     const replyApId = `swarm:${sourceDomain}:${data.reply.id}`;
     const existingReply = await db.query.posts.findFirst({
-      where: eq(posts.apId, replyApId),
+      where: { apId: replyApId },
     });
 
     if (existingReply) {
@@ -205,7 +202,7 @@ export async function DELETE(request: NextRequest) {
     // Find the reply by its swarm ID
     const swarmReplyId = `swarm:${nodeDomain}:${replyId}`;
     const existingReply = await db.query.posts.findFirst({
-      where: eq(posts.apId, swarmReplyId),
+      where: { apId: swarmReplyId },
     });
 
     if (!existingReply) {

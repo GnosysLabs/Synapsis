@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 /**
- * Health check endpoint for Docker and monitoring
+ * Health check endpoint for systemd and external monitoring
  * Returns 200 OK when the application is running properly
  */
 export async function GET() {

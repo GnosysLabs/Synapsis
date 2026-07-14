@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
         let existingUser = null;
         try {
             existingUser = await db.query.users.findFirst({
-                where: eq(users.handle, handle),
+                where: { handle: handle },
             });
         } catch (err: any) {
             // Handle fresh installs where the users table isn't created yet.

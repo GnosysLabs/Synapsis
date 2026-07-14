@@ -24,7 +24,7 @@ export async function PATCH(request: Request, context: RouteContext) {
         const data = updateSchema.parse(body);
 
         const report = await db.query.reports.findFirst({
-            where: eq(reports.id, id),
+            where: { id: id },
         });
 
         if (!report) {

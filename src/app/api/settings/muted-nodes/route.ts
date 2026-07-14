@@ -10,7 +10,7 @@ export async function GET() {
         const currentUser = await requireAuth();
 
         const muted = await db.query.mutedNodes.findMany({
-            where: eq(mutedNodes.userId, currentUser.id),
+            where: { userId: currentUser.id },
             orderBy: (t, { desc }) => [desc(t.createdAt)],
         });
 
@@ -43,10 +43,7 @@ export async function POST(req: NextRequest) {
 
         // Check if already muted
         const existing = await db.query.mutedNodes.findFirst({
-            where: and(
-                eq(mutedNodes.userId, currentUser.id),
-                eq(mutedNodes.nodeDomain, normalizedDomain)
-            ),
+            where: { AND: [{ userId: currentUser.id }, { nodeDomain: normalizedDomain }] },
         });
 
         if (existing) {

@@ -89,7 +89,7 @@ async function loadSessionsByTokens(tokens: string[]): Promise<SessionRecord[]> 
     }
 
     const sessionRecords = await db.query.sessions.findMany({
-        where: inArray(sessions.token, uniqueTokens),
+        where: { token: { in: uniqueTokens } },
         with: {
             user: true,
         },
@@ -296,7 +296,7 @@ export async function registerUser(
 
     // Check if handle is taken
     const existingHandle = await db.query.users.findFirst({
-        where: eq(users.handle, handle.toLowerCase()),
+        where: { handle: handle.toLowerCase() },
     });
 
     if (existingHandle) {
@@ -305,7 +305,7 @@ export async function registerUser(
 
     // Check if email is taken
     const existingEmail = await db.query.users.findFirst({
-        where: eq(users.email, email.toLowerCase()),
+        where: { email: email.toLowerCase() },
     });
 
     if (existingEmail) {
@@ -339,7 +339,7 @@ export async function registerUser(
     const did = generateDID(publicKey);
     const passwordHash = await hashPassword(password);
 
-    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:3000';
+    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
     // Generate avatar and upload to user's S3 storage
     const fullHandle = `${handle.toLowerCase()}@${nodeDomain}`;
@@ -393,7 +393,7 @@ export async function authenticateUser(
     password: string
 ): Promise<typeof users.$inferSelect> {
     const user = await db.query.users.findFirst({
-        where: eq(users.email, email.toLowerCase()),
+        where: { email: email.toLowerCase() },
     });
 
     if (!user || !user.passwordHash) {

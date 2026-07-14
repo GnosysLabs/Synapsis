@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, users, posts, likes } from '@/db';
-import { ilike, or, desc, and, notInArray, eq, inArray } from 'drizzle-orm';
+import { like, or, desc, and, eq, inArray } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 
@@ -119,9 +119,9 @@ export async function GET(request: Request) {
             if (searchUsers.length === 0) {
                 const userConditions = and(
                     or(
-                        ilike(users.handle, searchPattern),
-                        ilike(users.displayName, searchPattern),
-                        ilike(users.bio, searchPattern)
+                        like(users.handle, searchPattern),
+                        like(users.displayName, searchPattern),
+                        like(users.bio, searchPattern)
                     ),
                     eq(users.isSuspended, false),
                     eq(users.isSilenced, false)
@@ -187,17 +187,14 @@ export async function GET(request: Request) {
 
         // Search posts
         if (type === 'all' || type === 'posts') {
-            const postConditions = [
-                ilike(posts.content, searchPattern),
-                eq(posts.isRemoved, false),
-            ];
-            if (moderatedIds.length) {
-                postConditions.push(notInArray(posts.userId, moderatedIds));
-            }
             const postResults = await db.query.posts.findMany({
-                where: and(...postConditions),
+                where: {
+                    content: { like: searchPattern },
+                    isRemoved: false,
+                    ...(moderatedIds.length ? { userId: { notIn: moderatedIds } } : {}),
+                },
                 with: searchPostRelations,
-                orderBy: [desc(posts.createdAt)],
+                orderBy: () => [desc(posts.createdAt)],
                 limit,
             });
             searchPosts = postResults;
@@ -213,19 +210,12 @@ export async function GET(request: Request) {
 
                     if (postIds.length > 0) {
                         const viewerLikes = await db.query.likes.findMany({
-                            where: and(
-                                eq(likes.userId, viewer.id),
-                                inArray(likes.postId, postIds)
-                            ),
+                            where: { AND: [{ userId: viewer.id }, { postId: { in: postIds } }] },
                         });
                         const likedPostIds = new Set(viewerLikes.map(l => l.postId));
 
                         const viewerReposts = await db.query.posts.findMany({
-                            where: and(
-                                eq(posts.userId, viewer.id),
-                                inArray(posts.repostOfId, postIds),
-                                eq(posts.isRemoved, false)
-                            ),
+                            where: { AND: [{ userId: viewer.id }, { repostOfId: { in: postIds } }, { isRemoved: false }] },
                         });
                         const repostedPostIds = new Set(viewerReposts.map(r => r.repostOfId));
 

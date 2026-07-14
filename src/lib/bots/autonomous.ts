@@ -114,10 +114,10 @@ export const MIN_INTEREST_SCORE = 60;
  */
 async function hasContentSources(botId: string): Promise<boolean> {
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     with: {
       contentSources: {
-        where: (sources, { eq }) => eq(sources.isActive, true),
+        where: { isActive: true },
       },
     },
   });
@@ -139,10 +139,10 @@ async function getUnprocessedContentItems(
 ): Promise<ContentItem[]> {
   // Get bot's content sources
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     with: {
       contentSources: {
-        where: (sources, { eq }) => eq(sources.isActive, true),
+        where: { isActive: true },
       },
     },
   });
@@ -155,9 +155,7 @@ async function getUnprocessedContentItems(
 
   // Get unprocessed content items from these sources
   const items = await db.query.botContentItems.findMany({
-    where: and(
-      eq(botContentItems.isProcessed, false)
-    ),
+    where: { AND: [{ isProcessed: false }] },
     orderBy: (items, { desc }) => [desc(items.publishedAt)],
     limit,
   });
@@ -284,7 +282,7 @@ export async function evaluateContentForPosting(
 ): Promise<AutonomousPostEvaluation> {
   // Get bot with user relation
   const dbBot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     with: { user: true },
   });
 
@@ -373,7 +371,7 @@ export async function attemptAutonomousPost(
 
   // Get bot with schedule config
   const dbBot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     with: { user: true },
   });
 
@@ -541,11 +539,7 @@ export async function processAllAutonomousBots(): Promise<Array<{
 }>> {
   // Get all active bots with autonomous mode enabled
   const autonomousBots = await db.query.bots.findMany({
-    where: and(
-      eq(bots.isActive, true),
-      eq(bots.isSuspended, false),
-      eq(bots.autonomousMode, true)
-    ),
+    where: { AND: [{ isActive: true }, { isSuspended: false }, { autonomousMode: true }] },
     with: { user: true },
   });
 
@@ -590,7 +584,7 @@ export async function canPostAutonomously(botId: string): Promise<{
 }> {
   // Get bot
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
   });
   
   if (!bot) {
@@ -686,7 +680,7 @@ export async function getAutonomousPostingStats(botId: string): Promise<{
 }> {
   // Get bot's content sources
   const bot = await db.query.bots.findFirst({
-    where: eq(bots.id, botId),
+    where: { id: botId },
     with: {
       contentSources: true,
     },
@@ -706,7 +700,7 @@ export async function getAutonomousPostingStats(botId: string): Promise<{
 
   // Get all content items for this bot's sources
   const allItems = await db.query.botContentItems.findMany({
-    where: (items, { inArray }) => inArray(items.sourceId, sourceIds),
+    where: { sourceId: { in: sourceIds } },
   });
 
   const processedItems = allItems.filter(item => item.isProcessed);

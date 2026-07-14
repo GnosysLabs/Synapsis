@@ -465,7 +465,7 @@ export async function cacheSwarmUserPosts(
 
       // Check if we already have this post
       const existing = await db.query.remotePosts.findFirst({
-        where: eq(remotePosts.apId, apId),
+        where: { apId: apId },
       });
 
       if (existing) {
@@ -673,7 +673,7 @@ export async function getSwarmFollowerDomains(userId: string): Promise<string[]>
     if (!db) return [];
 
     const followers = await db.query.remoteFollowers.findMany({
-      where: eq(remoteFollowers.userId, userId),
+      where: { userId: userId },
     });
 
     // Filter for swarm followers (actorUrl starts with swarm://)

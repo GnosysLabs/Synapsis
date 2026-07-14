@@ -47,7 +47,7 @@ async function migrateDIDs() {
 
   // Find all users with legacy did:synapsis: format
   const legacyUsers = await db.query.users.findMany({
-    where: (users, { like }) => like(users.did, 'did:synapsis:%'),
+    where: { did: { like: 'did:synapsis:%' } },
   });
 
   console.log(`Found ${legacyUsers.length} users with legacy DID format\n`);
