@@ -52,7 +52,7 @@ Supported S3-compatible providers include AWS S3, Cloudflare R2, Backblaze B2, W
 ## Development
 
 ```bash
-git clone https://github.com/GnosysLabs/Synapsis.git
+git clone https://githop.xyz/GnosysLabs/Synapsis.git
 cd Synapsis
 npm install
 cp .env.example .env

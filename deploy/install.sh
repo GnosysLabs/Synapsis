@@ -4,7 +4,7 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/synapsis}"
 DATA_DIR="${DATA_DIR:-/var/lib/synapsis}"
 ENV_FILE="${ENV_FILE:-/etc/synapsis.env}"
-REPO_URL="${REPO_URL:-https://github.com/GnosysLabs/Synapsis.git}"
+REPO_URL="${REPO_URL:-https://githop.xyz/GnosysLabs/Synapsis.git}"
 BRANCH="${BRANCH:-main}"
 
 if [[ ${EUID} -ne 0 ]]; then
