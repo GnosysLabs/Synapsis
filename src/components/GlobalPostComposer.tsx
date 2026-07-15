@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { PenLine, Plus, X } from 'lucide-react';
 import { Compose } from '@/components/Compose';
+import { AvatarImage } from '@/components/AvatarImage';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useToast } from '@/lib/contexts/ToastContext';
@@ -10,7 +11,8 @@ import { useToast } from '@/lib/contexts/ToastContext';
 export function GlobalPostComposer() {
     const { user, did, handle } = useAuth();
     const { showToast } = useToast();
-    const [open, setOpen] = useState(false);
+    const [openForUserId, setOpenForUserId] = useState<string | null>(null);
+    const open = Boolean(user && openForUserId === user.id);
 
     useEffect(() => {
         if (!open) return;
@@ -19,7 +21,7 @@ export function GlobalPostComposer() {
         document.body.style.overflow = 'hidden';
 
         const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') setOpen(false);
+            if (event.key === 'Escape') setOpenForUserId(null);
         };
         window.addEventListener('keydown', handleKeyDown);
 
@@ -28,10 +30,6 @@ export function GlobalPostComposer() {
             window.removeEventListener('keydown', handleKeyDown);
         };
     }, [open]);
-
-    useEffect(() => {
-        if (!user) setOpen(false);
-    }, [user]);
 
     if (!user) return null;
 
@@ -78,7 +76,7 @@ export function GlobalPostComposer() {
                 <button
                     type="button"
                     className="global-compose-fab"
-                    onClick={() => setOpen(true)}
+                    onClick={() => setOpenForUserId(user.id)}
                     aria-label="Create a post"
                     title="Create a post"
                 >
@@ -90,7 +88,7 @@ export function GlobalPostComposer() {
                 <div
                     className="global-compose-overlay"
                     onMouseDown={(event) => {
-                        if (event.target === event.currentTarget) setOpen(false);
+                        if (event.target === event.currentTarget) setOpenForUserId(null);
                     }}
                 >
                     <section
@@ -98,23 +96,48 @@ export function GlobalPostComposer() {
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="global-compose-title"
+                        aria-describedby="global-compose-description"
                     >
                         <header className="global-compose-header">
-                            <h2 id="global-compose-title">Create post</h2>
+                            <div className="global-compose-heading">
+                                <span className="global-compose-heading-icon" aria-hidden="true">
+                                    <PenLine size={18} strokeWidth={2} />
+                                </span>
+                                <div>
+                                    <h2 id="global-compose-title">New post</h2>
+                                    <p id="global-compose-description">Share something with your network</p>
+                                </div>
+                            </div>
                             <button
                                 type="button"
                                 className="global-compose-close"
-                                onClick={() => setOpen(false)}
+                                onClick={() => setOpenForUserId(null)}
                                 aria-label="Close post composer"
                             >
                                 <X size={22} />
                             </button>
                         </header>
+                        <div className="global-compose-identity">
+                            <span className="global-compose-avatar">
+                                <AvatarImage
+                                    avatarUrl={user.avatarUrl}
+                                    seed={user.handle}
+                                    isNsfw={user.isNsfw}
+                                    alt=""
+                                />
+                            </span>
+                            <div className="global-compose-identity-copy">
+                                <span>{user.displayName || user.handle}</span>
+                                <small>@{user.handle}</small>
+                            </div>
+                            <span className="global-compose-audience">Public</span>
+                        </div>
                         <Compose
                             autoFocus
+                            placeholder="What do you want to share?"
                             onPost={handlePost}
                             onPosted={() => {
-                                setOpen(false);
+                                setOpenForUserId(null);
                                 showToast('Post published.', 'success');
                             }}
                         />

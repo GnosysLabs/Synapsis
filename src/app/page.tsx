@@ -220,15 +220,7 @@ export default function Home() {
 
   return (
     <>
-      <header style={{
-        padding: '16px',
-        borderBottom: '1px solid var(--border)',
-        position: 'sticky',
-        top: 0,
-        background: 'rgba(10, 10, 10, 0.95)',
-        zIndex: 10,
-        backdropFilter: 'blur(12px)',
-      }}>
+      <header className="home-feed-header">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: '20px', fontWeight: 600 }}>Home</h1>
           <div className="feed-toggle">
