@@ -30,10 +30,11 @@ const nodeInfoSchema = z.object({
   softwareVersion: z.string().optional(),
   userCount: z.number().optional(),
   postCount: z.number().optional(),
+  mediaCount: z.number().optional(),
   isNsfw: z.boolean().optional(),
   capabilities: z.array(z.enum(['handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1'])).optional(),
   lastSeenAt: z.string().optional(),
-});
+}).passthrough();
 
 const gossipPayloadSchema = z.object({
   sender: z.string().min(1),
@@ -41,7 +42,7 @@ const gossipPayloadSchema = z.object({
   handles: z.array(handleSchema).optional(),
   timestamp: z.string(),
   since: z.string().optional(),
-});
+}).passthrough();
 
 // Schema including signature for verification
 const signedGossipSchema = gossipPayloadSchema.extend({

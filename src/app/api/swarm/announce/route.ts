@@ -32,10 +32,11 @@ const announcementSchema = z.object({
   softwareVersion: z.string().optional(),
   userCount: z.number().optional(),
   postCount: z.number().optional(),
+  mediaCount: z.number().optional(),
   isNsfw: z.boolean().optional(),
   capabilities: z.array(z.enum(['handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1'])).optional(),
   timestamp: z.string().optional(),
-});
+}).passthrough();
 
 // Schema including signature for verification
 const signedAnnouncementSchema = announcementSchema.extend({
@@ -101,6 +102,7 @@ export async function POST(request: Request) {
       softwareVersion: data.softwareVersion,
       userCount: data.userCount,
       postCount: data.postCount,
+      mediaCount: data.mediaCount,
       isNsfw: data.isNsfw,
       capabilities: data.capabilities,
       lastSeenAt: new Date().toISOString(),
@@ -122,6 +124,7 @@ export async function POST(request: Request) {
       softwareVersion: ourAnnouncement.softwareVersion,
       userCount: ourAnnouncement.userCount,
       postCount: ourAnnouncement.postCount,
+      mediaCount: ourAnnouncement.mediaCount,
       isNsfw: ourAnnouncement.isNsfw,
       capabilities: ourAnnouncement.capabilities,
       lastSeenAt: new Date().toISOString(),

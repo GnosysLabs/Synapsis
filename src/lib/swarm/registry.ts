@@ -4,8 +4,8 @@
  * Manages the local registry of known swarm nodes.
  */
 
-import { db, swarmNodes, swarmSeeds, swarmSyncLog } from '@/db';
-import { eq, desc, and, gt, lt, sql } from 'drizzle-orm';
+import { db, media, posts, swarmNodes, swarmSeeds, swarmSyncLog, users } from '@/db';
+import { eq, desc, and, gt, isNotNull, lt, sql } from 'drizzle-orm';
 import type { SwarmNodeInfo, SwarmCapability, SwarmSyncResult } from './types';
 import { SWARM_CONFIG, DEFAULT_SEED_NODES } from './types';
 import {
@@ -13,6 +13,40 @@ import {
   getPublicSwarmDomain,
   isPublicSwarmDomain,
 } from './node-domain';
+
+interface NetworkStatNode {
+  isActive: boolean;
+  userCount: number | null;
+  postCount: number | null;
+  mediaCount: number | null;
+}
+
+interface LocalNetworkStats {
+  users: number;
+  posts: number;
+  media: number;
+}
+
+export function aggregateSwarmStats(
+  publicNodes: NetworkStatNode[],
+  local: LocalNetworkStats,
+  includeLocalNode: boolean,
+) {
+  const activeNodes = publicNodes.filter(node => node.isActive);
+  const localNodeOffset = includeLocalNode ? 1 : 0;
+
+  return {
+    totalNodes: publicNodes.length + localNodeOffset,
+    // Keep this as the active peer count; the scheduler uses zero to trigger seed recovery.
+    activeNodes: activeNodes.length,
+    totalUsers: activeNodes.reduce((sum, node) => sum + (node.userCount || 0), 0)
+      + (includeLocalNode ? local.users : 0),
+    totalPosts: activeNodes.reduce((sum, node) => sum + (node.postCount || 0), 0)
+      + (includeLocalNode ? local.posts : 0),
+    totalMedia: activeNodes.reduce((sum, node) => sum + (node.mediaCount || 0), 0)
+      + (includeLocalNode ? local.media : 0),
+  };
+}
 
 /**
  * Get or create a swarm node entry
@@ -46,6 +80,7 @@ export async function upsertSwarmNode(
       softwareVersion: node.softwareVersion,
       userCount: node.userCount,
       postCount: node.postCount,
+      mediaCount: node.mediaCount,
       isNsfw: node.isNsfw ?? false,
       discoveredVia,
       capabilities,
@@ -64,6 +99,7 @@ export async function upsertSwarmNode(
       softwareVersion: node.softwareVersion ?? existing.softwareVersion,
       userCount: node.userCount ?? existing.userCount,
       postCount: node.postCount ?? existing.postCount,
+      mediaCount: node.mediaCount ?? existing.mediaCount,
       isNsfw: node.isNsfw ?? existing.isNsfw,
       capabilities: capabilities ?? existing.capabilities,
       lastSeenAt: new Date(),
@@ -317,22 +353,25 @@ export async function getSwarmStats() {
       activeNodes: 0,
       totalUsers: 0,
       totalPosts: 0,
+      totalMedia: 0,
     };
   }
 
   const allNodes = await db.query.swarmNodes.findMany();
   const publicNodes = allNodes.filter(n => isPublicSwarmDomain(n.domain));
-  const activeNodes = publicNodes.filter(n => n.isActive);
 
-  const totalUsers = activeNodes.reduce((sum, n) => sum + (n.userCount || 0), 0);
-  const totalPosts = activeNodes.reduce((sum, n) => sum + (n.postCount || 0), 0);
+  const [localUsers, localPosts, localMedia] = await Promise.all([
+    db.select({ count: sql<number>`count(*)` }).from(users),
+    db.select({ count: sql<number>`count(*)` }).from(posts),
+    db.select({ count: sql<number>`count(*)` }).from(media).where(isNotNull(media.postId)),
+  ]);
 
-  return {
-    totalNodes: publicNodes.length,
-    activeNodes: activeNodes.length,
-    totalUsers,
-    totalPosts,
-  };
+  const hasPublicLocalNode = isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
+  return aggregateSwarmStats(publicNodes, {
+    users: Number(localUsers[0]?.count ?? 0),
+    posts: Number(localPosts[0]?.count ?? 0),
+    media: Number(localMedia[0]?.count ?? 0),
+  }, hasPublicLocalNode);
 }
 
 // Helper to convert DB node to SwarmNodeInfo
@@ -346,6 +385,7 @@ function nodeToInfo(node: typeof swarmNodes.$inferSelect): SwarmNodeInfo {
     softwareVersion: node.softwareVersion ?? undefined,
     userCount: node.userCount ?? undefined,
     postCount: node.postCount ?? undefined,
+    mediaCount: node.mediaCount ?? undefined,
     capabilities: node.capabilities ? JSON.parse(node.capabilities) : undefined,
     isNsfw: node.isNsfw,
     lastSeenAt: node.lastSeenAt.toISOString(),

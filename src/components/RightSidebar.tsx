@@ -22,6 +22,17 @@ interface NodeInfo {
     isNsfw: boolean;
 }
 
+interface NetworkStats {
+    totalNodes: number;
+    totalUsers: number;
+    totalMedia: number;
+    totalPosts: number;
+}
+
+function formatNetworkTotal(value: number | undefined): string {
+    return typeof value === 'number' ? value.toLocaleString() : '—';
+}
+
 export function RightSidebar() {
     const fallbackDescription = process.env.NEXT_PUBLIC_NODE_DESCRIPTION || 'A swarm social network node.';
     const [nodeInfo, setNodeInfo] = useState<NodeInfo>({
@@ -39,6 +50,7 @@ export function RightSidebar() {
         commitCount: number | null;
         buildDate: string | null;
     } | null>(null);
+    const [networkStats, setNetworkStats] = useState<NetworkStats | null>(null);
 
     const [loading, setLoading] = useState(true);
 
@@ -87,7 +99,18 @@ export function RightSidebar() {
             .then(data => setVersion(data))
             .catch(() => setVersion({ version: 'unknown', commit: null, commitCount: null, buildDate: null }));
 
-        return () => window.removeEventListener('synapsis:node-updated', handleNodeUpdated);
+        const loadNetworkStats = () => fetch('/api/swarm/nodes?stats=true&limit=1', { cache: 'no-store' })
+            .then(res => res.ok ? res.json() : Promise.reject(new Error('Failed to load network stats')))
+            .then(data => setNetworkStats(data?.stats ?? null))
+            .catch(() => setNetworkStats(null));
+
+        void loadNetworkStats();
+        const networkStatsInterval = window.setInterval(loadNetworkStats, 60_000);
+
+        return () => {
+            window.removeEventListener('synapsis:node-updated', handleNodeUpdated);
+            window.clearInterval(networkStatsInterval);
+        };
     }, []);
 
     if (loading) {
@@ -164,6 +187,22 @@ export function RightSidebar() {
                             ? ` ${version.version}`
                             : ''}
                 </p>
+
+                <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-hover)', display: 'grid', gap: '9px' }}>
+                    {[
+                        ['Total nodes', networkStats?.totalNodes],
+                        ['Total users', networkStats?.totalUsers],
+                        ['Total media', networkStats?.totalMedia],
+                        ['Total posts', networkStats?.totalPosts],
+                    ].map(([label, value]) => (
+                        <div key={label} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', fontSize: '13px' }}>
+                            <span style={{ color: 'var(--foreground-secondary)' }}>{label}</span>
+                            <strong style={{ color: 'var(--foreground)', fontVariantNumeric: 'tabular-nums' }}>
+                                {formatNetworkTotal(value as number | undefined)}
+                            </strong>
+                        </div>
+                    ))}
+                </div>
 
                 {nodeInfo.admins.length > 0 && (
                     <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-hover)' }}>

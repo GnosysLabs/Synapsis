@@ -1,0 +1,1 @@
+ALTER TABLE `swarm_nodes` ADD `media_count` integer;

@@ -699,6 +699,7 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
   // Stats (updated periodically)
   userCount: integer('user_count'),
   postCount: integer('post_count'),
+  mediaCount: integer('media_count'),
 
   // NSFW flag (synced from remote node)
   isNsfw: integer('is_nsfw', { mode: 'boolean' }).default(false).notNull(),

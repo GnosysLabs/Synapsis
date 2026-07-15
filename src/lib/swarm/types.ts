@@ -13,6 +13,7 @@ export interface SwarmNodeInfo {
   softwareVersion?: string;
   userCount?: number;
   postCount?: number;
+  mediaCount?: number;
   capabilities?: SwarmCapability[];
   isNsfw?: boolean;
   lastSeenAt?: string;
@@ -29,6 +30,7 @@ export interface SwarmAnnouncement {
   softwareVersion: string;
   userCount: number;
   postCount: number;
+  mediaCount: number;
   capabilities: SwarmCapability[];
   isNsfw: boolean;
   timestamp: string;
@@ -91,6 +93,7 @@ export interface SwarmStats {
   activeNodes: number;
   totalUsers: number;
   totalPosts: number;
+  totalMedia: number;
   lastUpdated: string;
 }
 

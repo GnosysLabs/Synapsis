@@ -4,8 +4,8 @@
  * Handles node discovery and announcement in the swarm network.
  */
 
-import { db, users, posts } from '@/db';
-import { sql } from 'drizzle-orm';
+import { db, users, posts, media } from '@/db';
+import { isNotNull, sql } from 'drizzle-orm';
 import type { SwarmAnnouncement, SwarmNodeInfo, SwarmCapability } from './types';
 import { getCurrentBuildInfo } from '@/lib/version';
 import { upsertSwarmNode, getSeedNodes, markNodeSuccess, markNodeFailure } from './registry';
@@ -31,6 +31,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
   let publicKey = '';
   let userCount = 0;
   let postCount = 0;
+  let mediaCount = 0;
   let isNsfw = false;
 
   if (db) {
@@ -50,9 +51,13 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     // Get counts
     const userResult = await db.select({ count: sql<number>`count(*)` }).from(users);
     const postResult = await db.select({ count: sql<number>`count(*)` }).from(posts);
+    const mediaResult = await db.select({ count: sql<number>`count(*)` })
+      .from(media)
+      .where(isNotNull(media.postId));
     
     userCount = Number(userResult[0]?.count ?? 0);
     postCount = Number(postResult[0]?.count ?? 0);
+    mediaCount = Number(mediaResult[0]?.count ?? 0);
   }
 
   const capabilities: SwarmCapability[] = ['handles', 'gossip', 'interactions', 'e2ee_dm_v1'];
@@ -68,6 +73,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
       : buildInfo.version,
     userCount,
     postCount,
+    mediaCount,
     capabilities,
     isNsfw,
     timestamp: new Date().toISOString(),
@@ -212,6 +218,7 @@ export async function fetchNodeInfo(domain: string): Promise<SwarmNodeInfo | nul
       softwareVersion: data.softwareVersion,
       userCount: data.userCount,
       postCount: data.postCount,
+      mediaCount: data.mediaCount,
       capabilities: data.capabilities,
       isNsfw: data.isNsfw,
     };
