@@ -135,13 +135,13 @@ export function RightSidebar() {
                                     href={`/u/${admin.handle}`}
                                     style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none', color: 'inherit' }}
                                 >
-                                    <img
-                                        src={admin.avatarUrl || `https://api.dicebear.com/7.x/identicon/svg?seed=${admin.handle}`}
-                                        alt={admin.displayName || admin.handle}
-                                        width={32}
-                                        height={32}
-                                        style={{ borderRadius: '50%', objectFit: 'cover' }}
-                                    />
+                                    <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
+                                        {admin.avatarUrl ? (
+                                            <img src={admin.avatarUrl} alt={admin.displayName || admin.handle} />
+                                        ) : (
+                                            (admin.displayName?.charAt(0) || admin.handle.charAt(0)).toUpperCase()
+                                        )}
+                                    </div>
                                     <div>
                                         <div style={{ fontWeight: 500, fontSize: '14px' }}>
                                             {admin.displayName || admin.handle}
