@@ -9,6 +9,7 @@ import { Post, LinkPreviewMediaItem } from '@/lib/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useToast } from '@/lib/contexts/ToastContext';
 import { VideoEmbed } from '@/components/VideoEmbed';
+import BlurredImage from '@/components/BlurredImage';
 import BlurredVideo from '@/components/BlurredVideo';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useDomain } from '@/lib/contexts/ConfigContext';
@@ -891,7 +892,10 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                                             }}
                                         />
                                     ) : (
-                                        <img src={item.url} alt={item.altText || 'Post media'} loading="lazy" />
+                                        <BlurredImage
+                                            src={item.url}
+                                            alt={item.altText || 'Post media'}
+                                        />
                                     )}
                                 </div>
                             );

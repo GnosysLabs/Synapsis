@@ -451,6 +451,32 @@ a.btn-primary:visited {
   display: block;
 }
 
+/* Fill letterboxed image space with a glow derived from the image itself. */
+.blurred-image-container {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: #000;
+  isolation: isolate;
+}
+
+.post-media-item .blurred-image-bg {
+  position: absolute;
+  inset: -32px;
+  width: calc(100% + 64px);
+  height: calc(100% + 64px);
+  max-height: none;
+  object-fit: cover;
+  filter: blur(28px) brightness(0.48) saturate(1.15);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.post-media-item .blurred-image-main {
+  position: relative;
+  z-index: 1;
+}
+
 .post-media-item video {
   width: 100%;
   max-height: 360px;
