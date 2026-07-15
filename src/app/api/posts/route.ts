@@ -11,9 +11,13 @@ import { isLocalNodeNsfw } from '@/lib/node/local-node';
 import { hasPublishablePostContent } from '@/lib/posts/content-policy';
 import { decodeFeedCursor, encodeFeedCursor } from '@/lib/posts/feed-pagination';
 import { mapSwarmPostToPost } from '@/lib/swarm/feed-post';
+import {
+    CURATED_FEED_WEIGHTS,
+    CURATED_FEED_WINDOW_HOURS,
+    rankCuratedFeed,
+} from '@/lib/posts/curated-feed';
 
 const POST_MAX_LENGTH = 600;
-const CURATION_WINDOW_HOURS = 72;
 const CURATION_SEED_MULTIPLIER = 5;
 const CURATION_SEED_CAP = 200;
 
@@ -777,58 +781,13 @@ export async function GET(request: Request) {
                 blockedIds = new Set(blockRows.map(row => row.blockedUserId));
             }
 
-            const now = Date.now();
-            const rankedPosts = swarmPosts
-                .filter((post: any) => !mutedIds.has(post.author.id) && !blockedIds.has(post.author.id))
-                .map((post: any) => {
-                    const createdAt = new Date(post.createdAt).getTime();
-                    const ageHours = Math.max(0, (now - createdAt) / 3600000);
-                    const engagement = (post.likesCount || 0) + (post.repostsCount || 0) * 2 + (post.repliesCount || 0) * 0.5;
-                    const engagementScore = Math.log1p(Math.max(0, engagement));
-                    const recencyScore = Math.max(0, 1 - ageHours / CURATION_WINDOW_HOURS);
-
-                    const score = engagementScore * 1.4 + recencyScore * 1.1;
-
-                    const reasons: string[] = [];
-                    reasons.push(`From ${post.nodeDomain}`);
-                    if (engagement >= 5) {
-                        reasons.push(`Popular: ${post.likesCount || 0} likes, ${post.repostsCount || 0} reposts`);
-                    } else if ((post.repliesCount || 0) > 0) {
-                        reasons.push(`Active conversation: ${post.repliesCount} replies`);
-                    }
-                    if (ageHours <= 6) {
-                        reasons.push('Posted recently');
-                    } else if (ageHours <= 24) {
-                        reasons.push('Posted today');
-                    }
-                    if (reasons.length === 1) {
-                        reasons.push('New post');
-                    }
-
-                    return {
-                        ...post,
-                        feedMeta: {
-                            score: Number(score.toFixed(3)),
-                            reasons,
-                            engagement: {
-                                likes: post.likesCount || 0,
-                                reposts: post.repostsCount || 0,
-                                replies: post.repliesCount || 0,
-                            },
-                        },
-                    };
-                })
-                .sort((a: any, b: any) => {
-                    if (b.feedMeta.score !== a.feedMeta.score) {
-                        return b.feedMeta.score - a.feedMeta.score;
-                    }
-                    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-                })
-                .slice(0, limit);
+            const eligiblePosts = swarmPosts
+                .filter((post) => !mutedIds.has(post.author.id) && !blockedIds.has(post.author.id));
+            const rankedPosts = rankCuratedFeed(eligiblePosts, { limit });
 
             console.log('[Curated Feed] After ranking:', {
                 swarmPostsCount: swarmPosts.length,
-                afterMuteFilter: swarmPosts.filter((post: any) => !mutedIds.has(post.author.id) && !blockedIds.has(post.author.id)).length,
+                afterMuteFilter: eligiblePosts.length,
                 rankedPostsCount: rankedPosts.length,
                 limit,
             });
@@ -1066,14 +1025,11 @@ export async function GET(request: Request) {
         return NextResponse.json({
             posts: feedPosts || [],
             meta: type === 'curated' ? {
-                algorithm: 'curated-v1',
-                windowHours: CURATION_WINDOW_HOURS,
+                algorithm: 'curated-v2-diversity',
+                windowHours: CURATED_FEED_WINDOW_HOURS,
                 seedLimit: Math.min(limit * CURATION_SEED_MULTIPLIER, CURATION_SEED_CAP),
                 weights: {
-                    engagement: 1.4,
-                    recency: 1.1,
-                    followBoost: 0.9,
-                    selfBoost: 0.5,
+                    ...CURATED_FEED_WEIGHTS,
                 },
             } : undefined,
             nextCursor: (feedPosts?.length === limit)

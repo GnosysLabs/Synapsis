@@ -37,8 +37,11 @@ export default function Home() {
     weights: {
       engagement: number;
       recency: number;
-      followBoost: number;
-      selfBoost: number;
+      authorRepeat: number;
+      nodeRepeat: number;
+      formatRepeat: number;
+      consecutiveAuthor: number;
+      consecutiveNode: number;
     };
   } | null>(null);
 
@@ -264,7 +267,7 @@ export default function Home() {
         <div className="feed-meta card">
           <div className="feed-meta-title">For You</div>
           <div className="feed-meta-body">
-            This feed highlights fresh posts and active discussions, with a boost for people you follow. It is designed to surface what matters without hiding your own activity.
+            This feed balances fresh posts and active discussions with a varied mix of people, communities, and post types.
           </div>
         </div>
       )}
