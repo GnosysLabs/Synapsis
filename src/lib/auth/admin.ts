@@ -1,22 +1,12 @@
 import { requireAuth } from '@/lib/auth';
 import { users } from '@/db';
+import { isConfiguredAdminEmail } from '@/lib/auth/admin-config';
 
 type User = typeof users.$inferSelect;
 
-const normalizeList = (value?: string | null) =>
-    (value || '')
-        .split(',')
-        .map((item) => item.trim().toLowerCase())
-        .filter(Boolean);
-
-const adminEmails = normalizeList(process.env.ADMIN_EMAILS);
-
 export const isAdminUser = (user: User | null | undefined) => {
     if (!user) return false;
-    if (user.email && adminEmails.length > 0 && adminEmails.includes(user.email.toLowerCase())) {
-        return true;
-    }
-    return false;
+    return isConfiguredAdminEmail(user.email);
 };
 
 export async function requireAdmin(): Promise<User> {

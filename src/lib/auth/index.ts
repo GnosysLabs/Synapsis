@@ -2,8 +2,8 @@
  * Authentication Utilities
  */
 
-import { db, users, sessions } from '@/db';
-import { eq, inArray } from 'drizzle-orm';
+import { db, follows, users, sessions } from '@/db';
+import { eq, inArray, sql } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
 import { generateKeyPair } from '@/lib/crypto/keys';
@@ -12,6 +12,7 @@ import { encryptPrivateKey, serializeEncryptedKey } from '@/lib/crypto/private-k
 import { cookies } from 'next/headers';
 import { upsertHandleEntries } from '@/lib/federation/handles';
 import { registrationDisplayName } from '@/lib/auth/display-name';
+import { configuredAdminEmails } from '@/lib/auth/admin-config';
 
 const ACTIVE_SESSION_COOKIE_NAME = 'synapsis_session';
 const SESSION_COOKIE_NAME = 'synapsis_sessions';
@@ -310,15 +311,38 @@ export async function registerUser(
 
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
-    const [user] = await db.insert(users).values({
-        did,
-        handle: handle.toLowerCase(),
-        email: email.toLowerCase(),
-        passwordHash,
-        displayName: registrationDisplayName(handle, email, displayName),
-        publicKey,
-        privateKeyEncrypted: serializeEncryptedKey(encryptedPrivateKey),
-    }).returning();
+    const adminEmails = configuredAdminEmails();
+    const adminUsers = adminEmails.length > 0
+        ? (await db.query.users.findMany({
+            where: { email: { in: adminEmails } },
+        })).filter((admin) => !admin.isSuspended)
+        : [];
+
+    const user = await db.transaction(async (tx) => {
+        const [createdUser] = await tx.insert(users).values({
+            did,
+            handle: handle.toLowerCase(),
+            email: email.toLowerCase(),
+            passwordHash,
+            displayName: registrationDisplayName(handle, email, displayName),
+            publicKey,
+            privateKeyEncrypted: serializeEncryptedKey(encryptedPrivateKey),
+            followingCount: adminUsers.length,
+        }).returning();
+
+        if (adminUsers.length > 0) {
+            await tx.insert(follows).values(adminUsers.map((admin) => ({
+                followerId: createdUser.id,
+                followingId: admin.id,
+            })));
+
+            await tx.update(users)
+                .set({ followersCount: sql`${users.followersCount} + 1` })
+                .where(inArray(users.id, adminUsers.map((admin) => admin.id)));
+        }
+
+        return createdUser;
+    });
 
     await upsertHandleEntries([{
         handle: user.handle,
