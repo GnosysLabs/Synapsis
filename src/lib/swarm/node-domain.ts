@@ -56,6 +56,23 @@ export function isPublicSwarmDomain(value: string | null | undefined): boolean {
   return getPublicSwarmDomain(value) !== null;
 }
 
+export function resolveNodeAssetUrl(
+  value: string | null | undefined,
+  nodeDomain: string
+): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+
+  try {
+    const resolved = new URL(trimmed, `https://${normalizeNodeDomain(nodeDomain)}`);
+    return resolved.protocol === 'http:' || resolved.protocol === 'https:'
+      ? resolved.toString()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Resolve retired bootstrap hostnames to the node identity they represent.
  * This keeps upgraded nodes working even before their persisted seed rows are

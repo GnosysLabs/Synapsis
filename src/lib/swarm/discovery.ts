@@ -12,18 +12,10 @@ import {
   getCanonicalSwarmSeedDomain,
   getPublicSwarmDomain,
   isPublicSwarmDomain,
+  resolveNodeAssetUrl,
 } from './node-domain';
 
 const PUBLIC_SWARM_DOMAIN_ERROR = 'Public swarm participation requires a real ICANN domain';
-
-function normalizeOptionalUrl(value: string | null | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
 
 /**
  * Build this node's announcement payload
@@ -48,7 +40,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     if (node) {
       name = node.name;
       description = node.description ?? undefined;
-      logoUrl = normalizeOptionalUrl(node.logoUrl);
+      logoUrl = resolveNodeAssetUrl(node.logoUrl, domain);
       publicKey = node.publicKey ?? '';
       isNsfw = node.isNsfw;
     }

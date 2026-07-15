@@ -3,6 +3,7 @@ import {
   getCanonicalSwarmSeedDomain,
   getPublicSwarmDomain,
   isPublicSwarmDomain,
+  resolveNodeAssetUrl,
 } from './node-domain';
 
 describe('public swarm domains', () => {
@@ -47,5 +48,19 @@ describe('swarm seed domains', () => {
 
   it('rejects non-public seed domains', () => {
     expect(getCanonicalSwarmSeedDomain('localhost:43821')).toBeNull();
+  });
+});
+
+describe('node asset URLs', () => {
+  it('resolves a relative logo path against the node domain', () => {
+    expect(
+      resolveNodeAssetUrl('/api/node/logo?v=1784095823196', 'batorbros.bond')
+    ).toBe('https://batorbros.bond/api/node/logo?v=1784095823196');
+  });
+
+  it('preserves an absolute HTTPS asset URL', () => {
+    expect(
+      resolveNodeAssetUrl('https://media.example.org/node/logo.png', 'batorbros.bond')
+    ).toBe('https://media.example.org/node/logo.png');
   });
 });
