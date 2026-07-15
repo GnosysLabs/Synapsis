@@ -173,6 +173,35 @@ export function RightSidebar() {
                             </div>
                         </div>
                     )}
+
+                    {nodeInfo.admins.length > 0 && (
+                        <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-hover)' }}>
+                            <h4 style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--foreground-tertiary)', marginBottom: '12px', letterSpacing: '0.05em' }}>
+                                Admins
+                            </h4>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {nodeInfo.admins.map((admin) => (
+                                    <Link
+                                        key={admin.handle}
+                                        href={`/u/${admin.handle}`}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none', color: 'inherit' }}
+                                    >
+                                        <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
+                                            <AvatarImage avatarUrl={admin.avatarUrl} seed={admin.handle} isNsfw={admin.isNsfw} nodeIsNsfw={nodeInfo.isNsfw} alt={admin.displayName || admin.handle} />
+                                        </div>
+                                        <div>
+                                            <div style={{ fontWeight: 500, fontSize: '14px' }}>
+                                                {admin.displayName || admin.handle}
+                                            </div>
+                                            <div style={{ color: 'var(--foreground-tertiary)', fontSize: '12px' }}>
+                                                @{admin.handle}
+                                            </div>
+                                        </div>
+                                    </Link>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -204,34 +233,6 @@ export function RightSidebar() {
                     ))}
                 </div>
 
-                {nodeInfo.admins.length > 0 && (
-                    <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-hover)' }}>
-                        <h4 style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--foreground-tertiary)', marginBottom: '12px', letterSpacing: '0.05em' }}>
-                            Admins
-                        </h4>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            {nodeInfo.admins.map((admin) => (
-                                <Link
-                                    key={admin.handle}
-                                    href={`/u/${admin.handle}`}
-                                    style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none', color: 'inherit' }}
-                                >
-                                    <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
-                                        <AvatarImage avatarUrl={admin.avatarUrl} seed={admin.handle} isNsfw={admin.isNsfw} nodeIsNsfw={nodeInfo.isNsfw} alt={admin.displayName || admin.handle} />
-                                    </div>
-                                    <div>
-                                        <div style={{ fontWeight: 500, fontSize: '14px' }}>
-                                            {admin.displayName || admin.handle}
-                                        </div>
-                                        <div style={{ color: 'var(--foreground-tertiary)', fontSize: '12px' }}>
-                                            @{admin.handle}
-                                        </div>
-                                    </div>
-                                </Link>
-                            ))}
-                        </div>
-                    </div>
-                )}
             </div>
         </aside>
     );

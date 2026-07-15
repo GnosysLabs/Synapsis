@@ -49,7 +49,9 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     }
 
     // Get counts
-    const userResult = await db.select({ count: sql<number>`count(*)` }).from(users);
+    const userResult = await db.select({ count: sql<number>`count(*)` })
+      .from(users)
+      .where(sql`${users.handle} NOT LIKE '%@%'`);
     const postResult = await db.select({ count: sql<number>`count(*)` }).from(posts);
     const mediaResult = await db.select({ count: sql<number>`count(*)` })
       .from(media)

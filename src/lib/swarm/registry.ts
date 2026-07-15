@@ -361,7 +361,8 @@ export async function getSwarmStats() {
   const publicNodes = allNodes.filter(n => isPublicSwarmDomain(n.domain));
 
   const [localUsers, localPosts, localMedia] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(users),
+    db.select({ count: sql<number>`count(*)` }).from(users)
+      .where(sql`${users.handle} NOT LIKE '%@%'`),
     db.select({ count: sql<number>`count(*)` }).from(posts),
     db.select({ count: sql<number>`count(*)` }).from(media).where(isNotNull(media.postId)),
   ]);
