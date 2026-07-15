@@ -8,12 +8,13 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { UserStorageImageUpload } from '@/components/UserStorageImageUpload';
 import { Bot, Sparkles, Rss, Clock, Trash2 } from 'lucide-react';
+import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 
 interface ContentSource {
   id?: string;
@@ -66,8 +67,10 @@ export default function EditBotPage() {
     postingFrequency: 'every_4_hours',
     customIntervalMinutes: 240,
   });
+  const savedFormDataRef = useRef<typeof formData | null>(null);
 
   const [sources, setSources] = useState<ContentSource[]>([]);
+  const savedSourcesRef = useRef<ContentSource[] | null>(null);
   const [newSource, setNewSource] = useState<ContentSource>({
     type: 'rss',
     url: '',
@@ -78,6 +81,9 @@ export default function EditBotPage() {
     newsQuery: '',
   });
   const [sourcesToDelete, setSourcesToDelete] = useState<string[]>([]);
+  const botChanged = hasUnsavedChanges(formData, savedFormDataRef.current)
+    || hasUnsavedChanges(sources, savedSourcesRef.current)
+    || sourcesToDelete.length > 0;
 
   useEffect(() => {
     fetchBot();
@@ -129,7 +135,7 @@ export default function EditBotPage() {
         }
       }
 
-      setFormData({
+      const loadedFormData = {
         name: bot.name || '',
         handle: bot.handle || '',
         bio: bot.bio || '',
@@ -143,12 +149,17 @@ export default function EditBotPage() {
         autonomousMode: bot.autonomousMode || false,
         postingFrequency,
         customIntervalMinutes,
-      });
+      };
+      setFormData(loadedFormData);
+      savedFormDataRef.current = loadedFormData;
 
+      let loadedSources: ContentSource[] = [];
       if (sourcesRes.ok) {
         const sourcesData = await sourcesRes.json();
-        setSources(sourcesData.sources || []);
+        loadedSources = sourcesData.sources || [];
       }
+      setSources(loadedSources);
+      savedSourcesRef.current = loadedSources;
     } catch (err) {
       console.error('Failed to fetch bot:', err);
       setError('Failed to load bot data');
@@ -266,6 +277,7 @@ export default function EditBotPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!botChanged) return;
     setSaving(true);
     setError('');
 
@@ -994,7 +1006,7 @@ export default function EditBotPage() {
             <button
               key="submit-button"
               type="submit"
-              disabled={saving}
+              disabled={saving || !botChanged}
               className="btn btn-primary"
             >
               {saving ? 'Saving...' : 'Save Changes'}

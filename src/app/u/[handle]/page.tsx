@@ -12,6 +12,7 @@ import { Rocket, MoreHorizontal, Mail } from 'lucide-react';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { Bot } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
 
@@ -114,6 +115,15 @@ export default function ProfilePage() {
     const [saveError, setSaveError] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [mediaSaveStatus, setMediaSaveStatus] = useState<Partial<Record<ProfileMediaField, 'saving' | 'saved'>>>({});
+    const savedProfileForm = user ? {
+        displayName: user.displayName || '',
+        bio: user.bio || '',
+        avatarUrl: user.avatarUrl || '',
+        headerUrl: user.headerUrl || '',
+        website: user.website || '',
+    } : null;
+    const profileChanged = hasUnsavedChanges(profileForm, savedProfileForm);
+    const isSavingProfileMedia = Object.values(mediaSaveStatus).includes('saving');
     const [isBlocked, setIsBlocked] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
     useEffect(() => {
@@ -400,7 +410,7 @@ export default function ProfilePage() {
     };
 
     const handleSaveProfile = async () => {
-        if (!isOwnProfile) return;
+        if (!isOwnProfile || !profileChanged) return;
 
         if (!isIdentityUnlocked) {
             setSaveError('Session expired. Please log in again.');
@@ -846,7 +856,7 @@ export default function ProfilePage() {
                                     <button className="btn btn-ghost" onClick={() => setIsEditing(false)} disabled={isSaving}>
                                         Cancel
                                     </button>
-                                    <button className="btn btn-primary" onClick={handleSaveProfile} disabled={isSaving}>
+                                    <button className="btn btn-primary" onClick={handleSaveProfile} disabled={isSaving || isSavingProfileMedia || !profileChanged}>
                                         {isSaving ? 'Saving...' : 'Save'}
                                     </button>
                                 </div>

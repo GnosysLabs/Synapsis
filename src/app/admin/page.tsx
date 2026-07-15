@@ -9,6 +9,7 @@ import { useToast } from '@/lib/contexts/ToastContext';
 import { useAccentColor } from '@/lib/contexts/AccentColorContext';
 import { refreshStorageSession } from '@/lib/storage/client';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 
 export default function AdminPage() {
     const { showToast } = useToast();
@@ -28,6 +29,8 @@ export default function AdminPage() {
         turnstileSiteKey: '',
         turnstileSecretKey: '',
     });
+    const savedNodeSettingsRef = useRef<typeof nodeSettings | null>(null);
+    const nodeSettingsChanged = hasUnsavedChanges(nodeSettings, savedNodeSettingsRef.current);
     const [savingSettings, setSavingSettings] = useState(false);
     const [isUploadingBanner, setIsUploadingBanner] = useState(false);
     const [isCheckingBannerStorage, setIsCheckingBannerStorage] = useState(false);
@@ -55,7 +58,7 @@ export default function AdminPage() {
         try {
             const res = await fetch('/api/node');
             const data = await res.json();
-            setNodeSettings({
+            const loadedSettings = {
                 name: data.name || '',
                 description: data.description || '',
                 longDescription: data.longDescription || '',
@@ -67,7 +70,9 @@ export default function AdminPage() {
                 isNsfw: data.isNsfw || false,
                 turnstileSiteKey: data.turnstileSiteKey || '',
                 turnstileSecretKey: data.turnstileSecretKey || '',
-            });
+            };
+            setNodeSettings(loadedSettings);
+            savedNodeSettingsRef.current = loadedSettings;
         } catch {
             // error
         } finally {
@@ -91,6 +96,7 @@ export default function AdminPage() {
                 body: JSON.stringify(payload),
             });
             if (res.ok) {
+                savedNodeSettingsRef.current = payload;
                 const data = await res.json().catch(() => ({}));
                 if (data.node) {
                     window.dispatchEvent(new CustomEvent('synapsis:node-updated', { detail: data.node }));
@@ -607,7 +613,7 @@ export default function AdminPage() {
                             </div>
 
                             <div style={{ paddingTop: '8px' }}>
-                                <button className="btn btn-primary" onClick={() => handleSaveSettings()} disabled={savingSettings}>
+                                <button className="btn btn-primary" onClick={() => handleSaveSettings()} disabled={savingSettings || !nodeSettingsChanged}>
                                     {savingSettings ? 'Saving...' : 'Save Settings'}
                                 </button>
                             </div>
