@@ -16,6 +16,8 @@ import { useDomain } from '@/lib/contexts/ConfigContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import { AvatarImage } from '@/components/AvatarImage';
+import { AudioPlayer } from '@/components/AudioPlayer';
+import { getMediaKind } from '@/lib/media/upload-policy';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -879,10 +881,10 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                 {post.media && post.media.length > 0 && (
                     <div className="post-media-grid">
                         {post.media.map((item) => {
-                            const isVideo = item.mimeType?.startsWith('video/');
+                            const mediaKind = getMediaKind(item.mimeType);
                             return (
-                                <div className="post-media-item" key={item.id}>
-                                    {isVideo ? (
+                                <div className={`post-media-item ${mediaKind === 'audio' ? 'audio' : ''}`} key={item.id}>
+                                    {mediaKind === 'video' ? (
                                         <BlurredVideo
                                             src={item.url}
                                             onClick={(e) => {
@@ -890,6 +892,11 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                                                 const video = e.currentTarget;
                                                 video.muted = !video.muted;
                                             }}
+                                        />
+                                    ) : mediaKind === 'audio' ? (
+                                        <AudioPlayer
+                                            src={item.url}
+                                            title={`Audio by ${post.author.displayName || post.author.handle}`}
                                         />
                                     ) : (
                                         <BlurredImage

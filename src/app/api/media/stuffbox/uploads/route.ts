@@ -3,18 +3,16 @@ import { z } from 'zod';
 import { requireAuth } from '@/lib/auth';
 import { createUpload, StuffboxApiError } from '@/lib/stuffbox/client';
 import { getStuffboxAccess } from '@/lib/stuffbox/tokens';
+import { ALLOWED_MEDIA_TYPES, MAX_IMAGE_SIZE, MAX_AUDIO_SIZE, MAX_VIDEO_SIZE } from '@/lib/media/upload-policy';
 
 const uploadSchema = z.object({
   filename: z.string().min(1).max(255),
-  mimeType: z.enum([
-    'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-    'video/mp4', 'video/webm', 'video/quicktime',
-  ]),
-  size: z.number().int().positive().max(100 * 1024 * 1024),
+  mimeType: z.enum(ALLOWED_MEDIA_TYPES),
+  size: z.number().int().positive().max(Math.max(MAX_VIDEO_SIZE, MAX_AUDIO_SIZE)),
   sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).superRefine((upload, context) => {
-  if (upload.mimeType.startsWith('image/') && upload.size > 10 * 1024 * 1024) {
-    context.addIssue({ code: 'too_big', maximum: 10 * 1024 * 1024, origin: 'number', inclusive: true, path: ['size'], message: 'Images must be 10MB or smaller' });
+  if (upload.mimeType.startsWith('image/') && upload.size > MAX_IMAGE_SIZE) {
+    context.addIssue({ code: 'too_big', maximum: MAX_IMAGE_SIZE, origin: 'number', inclusive: true, path: ['size'], message: 'Images must be 10MB or smaller' });
   }
 });
 

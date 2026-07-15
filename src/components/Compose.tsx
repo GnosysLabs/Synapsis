@@ -3,15 +3,17 @@
 import { useState, useEffect, useRef } from 'react';
 import AutoTextarea from '@/components/AutoTextarea';
 import { Post, Attachment } from '@/lib/types';
-import { ImageIcon, AlertTriangle, Film } from 'lucide-react';
+import { AlertTriangle, Music2, Paperclip } from 'lucide-react';
 import { VideoEmbed } from '@/components/VideoEmbed';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { getMediaKind } from '@/lib/media/upload-policy';
 
 interface MediaAttachment extends Attachment {
     mimeType?: string;
+    filename?: string;
 }
 
 interface ComposeProps {
@@ -142,6 +144,7 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
                     url: media.url,
                     altText: media.altText ?? null,
                     mimeType: media.mimeType ?? file.type,
+                    filename: file.name,
                 });
             } catch (error) {
                 if (error instanceof MediaUploadError && error.code === 'STORAGE_NOT_CONFIGURED') {
@@ -229,11 +232,16 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
             {attachments.length > 0 && (
                 <div className="compose-media-grid">
                     {attachments.map((item) => {
-                        const isVideo = item.mimeType?.startsWith('video/');
+                        const mediaKind = getMediaKind(item.mimeType);
                         return (
-                            <div className="compose-media-item" key={item.id}>
-                                {isVideo ? (
+                            <div className={`compose-media-item ${mediaKind === 'audio' ? 'audio' : ''}`} key={item.id}>
+                                {mediaKind === 'video' ? (
                                     <video src={item.url} muted playsInline preload="metadata" />
+                                ) : mediaKind === 'audio' ? (
+                                    <div className="compose-audio-preview">
+                                        <Music2 size={22} />
+                                        <span>{item.filename || 'Audio track'}</span>
+                                    </div>
                                 ) : (
                                     <img src={item.url} alt={item.altText || 'Upload preview'} />
                                 )}
@@ -324,16 +332,16 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
                     <button
                         type="button"
                         className="compose-media-button"
-                        title="Add media"
+                        title="Attach media"
                         onClick={handleAddMedia}
                         disabled={isUploading || isCheckingStorage || attachments.length >= 4}
                     >
-                        {isUploading || isCheckingStorage ? '...' : <ImageIcon size={20} />}
+                        {isUploading || isCheckingStorage ? '...' : <Paperclip size={20} />}
                     </button>
                     <input
                         ref={mediaInputRef}
                         type="file"
-                        accept="image/*,video/mp4,video/webm,video/quicktime"
+                        accept="image/*,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/ogg,audio/flac"
                         multiple
                         onChange={handleMediaSelect}
                         disabled={isUploading || attachments.length >= 4}
