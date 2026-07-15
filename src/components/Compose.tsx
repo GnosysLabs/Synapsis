@@ -17,14 +17,16 @@ interface MediaAttachment extends Attachment {
 }
 
 interface ComposeProps {
-    onPost: (content: string, mediaIds: string[], linkPreview?: any, replyToId?: string, isNsfw?: boolean) => void;
+    onPost: (content: string, mediaIds: string[], linkPreview?: any, replyToId?: string, isNsfw?: boolean) => void | boolean | Promise<void | boolean>;
+    onPosted?: () => void;
     replyingTo?: Post | null;
     onCancelReply?: () => void;
     placeholder?: string;
     isReply?: boolean;
+    autoFocus?: boolean;
 }
 
-export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What's happening?", isReply }: ComposeProps) {
+export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placeholder = "What's happening?", isReply, autoFocus = false }: ComposeProps) {
     const { isIdentityUnlocked } = useAuth();
     const replyToHandle = replyingTo ? useFormattedHandle(replyingTo.author.handle) : '';
     const [content, setContent] = useState('');
@@ -116,13 +118,24 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
         }
 
         setIsPosting(true);
-        await onPost(content, attachments.map((item) => item.id).filter(Boolean), linkPreview, replyingTo?.id, isNsfw);
-        setContent('');
-        setAttachments([]);
-        setLinkPreview(null);
-        setLastDetectedUrl(null);
-        setIsNsfw(false);
-        setIsPosting(false);
+        try {
+            const posted = await onPost(content, attachments.map((item) => item.id).filter(Boolean), linkPreview, replyingTo?.id, isNsfw);
+            if (posted === false) {
+                setIsPosting(false);
+                return;
+            }
+
+            setContent('');
+            setAttachments([]);
+            setLinkPreview(null);
+            setLastDetectedUrl(null);
+            setIsNsfw(false);
+            setIsPosting(false);
+            onPosted?.();
+        } catch (error) {
+            setIsPosting(false);
+            throw error;
+        }
     };
 
     const uploadMediaFiles = async (files: File[]) => {
@@ -228,6 +241,7 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
                 maxLength={maxLength + 50} // Allow some overflow for better UX
+                autoFocus={autoFocus}
             />
             {attachments.length > 0 && (
                 <div className="compose-media-grid">
