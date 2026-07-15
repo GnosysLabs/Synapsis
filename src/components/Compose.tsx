@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useId, useRef } from 'react';
 import AutoTextarea from '@/components/AutoTextarea';
 import { Post, Attachment } from '@/lib/types';
 import { AlertTriangle, Music2, Paperclip } from 'lucide-react';
@@ -10,14 +10,31 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { getMediaKind } from '@/lib/media/upload-policy';
+import { AvatarImage } from '@/components/AvatarImage';
+import type { LinkPreviewData } from '@/lib/media/linkPreview';
+import {
+    getActiveMentionQuery,
+    parseMentions,
+    replaceMentionQuery,
+    type ActiveMentionQuery,
+} from '@/lib/mentions/parser';
 
 interface MediaAttachment extends Attachment {
     mimeType?: string;
     filename?: string;
 }
 
+interface MentionSuggestion {
+    handle: string;
+    displayName: string | null;
+    avatarUrl: string | null;
+    isBot: boolean;
+    isRemote: boolean;
+    nodeDomain: string | null;
+}
+
 interface ComposeProps {
-    onPost: (content: string, mediaIds: string[], linkPreview?: any, replyToId?: string, isNsfw?: boolean) => void | boolean | Promise<void | boolean>;
+    onPost: (content: string, mediaIds: string[], linkPreview?: LinkPreviewData, replyToId?: string, isNsfw?: boolean) => void | boolean | Promise<void | boolean>;
     onPosted?: () => void;
     replyingTo?: Post | null;
     onCancelReply?: () => void;
@@ -28,7 +45,7 @@ interface ComposeProps {
 
 export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placeholder = "What's happening?", isReply, autoFocus = false }: ComposeProps) {
     const { isIdentityUnlocked } = useAuth();
-    const replyToHandle = replyingTo ? useFormattedHandle(replyingTo.author.handle) : '';
+    const replyToHandle = useFormattedHandle(replyingTo?.author.handle || '');
     const [content, setContent] = useState('');
     const [isPosting, setIsPosting] = useState(false);
     const [attachments, setAttachments] = useState<MediaAttachment[]>([]);
@@ -38,13 +55,18 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     const [storageNotice, setStorageNotice] = useState<string | null>(null);
     const [pendingStorageFiles, setPendingStorageFiles] = useState<File[]>([]);
     const [showStorageConfiguration, setShowStorageConfiguration] = useState(false);
-    const [linkPreview, setLinkPreview] = useState<any>(null);
-    const [fetchingPreview, setFetchingPreview] = useState(false);
+    const [linkPreview, setLinkPreview] = useState<LinkPreviewData | null>(null);
     const [lastDetectedUrl, setLastDetectedUrl] = useState<string | null>(null);
     const [isNsfw, setIsNsfw] = useState(false);
     const [canPostNsfw, setCanPostNsfw] = useState(false);
     const [isNsfwNode, setIsNsfwNode] = useState(false);
     const mediaInputRef = useRef<HTMLInputElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const mentionListId = useId();
+    const [activeMention, setActiveMention] = useState<ActiveMentionQuery | null>(null);
+    const [mentionSuggestions, setMentionSuggestions] = useState<MentionSuggestion[]>([]);
+    const [mentionLoading, setMentionLoading] = useState(false);
+    const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
     const maxLength = 600;
     const remaining = maxLength - content.length;
     const canSubmit = content.trim().length > 0 || attachments.length > 0;
@@ -80,10 +102,16 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     // Detect URLs in content
     useEffect(() => {
         const urlRegex = /(?:https?:\/\/)?((?:[a-zA-Z0-9-]+\.)+[a-z]{2,63})\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)/gi;
-        const matches = content.match(urlRegex);
+        const mentionRanges = parseMentions(content);
+        const matches = Array.from(content.matchAll(urlRegex))
+            .filter((match) => {
+                const start = match.index || 0;
+                const end = start + match[0].length;
+                return !mentionRanges.some((mention) => start < mention.end && end > mention.start);
+            });
 
-        if (matches && matches[0]) {
-            const url = matches[0];
+        if (matches[0]) {
+            const url = matches[0][0];
             if (url !== lastDetectedUrl) {
                 setLastDetectedUrl(url);
                 fetchPreview(url);
@@ -94,8 +122,83 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
         }
     }, [content, lastDetectedUrl]);
 
+    useEffect(() => {
+        if (!activeMention) {
+            setMentionSuggestions([]);
+            setMentionLoading(false);
+            return;
+        }
+
+        const controller = new AbortController();
+        const timeout = window.setTimeout(async () => {
+            setMentionLoading(true);
+            try {
+                const response = await fetch(
+                    `/api/mentions/suggestions?q=${encodeURIComponent(activeMention.query)}&limit=8`,
+                    { signal: controller.signal, cache: 'no-store' },
+                );
+                if (!response.ok) {
+                    setMentionSuggestions([]);
+                    return;
+                }
+                const data = await response.json();
+                const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+                setMentionSuggestions(suggestions);
+                setSelectedMentionIndex(0);
+            } catch (error) {
+                if (!(error instanceof DOMException && error.name === 'AbortError')) {
+                    console.warn('[Compose] Mention suggestions failed:', error);
+                }
+            } finally {
+                if (!controller.signal.aborted) setMentionLoading(false);
+            }
+        }, 160);
+
+        return () => {
+            window.clearTimeout(timeout);
+            controller.abort();
+        };
+    }, [activeMention]);
+
+    const syncActiveMention = (value: string, caret: number | null) => {
+        setActiveMention(getActiveMentionQuery(value, caret ?? value.length));
+    };
+
+    const chooseMention = (suggestion: MentionSuggestion) => {
+        if (!activeMention) return;
+        const replacement = replaceMentionQuery(content, activeMention, suggestion.handle);
+        setContent(replacement.content);
+        setActiveMention(null);
+        setMentionSuggestions([]);
+        requestAnimationFrame(() => {
+            textareaRef.current?.focus();
+            textareaRef.current?.setSelectionRange(replacement.caret, replacement.caret);
+        });
+    };
+
+    const handleMentionKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (!activeMention || mentionSuggestions.length === 0) {
+            if (event.key === 'Escape') setActiveMention(null);
+            return;
+        }
+
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            setSelectedMentionIndex((index) => (index + 1) % mentionSuggestions.length);
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            setSelectedMentionIndex((index) => (index - 1 + mentionSuggestions.length) % mentionSuggestions.length);
+        } else if (event.key === 'Enter' || event.key === 'Tab') {
+            event.preventDefault();
+            chooseMention(mentionSuggestions[selectedMentionIndex]);
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            setActiveMention(null);
+            setMentionSuggestions([]);
+        }
+    };
+
     const fetchPreview = async (url: string) => {
-        setFetchingPreview(true);
         try {
             const res = await fetch(`/api/media/preview?url=${encodeURIComponent(url)}`);
             if (res.ok) {
@@ -104,8 +207,6 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
             }
         } catch (err) {
             console.error('Preview error', err);
-        } finally {
-            setFetchingPreview(false);
         }
     };
 
@@ -120,7 +221,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
 
         setIsPosting(true);
         try {
-            const posted = await onPost(content, attachments.map((item) => item.id).filter(Boolean), linkPreview, replyingTo?.id, isNsfw);
+            const posted = await onPost(content, attachments.map((item) => item.id).filter(Boolean), linkPreview || undefined, replyingTo?.id, isNsfw);
             if (posted === false) {
                 setIsPosting(false);
                 return;
@@ -236,14 +337,74 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                     </button>
                 </div>
             )}
-            <AutoTextarea
-                className="compose-input"
-                placeholder={placeholder}
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                maxLength={maxLength + 50} // Allow some overflow for better UX
-                autoFocus={autoFocus}
-            />
+            <div className="compose-mention-field">
+                <AutoTextarea
+                    ref={textareaRef}
+                    className="compose-input"
+                    placeholder={placeholder}
+                    value={content}
+                    onChange={(event) => {
+                        setContent(event.target.value);
+                        syncActiveMention(event.target.value, event.target.selectionStart);
+                    }}
+                    onClick={(event) => syncActiveMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+                    onKeyUp={(event) => {
+                        if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(event.key)) {
+                            syncActiveMention(event.currentTarget.value, event.currentTarget.selectionStart);
+                        }
+                    }}
+                    onKeyDown={handleMentionKeyDown}
+                    onBlur={() => window.setTimeout(() => setActiveMention(null), 120)}
+                    maxLength={maxLength + 50} // Allow some overflow for better UX
+                    autoFocus={autoFocus}
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded={Boolean(activeMention && (mentionLoading || mentionSuggestions.length > 0))}
+                    aria-controls={mentionListId}
+                    aria-activedescendant={mentionSuggestions[selectedMentionIndex]
+                        ? `${mentionListId}-option-${selectedMentionIndex}`
+                        : undefined}
+                />
+                {activeMention && (mentionLoading || mentionSuggestions.length > 0) && (
+                    <div
+                        id={mentionListId}
+                        className="compose-mention-suggestions"
+                        role="listbox"
+                        aria-label="Mention suggestions"
+                    >
+                        {mentionLoading && mentionSuggestions.length === 0 ? (
+                            <div className="compose-mention-loading">Finding people…</div>
+                        ) : mentionSuggestions.map((suggestion, index) => (
+                            <button
+                                id={`${mentionListId}-option-${index}`}
+                                type="button"
+                                role="option"
+                                aria-selected={index === selectedMentionIndex}
+                                className={`compose-mention-suggestion ${index === selectedMentionIndex ? 'selected' : ''}`}
+                                key={suggestion.handle}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onMouseEnter={() => setSelectedMentionIndex(index)}
+                                onClick={() => chooseMention(suggestion)}
+                            >
+                                <span className="compose-mention-avatar">
+                                    <AvatarImage
+                                        avatarUrl={suggestion.avatarUrl}
+                                        seed={suggestion.handle}
+                                        alt=""
+                                    />
+                                </span>
+                                <span className="compose-mention-identity">
+                                    <span className="compose-mention-name">
+                                        {suggestion.displayName || suggestion.handle.split('@')[0]}
+                                        {suggestion.isBot && <span className="compose-mention-bot">Bot</span>}
+                                    </span>
+                                    <span className="compose-mention-handle">@{suggestion.handle}</span>
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
             {attachments.length > 0 && (
                 <div className="compose-media-grid">
                     {attachments.map((item) => {

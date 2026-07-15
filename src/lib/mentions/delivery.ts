@@ -1,0 +1,318 @@
+import { randomUUID } from 'node:crypto';
+import { and, eq, lte, or } from 'drizzle-orm';
+
+import {
+  botMentions,
+  db,
+  mentionDeliveries,
+  notifications,
+} from '@/db';
+import { buildNotificationTarget } from '@/lib/notifications';
+import { discoverNode } from '@/lib/swarm/discovery';
+import {
+  deliverSwarmMention,
+  isSwarmNode,
+  type SwarmInteractionResponse,
+} from '@/lib/swarm/interactions';
+import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import { parseMentions, uniqueMentions } from './parser';
+
+const MAX_DELIVERY_ATTEMPTS = 12;
+const PROCESSING_LEASE_MS = 2 * 60 * 1000;
+let activeWorker: Promise<MentionOutboxResult> | null = null;
+
+export interface MentionActor {
+  id: string;
+  handle: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  did?: string | null;
+  publicKey?: string | null;
+}
+
+export interface RegisterPostMentionsInput {
+  postId: string;
+  content: string;
+  actor: MentionActor;
+  nodeDomain?: string;
+}
+
+export interface RegisterPostMentionsResult {
+  localNotifications: number;
+  remoteQueued: number;
+  skipped: number;
+}
+
+export interface MentionOutboxResult {
+  delivered: number;
+  retried: number;
+  dead: number;
+}
+
+export function mentionRetryDelayMs(attempt: number): number {
+  return Math.min(60 * 60 * 1000, 30 * 1000 * (2 ** Math.max(0, attempt - 1)));
+}
+
+async function localInteractionAllowed(recipientId: string, actorId: string): Promise<boolean> {
+  const [block, mute] = await Promise.all([
+    db.query.blocks.findFirst({
+      where: {
+        OR: [
+          { AND: [{ userId: recipientId }, { blockedUserId: actorId }] },
+          { AND: [{ userId: actorId }, { blockedUserId: recipientId }] },
+        ],
+      },
+      columns: { id: true },
+    }),
+    db.query.mutes.findFirst({
+      where: { AND: [{ userId: recipientId }, { mutedUserId: actorId }] },
+      columns: { id: true },
+    }),
+  ]);
+  return !block && !mute;
+}
+
+async function insertMentionNotification(values: typeof notifications.$inferInsert): Promise<boolean> {
+  const inserted = await db.insert(notifications)
+    .values(values)
+    .onConflictDoNothing()
+    .returning({ id: notifications.id });
+  return inserted.length > 0;
+}
+
+async function registerLocalBotMention(
+  mentionedUserId: string,
+  postId: string,
+  actorId: string,
+  content: string,
+): Promise<void> {
+  const bot = await db.query.bots.findFirst({
+    where: { userId: mentionedUserId },
+    columns: { id: true, isActive: true, isSuspended: true },
+  });
+  if (!bot || !bot.isActive || bot.isSuspended) return;
+
+  await db.insert(botMentions).values({
+    botId: bot.id,
+    postId,
+    authorId: actorId,
+    content,
+    isProcessed: false,
+    isRemote: false,
+  }).onConflictDoNothing();
+}
+
+/** Resolve local mentions synchronously and persist remote delivery work. */
+export async function registerPostMentions(
+  input: RegisterPostMentionsInput,
+): Promise<RegisterPostMentionsResult> {
+  const nodeDomain = normalizeNodeDomain(
+    input.nodeDomain || process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+  );
+  const mentions = uniqueMentions(parseMentions(input.content, nodeDomain));
+  const result: RegisterPostMentionsResult = {
+    localNotifications: 0,
+    remoteQueued: 0,
+    skipped: 0,
+  };
+
+  for (const mention of mentions) {
+    if (mention.isLocal) {
+      const mentionedUser = await db.query.users.findFirst({
+        where: { handle: mention.handle },
+      });
+      if (!mentionedUser
+        || mentionedUser.id === input.actor.id
+        || mentionedUser.isSuspended
+        || !(await localInteractionAllowed(mentionedUser.id, input.actor.id))) {
+        result.skipped += 1;
+        continue;
+      }
+
+      const created = await insertMentionNotification({
+        userId: mentionedUser.id,
+        actorId: input.actor.id,
+        actorHandle: input.actor.handle,
+        actorDisplayName: input.actor.displayName,
+        actorAvatarUrl: input.actor.avatarUrl,
+        actorNodeDomain: null,
+        postId: input.postId,
+        postContent: input.content.slice(0, 200),
+        interactionId: `mention:local:${input.postId}:${mentionedUser.id}`,
+        ...(mentionedUser.isBot ? buildNotificationTarget(mentionedUser) : {}),
+        type: 'mention',
+      });
+      if (created) result.localNotifications += 1;
+
+      if (mentionedUser.isBot) {
+        await registerLocalBotMention(mentionedUser.id, input.postId, input.actor.id, input.content);
+      }
+
+      if (mentionedUser.isBot
+        && mentionedUser.botOwnerId
+        && await localInteractionAllowed(mentionedUser.botOwnerId, input.actor.id)) {
+        const ownerCreated = await insertMentionNotification({
+          userId: mentionedUser.botOwnerId,
+          actorId: input.actor.id,
+          actorHandle: input.actor.handle,
+          actorDisplayName: input.actor.displayName,
+          actorAvatarUrl: input.actor.avatarUrl,
+          actorNodeDomain: null,
+          postId: input.postId,
+          postContent: input.content.slice(0, 200),
+          interactionId: `mention:local-owner:${input.postId}:${mentionedUser.id}`,
+          ...buildNotificationTarget(mentionedUser),
+          type: 'mention',
+        });
+        if (ownerCreated) result.localNotifications += 1;
+      }
+      continue;
+    }
+
+    if (!mention.domain) {
+      result.skipped += 1;
+      continue;
+    }
+
+    const inserted = await db.insert(mentionDeliveries).values({
+      interactionId: randomUUID(),
+      postId: input.postId,
+      targetHandle: mention.handle,
+      targetDomain: normalizeNodeDomain(mention.domain),
+      status: 'pending',
+      nextAttemptAt: new Date(),
+    }).onConflictDoNothing().returning({ id: mentionDeliveries.id });
+    if (inserted.length > 0) result.remoteQueued += 1;
+  }
+
+  if (result.remoteQueued > 0) {
+    void processMentionDeliveryOutbox().catch((error) => {
+      console.error('[Mentions] Immediate outbox processing failed:', error);
+    });
+  }
+  return result;
+}
+
+async function markDeliveryFailure(
+  delivery: typeof mentionDeliveries.$inferSelect,
+  response: SwarmInteractionResponse,
+): Promise<'retry' | 'dead'> {
+  const attempts = delivery.attempts + 1;
+  const isDead = response.retryable === false || attempts >= MAX_DELIVERY_ATTEMPTS;
+  const now = new Date();
+  await db.update(mentionDeliveries).set({
+    status: isDead ? 'dead' : 'retry',
+    attempts,
+    nextAttemptAt: isDead ? now : new Date(now.getTime() + mentionRetryDelayMs(attempts)),
+    lastError: (response.error || 'Unknown delivery failure').slice(0, 1000),
+    updatedAt: now,
+  }).where(eq(mentionDeliveries.id, delivery.id));
+  return isDead ? 'dead' : 'retry';
+}
+
+async function attemptMentionDelivery(
+  delivery: typeof mentionDeliveries.$inferSelect,
+): Promise<'delivered' | 'retry' | 'dead'> {
+  const post = await db.query.posts.findFirst({
+    where: { id: delivery.postId },
+    with: { author: true },
+  });
+  if (!post || post.isRemoved || post.author.isSuspended) {
+    return markDeliveryFailure(delivery, {
+      success: false,
+      retryable: false,
+      error: 'Source post or actor is unavailable',
+    });
+  }
+
+  let knownNode = await isSwarmNode(delivery.targetDomain);
+  if (!knownNode) knownNode = (await discoverNode(delivery.targetDomain)).success;
+  if (!knownNode) {
+    return markDeliveryFailure(delivery, {
+      success: false,
+      retryable: true,
+      error: `Unable to discover Synapsis node ${delivery.targetDomain}`,
+    });
+  }
+
+  const response = await deliverSwarmMention(delivery.targetDomain, {
+    mentionedHandle: delivery.targetHandle,
+    mention: {
+      actorHandle: post.author.handle,
+      actorDisplayName: post.author.displayName || post.author.handle,
+      actorAvatarUrl: post.author.avatarUrl || undefined,
+      actorNodeDomain: normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821'),
+      actorDid: post.author.did,
+      actorPublicKey: post.author.publicKey,
+      postId: post.id,
+      postContent: post.content,
+      interactionId: delivery.interactionId,
+      timestamp: post.createdAt.toISOString(),
+    },
+  });
+
+  if (!response.success) return markDeliveryFailure(delivery, response);
+
+  await db.update(mentionDeliveries).set({
+    status: 'delivered',
+    attempts: delivery.attempts + 1,
+    deliveredAt: new Date(),
+    lastError: null,
+    updatedAt: new Date(),
+  }).where(eq(mentionDeliveries.id, delivery.id));
+  return 'delivered';
+}
+
+async function runMentionDeliveryOutbox(limit: number): Promise<MentionOutboxResult> {
+  const result: MentionOutboxResult = { delivered: 0, retried: 0, dead: 0 };
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - PROCESSING_LEASE_MS);
+
+  await db.update(mentionDeliveries).set({ status: 'retry', nextAttemptAt: now, updatedAt: now })
+    .where(and(
+      eq(mentionDeliveries.status, 'processing'),
+      lte(mentionDeliveries.lastAttemptAt, staleBefore),
+    ));
+
+  const due = await db.select().from(mentionDeliveries)
+    .where(and(
+      or(eq(mentionDeliveries.status, 'pending'), eq(mentionDeliveries.status, 'retry')),
+      lte(mentionDeliveries.nextAttemptAt, now),
+    ))
+    .limit(Math.max(1, Math.min(limit, 100)));
+
+  for (const delivery of due) {
+    const claimed = await db.update(mentionDeliveries).set({
+      status: 'processing',
+      lastAttemptAt: new Date(),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(mentionDeliveries.id, delivery.id),
+      or(eq(mentionDeliveries.status, 'pending'), eq(mentionDeliveries.status, 'retry')),
+    )).returning({ id: mentionDeliveries.id });
+    if (claimed.length === 0) continue;
+
+    try {
+      const state = await attemptMentionDelivery(delivery);
+      result[state === 'retry' ? 'retried' : state] += 1;
+    } catch (error) {
+      const state = await markDeliveryFailure(delivery, {
+        success: false,
+        retryable: true,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      result[state === 'dead' ? 'dead' : 'retried'] += 1;
+    }
+  }
+  return result;
+}
+
+export async function processMentionDeliveryOutbox(limit = 25): Promise<MentionOutboxResult> {
+  if (activeWorker) return activeWorker;
+  activeWorker = runMentionDeliveryOutbox(limit);
+  try {
+    return await activeWorker;
+  } finally {
+    activeWorker = null;
+  }
+}

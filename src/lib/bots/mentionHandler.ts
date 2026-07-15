@@ -7,11 +7,16 @@
  * Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
  */
 
-import { db, bots, botMentions, posts, users } from '@/db';
-import { eq, and, desc, asc, isNull } from 'drizzle-orm';
+import { db, botMentions, notifications, posts, users } from '@/db';
+import { and, eq, isNull, lte, or, sql } from 'drizzle-orm';
 import { ContentGenerator, type Bot as GeneratorBot, type Post as GeneratorPost } from './contentGenerator';
 import { canReply, recordReply } from './rateLimiter';
-import { decryptApiKey } from './encryption';
+import type { LLMProvider } from './encryption';
+import { parseMentions, uniqueMentions } from '@/lib/mentions/parser';
+import { registerPostMentions } from '@/lib/mentions/delivery';
+import { deliverPostToSwarmFollowers } from '@/lib/swarm/interactions';
+
+const MENTION_PROCESSING_LEASE_MS = 10 * 60 * 1000;
 
 // ============================================
 // TYPES
@@ -45,6 +50,18 @@ export interface PostWithAuthor {
   createdAt: Date;
   author: {
     id: string;
+    handle: string;
+    displayName: string | null;
+  };
+}
+
+interface ConversationPostRow {
+  id: string;
+  userId: string;
+  content: string;
+  replyToId: string | null;
+  createdAt: Date;
+  author: {
     handle: string;
     displayName: string | null;
   };
@@ -109,7 +126,7 @@ export async function detectMentions(botId: string): Promise<MentionDetectionRes
       where: { id: botId },
       with: {
         user: {
-          columns: { handle: true },
+          columns: { id: true, handle: true },
         },
       },
       columns: { id: true },
@@ -130,15 +147,8 @@ export async function detectMentions(botId: string): Promise<MentionDetectionRes
 
     const existingPostIds = new Set(existingMentions.map(m => m.postId));
 
-    // Find posts that mention the bot's handle
-    // Note: In a production system, this would be more efficient with full-text search
-    // or a dedicated mentions table updated on post creation
-    const mentionPattern = `@${bot.user.handle}`;
-
-    // Get recent posts (last 24 hours) that might contain mentions
-    const oneDayAgo = new Date();
-    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
-
+    // Direct post creation records bot mentions immediately. This bounded scan
+    // remains as a repair path for imported posts and older nodes.
     const recentPosts = await db.query.posts.findMany({
       where: { AND: [{ isRemoved: false }] },
       with: {
@@ -155,9 +165,12 @@ export async function detectMentions(botId: string): Promise<MentionDetectionRes
     });
 
     // Filter posts that mention the bot and aren't already tracked
-    const newMentionPosts = recentPosts.filter(post =>
-      post.content.includes(mentionPattern) &&
-      !existingPostIds.has(post.id)
+    const newMentionPosts = recentPosts.filter((post) =>
+      post.userId !== bot.user.id
+      && !existingPostIds.has(post.id)
+      && uniqueMentions(parseMentions(post.content)).some(
+        (mention) => mention.isLocal && mention.handle === bot.user.handle.toLowerCase(),
+      )
     );
 
     // Create mention records
@@ -171,7 +184,9 @@ export async function detectMentions(botId: string): Promise<MentionDetectionRes
         content: post.content,
         isProcessed: false,
         isRemote: false, // Local mentions for now
-      }).returning();
+      }).onConflictDoNothing().returning();
+
+      if (!mention) continue;
 
       newMentions.push({
         id: mention.id,
@@ -301,7 +316,7 @@ export async function getConversationContext(
     let depth = 0;
 
     while (currentPostId && depth < maxDepth) {
-      const post: any = await db.query.posts.findFirst({
+      const post = await db.query.posts.findFirst({
         where: { id: currentPostId },
         with: {
           author: {
@@ -311,7 +326,7 @@ export async function getConversationContext(
             },
           },
         },
-      });
+      }) as ConversationPostRow | undefined;
 
       if (!post) break;
 
@@ -357,6 +372,8 @@ export async function getConversationContext(
  * Validates: Requirements 7.3, 7.4, 7.6
  */
 export async function processMention(mentionId: string): Promise<MentionResponseResult> {
+  let ownsLease = false;
+  let completed = false;
   try {
     // Get the mention
     const mention = await db.query.botMentions.findFirst({
@@ -370,13 +387,45 @@ export async function processMention(mentionId: string): Promise<MentionResponse
       );
     }
 
-    // Check if already processed
+    // A completed response is idempotent. A stale claim is released so a
+    // process crash cannot strand a mention forever.
     if (mention.isProcessed) {
+      if (!mention.responsePostId) {
+        const staleBefore = new Date(Date.now() - MENTION_PROCESSING_LEASE_MS);
+        const isStale = !mention.processedAt || mention.processedAt <= staleBefore;
+        if (!isStale) {
+          return { success: false, error: 'Mention is already being processed' };
+        }
+        await db.update(botMentions).set({
+          isProcessed: false,
+          processedAt: null,
+        }).where(and(
+          eq(botMentions.id, mentionId),
+          eq(botMentions.isProcessed, true),
+          isNull(botMentions.responsePostId),
+        ));
+      } else {
+        return {
+          success: true,
+          responsePostId: mention.responsePostId,
+        };
+      }
+    }
+
+    const claimed = await db.update(botMentions).set({
+      isProcessed: true,
+      processedAt: new Date(),
+    }).where(and(
+      eq(botMentions.id, mentionId),
+      eq(botMentions.isProcessed, false),
+    )).returning({ id: botMentions.id });
+    if (claimed.length === 0) {
       return {
-        success: true,
-        responsePostId: mention.responsePostId || undefined,
+        success: false,
+        error: 'Mention is already being processed',
       };
     }
+    ownsLease = true;
 
     // Check rate limits (Requirement 7.6)
     const rateLimitCheck = await canReply(mention.botId);
@@ -395,6 +444,11 @@ export async function processMention(mentionId: string): Promise<MentionResponse
           columns: {
             id: true,
             handle: true,
+            displayName: true,
+            avatarUrl: true,
+            isNsfw: true,
+            did: true,
+            publicKey: true,
           },
         },
       },
@@ -439,7 +493,7 @@ export async function processMention(mentionId: string): Promise<MentionResponse
       name: bot.name,
       handle: bot.user.handle,
       personalityConfig: JSON.parse(bot.personalityConfig),
-      llmProvider: bot.llmProvider as any,
+      llmProvider: bot.llmProvider as LLMProvider,
       llmModel: bot.llmModel,
       llmEndpoint: bot.llmEndpoint,
       llmApiKeyEncrypted: bot.llmApiKeyEncrypted,
@@ -465,29 +519,118 @@ export async function processMention(mentionId: string): Promise<MentionResponse
     );
 
     // Create response post
-    const [responsePost] = await db.insert(posts).values({
-      userId: bot.user.id, // Bot posts as its associated user
-      content: generatedReply.text,
-      replyToId: mention.postId,
-    }).returning();
+    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+    const postUuid = mention.id;
+    const responsePost = await db.transaction(async (tx) => {
+      const [createdPost] = await tx.insert(posts).values({
+        id: postUuid,
+        userId: bot.user.id, // Bot posts as its associated user
+        content: generatedReply.text,
+        replyToId: mention.postId,
+        isNsfw: bot.user.isNsfw,
+        apId: `https://${nodeDomain}/posts/${postUuid}`,
+        apUrl: `https://${nodeDomain}/posts/${postUuid}`,
+      }).onConflictDoNothing().returning();
+      const [existingPost] = createdPost ? [] : await tx.select().from(posts)
+        .where(eq(posts.id, postUuid))
+        .limit(1);
+      const reply = createdPost || existingPost;
+      if (!reply || reply.userId !== bot.user.id || reply.replyToId !== mention.postId) {
+        throw new MentionHandlerError('Unable to persist bot reply', 'DATABASE_ERROR');
+      }
 
-    // Mark mention as processed
-    await db.update(botMentions)
-      .set({
-        isProcessed: true,
-        processedAt: new Date(),
-        responsePostId: responsePost.id,
-      })
-      .where(eq(botMentions.id, mentionId));
+      if (!createdPost) {
+        await tx.update(botMentions).set({
+          isProcessed: true,
+          processedAt: new Date(),
+          responsePostId: reply.id,
+        }).where(eq(botMentions.id, mentionId));
+        return reply;
+      }
+
+      await tx.update(users)
+        .set({ postsCount: sql`${users.postsCount} + 1` })
+        .where(eq(users.id, bot.user.id));
+      await tx.update(posts)
+        .set({ repliesCount: sql`${posts.repliesCount} + 1` })
+        .where(eq(posts.id, mention.postId));
+      await tx.insert(notifications).values({
+        userId: mention.authorId,
+        actorId: bot.user.id,
+        actorHandle: bot.user.handle,
+        actorDisplayName: bot.user.displayName,
+        actorAvatarUrl: bot.user.avatarUrl,
+        actorNodeDomain: null,
+        postId: reply.id,
+        postContent: reply.content.slice(0, 200),
+        interactionId: `bot-reply:${mention.id}`,
+        type: 'reply',
+      }).onConflictDoNothing();
+      await tx.update(botMentions)
+        .set({
+          isProcessed: true,
+          processedAt: new Date(),
+          responsePostId: reply.id,
+        })
+        .where(eq(botMentions.id, mentionId));
+      return reply;
+    });
+    completed = true;
+
+    try {
+      await registerPostMentions({
+        postId: responsePost.id,
+        content: responsePost.content,
+        actor: {
+          id: bot.user.id,
+          handle: bot.user.handle,
+          displayName: bot.user.displayName,
+          avatarUrl: bot.user.avatarUrl,
+          did: bot.user.did,
+          publicKey: bot.user.publicKey,
+        },
+        nodeDomain,
+      });
+    } catch (error) {
+      console.error('[Bots] Failed to register mentions in bot reply:', error);
+    }
 
     // Record reply for rate limiting
-    await recordReply(mention.botId);
+    try {
+      await recordReply(mention.botId);
+    } catch (error) {
+      console.error('[Bots] Failed to record mention reply rate limit:', error);
+    }
+
+    void deliverPostToSwarmFollowers(
+      bot.user.id,
+      responsePost,
+      {
+        handle: bot.user.handle,
+        displayName: bot.user.displayName,
+        avatarUrl: bot.user.avatarUrl,
+        isNsfw: bot.user.isNsfw,
+      },
+      [],
+      nodeDomain,
+    ).catch((error) => console.error('[Bots] Failed to federate mention reply:', error));
 
     return {
       success: true,
       responsePostId: responsePost.id,
     };
   } catch (error) {
+    if (ownsLease && !completed) {
+      await db.update(botMentions).set({
+        isProcessed: false,
+        processedAt: null,
+      }).where(and(
+        eq(botMentions.id, mentionId),
+        isNull(botMentions.responsePostId),
+      )).catch((releaseError) => {
+        console.error(`[Bots] Failed to release mention claim ${mentionId}:`, releaseError);
+      });
+    }
     if (error instanceof MentionHandlerError) {
       return {
         success: false,
@@ -537,6 +680,42 @@ export async function processAllMentions(botId: string): Promise<MentionResponse
   }
 
   return results;
+}
+
+/** Detect and process pending mentions for every active bot. */
+export async function processAllActiveBotMentions(): Promise<{
+  bots: number;
+  detected: number;
+  responded: number;
+  failed: number;
+}> {
+  const staleBefore = new Date(Date.now() - MENTION_PROCESSING_LEASE_MS);
+  await db.update(botMentions).set({ isProcessed: false, processedAt: null })
+    .where(and(
+      eq(botMentions.isProcessed, true),
+      isNull(botMentions.responsePostId),
+      or(isNull(botMentions.processedAt), lte(botMentions.processedAt, staleBefore)),
+    ));
+
+  const activeBots = await db.query.bots.findMany({
+    where: { AND: [{ isActive: true }, { isSuspended: false }] },
+    columns: { id: true },
+  });
+  const totals = { bots: activeBots.length, detected: 0, responded: 0, failed: 0 };
+
+  for (const bot of activeBots) {
+    try {
+      const detected = await detectMentions(bot.id);
+      totals.detected += detected.mentions.length;
+      const responses = await processAllMentions(bot.id);
+      totals.responded += responses.filter((response) => response.success).length;
+      totals.failed += responses.filter((response) => !response.success).length;
+    } catch (error) {
+      totals.failed += 1;
+      console.error(`[Bots] Mention processing failed for ${bot.id}:`, error);
+    }
+  }
+  return totals;
 }
 
 // ============================================

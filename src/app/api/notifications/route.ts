@@ -91,6 +91,9 @@ export async function GET(request: Request) {
         const payload = rows.map((row) => {
             const key = row.actorNodeDomain ? `${row.actorHandle}@${row.actorNodeDomain}` : null;
             const freshProfile = key ? freshProfiles.get(key) : null;
+            const remotePostReference = row.remotePostId && row.remotePostDomain
+                ? `swarm:${row.remotePostDomain}:${row.remotePostId}`
+                : null;
 
             return {
                 id: row.id,
@@ -114,10 +117,12 @@ export async function GET(request: Request) {
                     nodeDomain: row.targetNodeDomain,
                     isBot: row.targetIsBot,
                 } : null,
-                post: row.postId ? {
-                    id: row.postId,
+                post: row.postId || remotePostReference ? {
+                    id: row.postId || remotePostReference!,
                     content: row.post?.content || row.postContent,
-                    authorHandle: row.post?.author?.handle || null,
+                    authorHandle: row.post?.author?.handle || (row.actorNodeDomain
+                        ? `${row.actorHandle}@${row.actorNodeDomain}`
+                        : row.actorHandle),
                     media: row.post?.media.map((item) => ({
                         url: item.url,
                         mimeType: item.mimeType,

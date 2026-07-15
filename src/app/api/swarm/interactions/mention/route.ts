@@ -7,12 +7,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, users, notifications } from '@/db';
-import { eq } from 'drizzle-orm';
+import { db, notifications } from '@/db';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 import { buildNotificationTarget } from '@/lib/notifications';
+import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 
 const swarmMentionSchema = z.object({
   mentionedHandle: localHandleSchema,
@@ -21,6 +21,8 @@ const swarmMentionSchema = z.object({
     actorDisplayName: z.string().min(1).max(50),
     actorAvatarUrl: z.string().url().optional(),
     actorNodeDomain: nodeDomainSchema,
+    actorDid: z.string().min(1).max(500).optional(),
+    actorPublicKey: z.string().min(1).max(5000).optional(),
     postId: z.string().uuid(),
     postContent: z.string().max(10000),
     interactionId: z.string().uuid(),
@@ -28,6 +30,36 @@ const swarmMentionSchema = z.object({
   }),
   signature: z.string(),
 });
+
+async function acceptsRemoteMention(
+  userId: string,
+  actorDomain: string,
+  cachedActorId: string | null,
+): Promise<boolean> {
+  const nodeMute = await db.query.mutedNodes.findFirst({
+    where: { AND: [{ userId }, { nodeDomain: actorDomain }] },
+    columns: { id: true },
+  });
+  if (nodeMute) return false;
+  if (!cachedActorId) return true;
+
+  const [block, mute] = await Promise.all([
+    db.query.blocks.findFirst({
+      where: {
+        OR: [
+          { AND: [{ userId }, { blockedUserId: cachedActorId }] },
+          { AND: [{ userId: cachedActorId }, { blockedUserId: userId }] },
+        ],
+      },
+      columns: { id: true },
+    }),
+    db.query.mutes.findFirst({
+      where: { AND: [{ userId }, { mutedUserId: cachedActorId }] },
+      columns: { id: true },
+    }),
+  ]);
+  return !block && !mute;
+}
 
 /**
  * POST /api/swarm/interactions/mention
@@ -65,39 +97,53 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Create notification with actor info stored directly
-    try {
-      await db.insert(notifications).values({
+    const actorDomain = normalizeNodeDomain(data.mention.actorNodeDomain);
+    const interactionKey = `mention:remote:${actorDomain}:${data.mention.interactionId}`;
+    const cachedActor = await db.query.users.findFirst({
+      where: { handle: `${data.mention.actorHandle.toLowerCase()}@${actorDomain}` },
+      columns: { id: true },
+    });
+    if (!(await acceptsRemoteMention(mentionedUser.id, actorDomain, cachedActor?.id || null))) {
+      // Do not disclose moderation state to the sending node.
+      return NextResponse.json({ success: true, message: 'Mention received' });
+    }
+
+    // The interaction ID is persisted under a unique index. A retried signed
+    // request therefore remains successful without creating duplicates.
+    const inserted = await db.insert(notifications).values({
         userId: mentionedUser.id,
         actorHandle: data.mention.actorHandle,
         actorDisplayName: data.mention.actorDisplayName,
         actorAvatarUrl: data.mention.actorAvatarUrl || null,
-        actorNodeDomain: data.mention.actorNodeDomain,
+        actorNodeDomain: actorDomain,
+        remotePostId: data.mention.postId,
+        remotePostDomain: actorDomain,
         postContent: data.mention.postContent.slice(0, 200),
+        interactionId: interactionKey,
         ...(mentionedUser.isBot ? buildNotificationTarget(mentionedUser) : {}),
         type: 'mention',
-      });
+      }).onConflictDoNothing().returning({ id: notifications.id });
+    if (inserted.length > 0) {
       console.log(`[Swarm] Created mention notification for @${data.mentionedHandle} from ${data.mention.actorHandle}@${data.mention.actorNodeDomain}`);
-    } catch (notifError) {
-      console.error(`[Swarm] Failed to create mention notification:`, notifError);
     }
 
     // Also notify bot owner if this is a bot being mentioned
-    if (mentionedUser.isBot && mentionedUser.botOwnerId) {
-      try {
+    if (mentionedUser.isBot
+      && mentionedUser.botOwnerId
+      && await acceptsRemoteMention(mentionedUser.botOwnerId, actorDomain, cachedActor?.id || null)) {
         await db.insert(notifications).values({
           userId: mentionedUser.botOwnerId,
           actorHandle: data.mention.actorHandle,
           actorDisplayName: data.mention.actorDisplayName,
           actorAvatarUrl: data.mention.actorAvatarUrl || null,
-          actorNodeDomain: data.mention.actorNodeDomain,
+          actorNodeDomain: actorDomain,
+          remotePostId: data.mention.postId,
+          remotePostDomain: actorDomain,
           postContent: data.mention.postContent.slice(0, 200),
+          interactionId: `${interactionKey}:owner:${mentionedUser.id}`,
           ...buildNotificationTarget(mentionedUser),
           type: 'mention',
-        });
-      } catch (err) {
-        console.error('[Swarm] Failed to notify bot owner:', err);
-      }
+        }).onConflictDoNothing();
     }
 
     console.log(`[Swarm] Received mention from ${data.mention.actorHandle}@${data.mention.actorNodeDomain} for @${data.mentionedHandle}`);

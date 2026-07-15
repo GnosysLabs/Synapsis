@@ -1,0 +1,40 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { and, asc, eq, like, notLike } from 'drizzle-orm';
+import { z } from 'zod';
+
+import { db, users } from '@/db';
+
+const querySchema = z.object({
+  q: z.string().max(30).regex(/^[a-zA-Z0-9_]*$/),
+  limit: z.coerce.number().int().min(1).max(12).default(8),
+});
+
+/** Public, bounded local user directory used by federated mention typeahead. */
+export async function GET(request: NextRequest) {
+  const parsed = querySchema.safeParse({
+    q: request.nextUrl.searchParams.get('q') || '',
+    limit: request.nextUrl.searchParams.get('limit') || undefined,
+  });
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Invalid query' }, { status: 400 });
+  }
+
+  const query = parsed.data.q.toLowerCase();
+  const matches = await db.select({
+    handle: users.handle,
+    displayName: users.displayName,
+    avatarUrl: users.avatarUrl,
+    isBot: users.isBot,
+  })
+    .from(users)
+    .where(and(
+      like(users.handle, `${query}%`),
+      notLike(users.handle, '%@%'),
+      eq(users.isSuspended, false),
+      eq(users.isSilenced, false),
+    ))
+    .orderBy(asc(users.handle))
+    .limit(parsed.data.limit);
+
+  return NextResponse.json({ users: matches });
+}

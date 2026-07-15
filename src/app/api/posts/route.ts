@@ -16,6 +16,7 @@ import {
     CURATED_FEED_WINDOW_HOURS,
     rankCuratedFeed,
 } from '@/lib/posts/curated-feed';
+import { registerPostMentions } from '@/lib/mentions/delivery';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_SEED_MULTIPLIER = 5;
@@ -406,85 +407,26 @@ export async function POST(request: Request) {
             }
         }
 
-        // Handle local mentions (create notifications for users on this node)
-        (async () => {
-            try {
-                const { extractMentions } = await import('@/lib/swarm/interactions');
-                const mentions = extractMentions(postContent);
-
-                for (const mention of mentions) {
-                    // Only handle local mentions (no domain)
-                    if (mention.domain) continue;
-
-                    // Find the mentioned user
-                    const mentionedUser = await db.query.users.findFirst({
-                        where: { handle: mention.handle.toLowerCase() },
-                    });
-
-                    if (mentionedUser && mentionedUser.id !== user.id && !mentionedUser.isSuspended) {
-                        // Create notification for the mentioned user with actor info stored directly
-                        await db.insert(notifications).values({
-                            userId: mentionedUser.id,
-                            actorId: user.id,
-                            actorHandle: user.handle,
-                            actorDisplayName: user.displayName,
-                            actorAvatarUrl: user.avatarUrl,
-                            actorNodeDomain: null, // Local user
-                            postId: post.id,
-                            postContent: post.content?.slice(0, 200) || null,
-                            ...(mentionedUser.isBot ? buildNotificationTarget(mentionedUser) : {}),
-                            type: 'mention',
-                        });
-
-                        // Also notify bot owner if this is a bot being mentioned
-                        if (mentionedUser.isBot && mentionedUser.botOwnerId) {
-                            await db.insert(notifications).values({
-                                userId: mentionedUser.botOwnerId,
-                                actorId: user.id,
-                                actorHandle: user.handle,
-                                actorDisplayName: user.displayName,
-                                actorAvatarUrl: user.avatarUrl,
-                                actorNodeDomain: null,
-                                postId: post.id,
-                                postContent: post.content?.slice(0, 200) || null,
-                                ...buildNotificationTarget(mentionedUser),
-                                type: 'mention',
-                            });
-                        }
-                    }
-                }
-            } catch (err) {
-                // Log error with context but don't fail the request - mention notifications are best-effort
-                console.error('[Posts] Error creating mention notifications:', err);
-                console.error('[Posts] Context:', { postId: post.id, userId: user.id, content: postContent.slice(0, 100) });
-            }
-        })();
-
-        // SWARM-FIRST: Deliver mentions to swarm nodes
-        (async () => {
-            try {
-                const { deliverSwarmMentions } = await import('@/lib/swarm/interactions');
-
-                const result = await deliverSwarmMentions(
-                    postContent,
-                    post.id,
-                    {
-                        handle: user.handle,
-                        displayName: user.displayName || user.handle,
-                        avatarUrl: user.avatarUrl || undefined,
-                        nodeDomain,
-                    }
-                );
-
-                if (result.delivered > 0) {
-                    console.log(`[Swarm] Delivered ${result.delivered} mentions (${result.failed} failed)`);
-                }
-            } catch (err) {
-                // Log error with context but don't fail the request - swarm delivery is best-effort
-                console.error('[Posts] Error delivering swarm mentions:', err);
-                console.error('[Posts] Context:', { postId: post.id, userId: user.id, nodeDomain });
-            }
-        })();
+        // Resolve local mentions and durably enqueue federated delivery before
+        // returning. Remote network I/O is retried from the persistent outbox.
+        try {
+            await registerPostMentions({
+                postId: post.id,
+                content: postContent,
+                actor: {
+                    id: user.id,
+                    handle: user.handle,
+                    displayName: user.displayName,
+                    avatarUrl: user.avatarUrl,
+                    did: user.did,
+                    publicKey: user.publicKey,
+                },
+                nodeDomain,
+            });
+        } catch (err) {
+            console.error('[Posts] Error registering mentions:', err);
+            console.error('[Posts] Context:', { postId: post.id, userId: user.id, content: postContent.slice(0, 100) });
+        }
 
         // Federate the post to remote followers (non-blocking)
         (async () => {

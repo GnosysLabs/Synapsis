@@ -52,4 +52,18 @@ describe('browser notification presentation', () => {
             url: '/notifications',
         });
     });
+
+    it('links federated mentions to the source swarm post', () => {
+        expect(getBrowserNotificationContent({
+            id: 'notification-remote',
+            type: 'mention',
+            actor: { handle: 'alice@remote.example', displayName: 'Alice' },
+            post: {
+                id: 'swarm:remote.example:550e8400-e29b-41d4-a716-446655440000',
+                content: 'Hello @bob@local.example',
+            },
+        })).toMatchObject({
+            url: '/posts/swarm:remote.example:550e8400-e29b-41d4-a716-446655440000',
+        });
+    });
 });

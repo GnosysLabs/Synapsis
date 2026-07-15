@@ -409,13 +409,41 @@ export const notifications = sqliteTable('notifications', {
   targetIsBot: integer('target_is_bot', { mode: 'boolean' }),
   // Post reference
   postId: text('post_id').references(() => posts.id, { onDelete: 'cascade' }),
+  remotePostId: text('remote_post_id'),
+  remotePostDomain: text('remote_post_domain'),
   postContent: text('post_content'), // Cached content for display
+  interactionId: text('interaction_id'), // Idempotency key for local and federated interactions
   type: text('type').notNull(), // follow | like | repost | mention
   readAt: integer('read_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
   index('notifications_user_idx').on(table.userId),
   index('notifications_created_idx').on(table.createdAt),
+  uniqueIndex('notifications_interaction_unique_idx').on(table.interactionId),
+]);
+
+
+// ============================================
+// MENTION DELIVERY OUTBOX
+// ============================================
+
+export const mentionDeliveries = sqliteTable('mention_deliveries', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  interactionId: text('interaction_id').notNull().unique(),
+  postId: text('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
+  targetHandle: text('target_handle').notNull(),
+  targetDomain: text('target_domain').notNull(),
+  status: text('status').default('pending').notNull(), // pending | processing | retry | delivered | dead
+  attempts: integer('attempts').default(0).notNull(),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  lastAttemptAt: integer('last_attempt_at', { mode: 'timestamp' }),
+  deliveredAt: integer('delivered_at', { mode: 'timestamp' }),
+  lastError: text('last_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('mention_deliveries_target_unique_idx').on(table.postId, table.targetHandle, table.targetDomain),
+  index('mention_deliveries_due_idx').on(table.status, table.nextAttemptAt),
 ]);
 
 
@@ -633,6 +661,7 @@ export const botMentions = sqliteTable('bot_mentions', {
   index('bot_mentions_bot_idx').on(table.botId),
   index('bot_mentions_processed_idx').on(table.isProcessed),
   index('bot_mentions_created_idx').on(table.createdAt),
+  uniqueIndex('bot_mentions_bot_post_unique_idx').on(table.botId, table.postId),
 ]);
 
 

@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useRef, TextareaHTMLAttributes } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, TextareaHTMLAttributes } from 'react';
 
-export default function AutoTextarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+const AutoTextarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function AutoTextarea(props, forwardedRef) {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    useImperativeHandle(forwardedRef, () => textareaRef.current as HTMLTextAreaElement, []);
 
     const adjustHeight = () => {
         const textarea = textareaRef.current;
@@ -35,4 +37,6 @@ export default function AutoTextarea(props: TextareaHTMLAttributes<HTMLTextAreaE
             }}
         />
     );
-}
+});
+
+export default AutoTextarea;

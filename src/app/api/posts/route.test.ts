@@ -14,6 +14,14 @@ vi.mock('@/lib/auth/verify-signature', () => ({
   requireSignedAction: vi.fn(),
 }));
 
+vi.mock('@/lib/mentions/delivery', () => ({
+  registerPostMentions: vi.fn().mockResolvedValue({
+    localNotifications: 0,
+    remoteQueued: 0,
+    skipped: 0,
+  }),
+}));
+
 vi.mock('@/db', () => ({
   db: {
     insert: vi.fn(() => ({
@@ -80,8 +88,9 @@ describe('POST /api/posts', () => {
       },
       did: 'did:synapsis:test123',
       handle: 'testuser',
-      timestamp: new Date().toISOString(),
-      signature: 'test-signature',
+      ts: Date.now(),
+      nonce: 'nonce-1',
+      sig: 'test-signature',
     };
 
     // Create a mock request
@@ -118,8 +127,9 @@ describe('POST /api/posts', () => {
       },
       did: 'did:synapsis:test123',
       handle: 'testuser',
-      timestamp: new Date().toISOString(),
-      signature: 'invalid-signature',
+      ts: Date.now(),
+      nonce: 'nonce-2',
+      sig: 'invalid-signature',
     };
 
     const request = new Request('http://localhost:43821/api/posts', {
@@ -148,8 +158,9 @@ describe('POST /api/posts', () => {
       },
       did: 'did:synapsis:nonexistent',
       handle: 'nonexistent',
-      timestamp: new Date().toISOString(),
-      signature: 'test-signature',
+      ts: Date.now(),
+      nonce: 'nonce-3',
+      sig: 'test-signature',
     };
 
     const request = new Request('http://localhost:43821/api/posts', {
@@ -178,8 +189,9 @@ describe('POST /api/posts', () => {
       },
       did: 'did:synapsis:test123',
       handle: 'wronghandle',
-      timestamp: new Date().toISOString(),
-      signature: 'test-signature',
+      ts: Date.now(),
+      nonce: 'nonce-4',
+      sig: 'test-signature',
     };
 
     const request = new Request('http://localhost:43821/api/posts', {
@@ -208,8 +220,9 @@ describe('POST /api/posts', () => {
       },
       did: 'did:synapsis:test123',
       handle: 'testuser',
-      timestamp: new Date(Date.now() - 10 * 60 * 1000).toISOString(), // 10 minutes ago
-      signature: 'test-signature',
+      ts: Date.now() - 10 * 60 * 1000,
+      nonce: 'nonce-5',
+      sig: 'test-signature',
     };
 
     const request = new Request('http://localhost:43821/api/posts', {
@@ -249,8 +262,9 @@ describe('POST /api/posts', () => {
       },
       did: 'did:synapsis:test123',
       handle: 'testuser',
-      timestamp: new Date().toISOString(),
-      signature: 'test-signature',
+      ts: Date.now(),
+      nonce: 'nonce-6',
+      sig: 'test-signature',
     };
 
     const request = new Request('http://localhost:43821/api/posts', {
@@ -289,8 +303,9 @@ describe('POST /api/posts', () => {
       },
       did: 'did:synapsis:test123',
       handle: 'testuser',
-      timestamp: new Date().toISOString(),
-      signature: 'test-signature',
+      ts: Date.now(),
+      nonce: 'nonce-7',
+      sig: 'test-signature',
     };
 
     const request = new Request('http://localhost:43821/api/posts', {

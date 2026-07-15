@@ -18,6 +18,7 @@ import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node
 import { getPublicSwarmDomain } from './node-domain';
 import { safeFederationRequest } from './safe-federation-http';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
+import { parseMentions, uniqueMentions } from '@/lib/mentions/parser';
 
 // ============================================
 // TYPES
@@ -53,6 +54,8 @@ export interface SwarmInteractionResponse {
   success: boolean;
   message?: string;
   error?: string;
+  statusCode?: number;
+  retryable?: boolean;
 }
 
 export interface SwarmLikePayload {
@@ -130,6 +133,8 @@ export interface SwarmMentionPayload {
     actorDisplayName: string;
     actorAvatarUrl?: string;
     actorNodeDomain: string;
+    actorDid?: string;
+    actorPublicKey?: string;
     postId: string;
     postContent: string;
     interactionId: string;
@@ -273,6 +278,8 @@ async function deliverSwarmInteraction(
     if (await isNodeBlocked(normalizedTargetDomain)) {
       return {
         success: false,
+        statusCode: 403,
+        retryable: false,
         error: `Blocked node: ${normalizedTargetDomain}`,
       };
     }
@@ -295,22 +302,27 @@ async function deliverSwarmInteraction(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(signedPayload),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(signedPayload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'Unknown error');
       return {
         success: false,
+        statusCode: response.status,
+        retryable: response.status === 408 || response.status === 429 || response.status >= 500,
         error: `HTTP ${response.status}: ${errorText}`,
       };
     }
@@ -323,6 +335,7 @@ async function deliverSwarmInteraction(
   } catch (error) {
     return {
       success: false,
+      retryable: true,
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
@@ -620,19 +633,7 @@ export async function fetchSwarmPost(
  * Returns array of { handle, domain } for remote mentions
  */
 export function extractMentions(content: string): { handle: string; domain: string | null }[] {
-  // Match @handle or @handle@domain patterns
-  const mentionRegex = /@([a-zA-Z0-9_]+)(?:@([a-zA-Z0-9.-]+))?/g;
-  const mentions: { handle: string; domain: string | null }[] = [];
-
-  let match;
-  while ((match = mentionRegex.exec(content)) !== null) {
-    mentions.push({
-      handle: match[1].toLowerCase(),
-      domain: match[2]?.toLowerCase() || null,
-    });
-  }
-
-  return mentions;
+  return parseMentions(content).map(({ handle, domain }) => ({ handle, domain }));
 }
 
 /**
@@ -648,13 +649,13 @@ export async function deliverSwarmMentions(
     nodeDomain: string;
   }
 ): Promise<{ delivered: number; failed: number }> {
-  const mentions = extractMentions(content);
+  const mentions = uniqueMentions(parseMentions(content, actor.nodeDomain));
   let delivered = 0;
   let failed = 0;
 
   for (const mention of mentions) {
-    // Skip local mentions (no domain)
-    if (!mention.domain) continue;
+    // Local and same-node-qualified mentions are handled synchronously.
+    if (mention.isLocal || !mention.domain) continue;
 
     // Check if it's a swarm node
     const isSwarm = await isSwarmNode(mention.domain);

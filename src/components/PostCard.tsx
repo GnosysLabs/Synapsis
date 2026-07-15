@@ -11,13 +11,14 @@ import { useToast } from '@/lib/contexts/ToastContext';
 import { VideoEmbed } from '@/components/VideoEmbed';
 import BlurredImage from '@/components/BlurredImage';
 import BlurredVideo from '@/components/BlurredVideo';
-import { useFormattedHandle } from '@/lib/utils/handle';
+import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { useDomain } from '@/lib/contexts/ConfigContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import { AvatarImage } from '@/components/AvatarImage';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import { getMediaKind } from '@/lib/media/upload-policy';
+import { tokenizePostContent } from '@/lib/mentions/parser';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -584,9 +585,24 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
 
     const renderContent = (content: string, hidePreviewUrl?: string) => {
         const decoded = decodeHtmlEntities(content);
-        const parts = decoded.split(/(https?:\/\/[^\s]+)/g);
-        return parts.map((part, index) => {
-            if (part.match(/^https?:\/\/[^\s]+$/)) {
+        const tokens = tokenizePostContent(decoded, domain);
+        return tokens.map((token, index) => {
+            if (token.type === 'mention') {
+                return (
+                    <Link
+                        key={`mention-${token.start}-${token.end}`}
+                        href={getProfilePath(token.canonicalHandle)}
+                        className="mention-link"
+                        onClick={(event) => event.stopPropagation()}
+                        title={token.isQualified ? token.raw : `@${token.handle}@${domain}`}
+                    >
+                        {token.raw}
+                    </Link>
+                );
+            }
+
+            if (token.type === 'url') {
+                const part = token.value;
                 // If this URL matches the link preview URL, hide it entirely
                 if (hidePreviewUrl && part.includes(hidePreviewUrl.replace(/^https?:\/\/(www\.)?/, '').split('/')[0])) {
                     return null;
@@ -622,16 +638,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                     );
                 }
             }
-            // Handle newlines
-            if (part.includes('\n')) {
-                return part.split('\n').map((line, lineIndex, arr) => (
-                    <span key={`text-${index}-${lineIndex}`}>
-                        {line}
-                        {lineIndex < arr.length - 1 && <br />}
-                    </span>
-                ));
-            }
-            return <span key={`text-${index}`}>{part}</span>;
+            return <span key={`text-${token.start}-${index}`}>{token.value}</span>;
         });
     };
 
@@ -651,7 +658,10 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
             ? JSON.parse(post.swarmReplyToAuthor)
             : post.swarmReplyToAuthor)?.nodeDomain,
     } as Post : null);
-    const replyToHandle = effectiveReplyTo?.author?.handle ? useFormattedHandle(effectiveReplyTo.author.handle, effectiveReplyTo.nodeDomain) : '';
+    const replyToHandle = useFormattedHandle(
+        effectiveReplyTo?.author?.handle || '',
+        effectiveReplyTo?.nodeDomain,
+    );
     const repostHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
     const hasOwnContent = decodeHtmlEntities(post.content).trim().length > 0;
     const isRepostEvent = Boolean(post.repostOf);

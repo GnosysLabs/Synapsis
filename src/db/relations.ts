@@ -56,6 +56,7 @@ export const relations = defineRelations(schema, (r) => ({
     }),
     likes: r.many.likes({ from: r.posts.id, to: r.likes.postId }),
     media: r.many.media({ from: r.posts.id, to: r.media.postId }),
+    mentionDeliveries: r.many.mentionDeliveries({ from: r.posts.id, to: r.mentionDeliveries.postId }),
   },
   media: {
     user: r.one.users({ from: r.media.userId, to: r.users.id, optional: false }),
@@ -100,6 +101,13 @@ export const relations = defineRelations(schema, (r) => ({
       optional: false,
     }),
     post: r.one.posts({ from: r.notifications.postId, to: r.posts.id }),
+  },
+  mentionDeliveries: {
+    post: r.one.posts({
+      from: r.mentionDeliveries.postId,
+      to: r.posts.id,
+      optional: false,
+    }),
   },
   sessions: {
     user: r.one.users({ from: r.sessions.userId, to: r.users.id, optional: false }),

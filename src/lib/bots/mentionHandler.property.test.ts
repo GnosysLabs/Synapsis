@@ -226,8 +226,12 @@ vi.mock('@/db', () => {
               responsePostId: null,
             };
             mentionsStore.set(id, mention);
-            return {
+            const result = {
               returning: vi.fn().mockResolvedValue([mention]),
+            };
+            return {
+              ...result,
+              onConflictDoNothing: vi.fn().mockReturnValue(result),
             };
           } else {
             // This is a post insert

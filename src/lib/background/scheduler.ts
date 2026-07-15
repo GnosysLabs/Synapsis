@@ -14,10 +14,13 @@ import { announceToSeeds } from '@/lib/swarm/discovery';
 import { getSwarmStats } from '@/lib/swarm/registry';
 import { syncRemoteFollowsPosts } from '@/lib/background/remote-sync';
 import { isPublicSwarmDomain } from '@/lib/swarm/node-domain';
+import { processMentionDeliveryOutbox } from '@/lib/mentions/delivery';
+import { processAllActiveBotMentions } from '@/lib/bots/mentionHandler';
 
 const BOT_INTERVAL_MS = 60 * 1000; // 1 minute
 const GOSSIP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const REMOTE_SYNC_INTERVAL_MS = 60 * 1000; // 1 minute - keep feeds fresh
+const MENTION_DELIVERY_INTERVAL_MS = 30 * 1000;
 const STARTUP_DELAY_MS = 10 * 1000; // Wait 10s for server to be ready
 
 let isStarted = false;
@@ -33,6 +36,7 @@ function log(category: string, message: string, data?: unknown) {
 
 async function runBotTasks() {
   try {
+    const mentions = await processAllActiveBotMentions();
     const results = await processAllAutonomousBots();
     
     const posted = results.filter(r => r.result.posted).length;
@@ -58,8 +62,22 @@ async function runBotTasks() {
       const errorMsgs = results.filter(r => r.error).map(r => `${r.botHandle}: ${r.error}`);
       log('BOTS', `Errors: ${errorMsgs.join('; ')}`);
     }
+    if (mentions.detected > 0 || mentions.responded > 0 || mentions.failed > 0) {
+      log('BOTS', `Mentions: ${mentions.detected} detected, ${mentions.responded} responded, ${mentions.failed} failed`);
+    }
   } catch (error) {
     log('BOTS', `Error: ${error}`);
+  }
+}
+
+async function runMentionDeliveries() {
+  try {
+    const result = await processMentionDeliveryOutbox();
+    if (result.delivered > 0 || result.retried > 0 || result.dead > 0) {
+      log('MENTIONS', `Delivered ${result.delivered}, retrying ${result.retried}, dead-lettered ${result.dead}`);
+    }
+  } catch (error) {
+    log('MENTIONS', `Outbox error: ${error}`);
   }
 }
 
@@ -140,12 +158,14 @@ export function startBackgroundTasks(origin?: string) {
     
     // Run initial bot check
     await runBotTasks();
+    await runMentionDeliveries();
     
     // Run initial remote sync (after 15s to let server stabilize)
     setTimeout(() => runRemoteSync(syncOrigin), 15 * 1000);
     
     // Schedule recurring tasks
     setInterval(runBotTasks, BOT_INTERVAL_MS);
+    setInterval(runMentionDeliveries, MENTION_DELIVERY_INTERVAL_MS);
     if (publicSwarmEnabled) {
       setInterval(runSwarmGossip, GOSSIP_INTERVAL_MS);
     }

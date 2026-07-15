@@ -385,6 +385,23 @@ a.btn-primary:visited {
   word-wrap: break-word;
 }
 
+.post-content a,
+.post-content .mention-link {
+  position: relative;
+  z-index: 2;
+}
+
+.mention-link {
+  color: var(--accent);
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.mention-link:hover,
+.mention-link:focus-visible {
+  text-decoration: underline;
+}
+
 .repost-event-header {
   display: flex;
   align-items: center;
@@ -759,6 +776,7 @@ a.btn-primary:visited {
 .compose {
   padding: 16px;
   border-bottom: 1px solid var(--border);
+  position: relative;
 }
 
 .compose-input {
@@ -778,6 +796,101 @@ a.btn-primary:visited {
 
 .compose-input::placeholder {
   color: var(--foreground-tertiary);
+}
+
+.compose-mention-field {
+  position: relative;
+}
+
+.compose-mention-suggestions {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 8px;
+  right: 8px;
+  max-height: 288px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--background);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+}
+
+.compose-mention-suggestion {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+
+.compose-mention-suggestion:hover,
+.compose-mention-suggestion.selected {
+  background: var(--background-secondary);
+}
+
+.compose-mention-avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.compose-mention-avatar img,
+.compose-mention-avatar .avatar-fallback {
+  width: 100%;
+  height: 100%;
+}
+
+.compose-mention-identity {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.compose-mention-name,
+.compose-mention-handle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compose-mention-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.compose-mention-handle,
+.compose-mention-loading {
+  color: var(--foreground-tertiary);
+  font-size: 13px;
+}
+
+.compose-mention-bot {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--foreground-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.compose-mention-loading {
+  padding: 12px;
 }
 
 .compose-footer {
