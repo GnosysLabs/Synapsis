@@ -91,6 +91,10 @@ export default function AdminPage() {
                 body: JSON.stringify(payload),
             });
             if (res.ok) {
+                const data = await res.json().catch(() => ({}));
+                if (data.node) {
+                    window.dispatchEvent(new CustomEvent('synapsis:node-updated', { detail: data.node }));
+                }
                 showToast('Settings saved!', 'success');
                 refreshAccentColor();
             } else {

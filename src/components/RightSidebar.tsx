@@ -10,9 +10,18 @@ interface Admin {
     avatarUrl: string | null;
 }
 
+interface NodeInfo {
+    name: string;
+    description: string;
+    longDescription: string;
+    rules: string;
+    bannerUrl: string;
+    admins: Admin[];
+}
+
 export function RightSidebar() {
     const fallbackDescription = process.env.NEXT_PUBLIC_NODE_DESCRIPTION || 'A swarm social network node.';
-    const [nodeInfo, setNodeInfo] = useState({
+    const [nodeInfo, setNodeInfo] = useState<NodeInfo>({
         name: process.env.NEXT_PUBLIC_NODE_NAME || 'Synapsis Node',
         description: fallbackDescription,
         longDescription: '',
@@ -28,7 +37,7 @@ export function RightSidebar() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetch('/api/node', { cache: 'no-store' })
+        const loadNodeInfo = () => fetch('/api/node', { cache: 'no-store' })
             .then(res => res.json())
             .then(data => {
                 setNodeInfo(prev => ({
@@ -45,11 +54,34 @@ export function RightSidebar() {
             .catch(() => { })
             .finally(() => setLoading(false));
 
+        const handleNodeUpdated = (event: Event) => {
+            const updatedNode = (event as CustomEvent<Partial<NodeInfo>>).detail;
+            if (!updatedNode) {
+                void loadNodeInfo();
+                return;
+            }
+            setNodeInfo(prev => ({
+                ...prev,
+                ...updatedNode,
+                name: updatedNode.name ?? prev.name,
+                description: updatedNode.description ?? prev.description,
+                longDescription: updatedNode.longDescription ?? prev.longDescription,
+                rules: updatedNode.rules ?? prev.rules,
+                bannerUrl: updatedNode.bannerUrl ?? prev.bannerUrl,
+                admins: updatedNode.admins ?? prev.admins,
+            }));
+        };
+
+        void loadNodeInfo();
+        window.addEventListener('synapsis:node-updated', handleNodeUpdated);
+
         // Fetch version info
         fetch('/api/version')
             .then(res => res.json())
             .then(data => setVersion(data))
             .catch(() => setVersion({ version: 'unknown', buildDate: null }));
+
+        return () => window.removeEventListener('synapsis:node-updated', handleNodeUpdated);
     }, []);
 
     if (loading) {

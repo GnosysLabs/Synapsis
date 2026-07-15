@@ -36,7 +36,7 @@ export function Sidebar() {
     const formattedHandle = user ? shortHandle(user.handle) : '';
 
     useEffect(() => {
-        fetch('/api/node')
+        const loadLogo = () => fetch('/api/node', { cache: 'no-store' })
             .then(res => res.json())
             .then(data => {
                 setCustomLogoUrl(data.logoUrl || null);
@@ -44,6 +44,19 @@ export function Sidebar() {
             .catch(() => {
                 setCustomLogoUrl(null);
             });
+
+        const handleNodeUpdated = (event: Event) => {
+            const updatedNode = (event as CustomEvent<{ logoUrl?: string | null }>).detail;
+            if (updatedNode && 'logoUrl' in updatedNode) {
+                setCustomLogoUrl(updatedNode.logoUrl || null);
+                return;
+            }
+            void loadLogo();
+        };
+
+        void loadLogo();
+        window.addEventListener('synapsis:node-updated', handleNodeUpdated);
+        return () => window.removeEventListener('synapsis:node-updated', handleNodeUpdated);
     }, []);
 
     const fetchUnreadNotifications = useCallback(() => {
