@@ -35,6 +35,8 @@ The installer creates:
 
 Every node checks `origin/main` about once per minute. When a new commit is available, Synapsis fast-forwards the checkout, replaces the single `backups/latest` database snapshot, installs dependencies, runs migrations, builds, and restarts automatically. The repository commit count is shown in the Network Info card; `/api/version` exposes both that number and the full deployed commit hash.
 
+While an update is being installed, `synapsis-maintenance.service` temporarily serves a branded maintenance page on the node's configured `PORT`. Existing reverse proxies continue receiving an HTTP response instead of showing a gateway error, and browsers automatically reload when Synapsis is ready.
+
 For a node installed before automatic updates existed, bootstrap the timer once with:
 
 ```bash

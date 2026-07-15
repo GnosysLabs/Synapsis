@@ -59,6 +59,7 @@ runuser -u synapsis -- npm --prefix "$APP_DIR" run db:migrate
 runuser -u synapsis -- npm --prefix "$APP_DIR" run build
 
 install -m 0644 "$APP_DIR/deploy/synapsis.service" /etc/systemd/system/synapsis.service
+install -m 0644 "$APP_DIR/deploy/synapsis-maintenance.service" /etc/systemd/system/synapsis-maintenance.service
 install -m 0644 "$APP_DIR/deploy/synapsis-update.service" /etc/systemd/system/synapsis-update.service
 install -m 0644 "$APP_DIR/deploy/synapsis-update.timer" /etc/systemd/system/synapsis-update.timer
 runuser -u synapsis -- git -C "$APP_DIR" rev-parse HEAD | install -m 0644 -o synapsis -g synapsis /dev/stdin "$DATA_DIR/deployed-commit"

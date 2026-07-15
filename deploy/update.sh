@@ -21,7 +21,7 @@ set +a
 
 install_update_units() {
   units_changed=0
-  for unit in synapsis.service synapsis-update.service synapsis-update.timer; do
+  for unit in synapsis.service synapsis-maintenance.service synapsis-update.service synapsis-update.timer; do
     if ! cmp -s "$APP_DIR/deploy/$unit" "/etc/systemd/system/$unit"; then
       install -m 0644 "$APP_DIR/deploy/$unit" "/etc/systemd/system/$unit"
       units_changed=1
@@ -66,8 +66,15 @@ if [[ "${SYNAPSIS_APPLY_UPDATE:-0}" != "1" ]]; then
   exec env SYNAPSIS_APPLY_UPDATE=1 APP_DIR="$APP_DIR" DATA_DIR="$DATA_DIR" ENV_FILE="$ENV_FILE" BRANCH="$BRANCH" bash "$APP_DIR/deploy/update.sh"
 fi
 
+install_update_units
 systemctl stop synapsis
-trap 'systemctl start synapsis' EXIT
+systemctl start synapsis-maintenance
+
+restore_service() {
+  systemctl stop synapsis-maintenance 2>/dev/null || true
+  systemctl start synapsis
+}
+trap restore_service EXIT
 
 if [[ -f "${DATABASE_PATH:-$DATA_DIR/synapsis.db}" ]]; then
   database_file="${DATABASE_PATH:-$DATA_DIR/synapsis.db}"
@@ -96,6 +103,7 @@ runuser -u synapsis -- npm --prefix "$APP_DIR" run build
 deployed_commit="$(runuser -u synapsis -- git -C "$APP_DIR" rev-parse HEAD)"
 printf '%s\n' "$deployed_commit" | install -m 0644 -o synapsis -g synapsis /dev/stdin "$DEPLOYED_COMMIT_FILE"
 install_update_units
+systemctl stop synapsis-maintenance
 systemctl start synapsis
 trap - EXIT
 echo "Synapsis updated successfully to ${deployed_commit:0:7}."

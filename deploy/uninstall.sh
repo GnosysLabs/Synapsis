@@ -12,8 +12,10 @@ fi
 
 systemctl disable --now synapsis-update.timer 2>/dev/null || true
 systemctl stop synapsis-update.service 2>/dev/null || true
+systemctl stop synapsis-maintenance.service 2>/dev/null || true
 systemctl disable --now synapsis 2>/dev/null || true
 rm -f /etc/systemd/system/synapsis.service \
+  /etc/systemd/system/synapsis-maintenance.service \
   /etc/systemd/system/synapsis-update.service \
   /etc/systemd/system/synapsis-update.timer
 systemctl daemon-reload
