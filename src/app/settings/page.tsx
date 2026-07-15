@@ -131,19 +131,21 @@ export default function SettingsPage() {
                         </div>
                     </Link>
 
-                    <div className="card" style={{
+                    <Link href="/settings/notifications" className="card" style={{
                         display: 'block',
                         padding: '20px',
-                        opacity: 0.5,
+                        textDecoration: 'none',
+                        color: 'var(--foreground)',
+                        transition: 'border-color 0.15s ease',
                     }}>
                         <div style={{ fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <Bell size={18} />
                             Notifications
                         </div>
                         <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px' }}>
-                            Notification preferences (coming soon)
+                            Browser notification preferences
                         </div>
-                    </div>
+                    </Link>
                 </div>
             </div>
         </>

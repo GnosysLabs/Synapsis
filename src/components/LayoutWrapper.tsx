@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { isAppBootstrapReady } from '@/lib/bootstrap/readiness';
 import { GlobalPostComposer } from './GlobalPostComposer';
+import { BrowserNotificationBridge } from './BrowserNotificationBridge';
 
 export function LayoutWrapper({ children }: { children: React.ReactNode }) {
     const { loading } = useAuth();
@@ -60,6 +61,7 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
             </main>
             {!hideRightSidebar && <RightSidebar />}
             <GlobalPostComposer />
+            <BrowserNotificationBridge />
 
         </div>
     );
