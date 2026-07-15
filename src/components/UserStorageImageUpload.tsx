@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { StorageSessionPrompt } from '@/components/StorageSessionPrompt';
+import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { refreshStorageSession } from '@/lib/storage/client';
 
 interface UserStorageImageUploadProps {
@@ -28,6 +29,7 @@ export function UserStorageImageUpload({
     const inputRef = useRef<HTMLInputElement>(null);
     const [isUploading, setIsUploading] = useState(false);
     const [showSessionPrompt, setShowSessionPrompt] = useState(false);
+    const [showConfigurationPrompt, setShowConfigurationPrompt] = useState(false);
     const [pendingFile, setPendingFile] = useState<File | null>(null);
     const [password, setPassword] = useState('');
     const [promptError, setPromptError] = useState('');
@@ -54,6 +56,12 @@ export function UserStorageImageUpload({
 
             if (!res.ok || !data.url) {
                 const message = data.error || 'Upload failed';
+
+                if (data.code === 'STORAGE_NOT_CONFIGURED' && allowPrompt) {
+                    setPendingFile(file);
+                    setShowConfigurationPrompt(true);
+                    return;
+                }
 
                 if (res.status === 401 && allowPrompt) {
                     setPendingFile(file);
@@ -187,6 +195,18 @@ export function UserStorageImageUpload({
                 }}
                 onSubmit={handlePromptSubmit}
                 onCancel={handlePromptCancel}
+            />
+            <StorageConfigurationPrompt
+                open={showConfigurationPrompt}
+                onConfigured={async () => {
+                    setShowConfigurationPrompt(false);
+                    if (pendingFile) await uploadFile(pendingFile, false);
+                }}
+                onCancel={() => {
+                    setShowConfigurationPrompt(false);
+                    setPendingFile(null);
+                    resetFileInput();
+                }}
             />
         </>
     );

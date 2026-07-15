@@ -67,7 +67,7 @@ export const users = sqliteTable('users', {
   movedTo: text('moved_to'), // New actor URL if this account migrated away
   movedFrom: text('moved_from'), // Old actor URL if this account migrated here
   migratedAt: integer('migrated_at', { mode: 'timestamp' }), // When the migration occurred
-  // User-owned S3-compatible storage - required for new users
+  // Optional user-owned S3-compatible storage, configured on first media upload
   storageProvider: text('storage_provider'), // 's3', 'r2', 'b2', 'wasabi', 'contabo'
   storageEndpoint: text('storage_endpoint'), // S3 endpoint URL (optional for AWS)
   storagePublicBaseUrl: text('storage_public_base_url'), // Public URL for viewing files (required for R2, B2, Contabo)

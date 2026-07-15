@@ -7,6 +7,7 @@ import { ImageIcon, AlertTriangle, Film } from 'lucide-react';
 import { VideoEmbed } from '@/components/VideoEmbed';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 
 interface MediaAttachment extends Attachment {
     mimeType?: string;
@@ -28,6 +29,8 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
     const [attachments, setAttachments] = useState<MediaAttachment[]>([]);
     const [isUploading, setIsUploading] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
+    const [pendingStorageFiles, setPendingStorageFiles] = useState<File[]>([]);
+    const [showStorageConfiguration, setShowStorageConfiguration] = useState(false);
     const [linkPreview, setLinkPreview] = useState<any>(null);
     const [fetchingPreview, setFetchingPreview] = useState(false);
     const [lastDetectedUrl, setLastDetectedUrl] = useState<string | null>(null);
@@ -116,11 +119,7 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
         setIsPosting(false);
     };
 
-    const handleMediaSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const files = Array.from(event.target.files || []);
-        event.target.value = '';
-        if (files.length === 0) return;
-
+    const uploadMediaFiles = async (files: File[]) => {
         const remainingSlots = Math.max(0, 4 - attachments.length);
         const selectedFiles = files.slice(0, remainingSlots);
         if (selectedFiles.length === 0) return;
@@ -141,6 +140,12 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
                 const data = await res.json();
 
                 if (!res.ok || !data.media?.id) {
+                    if (data.code === 'STORAGE_NOT_CONFIGURED') {
+                        setPendingStorageFiles(selectedFiles);
+                        setShowStorageConfiguration(true);
+                        setIsUploading(false);
+                        return;
+                    }
                     throw new Error(data.error || 'Upload failed');
                 }
 
@@ -160,12 +165,32 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
         setIsUploading(false);
     };
 
+    const handleMediaSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(event.target.files || []);
+        event.target.value = '';
+        if (files.length === 0) return;
+        await uploadMediaFiles(files);
+    };
+
     const handleRemoveAttachment = (id: string) => {
         setAttachments((prev) => prev.filter((item) => item.id !== id));
     };
 
     return (
         <div className={`compose ${isReply ? 'reply-compose' : ''}`}>
+            <StorageConfigurationPrompt
+                open={showStorageConfiguration}
+                onConfigured={async () => {
+                    setShowStorageConfiguration(false);
+                    const files = pendingStorageFiles;
+                    setPendingStorageFiles([]);
+                    await uploadMediaFiles(files);
+                }}
+                onCancel={() => {
+                    setShowStorageConfiguration(false);
+                    setPendingStorageFiles([]);
+                }}
+            />
             {replyingTo && !isReply && (
                 <div className="compose-reply-target">
                     <div className="compose-reply-info">

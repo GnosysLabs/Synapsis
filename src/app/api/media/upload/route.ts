@@ -44,8 +44,9 @@ export async function POST(req: NextRequest) {
         // Check if user has S3 storage configured
         if (!user.storageProvider || !user.storageAccessKeyEncrypted || !user.storageSecretKeyEncrypted) {
             return NextResponse.json({ 
-                error: 'Storage not configured. Please set up S3-compatible storage in your settings.'
-            }, { status: 400 });
+                error: 'Connect your storage before uploading media.',
+                code: 'STORAGE_NOT_CONFIGURED',
+            }, { status: 409 });
         }
 
         const storageSession =

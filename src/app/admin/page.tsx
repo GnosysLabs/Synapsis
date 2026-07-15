@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import AutoTextarea from '@/components/AutoTextarea';
 import { StorageSessionPrompt } from '@/components/StorageSessionPrompt';
+import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { useToast } from '@/lib/contexts/ToastContext';
 import { useAccentColor } from '@/lib/contexts/AccentColorContext';
 import { refreshStorageSession } from '@/lib/storage/client';
@@ -30,6 +31,7 @@ export default function AdminPage() {
     const [isUploadingBanner, setIsUploadingBanner] = useState(false);
     const [bannerUploadError, setBannerUploadError] = useState<string | null>(null);
     const [showBannerSessionPrompt, setShowBannerSessionPrompt] = useState(false);
+    const [showBannerStorageConfiguration, setShowBannerStorageConfiguration] = useState(false);
     const [pendingBannerFile, setPendingBannerFile] = useState<File | null>(null);
     const [bannerPassword, setBannerPassword] = useState('');
     const [bannerPromptError, setBannerPromptError] = useState('');
@@ -112,6 +114,11 @@ export default function AdminPage() {
             const data = await res.json();
 
             if (!res.ok || !data.url) {
+                if (data.code === 'STORAGE_NOT_CONFIGURED' && allowPrompt) {
+                    setPendingBannerFile(file);
+                    setShowBannerStorageConfiguration(true);
+                    return;
+                }
                 if (res.status === 401 && allowPrompt) {
                     setPendingBannerFile(file);
                     setBannerPromptError('');
@@ -606,6 +613,17 @@ export default function AdminPage() {
                 }}
                 onSubmit={handleBannerSessionSubmit}
                 onCancel={handleBannerSessionCancel}
+            />
+            <StorageConfigurationPrompt
+                open={showBannerStorageConfiguration}
+                onConfigured={async () => {
+                    setShowBannerStorageConfiguration(false);
+                    if (pendingBannerFile) await uploadBannerFile(pendingBannerFile, false);
+                }}
+                onCancel={() => {
+                    setShowBannerStorageConfiguration(false);
+                    setPendingBannerFile(null);
+                }}
             />
         </>
     );

@@ -38,13 +38,6 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
     const [confirmPassword, setConfirmPassword] = useState('');
     const [handle, setHandle] = useState('');
     const [displayName, setDisplayName] = useState('');
-    const [storageProvider, setStorageProvider] = useState('r2');
-    const [storageEndpoint, setStorageEndpoint] = useState('');
-    const [storagePublicBaseUrl, setStoragePublicBaseUrl] = useState('');
-    const [storageRegion, setStorageRegion] = useState('auto');
-    const [storageBucket, setStorageBucket] = useState('');
-    const [storageAccessKey, setStorageAccessKey] = useState('');
-    const [storageSecretKey, setStorageSecretKey] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [nodeInfoLoaded, setNodeInfoLoaded] = useState(false);
@@ -262,13 +255,6 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                     password,
                     handle,
                     displayName,
-                    storageProvider,
-                    storageEndpoint: storageEndpoint || null,
-                    storagePublicBaseUrl: storagePublicBaseUrl || null,
-                    storageRegion,
-                    storageBucket,
-                    storageAccessKey,
-                    storageSecretKey,
                     ...(nodeInfo.turnstileSiteKey ? { turnstileToken } : {})
                 };
 
@@ -565,8 +551,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                     </div>
                                 </div>
 
-                                {/* Row 3: Email | Storage Provider */}
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                                <div style={{ marginBottom: '16px' }}>
                                     <div>
                                         <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
                                             Email
@@ -580,159 +565,11 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                             required
                                         />
                                     </div>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                            Storage Provider
-                                        </label>
-                                        <select
-                                            className="input"
-                                            value={storageProvider}
-                                            onChange={(e) => setStorageProvider(e.target.value)}
-                                            style={{ cursor: 'pointer' }}
-                                        >
-                                            <option value="r2">Cloudflare R2 (10GB free)</option>
-                                            <option value="b2">Backblaze B2 (10GB free)</option>
-                                            <option value="wasabi">Wasabi</option>
-                                            <option value="contabo">Contabo S3</option>
-                                            <option value="s3">AWS S3</option>
-                                        </select>
-                                    </div>
                                 </div>
 
-                                {/* Storage Explainer Section */}
-                                <div style={{
-                                    marginBottom: '20px',
-                                    padding: '16px',
-                                    background: 'var(--background-secondary)',
-                                    border: '1px solid var(--border)',
-                                    borderRadius: 'var(--radius-md)',
-                                }}>
-                                    <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px', color: 'var(--foreground)' }}>
-                                        🗄️ Why do I need to provide storage?
-                                    </div>
-                                    <div style={{ fontSize: '13px', color: 'var(--foreground-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
-                                        Synapsis is <strong>decentralized</strong> — unlike other platforms, we don't store your photos, videos, or files on our servers. 
-                                        Instead, you connect your own S3-compatible storage bucket (like Cloudflare R2 or Backblaze B2) where your media lives.
-                                    </div>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
-                                        <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)' }}>
-                                            <strong style={{ color: 'var(--success)' }}>✓ You own your data</strong><br/>
-                                            Your files stay in your bucket, not ours
-                                        </div>
-                                        <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)' }}>
-                                            <strong style={{ color: 'var(--success)' }}>✓ Portable</strong><br/>
-                                            Take your media with you if you leave
-                                        </div>
-                                        <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)' }}>
-                                            <strong style={{ color: 'var(--success)' }}>✓ Free options</strong><br/>
-                                            R2 and B2 offer 10GB free
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Endpoint URL - only show for providers that need it (R2, B2, Contabo) */}
-                                {(storageProvider === 'r2' || storageProvider === 'b2' || storageProvider === 'contabo') && (
-                                    <div style={{ marginBottom: '16px' }}>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                            Endpoint URL
-                                        </label>
-                                        <input
-                                            type="text"
-                                            className="input"
-                                            value={storageEndpoint}
-                                            onChange={(e) => setStorageEndpoint(e.target.value)}
-                                            placeholder={storageProvider === 'contabo' ? 'https://s3.eu2.contabo.com' : 'https://<account>.r2.cloudflarestorage.com'}
-                                            required
-                                        />
-                                        <div style={{ fontSize: '11px', color: 'var(--foreground-tertiary)', marginTop: '4px' }}>
-                                            {storageProvider === 'contabo' ? 'S3 API endpoint from Contabo dashboard (e.g., https://s3.eu2.contabo.com)' :
-                                             'S3-compatible endpoint URL for uploads.'}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Public Base URL - only show for providers that need it (R2, B2, Contabo) */}
-                                {(storageProvider === 'r2' || storageProvider === 'b2' || storageProvider === 'contabo') && (
-                                    <div style={{ marginBottom: '16px' }}>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                            Public Base URL
-                                        </label>
-                                        <input
-                                            type="text"
-                                            className="input"
-                                            value={storagePublicBaseUrl}
-                                            onChange={(e) => setStoragePublicBaseUrl(e.target.value)}
-                                            placeholder={storageProvider === 'contabo' ? 'https://usc1.contabostorage.com/d5bec82ae49b444d8314dcb13654dd1d:your-bucket' : 'https://pub-xxx.r2.dev'}
-                                            required
-                                        />
-                                        <div style={{ fontSize: '11px', color: 'var(--foreground-tertiary)', marginTop: '4px' }}>
-                                            {storageProvider === 'contabo' ? 'Public URL from Contabo (format: https://region.contabostorage.com/account-id:bucket)' :
-                                             storageProvider === 'r2' ? 'Public bucket URL from R2 dashboard (e.g., https://pub-xxx.r2.dev)' :
-                                             storageProvider === 'b2' ? 'Public bucket URL from B2 dashboard (e.g., https://f000.backblazeb2.com/file/bucket)' :
-                                             'Public URL where files are accessible (without trailing slash)'}
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                            Region
-                                        </label>
-                                        <input
-                                            type="text"
-                                            className="input"
-                                            value={storageRegion}
-                                            onChange={(e) => setStorageRegion(e.target.value)}
-                                            placeholder="auto"
-                                            required
-                                        />
-                                    </div>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                            Bucket Name
-                                        </label>
-                                        <input
-                                            type="text"
-                                            className="input"
-                                            value={storageBucket}
-                                            onChange={(e) => setStorageBucket(e.target.value)}
-                                            placeholder="my-synapsis-bucket"
-                                            required
-                                        />
-                                    </div>
-                                </div>
-
-                                <div style={{ marginBottom: '16px' }}>
-                                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                        Access Key ID
-                                    </label>
-                                    <input
-                                        type="password"
-                                        className="input"
-                                        value={storageAccessKey}
-                                        onChange={(e) => setStorageAccessKey(e.target.value)}
-                                        placeholder="AKIA..."
-                                        required
-                                    />
-                                </div>
-
-                                <div style={{ marginBottom: '16px' }}>
-                                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                        Secret Access Key
-                                    </label>
-                                    <input
-                                        type="password"
-                                        className="input"
-                                        value={storageSecretKey}
-                                        onChange={(e) => setStorageSecretKey(e.target.value)}
-                                        placeholder="••••••••"
-                                        required
-                                    />
-                                    <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', marginTop: '4px' }}>
-                                        Get free S3 storage at <a href="https://dash.cloudflare.com/sign-up/r2" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Cloudflare R2</a> (10GB free) or <a href="https://www.backblaze.com/b2/sign-up.html" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Backblaze B2</a>
-                                    </div>
-                                </div>
+                                <p style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', marginBottom: '16px' }}>
+                                    You can connect your own S3-compatible storage when you first upload media.
+                                </p>
                             </>
                         )}
 
@@ -812,11 +649,6 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                     !password || password.length < 8 ||
                                     !confirmPassword ||
                                     password !== confirmPassword ||
-                                    !storageProvider ||
-                                    !storageRegion ||
-                                    !storageBucket ||
-                                    !storageAccessKey ||
-                                    !storageSecretKey ||
                                     (nodeInfo.isNsfw && !ageVerified)
                                 ))}
                         >
@@ -882,8 +714,12 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                         Browse
                                     </span>
                                 </label>
-                            </div>
-                        </div>
+                                    </div>
+                                </div>
+
+                                <p style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', marginBottom: '16px' }}>
+                                    You can connect your own S3-compatible storage when you first upload media.
+                                </p>
 
                         <div style={{ marginBottom: '16px' }}>
                             <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>

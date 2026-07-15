@@ -11,7 +11,6 @@ import { encryptPrivateKey, serializeEncryptedKey } from '@/lib/crypto/private-k
 import { base58btc } from 'multiformats/bases/base58';
 import { cookies } from 'next/headers';
 import { upsertHandleEntries } from '@/lib/federation/handles';
-import { generateAndUploadAvatarToUserStorage } from '@/lib/storage/s3';
 
 const ACTIVE_SESSION_COOKIE_NAME = 'synapsis_session';
 const SESSION_COOKIE_NAME = 'synapsis_sessions';
@@ -280,14 +279,7 @@ export async function registerUser(
     handle: string,
     email: string,
     password: string,
-    displayName?: string,
-    storageProvider?: string,
-    storageEndpoint?: string | null,
-    storagePublicBaseUrl?: string | null,
-    storageRegion?: string,
-    storageBucket?: string,
-    storageAccessKey?: string,
-    storageSecretKey?: string
+    displayName?: string
 ): Promise<typeof users.$inferSelect> {
     // Validate handle format
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(handle)) {
@@ -312,23 +304,6 @@ export async function registerUser(
         throw new Error('Email is already registered');
     }
 
-    // Validate S3 storage credentials (required for new users)
-    if (!storageProvider) {
-        throw new Error('Storage provider is required.');
-    }
-    if (!storageRegion || storageRegion.length < 2) {
-        throw new Error('Storage region is required (e.g., us-east-1, auto).');
-    }
-    if (!storageBucket || storageBucket.length < 3) {
-        throw new Error('Storage bucket name is required.');
-    }
-    if (!storageAccessKey || storageAccessKey.length < 10) {
-        throw new Error('Storage access key is required.');
-    }
-    if (!storageSecretKey || storageSecretKey.length < 10) {
-        throw new Error('Storage secret key is required.');
-    }
-
     // Generate cryptographic keys
     const { publicKey, privateKey } = await generateKeyPair();
 
@@ -341,38 +316,14 @@ export async function registerUser(
 
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
-    // Generate avatar and upload to user's S3 storage
-    const fullHandle = `${handle.toLowerCase()}@${nodeDomain}`;
-    const avatarUrl = await generateAndUploadAvatarToUserStorage(
-        fullHandle,
-        storageEndpoint || undefined,
-        storagePublicBaseUrl || undefined,
-        storageRegion,
-        storageBucket,
-        storageAccessKey,
-        storageSecretKey
-    );
-
-    // Encrypt the storage credentials with user's password
-    const encryptedAccessKey = encryptPrivateKey(storageAccessKey, password);
-    const encryptedSecretKey = encryptPrivateKey(storageSecretKey, password);
-
     const [user] = await db.insert(users).values({
         did,
         handle: handle.toLowerCase(),
         email: email.toLowerCase(),
         passwordHash,
         displayName: displayName || handle,
-        avatarUrl,
         publicKey,
         privateKeyEncrypted: serializeEncryptedKey(encryptedPrivateKey),
-        storageProvider,
-        storageEndpoint: storageEndpoint || null,
-        storagePublicBaseUrl: storagePublicBaseUrl || null,
-        storageRegion,
-        storageBucket,
-        storageAccessKeyEncrypted: serializeEncryptedKey(encryptedAccessKey),
-        storageSecretKeyEncrypted: serializeEncryptedKey(encryptedSecretKey),
     }).returning();
 
     await upsertHandleEntries([{
