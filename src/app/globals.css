@@ -445,9 +445,9 @@ a.btn-primary:visited {
 
 .post-media-item img {
   width: 100%;
-  height: 100%;
-  max-height: 360px;
-  object-fit: cover;
+  height: auto;
+  max-height: min(80vh, 900px);
+  object-fit: contain;
   display: block;
 }
 
@@ -1606,7 +1606,6 @@ a.btn-primary:visited {
     gap: 8px;
   }
 
-  .post-media-item img,
   .post-media-item video {
     max-height: 400px;
   }
