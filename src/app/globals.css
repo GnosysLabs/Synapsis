@@ -1098,22 +1098,11 @@ a.btn-primary:visited {
   animation: globalComposeRiseIn 0.2s ease-out;
 }
 
-.global-compose-modal::before {
-  content: '';
-  position: absolute;
-  inset: -1px 16px auto;
-  height: 2px;
-  border-radius: 999px;
-  background: var(--accent);
-  opacity: 0.8;
-}
-
 .global-compose-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 15px 18px;
-  border-bottom: 1px solid #1d1d1d;
 }
 
 .global-compose-header h2 {
@@ -1178,7 +1167,6 @@ a.btn-primary:visited {
 .global-compose-modal .compose-footer {
   margin-top: 8px;
   padding-top: 14px;
-  border-top: 1px solid #1d1d1d;
 }
 
 .global-compose-modal .compose-actions .btn-primary {
