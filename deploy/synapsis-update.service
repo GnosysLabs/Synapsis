@@ -1,0 +1,11 @@
+[Unit]
+Description=Update Synapsis to the latest main commit
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/synapsis/.git
+
+[Service]
+Type=oneshot
+ExecStart=/opt/synapsis/deploy/update.sh
+TimeoutStartSec=30min
+UMask=0027

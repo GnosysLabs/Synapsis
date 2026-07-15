@@ -31,6 +31,7 @@ export function RightSidebar() {
     });
     const [version, setVersion] = useState<{
         version: string;
+        commit: string | null;
         buildDate: string | null;
     } | null>(null);
 
@@ -79,7 +80,7 @@ export function RightSidebar() {
         fetch('/api/version')
             .then(res => res.json())
             .then(data => setVersion(data))
-            .catch(() => setVersion({ version: 'unknown', buildDate: null }));
+            .catch(() => setVersion({ version: 'unknown', commit: null, buildDate: null }));
 
         return () => window.removeEventListener('synapsis:node-updated', handleNodeUpdated);
     }, []);
@@ -152,8 +153,12 @@ export function RightSidebar() {
                 <h3 style={{ fontWeight: 600, marginBottom: '12px' }}>Network Info</h3>
                 <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px' }}>
                     Running{' '}
-                    <a href="https://synapsis.social" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Synapsis</a>
-                    {version?.version ? ` ${version.version}` : ''}
+                    <a href="https://synapsis.gnosyslabs.xyz" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Synapsis</a>
+                    {version?.commit
+                        ? ` ${version.commit.slice(0, 7)}`
+                        : version?.version
+                            ? ` ${version.version}`
+                            : ''}
                 </p>
 
                 {nodeInfo.admins.length > 0 && (

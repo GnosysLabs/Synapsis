@@ -1,0 +1,13 @@
+[Unit]
+Description=Keep Synapsis on the latest main commit
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+RandomizedDelaySec=15s
+AccuracySec=5s
+Persistent=true
+Unit=synapsis-update.service
+
+[Install]
+WantedBy=timers.target

@@ -7,6 +7,7 @@
 import { db, nodes, users, posts } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import type { SwarmAnnouncement, SwarmNodeInfo, SwarmCapability } from './types';
+import { getCurrentBuildInfo } from '@/lib/version';
 import { upsertSwarmNode, getSeedNodes, markNodeSuccess, markNodeFailure } from './registry';
 import {
   getCanonicalSwarmSeedDomain,
@@ -22,6 +23,7 @@ const PUBLIC_SWARM_DOMAIN_ERROR = 'Public swarm participation requires a real IC
  */
 export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
   const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+  const buildInfo = getCurrentBuildInfo();
   
   let name = 'Synapsis Node';
   let description: string | undefined;
@@ -61,7 +63,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     description,
     logoUrl,
     publicKey,
-    softwareVersion: '0.1.0', // TODO: Get from package.json
+    softwareVersion: buildInfo.commit || buildInfo.version,
     userCount,
     postCount,
     capabilities,

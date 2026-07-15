@@ -31,12 +31,24 @@ The installer creates:
 - Environment file: `/etc/synapsis.env`
 - Embedded Turso database: `/var/lib/synapsis/synapsis.db`
 - Service: `synapsis.service`
+- Mandatory update timer: `synapsis-update.timer`
+
+Every node checks `origin/main` about once per minute. When a new commit is available, Synapsis fast-forwards the checkout, replaces the single `backups/latest` database snapshot, installs dependencies, runs migrations, builds, and restarts automatically. The currently deployed commit is shown in the Network Info card and exposed by `/api/version`.
+
+For a node installed before automatic updates existed, bootstrap the timer once with:
+
+```bash
+sudo -u synapsis git -C /opt/synapsis pull --ff-only
+sudo /opt/synapsis/deploy/update.sh
+```
 
 Useful commands:
 
 ```bash
 sudo systemctl status synapsis
+sudo systemctl status synapsis-update.timer
 sudo journalctl -u synapsis -f
+sudo journalctl -u synapsis-update -f
 sudo /opt/synapsis/deploy/update.sh
 sudo /opt/synapsis/deploy/uninstall.sh
 ```
