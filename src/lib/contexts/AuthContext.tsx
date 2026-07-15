@@ -8,7 +8,7 @@ export interface User {
     handle: string;
     displayName: string;
     email?: string;
-    avatarUrl?: string;
+    avatarUrl?: string | null;
     did?: string;
     publicKey?: string;
     privateKeyEncrypted?: string;
@@ -34,6 +34,7 @@ interface AuthContextType {
     logout: (userId?: string) => Promise<void>;
     switchAccount: (userId: string) => Promise<void>;
     refreshAuth: () => Promise<void>;
+    updateUserProfile: (updates: Partial<User>) => void;
     lockIdentity: () => Promise<void>;  // New: manual lock
     signUserAction: (action: string, data: any) => Promise<any>;
     requiresUnlock: boolean;  // True if user has encrypted key but not unlocked
@@ -57,6 +58,7 @@ const AuthContext = createContext<AuthContextType>({
     logout: async () => { },
     switchAccount: async () => { },
     refreshAuth: async () => { },
+    updateUserProfile: () => { },
     lockIdentity: async () => { },
     signUserAction: async () => Promise.reject('Not initialized'),
     requiresUnlock: false,
@@ -205,6 +207,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
     }, [refreshAuth]);
 
+    const updateUserProfile = useCallback((updates: Partial<User>) => {
+        setUser(current => current ? { ...current, ...updates } : current);
+        setAccounts(current => current.map(account => account.id === updates.id ? { ...account, ...updates } : account));
+    }, []);
+
     // Load auth state on mount
     useEffect(() => {
         refreshAuth();
@@ -231,6 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             logout,
             switchAccount,
             refreshAuth,
+            updateUserProfile,
             lockIdentity,
             signUserAction,
             requiresUnlock,

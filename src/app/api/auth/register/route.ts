@@ -9,7 +9,7 @@ const registerSchema = z.object({
     handle: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/),
     email: z.string().email(),
     password: z.string().min(8),
-    displayName: z.string().optional(),
+    displayName: z.string().trim().max(50).optional(),
     turnstileToken: z.string().nullable().optional(),
 });
 

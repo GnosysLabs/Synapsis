@@ -474,6 +474,8 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                             }}>@</span>
                                             <input
                                                 type="text"
+                                                name="username"
+                                                autoComplete="username"
                                                 className="input"
                                                 value={handle}
                                                 onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
@@ -511,6 +513,8 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                         </label>
                                         <input
                                             type="password"
+                                            name="password"
+                                            autoComplete="new-password"
                                             className="input"
                                             value={password}
                                             onChange={(e) => setPassword(e.target.value)}
@@ -529,6 +533,8 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                         </label>
                                         <input
                                             type="text"
+                                            name="displayName"
+                                            autoComplete="nickname"
                                             className="input"
                                             value={displayName}
                                             onChange={(e) => setDisplayName(e.target.value)}
@@ -541,6 +547,8 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                         </label>
                                         <input
                                             type="password"
+                                            name="confirmPassword"
+                                            autoComplete="new-password"
                                             className="input"
                                             value={confirmPassword}
                                             onChange={(e) => setConfirmPassword(e.target.value)}
@@ -558,6 +566,8 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                         </label>
                                         <input
                                             type="email"
+                                            name="email"
+                                            autoComplete="email"
                                             className="input"
                                             value={email}
                                             onChange={(e) => setEmail(e.target.value)}

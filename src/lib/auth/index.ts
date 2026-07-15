@@ -11,6 +11,7 @@ import { encryptPrivateKey, serializeEncryptedKey } from '@/lib/crypto/private-k
 import { base58btc } from 'multiformats/bases/base58';
 import { cookies } from 'next/headers';
 import { upsertHandleEntries } from '@/lib/federation/handles';
+import { registrationDisplayName } from '@/lib/auth/display-name';
 
 const ACTIVE_SESSION_COOKIE_NAME = 'synapsis_session';
 const SESSION_COOKIE_NAME = 'synapsis_sessions';
@@ -321,7 +322,7 @@ export async function registerUser(
         handle: handle.toLowerCase(),
         email: email.toLowerCase(),
         passwordHash,
-        displayName: displayName || handle,
+        displayName: registrationDisplayName(handle, email, displayName),
         publicKey,
         privateKeyEncrypted: serializeEncryptedKey(encryptedPrivateKey),
     }).returning();

@@ -31,6 +31,8 @@ interface UserSummary {
     isBot?: boolean;
 }
 
+type ProfileMediaField = 'avatarUrl' | 'headerUrl';
+
 // Strip HTML tags from a string
 const stripHtml = (html: string | null | undefined): string | null => {
     if (!html) return null;
@@ -79,7 +81,7 @@ export default function ProfilePage() {
     const params = useParams();
     const router = useRouter();
     const handle = (params.handle as string)?.replace(/^@/, '') || '';
-    const { did, handle: currentHandle, isIdentityUnlocked, signUserAction } = useAuth();
+    const { did, handle: currentHandle, isIdentityUnlocked, signUserAction, updateUserProfile } = useAuth();
 
     const [user, setUser] = useState<User | null>(null);
     const userFullHandle = user ? useFormattedHandle(user.handle) : '';
@@ -111,6 +113,7 @@ export default function ProfilePage() {
     });
     const [saveError, setSaveError] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const [mediaSaveStatus, setMediaSaveStatus] = useState<Partial<Record<ProfileMediaField, 'saving' | 'saved'>>>({});
     const [isBlocked, setIsBlocked] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
     useEffect(() => {
@@ -251,7 +254,7 @@ export default function ProfilePage() {
     };
 
     useEffect(() => {
-        if (user && currentUser?.handle === user.handle) {
+        if (user && currentUser?.handle === user.handle && !isEditing) {
             setProfileForm({
                 displayName: user.displayName || '',
                 bio: user.bio || '',
@@ -260,7 +263,7 @@ export default function ProfilePage() {
                 website: user.website || '',
             });
         }
-    }, [user, currentUser]);
+    }, [user, currentUser, isEditing]);
 
     useEffect(() => {
         const ownerHandle = user?.botOwner?.handle?.replace(/^@/, '').split('@')[0];
@@ -378,6 +381,24 @@ export default function ProfilePage() {
         }
     };
 
+    const updateProfile = async (changes: Partial<typeof profileForm>): Promise<User> => {
+            const signedPayload = await signUserAction('update_profile', changes);
+
+            const res = await fetch('/api/auth/me', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(signedPayload),
+            });
+
+            const data = await res.json() as { error?: string; user?: User };
+
+            if (!res.ok || !data.user) {
+                throw new Error(data.error || 'Failed to update profile');
+            }
+
+            return data.user;
+    };
+
     const handleSaveProfile = async () => {
         if (!isOwnProfile) return;
 
@@ -390,28 +411,41 @@ export default function ProfilePage() {
         setSaveError(null);
 
         try {
-            // Sign the profile update action
-            const signedPayload = await signUserAction('update_profile', profileForm);
+            const updatedUser = await updateProfile(profileForm);
 
-            const res = await fetch('/api/auth/me', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(signedPayload),
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-                throw new Error(data.error || 'Failed to update profile');
-            }
-
-            setUser(data.user);
+            setUser(prev => prev ? { ...prev, ...updatedUser } : updatedUser);
+            updateUserProfile(updatedUser);
             setIsEditing(false);
         } catch (error) {
             console.error('Profile update failed', error);
             setSaveError(error instanceof Error ? error.message : 'Unable to update profile. Please try again.');
         } finally {
             setIsSaving(false);
+        }
+    };
+
+    const handleProfileMediaChange = async (field: ProfileMediaField, value: string) => {
+        setProfileForm(prev => ({ ...prev, [field]: value }));
+        setSaveError(null);
+
+        if (!isOwnProfile || !isIdentityUnlocked) {
+            setSaveError('Session expired. Please log in again.');
+            return;
+        }
+
+        setMediaSaveStatus(prev => ({ ...prev, [field]: 'saving' }));
+        try {
+            const updatedUser = await updateProfile({ [field]: value });
+            setUser(prev => prev ? { ...prev, ...updatedUser } : updatedUser);
+            updateUserProfile(updatedUser);
+            setMediaSaveStatus(prev => ({ ...prev, [field]: 'saved' }));
+            window.setTimeout(() => {
+                setMediaSaveStatus(prev => prev[field] === 'saved' ? { ...prev, [field]: undefined } : prev);
+            }, 2000);
+        } catch (error) {
+            console.error('Profile media update failed', error);
+            setMediaSaveStatus(prev => ({ ...prev, [field]: undefined }));
+            setSaveError(error instanceof Error ? error.message : 'Unable to save profile media. Please try again.');
         }
     };
 
@@ -785,26 +819,24 @@ export default function ProfilePage() {
                                     label="Avatar"
                                     value={profileForm.avatarUrl}
                                     onChange={(avatarUrl) => {
-                                        setSaveError(null);
-                                        setProfileForm({ ...profileForm, avatarUrl });
+                                        void handleProfileMediaChange('avatarUrl', avatarUrl);
                                     }}
                                     previewWidth={48}
                                     previewHeight={48}
                                     previewBorderRadius="50%"
-                                    helperText="Square image recommended (optional)"
+                                    helperText={mediaSaveStatus.avatarUrl === 'saving' ? 'Saving avatar…' : mediaSaveStatus.avatarUrl === 'saved' ? 'Avatar saved' : 'Square image recommended (optional)'}
                                     onError={(message) => setSaveError(message || null)}
                                 />
                                 <UserStorageImageUpload
                                     label="Header"
                                     value={profileForm.headerUrl}
                                     onChange={(headerUrl) => {
-                                        setSaveError(null);
-                                        setProfileForm({ ...profileForm, headerUrl });
+                                        void handleProfileMediaChange('headerUrl', headerUrl);
                                     }}
                                     previewWidth={120}
                                     previewHeight={40}
                                     previewBorderRadius="4px"
-                                    helperText="Wide image recommended, e.g. 1500x500 (optional)"
+                                    helperText={mediaSaveStatus.headerUrl === 'saving' ? 'Saving header…' : mediaSaveStatus.headerUrl === 'saved' ? 'Header saved' : 'Wide image recommended, e.g. 1500x500 (optional)'}
                                     onError={(message) => setSaveError(message || null)}
                                 />
                                 {saveError && (
