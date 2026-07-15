@@ -9,6 +9,8 @@ import { fetchSwarmTimeline } from '@/lib/swarm/timeline';
 import { getSession } from '@/lib/auth';
 import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
 import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
+import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
+import { isLocalNodeNsfw } from '@/lib/node/local-node';
 
 type SwarmFeedPost = {
   id: string;
@@ -65,20 +67,16 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const cursor = searchParams.get('cursor') || undefined;
 
-    // Check user's NSFW preference
-    let includeNsfw = false;
-    try {
-      const session = await getSession();
-      includeNsfw = session?.user?.nsfwEnabled ?? false;
-    } catch {
-      includeNsfw = false;
-    }
+    const session = await getSession().catch(() => null);
+    const viewer = session?.user ?? null;
+    const includeNsfw = shouldIncludeNsfwFeed({
+      viewer,
+      localNodeIsNsfw: await isLocalNodeNsfw(),
+    });
 
     // Fetch swarm timeline (no caching - user preferences vary)
     const timeline = await fetchSwarmTimeline(10, 15, { includeNsfw, cursor });
 
-    const session = await getSession().catch(() => null);
-    const viewer = session?.user;
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
     const allTimelinePosts = collectNestedSwarmPosts(timeline.posts as SwarmFeedPost[]);
     const likedPostIds = viewer

@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 import { db, posts, users, media, follows, mutes, blocks, likes, remoteFollows, remotePosts, userSwarmReposts, notifications } from '@/db';
-import { requireAuth } from '@/lib/auth';
+import { getSession, requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, desc, and, inArray, isNull, isNotNull, or, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { buildNotificationTarget } from '@/lib/notifications';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
+import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
+import { isLocalNodeNsfw } from '@/lib/node/local-node';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_WINDOW_HOURS = 72;
@@ -705,17 +707,12 @@ export async function GET(request: Request) {
             });
         } else if (type === 'curated') {
             // Curated feed - swarm posts only
-            let viewer = null;
-            let includeNsfw = false;
-            try {
-                const { getSession } = await import('@/lib/auth');
-                const session = await getSession();
-                viewer = session?.user || null;
-                includeNsfw = session?.user?.nsfwEnabled ?? false;
-            } catch {
-                viewer = null;
-                includeNsfw = false;
-            }
+            const session = await getSession().catch(() => null);
+            const viewer = session?.user ?? null;
+            const includeNsfw = shouldIncludeNsfwFeed({
+                viewer,
+                localNodeIsNsfw: await isLocalNodeNsfw(),
+            });
 
             // Fetch swarm posts with user's NSFW preference
             const { fetchSwarmTimeline } = await import('@/lib/swarm/timeline');
