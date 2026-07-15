@@ -9,6 +9,7 @@ import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/medi
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { isLocalNodeNsfw } from '@/lib/node/local-node';
 import { hasPublishablePostContent } from '@/lib/posts/content-policy';
+import { decodeFeedCursor, encodeFeedCursor } from '@/lib/posts/feed-pagination';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_WINDOW_HOURS = 72;
@@ -82,6 +83,11 @@ function mapUserSwarmRepostToFeedPost(
 async function getMixedFeedCursorDate(cursor: string | null) {
     if (!cursor) {
         return null;
+    }
+
+    const timestampCursor = decodeFeedCursor(cursor);
+    if (timestampCursor) {
+        return timestampCursor;
     }
 
     if (cursor.startsWith('swarm-repost:')) {
@@ -741,7 +747,11 @@ export async function GET(request: Request) {
 
             // Fetch swarm posts with user's NSFW preference
             const { fetchSwarmTimeline } = await import('@/lib/swarm/timeline');
-            const swarmResult = await fetchSwarmTimeline(10, 30, { includeNsfw });
+            const cursorDate = await getMixedFeedCursorDate(cursor);
+            const swarmResult = await fetchSwarmTimeline(10, 30, {
+                includeNsfw,
+                cursor: cursorDate?.toISOString(),
+            });
 
             console.log('[Curated Feed] Swarm result:', {
                 postsCount: swarmResult.posts.length,
@@ -954,13 +964,14 @@ export async function GET(request: Request) {
                             if (!isSwarm) return [];
 
                             const profileData = await withTimeout(
-                                fetchSwarmUserProfile(handle, domain, limit),
+                                fetchSwarmUserProfile(handle, domain, limit, cursorDate?.toISOString()),
                                 5000 // 5s timeout per node
                             );
                             if (!profileData?.posts) return [];
 
                             return profileData.posts
                                 .filter((post: any) => !post.replyToId && !post.swarmReplyToId && !post.isReply)
+                                .filter((post: any) => !cursorDate || new Date(post.createdAt) < cursorDate)
                                 .map((post: any) => mapRemoteProfilePost({
                                     ...post,
                                     author: post.author || {
@@ -1103,7 +1114,11 @@ export async function GET(request: Request) {
                     selfBoost: 0.5,
                 },
             } : undefined,
-            nextCursor: (feedPosts?.length === limit) ? feedPosts[feedPosts.length - 1]?.id : null,
+            nextCursor: (feedPosts?.length === limit)
+                ? (type === 'home' || type === 'curated'
+                    ? encodeFeedCursor(feedPosts[feedPosts.length - 1]?.createdAt)
+                    : feedPosts[feedPosts.length - 1]?.id)
+                : null,
         });
     } catch (error) {
         console.error('Get feed error details:', error);

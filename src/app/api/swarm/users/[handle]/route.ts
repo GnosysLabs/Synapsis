@@ -189,6 +189,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const cleanHandle = handle.toLowerCase().replace(/^@/, '');
     const { searchParams } = new URL(request.url);
     const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
+    const cursorValue = searchParams.get('cursor');
+    const parsedCursorDate = cursorValue ? new Date(cursorValue) : null;
+    const cursorDate = parsedCursorDate && !Number.isNaN(parsedCursorDate.getTime())
+      ? parsedCursorDate
+      : null;
 
     if (!db) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
@@ -240,14 +245,25 @@ export async function GET(request: NextRequest, context: RouteContext) {
     };
 
     const localPosts = await db.query.posts.findMany({
-      where: { AND: [{ userId: user.id }, { isRemoved: false }, { replyToId: { isNull: true } }, { swarmReplyToId: { isNull: true } }] },
+      where: {
+        AND: [
+          { userId: user.id },
+          { isRemoved: false },
+          { replyToId: { isNull: true } },
+          { swarmReplyToId: { isNull: true } },
+          ...(cursorDate ? [{ createdAt: { lt: cursorDate } }] : []),
+        ],
+      },
       with: profilePostRelations,
       orderBy: (posts, { desc }) => [desc(posts.createdAt)],
       limit: limit * 2,
     });
 
     const remoteRepostRows = await db.query.userSwarmReposts.findMany({
-      where: { userId: user.id },
+      where: {
+        userId: user.id,
+        ...(cursorDate ? { repostedAt: { lt: cursorDate } } : {}),
+      },
       orderBy: (userSwarmReposts, { desc }) => [desc(userSwarmReposts.repostedAt)],
       limit: limit * 2,
     });

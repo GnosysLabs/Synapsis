@@ -396,7 +396,8 @@ export interface SwarmProfileResponse {
 export async function fetchSwarmUserProfile(
   handle: string,
   domain: string,
-  postsLimit: number = 25
+  postsLimit: number = 25,
+  cursor?: string
 ): Promise<SwarmProfileResponse | null> {
   try {
     const normalizedDomain = normalizeNodeDomain(domain);
@@ -410,7 +411,7 @@ export async function fetchSwarmUserProfile(
         ? `http://${normalizedDomain}`
         : `https://${normalizedDomain}`;
 
-    const url = `${baseUrl}/api/swarm/users/${handle}?limit=${postsLimit}`;
+    const url = `${baseUrl}/api/swarm/users/${handle}?limit=${postsLimit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);

@@ -42,6 +42,7 @@ export default function Home() {
   } | null>(null);
 
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const loadingCursorRef = useRef<string | null>(null);
 
   // Redirect unauthenticated users to explore page
   useEffect(() => {
@@ -57,6 +58,9 @@ export default function Home() {
   }, [feedType]);
 
   const loadFeed = async (type: 'following' | 'curated', cursor?: string | null) => {
+    if (cursor && loadingCursorRef.current === cursor) return;
+    if (cursor) loadingCursorRef.current = cursor;
+
     if (cursor) {
       setLoadingMore(true);
     } else {
@@ -64,8 +68,8 @@ export default function Home() {
     }
     try {
       const endpoint = type === 'curated'
-        ? `/api/posts?type=curated${cursor ? `&cursor=${cursor}` : ''}`
-        : `/api/posts?type=home${cursor ? `&cursor=${cursor}` : ''}`;
+        ? `/api/posts?type=curated${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`
+        : `/api/posts?type=home${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
 
       const res = await fetch(endpoint);
       const data = await res.json();
@@ -74,12 +78,20 @@ export default function Home() {
       if (type !== feedTypeRef.current) return;
 
       if (cursor) {
-        setPosts(prev => [...prev, ...(data.posts || [])]);
+        setPosts(prev => {
+          const seen = new Set(prev.map(post => post.id));
+          const newPosts = (data.posts || []).filter((post: Post) => {
+            if (seen.has(post.id)) return false;
+            seen.add(post.id);
+            return true;
+          });
+          return [...prev, ...newPosts];
+        });
       } else {
         setPosts(data.posts || []);
       }
       setFeedMeta(data.meta || null);
-      setNextCursor(data.nextCursor || null);
+      setNextCursor(data.nextCursor && data.nextCursor !== cursor ? data.nextCursor : null);
     } catch {
       if (type !== feedTypeRef.current) return;
 
@@ -92,6 +104,9 @@ export default function Home() {
       if (type === feedTypeRef.current) {
         setLoading(false);
         setLoadingMore(false);
+      }
+      if (cursor && loadingCursorRef.current === cursor) {
+        loadingCursorRef.current = null;
       }
     }
   };
