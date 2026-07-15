@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { PenLine, Plus, X } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import { Compose } from '@/components/Compose';
-import { AvatarImage } from '@/components/AvatarImage';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useToast } from '@/lib/contexts/ToastContext';
@@ -96,18 +95,9 @@ export function GlobalPostComposer() {
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="global-compose-title"
-                        aria-describedby="global-compose-description"
                     >
                         <header className="global-compose-header">
-                            <div className="global-compose-heading">
-                                <span className="global-compose-heading-icon" aria-hidden="true">
-                                    <PenLine size={18} strokeWidth={2} />
-                                </span>
-                                <div>
-                                    <h2 id="global-compose-title">New post</h2>
-                                    <p id="global-compose-description">Share something with your network</p>
-                                </div>
-                            </div>
+                            <h2 id="global-compose-title">Create post</h2>
                             <button
                                 type="button"
                                 className="global-compose-close"
@@ -117,24 +107,9 @@ export function GlobalPostComposer() {
                                 <X size={22} />
                             </button>
                         </header>
-                        <div className="global-compose-identity">
-                            <span className="global-compose-avatar">
-                                <AvatarImage
-                                    avatarUrl={user.avatarUrl}
-                                    seed={user.handle}
-                                    isNsfw={user.isNsfw}
-                                    alt=""
-                                />
-                            </span>
-                            <div className="global-compose-identity-copy">
-                                <span>{user.displayName || user.handle}</span>
-                                <small>@{user.handle}</small>
-                            </div>
-                            <span className="global-compose-audience">Public</span>
-                        </div>
                         <Compose
                             autoFocus
-                            placeholder="What do you want to share?"
+                            placeholder="What's happening?"
                             onPost={handlePost}
                             onPosted={() => {
                                 setOpenForUserId(null);
