@@ -69,6 +69,7 @@ fi
 install_update_units
 if ! runuser -u synapsis -- env \
   PORT="${PORT:-43821}" \
+  MAINTENANCE_APP_DIR="$APP_DIR" \
   MAINTENANCE_DATA_DIR="$DATA_DIR" \
   node "$APP_DIR/deploy/maintenance-server.mjs" --capture-branding; then
   echo "Warning: could not refresh maintenance-page branding; using the last captured branding." >&2

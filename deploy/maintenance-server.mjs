@@ -7,8 +7,10 @@ const host = process.env.MAINTENANCE_HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT || '43821', 10);
 const dataDir = process.env.MAINTENANCE_DATA_DIR
     || dirname(process.env.DATABASE_PATH || '/var/lib/synapsis/synapsis.db');
+const appDir = process.env.MAINTENANCE_APP_DIR || process.cwd();
 const brandingPath = join(dataDir, 'maintenance-branding.json');
 const logoPath = join(dataDir, 'maintenance-logo');
+const defaultLogoPath = join(appDir, 'public', 'logotext.svg');
 
 function validAccent(value) {
     return typeof value === 'string' && /^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(value)
@@ -69,7 +71,8 @@ const externalLogoUrl = typeof branding.externalLogoUrl === 'string' && /^https?
     ? branding.externalLogoUrl
     : null;
 const hasStoredLogo = existsSync(logoPath);
-const logoMarkup = hasStoredLogo || externalLogoUrl
+const hasDefaultLogo = existsSync(defaultLogoPath);
+const logoMarkup = hasStoredLogo || externalLogoUrl || hasDefaultLogo
     ? '<img class="logo" src="/maintenance-logo" alt="Node logo">'
     : '<div class="brand-fallback">Synapsis</div>';
 
@@ -129,6 +132,16 @@ const server = http.createServer((request, response) => {
         if (externalLogoUrl) {
             response.writeHead(302, { Location: externalLogoUrl, 'Cache-Control': 'no-store, max-age=0' });
             response.end();
+            return;
+        }
+        if (hasDefaultLogo) {
+            const logo = readFileSync(defaultLogoPath);
+            response.writeHead(200, {
+                'Content-Type': 'image/svg+xml',
+                'Content-Length': logo.byteLength,
+                'Cache-Control': 'no-store, max-age=0',
+            });
+            response.end(logo);
             return;
         }
     }
