@@ -41,6 +41,7 @@ export default function ChatPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const composeHandle = searchParams.get('compose');
+    const sharedPostUrl = searchParams.get('share');
 
     // Chat Data State
     const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -61,6 +62,7 @@ export default function ChatPage() {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const [isAtBottom, setIsAtBottom] = useState(true);
+    const appliedSharedPostRef = useRef<string | null>(null);
 
     // ============================================
     // HELPER FUNCTIONS (Defined before useEffects)
@@ -337,6 +339,16 @@ export default function ChatPage() {
         }
     }, [selectedConversation]);
 
+    // A post shared from the timeline waits for the user to choose a conversation,
+    // then appears in the composer so they remain in control of sending it.
+    useEffect(() => {
+        if (!selectedConversation || !sharedPostUrl || appliedSharedPostRef.current === sharedPostUrl) return;
+
+        setNewMessage(sharedPostUrl);
+        appliedSharedPostRef.current = sharedPostUrl;
+        router.replace('/chat', { scroll: false });
+    }, [selectedConversation, sharedPostUrl, router]);
+
     // Auto-scroll to bottom of messages only if user was already at bottom
     useEffect(() => {
         if (messagesEndRef.current && isAtBottom) {
@@ -554,6 +566,12 @@ export default function ChatPage() {
                         <h1 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>Chat</h1>
                     </div>
                 </header>
+
+                {sharedPostUrl && (
+                    <div className="chat-share-intent">
+                        Choose a conversation to share this post.
+                    </div>
+                )}
 
                 <div style={{
                     padding: '16px', // Reverted from 20px to 16px as requested

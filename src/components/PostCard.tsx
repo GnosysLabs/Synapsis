@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { HeartIcon, RepeatIcon, MessageIcon, FlagIcon, TrashIcon } from '@/components/Icons';
-import { Bot, MoreHorizontal, UserX, VolumeX, Globe } from 'lucide-react';
+import { Bot, MoreHorizontal, UserX, VolumeX, Globe, Download, MessageCircle, Link2, Share } from 'lucide-react';
 import { Post, LinkPreviewMediaItem } from '@/lib/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useToast } from '@/lib/contexts/ToastContext';
@@ -122,6 +122,8 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
     const [reporting, setReporting] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
+    const [showShareMenu, setShowShareMenu] = useState(false);
+    const [downloading, setDownloading] = useState(false);
     const [hydratedPreview, setHydratedPreview] = useState<LinkPreviewData | null>(null);
     const domain = useDomain();
     const authorHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
@@ -424,6 +426,102 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
     };
 
     const postUrl = `/u/${post.author.handle}/posts/${post.id}`;
+
+    const getAbsolutePostUrl = () => new URL(postUrl, window.location.origin).toString();
+
+    const handleSendViaChat = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowShareMenu(false);
+
+        if (!currentUser) {
+            showToast('Please log in to send posts via chat', 'error');
+            return;
+        }
+
+        router.push(`/chat?share=${encodeURIComponent(getAbsolutePostUrl())}`);
+    };
+
+    const handleCopyLink = async (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowShareMenu(false);
+
+        try {
+            await navigator.clipboard.writeText(getAbsolutePostUrl());
+            showToast('Post link copied', 'success');
+        } catch {
+            showToast('Could not copy the post link', 'error');
+        }
+    };
+
+    const handleSystemShare = async (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowShareMenu(false);
+
+        const url = getAbsolutePostUrl();
+        if (!navigator.share) {
+            try {
+                await navigator.clipboard.writeText(url);
+                showToast('Sharing is not available here, so the link was copied', 'success');
+            } catch {
+                showToast('Sharing is not available in this browser', 'error');
+            }
+            return;
+        }
+
+        try {
+            await navigator.share({
+                title: `${post.author.displayName || post.author.handle} on Synapsis`,
+                text: post.content || `Media from @${authorHandle}`,
+                url,
+            });
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') return;
+            showToast('Could not share this post', 'error');
+        }
+    };
+
+    const getDownloadName = (url: string, mimeType: string | null | undefined, index: number) => {
+        try {
+            const pathName = new URL(url, window.location.origin).pathname;
+            const existingName = decodeURIComponent(pathName.split('/').pop() || '');
+            if (existingName && existingName.includes('.')) return existingName;
+        } catch {
+            // Fall through to a generated filename.
+        }
+
+        const extension = mimeType?.split('/')[1]?.split(';')[0]?.replace('jpeg', 'jpg') || 'bin';
+        return `synapsis-${post.author.handle}-${post.id}-${index + 1}.${extension}`;
+    };
+
+    const handleDownloadMedia = async (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!post.media?.length || downloading) return;
+
+        setDownloading(true);
+        try {
+            for (const [index, item] of post.media.entries()) {
+                const response = await fetch(item.url);
+                if (!response.ok) throw new Error(`Download failed with status ${response.status}`);
+                const blob = await response.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+                anchor.href = objectUrl;
+                anchor.download = getDownloadName(item.url, item.mimeType || blob.type, index);
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+            }
+        } catch {
+            showToast('Could not download this media', 'error');
+        } finally {
+            setDownloading(false);
+        }
+    };
 
     // Get the full handle for profile links (includes domain for remote users)
     const getProfileHandle = () => {
@@ -919,30 +1017,81 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                 {renderLinkPreviewCard()}
 
                 <div className="post-actions">
-                    <button className="post-action" onClick={handleComment}>
-                        <MessageIcon />
-                        <span>{post.repliesCount || ''}</span>
-                    </button>
-                    <button className={`post-action ${reposted ? 'reposted' : ''}`} onClick={handleRepost} disabled={repostPending}>
-                        <RepeatIcon />
-                        <span>{repostsCount || ''}</span>
-                    </button>
-                    <button className={`post-action ${liked ? 'liked' : ''}`} onClick={handleLike}>
-                        <HeartIcon filled={liked} />
-                        <span>{likesCount || ''}</span>
-                    </button>
-                    {!isOwnOrOwnedBotPost && (
-                        <button className="post-action" onClick={handleReport} disabled={reporting}>
-                            <FlagIcon />
-                            <span>{reporting ? '...' : ''}</span>
+                    <div className="post-actions-primary">
+                        <button className="post-action" onClick={handleComment} title="Reply">
+                            <MessageIcon />
+                            <span>{post.repliesCount || ''}</span>
                         </button>
-                    )}
-                    {canDeletePost && (
+                        <button className={`post-action ${reposted ? 'reposted' : ''}`} onClick={handleRepost} disabled={repostPending} title="Repost">
+                            <RepeatIcon />
+                            <span>{repostsCount || ''}</span>
+                        </button>
+                        <button className={`post-action ${liked ? 'liked' : ''}`} onClick={handleLike} title="Like">
+                            <HeartIcon filled={liked} />
+                            <span>{likesCount || ''}</span>
+                        </button>
+                        {!isOwnOrOwnedBotPost && (
+                            <button className="post-action" onClick={handleReport} disabled={reporting} title="Report post">
+                                <FlagIcon />
+                                <span>{reporting ? '...' : ''}</span>
+                            </button>
+                        )}
+                        {canDeletePost && (
                             <button className="post-action delete-action" onClick={handleDelete} disabled={deleting} title="Delete post">
                                 <TrashIcon />
                                 <span>{deleting ? '...' : ''}</span>
                             </button>
                         )}
+                    </div>
+                    <div className="post-actions-secondary">
+                        {post.media && post.media.length > 0 && (
+                            <button className="post-action" onClick={handleDownloadMedia} disabled={downloading} title="Download media" aria-label="Download media">
+                                <Download size={20} />
+                            </button>
+                        )}
+                        <div className="post-share-control">
+                            <button
+                                className="post-action"
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setShowShareMenu((visible) => !visible);
+                                }}
+                                title="Share post"
+                                aria-label="Share post"
+                                aria-haspopup="menu"
+                                aria-expanded={showShareMenu}
+                            >
+                                <Share size={20} />
+                            </button>
+                            {showShareMenu && (
+                                <>
+                                    <div
+                                        className="post-share-backdrop"
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setShowShareMenu(false);
+                                        }}
+                                    />
+                                    <div className="post-share-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                                        <button type="button" role="menuitem" onClick={handleSendViaChat}>
+                                            <MessageCircle size={22} />
+                                            Send via Chat
+                                        </button>
+                                        <button type="button" role="menuitem" onClick={handleCopyLink}>
+                                            <Link2 size={22} />
+                                            Copy Link
+                                        </button>
+                                        <button type="button" role="menuitem" onClick={handleSystemShare}>
+                                            <Share size={22} />
+                                            Share post via…
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    </div>
                 </div>
             </article>
         </>

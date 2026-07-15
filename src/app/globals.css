@@ -620,7 +620,77 @@ a.btn-primary:visited {
 
 .post-actions {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.post-actions-primary,
+.post-actions-secondary {
+  display: flex;
+  align-items: center;
   gap: 24px;
+}
+
+.post-actions-secondary {
+  margin-left: auto;
+}
+
+.post-share-control {
+  position: relative;
+  display: flex;
+}
+
+.post-share-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 109;
+}
+
+.post-share-menu {
+  position: absolute;
+  right: -12px;
+  bottom: calc(100% + 12px);
+  z-index: 110;
+  width: max-content;
+  min-width: 230px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--background-secondary);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
+}
+
+.post-share-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.post-share-menu button:hover,
+.post-share-menu button:focus-visible {
+  background: var(--background-tertiary);
+  outline: none;
+}
+
+.chat-share-intent {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 12%, var(--background));
+  color: var(--foreground-secondary);
+  font-size: 13px;
+  text-align: center;
 }
 
 .post-action {
@@ -1768,8 +1838,30 @@ a.btn-primary:visited {
 
   /* Larger touch targets for actions */
   .post-actions {
-    gap: 16px;
+    gap: 4px;
     margin-top: 12px;
+  }
+
+  .post-actions-primary {
+    flex: 1;
+    min-width: 0;
+    justify-content: space-between;
+    gap: 0;
+  }
+
+  .post-actions-secondary {
+    flex-shrink: 0;
+    gap: 0;
+  }
+
+  .post-actions-primary .post-action {
+    flex: 1;
+    min-width: 0;
+    padding-inline: 4px;
+  }
+
+  .post-actions-secondary .post-action {
+    min-width: 40px;
   }
 
   .post-action {
