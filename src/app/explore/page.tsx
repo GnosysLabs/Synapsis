@@ -9,6 +9,7 @@ import { useFormattedHandle } from '@/lib/utils/handle';
 import { Bot, Network, Server, EyeOff } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
+import { AvatarImage } from '@/components/AvatarImage';
 
 interface User {
     id: string;
@@ -26,11 +27,7 @@ function UserCard({ user }: { user: User }) {
     return (
         <Link href={`/u/${user.handle}`} className="user-card">
             <div className="avatar">
-                {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt={user.displayName} />
-                ) : (
-                    user.displayName?.charAt(0).toUpperCase() || user.handle.charAt(0).toUpperCase()
-                )}
+                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} alt={user.displayName || user.handle} />
             </div>
             <div className="user-card-info">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

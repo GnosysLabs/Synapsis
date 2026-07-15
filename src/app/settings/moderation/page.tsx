@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { getProfilePath } from '@/lib/utils/handle';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { UserX, Globe, Trash2 } from 'lucide-react';
+import { AvatarImage } from '@/components/AvatarImage';
 
 interface BlockedUser {
     id: string;
@@ -189,16 +190,9 @@ export default function ModerationSettingsPage() {
                                             textDecoration: 'none',
                                         }}
                                     >
-                                        <img
-                                            src={user.avatarUrl || '/default-avatar.png'}
-                                            alt=""
-                                            style={{
-                                                width: '40px',
-                                                height: '40px',
-                                                borderRadius: '50%',
-                                                objectFit: 'cover',
-                                            }}
-                                        />
+                                        <div className="avatar">
+                                            <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} alt={user.displayName || user.handle} />
+                                        </div>
                                         <div>
                                             <div style={{ fontWeight: 500 }}>
                                                 {user.displayName || user.handle}

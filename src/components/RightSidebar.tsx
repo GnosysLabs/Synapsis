@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { AvatarImage } from './AvatarImage';
 
 interface Admin {
     handle: string;
@@ -136,11 +137,7 @@ export function RightSidebar() {
                                     style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none', color: 'inherit' }}
                                 >
                                     <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
-                                        {admin.avatarUrl ? (
-                                            <img src={admin.avatarUrl} alt={admin.displayName || admin.handle} />
-                                        ) : (
-                                            (admin.displayName?.charAt(0) || admin.handle.charAt(0)).toUpperCase()
-                                        )}
+                                        <AvatarImage avatarUrl={admin.avatarUrl} seed={admin.handle} alt={admin.displayName || admin.handle} />
                                     </div>
                                     <div>
                                         <div style={{ fontWeight: 500, fontSize: '14px' }}>

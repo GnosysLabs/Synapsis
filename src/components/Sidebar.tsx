@@ -10,6 +10,7 @@ import { HomeIcon, SearchIcon, BellIcon, UserIcon, ShieldIcon, SettingsIcon, Bot
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { Check, ChevronDown, LogOut, Plus, Settings2 } from 'lucide-react';
 import { AuthScreen } from '@/app/login/page';
+import { AvatarImage } from './AvatarImage';
 // import { IdentityUnlockPrompt } from './IdentityUnlockPrompt'; // Moved to LayoutWrapper
 
 function shortHandle(handle: string) {
@@ -327,11 +328,7 @@ export function Sidebar() {
                                             }}
                                         >
                                             <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
-                                                {account.avatarUrl ? (
-                                                    <img src={account.avatarUrl} alt={account.displayName || account.handle} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                ) : (
-                                                    (account.displayName?.charAt(0) || account.handle.charAt(0)).toUpperCase()
-                                                )}
+                                                <AvatarImage avatarUrl={account.avatarUrl} seed={account.handle} alt={account.displayName || account.handle} />
                                             </div>
                                             <div style={{ minWidth: 0, flex: 1, display: 'grid', gap: '2px' }}>
                                                 <div style={{ fontWeight: 700, fontSize: '15px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -418,11 +415,7 @@ export function Sidebar() {
                         }}
                     >
                         <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
-                            {user.avatarUrl ? (
-                                <img src={user.avatarUrl} alt={user.displayName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                            ) : (
-                                (user.displayName?.charAt(0) || user.handle.charAt(0)).toUpperCase()
-                            )}
+                            <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} alt={user.displayName} />
                         </div>
                         <div style={{ minWidth: 0, flex: 1, textAlign: 'left' }}>
                             <div style={{ fontWeight: 600, fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.displayName}</div>

@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { Bot, Plus, Sparkles } from 'lucide-react';
+import { AvatarImage } from '@/components/AvatarImage';
 
 interface BotData {
   id: string;
@@ -126,11 +127,7 @@ export default function BotsPage() {
                         fontSize: '18px',
                       }}
                     >
-                      {bot.avatarUrl ? (
-                        <img src={bot.avatarUrl} alt={bot.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
-                      ) : (
-                        bot.name.charAt(0).toUpperCase()
-                      )}
+                      <AvatarImage avatarUrl={bot.avatarUrl} seed={bot.handle} alt={bot.name} />
                     </Link>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>

@@ -7,6 +7,7 @@ import { ArrowLeft, Send, Loader2, MessageCircle, Search, Plus, Trash2, MoreVert
 import Link from 'next/link';
 import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { AvatarImage } from '@/components/AvatarImage';
 
 interface Conversation {
     id: string;
@@ -386,11 +387,11 @@ export default function ChatPage() {
                             <ArrowLeft size={20} />
                         </button>
                         <div className="avatar" style={{ width: '32px', height: '32px', fontSize: '14px' }}>
-                            {selectedConversation.participant2.avatarUrl ? (
-                                <img src={selectedConversation.participant2.avatarUrl} alt="" />
-                            ) : (
-                                selectedConversation.participant2.displayName[0] || '?'
-                            )}
+                            <AvatarImage
+                                avatarUrl={selectedConversation.participant2.avatarUrl}
+                                seed={selectedConversation.participant2.handle}
+                                alt={selectedConversation.participant2.displayName || selectedConversation.participant2.handle}
+                            />
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                             <Link
@@ -439,11 +440,11 @@ export default function ChatPage() {
                                 flexDirection: msg.isSentByMe ? 'row-reverse' : 'row'
                             }}>
                                 <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
-                                    {msg.isSentByMe ? (
-                                        user.avatarUrl ? <img src={user.avatarUrl} alt="" /> : user.displayName[0]
-                                    ) : (
-                                        msg.senderAvatarUrl ? <img src={msg.senderAvatarUrl} alt="" /> : msg.senderDisplayName?.[0]
-                                    )}
+                                    <AvatarImage
+                                        avatarUrl={msg.isSentByMe ? user.avatarUrl : msg.senderAvatarUrl}
+                                        seed={msg.isSentByMe ? user.handle : msg.senderHandle}
+                                        alt={msg.isSentByMe ? user.displayName : msg.senderDisplayName || msg.senderHandle}
+                                    />
                                 </div>
 
                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: msg.isSentByMe ? 'flex-end' : 'flex-start' }}>
@@ -595,7 +596,11 @@ export default function ChatPage() {
                             style={{ cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: '12px' }}
                         >
                             <div className="avatar">
-                                {conv.participant2.avatarUrl ? <img src={conv.participant2.avatarUrl} alt="" /> : conv.participant2.displayName?.[0] || '?'}
+                                <AvatarImage
+                                    avatarUrl={conv.participant2.avatarUrl}
+                                    seed={conv.participant2.handle}
+                                    alt={conv.participant2.displayName || conv.participant2.handle}
+                                />
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>

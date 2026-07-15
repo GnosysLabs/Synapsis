@@ -5,6 +5,7 @@ import { BellIcon } from '@/components/Icons';
 import Link from 'next/link';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { getProfilePath } from '@/lib/utils/handle';
+import { AvatarImage } from '@/components/AvatarImage';
 
 interface NotificationActor {
     id: string;
@@ -218,32 +219,9 @@ function NotificationItem({
             }}
         >
             <Link href={actorProfilePath} style={{ flexShrink: 0 }}>
-                {actor?.avatarUrl ? (
-                    <img
-                        src={actor.avatarUrl}
-                        alt={actor.displayName || actor.handle}
-                        width={40}
-                        height={40}
-                        style={{ borderRadius: '50%', objectFit: 'cover' }}
-                    />
-                ) : (
-                    <div
-                        style={{
-                            width: 40,
-                            height: 40,
-                            borderRadius: '50%',
-                            background: 'var(--background-tertiary)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: 'var(--foreground-secondary)',
-                            fontSize: '16px',
-                            fontWeight: 600,
-                        }}
-                    >
-                        {(actor?.displayName || actor?.handle || '?')[0].toUpperCase()}
-                    </div>
-                )}
+                <div className="avatar">
+                    <AvatarImage avatarUrl={actor?.avatarUrl} seed={actor?.handle || 'unknown'} alt={actor?.displayName || actor?.handle || 'Unknown user'} />
+                </div>
             </Link>
 
             <div style={{ flex: 1, minWidth: 0 }}>

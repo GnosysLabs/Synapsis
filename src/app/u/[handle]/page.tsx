@@ -13,6 +13,7 @@ import { useFormattedHandle } from '@/lib/utils/handle';
 import { Bot } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
+import { AvatarImage } from '@/components/AvatarImage';
 
 interface BotOwner {
     id: string;
@@ -41,11 +42,7 @@ function UserRow({ user }: { user: UserSummary }) {
     return (
         <Link href={`/u/${user.handle}`} className="user-row">
             <div className="avatar">
-                {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt={user.displayName || user.handle} />
-                ) : (
-                    (user.displayName || user.handle).charAt(0).toUpperCase()
-                )}
+                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} alt={user.displayName || user.handle} />
             </div>
             <div className="user-row-content">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -568,11 +565,7 @@ export default function ProfilePage() {
                                 position: 'relative',
                             }}
                         >
-                            {(isEditing ? profileForm.avatarUrl : user.avatarUrl) ? (
-                                <img src={(isEditing ? profileForm.avatarUrl : user.avatarUrl) || ''} alt={user.displayName || user.handle} />
-                            ) : (
-                                (user.displayName || user.handle).charAt(0).toUpperCase()
-                            )}
+                            <AvatarImage avatarUrl={isEditing ? profileForm.avatarUrl : user.avatarUrl} seed={user.handle} alt={user.displayName || user.handle} />
                         </div>
 
                         <div style={{ paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>

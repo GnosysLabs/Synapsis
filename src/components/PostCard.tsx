@@ -14,6 +14,7 @@ import { useFormattedHandle } from '@/lib/utils/handle';
 import { useDomain } from '@/lib/contexts/ConfigContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
+import { AvatarImage } from '@/components/AvatarImage';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -638,11 +639,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                 <div className="post-header">
                     <Link href={`/u/${profileHandle}`} className="avatar-link" onClick={(e) => e.stopPropagation()}>
                         <div className="avatar">
-                            {post.author.avatarUrl ? (
-                                <img src={post.author.avatarUrl} alt={post.author.displayName || ''} />
-                            ) : (
-                                post.author.displayName?.charAt(0).toUpperCase() || post.author.handle.charAt(0).toUpperCase()
-                            )}
+                            <AvatarImage avatarUrl={post.author.avatarUrl} seed={post.author.handle} alt={post.author.displayName || post.author.handle} />
                         </div>
                     </Link>
                     <div className="post-author">
@@ -720,11 +717,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                 <div className="post-header">
                     <Link href={`/u/${profileHandle}`} className="avatar-link" onClick={(e) => e.stopPropagation()}>
                         <div className="avatar">
-                            {post.author.avatarUrl ? (
-                                <img src={post.author.avatarUrl} alt={post.author.displayName} />
-                            ) : (
-                                post.author.displayName?.charAt(0).toUpperCase() || post.author.handle.charAt(0).toUpperCase()
-                            )}
+                            <AvatarImage avatarUrl={post.author.avatarUrl} seed={post.author.handle} alt={post.author.displayName || post.author.handle} />
                         </div>
                     </Link>
                     <div className="post-author">

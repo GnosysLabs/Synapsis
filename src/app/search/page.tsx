@@ -9,6 +9,7 @@ import { Post } from '@/lib/types';
 import { Bot } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
+import { AvatarImage } from '@/components/AvatarImage';
 
 interface User {
     id: string;
@@ -82,11 +83,7 @@ function UserCard({ user }: { user: User }) {
             className="hover-bg"
         >
             <div className="avatar">
-                {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt={user.displayName} />
-                ) : (
-                    (user.displayName || user.handle).charAt(0).toUpperCase()
-                )}
+                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} alt={user.displayName || user.handle} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
