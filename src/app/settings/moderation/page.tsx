@@ -248,7 +248,7 @@ export default function ModerationSettingsPage() {
                             <input
                                 type="text"
                                 className="input"
-                                placeholder="node.example.com"
+                                placeholder="example.com"
                                 value={newNodeDomain}
                                 onChange={(e) => setNewNodeDomain(e.target.value)}
                                 style={{ flex: 1 }}

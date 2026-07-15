@@ -529,7 +529,7 @@ export default function ModerationPage() {
                                 <input
                                     value={nodeDomain}
                                     onChange={(e) => setNodeDomain(e.target.value)}
-                                    placeholder="node.example.com"
+                                    placeholder="example.com"
                                     className="input"
                                 />
                                 <textarea
