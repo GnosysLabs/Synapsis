@@ -21,9 +21,11 @@ export function ProfileBanner({
 }) {
     const { user } = useAuth();
     const { config } = useRuntimeConfig();
+    const localNodeIsNsfw = config?.isNsfw ?? false;
     const blurred = shouldBlurProfileMedia({
         accountIsNsfw: isNsfw,
-        nodeIsNsfw: nodeIsNsfw ?? config?.isNsfw ?? false,
+        nodeIsNsfw: nodeIsNsfw ?? localNodeIsNsfw,
+        localNodeIsNsfw,
         viewer: user,
     });
 

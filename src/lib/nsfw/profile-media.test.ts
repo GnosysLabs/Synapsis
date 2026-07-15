@@ -6,8 +6,17 @@ describe('shouldBlurProfileMedia', () => {
         expect(shouldBlurProfileMedia({ accountIsNsfw: true, viewer: null })).toBe(true);
     });
 
-    it('blurs every account from an NSFW node when the viewer has NSFW disabled', () => {
-        expect(shouldBlurProfileMedia({ nodeIsNsfw: true, viewer: { nsfwEnabled: false } })).toBe(true);
+    it('blurs media from an NSFW node for a viewer on a non-NSFW node with NSFW disabled', () => {
+        expect(shouldBlurProfileMedia({ nodeIsNsfw: true, localNodeIsNsfw: false, viewer: { nsfwEnabled: false } })).toBe(true);
+    });
+
+    it('shows sensitive media to an authenticated member of the local NSFW node', () => {
+        expect(shouldBlurProfileMedia({
+            accountIsNsfw: true,
+            nodeIsNsfw: true,
+            localNodeIsNsfw: true,
+            viewer: { nsfwEnabled: false },
+        })).toBe(false);
     });
 
     it('shows sensitive profile media when the viewer has enabled NSFW', () => {

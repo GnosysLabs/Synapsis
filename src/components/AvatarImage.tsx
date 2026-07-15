@@ -22,9 +22,11 @@ export function AvatarImage({ avatarUrl, seed, isNsfw = false, nodeIsNsfw, alt =
     const { config } = useRuntimeConfig();
     const customAvatar = avatarUrl?.trim();
     const src = customAvatar && failedAvatarUrl !== customAvatar ? customAvatar : getDiceBearAvatarUrl(seed);
+    const localNodeIsNsfw = config?.isNsfw ?? false;
     const blurred = shouldBlurProfileMedia({
         accountIsNsfw: isNsfw,
-        nodeIsNsfw: nodeIsNsfw ?? config?.isNsfw ?? false,
+        nodeIsNsfw: nodeIsNsfw ?? localNodeIsNsfw,
+        localNodeIsNsfw,
         viewer: user,
     });
 

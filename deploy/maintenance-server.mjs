@@ -1,7 +1,77 @@
 import http from 'node:http';
+import { dirname, join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 
 const host = process.env.MAINTENANCE_HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT || '43821', 10);
+const dataDir = process.env.MAINTENANCE_DATA_DIR
+    || dirname(process.env.DATABASE_PATH || '/var/lib/synapsis/synapsis.db');
+const brandingPath = join(dataDir, 'maintenance-branding.json');
+const logoPath = join(dataDir, 'maintenance-logo');
+
+function validAccent(value) {
+    return typeof value === 'string' && /^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(value)
+        ? value
+        : '#9fdf5f';
+}
+
+async function captureBranding() {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await mkdir(dataDir, { recursive: true });
+    const nodeResponse = await fetch(`${baseUrl}/api/node`, { cache: 'no-store' });
+    if (!nodeResponse.ok) throw new Error(`Node branding returned HTTP ${nodeResponse.status}`);
+
+    const node = await nodeResponse.json();
+    const branding = {
+        accentColor: validAccent(node.accentColor),
+        externalLogoUrl: typeof node.logoUrl === 'string' && /^https?:\/\//i.test(node.logoUrl)
+            ? node.logoUrl
+            : null,
+        logoContentType: null,
+    };
+
+    const logoResponse = await fetch(`${baseUrl}/api/node/logo`, { cache: 'no-store' });
+    if (logoResponse.ok) {
+        const contentType = logoResponse.headers.get('content-type')?.split(';')[0];
+        if (contentType?.startsWith('image/')) {
+            const logoTempPath = `${logoPath}.tmp`;
+            await writeFile(logoTempPath, Buffer.from(await logoResponse.arrayBuffer()));
+            await rename(logoTempPath, logoPath);
+            branding.logoContentType = contentType;
+        } else {
+            await rm(logoPath, { force: true });
+        }
+    } else {
+        await rm(logoPath, { force: true });
+    }
+
+    const brandingTempPath = `${brandingPath}.tmp`;
+    await writeFile(brandingTempPath, `${JSON.stringify(branding)}\n`, { mode: 0o640 });
+    await rename(brandingTempPath, brandingPath);
+}
+
+if (process.argv.includes('--capture-branding')) {
+    await captureBranding();
+    process.exit(0);
+}
+
+let branding = {};
+try {
+    branding = JSON.parse(readFileSync(brandingPath, 'utf8'));
+} catch {}
+
+const accentColor = validAccent(branding.accentColor);
+const logoContentType = typeof branding.logoContentType === 'string' && branding.logoContentType.startsWith('image/')
+    ? branding.logoContentType
+    : 'application/octet-stream';
+const externalLogoUrl = typeof branding.externalLogoUrl === 'string' && /^https?:\/\//i.test(branding.externalLogoUrl)
+    ? branding.externalLogoUrl
+    : null;
+const hasStoredLogo = existsSync(logoPath);
+const logoMarkup = hasStoredLogo || externalLogoUrl
+    ? '<img class="logo" src="/maintenance-logo" alt="Node logo">'
+    : '<div class="brand-fallback">Synapsis</div>';
 
 const page = `<!doctype html>
 <html lang="en">
@@ -11,23 +81,24 @@ const page = `<!doctype html>
   <meta name="theme-color" content="#090909">
   <title>Update in progress</title>
   <style>
-    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    :root { --accent: ${accentColor}; color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; overflow: hidden; background: #090909; color: #f5f5f5; }
-    body::before { content: ""; position: fixed; width: 34rem; height: 34rem; border-radius: 50%; background: rgba(159, 223, 95, .13); filter: blur(110px); transform: translate(-38vw, -30vh); }
+    body::before { content: ""; position: fixed; width: 34rem; height: 34rem; border-radius: 50%; background: color-mix(in srgb, var(--accent) 13%, transparent); filter: blur(110px); transform: translate(-38vw, -30vh); }
     main { width: min(90vw, 34rem); padding: 3rem; text-align: center; border: 1px solid #292929; border-radius: 1.75rem; background: rgba(18, 18, 18, .92); box-shadow: 0 2rem 7rem rgba(0, 0, 0, .5); }
-    .mark { width: 4.25rem; height: 4.25rem; margin: 0 auto 1.5rem; display: grid; place-items: center; border-radius: 1.25rem; background: #9fdf5f; color: #0b1305; font-size: 2rem; font-weight: 800; box-shadow: 0 0 2.5rem rgba(159, 223, 95, .25); }
+    .logo { display: block; width: auto; max-width: min(18rem, 75%); height: auto; max-height: 6rem; margin: 0 auto 2rem; object-fit: contain; filter: drop-shadow(0 0 1.75rem color-mix(in srgb, var(--accent) 35%, transparent)); }
+    .brand-fallback { margin: 0 auto 2rem; color: var(--accent); font-size: 1.5rem; font-weight: 800; letter-spacing: -.04em; }
     h1 { margin: 0; font-size: clamp(1.75rem, 6vw, 2.5rem); letter-spacing: -.045em; }
     p { margin: 1rem auto 0; max-width: 25rem; color: #a6a6a6; font-size: 1.05rem; line-height: 1.6; }
     .status { margin-top: 2rem; display: inline-flex; align-items: center; gap: .65rem; color: #d7d7d7; font-size: .9rem; }
-    .dot { width: .6rem; height: .6rem; border-radius: 50%; background: #9fdf5f; animation: pulse 1.4s ease-in-out infinite; }
+    .dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
     @keyframes pulse { 50% { opacity: .3; transform: scale(.75); } }
     @media (max-width: 520px) { main { padding: 2.25rem 1.5rem; } }
   </style>
 </head>
 <body>
   <main>
-    <div class="mark" aria-hidden="true">S</div>
+    ${logoMarkup}
     <h1>Update in progress</h1>
     <p>We’re making Synapsis better. We’ll be right back!</p>
     <div class="status"><span class="dot"></span>Checking for the node…</div>
@@ -44,6 +115,24 @@ const page = `<!doctype html>
 </html>`;
 
 const server = http.createServer((request, response) => {
+    if (request.url?.split('?')[0] === '/maintenance-logo') {
+        if (hasStoredLogo) {
+            const logo = readFileSync(logoPath);
+            response.writeHead(200, {
+                'Content-Type': logoContentType,
+                'Content-Length': logo.byteLength,
+                'Cache-Control': 'no-store, max-age=0',
+            });
+            response.end(logo);
+            return;
+        }
+        if (externalLogoUrl) {
+            response.writeHead(302, { Location: externalLogoUrl, 'Cache-Control': 'no-store, max-age=0' });
+            response.end();
+            return;
+        }
+    }
+
     response.writeHead(503, {
         'Content-Type': 'text/html; charset=utf-8',
         'Content-Length': Buffer.byteLength(page),
