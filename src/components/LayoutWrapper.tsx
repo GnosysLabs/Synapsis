@@ -4,9 +4,12 @@ import { usePathname } from 'next/navigation';
 import { Sidebar } from './Sidebar';
 import { RightSidebar } from './RightSidebar';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
+import { isAppBootstrapReady } from '@/lib/bootstrap/readiness';
 
 export function LayoutWrapper({ children }: { children: React.ReactNode }) {
     const { loading } = useAuth();
+    const { isLoading: configLoading } = useRuntimeConfig();
     const pathname = usePathname();
 
     // Paths that should NOT have the app layout
@@ -17,7 +20,7 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
     // Hide right sidebar on chat page for more space
     const hideRightSidebar = false;
 
-    if (loading) {
+    if (!isAppBootstrapReady({ authLoading: loading, configLoading })) {
         return (
             <div style={{
                 height: '100vh',

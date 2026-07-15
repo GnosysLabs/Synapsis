@@ -10,6 +10,7 @@ import { Bot, Network, Server, EyeOff } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
+import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 
 interface User {
     id: string;
@@ -85,6 +86,7 @@ interface SwarmPost {
 
 export default function ExplorePage() {
     const { user, did, handle } = useAuth();
+    const { config } = useRuntimeConfig();
     const [query, setQuery] = useState('');
     const [activeTab, setActiveTab] = useState<'node' | 'swarm' | 'users' | 'search'>('node');
     const [nodePosts, setNodePosts] = useState<Post[]>([]);
@@ -99,17 +101,7 @@ export default function ExplorePage() {
     const [loadingMore, setLoadingMore] = useState(false);
     const [hasMoreNode, setHasMoreNode] = useState(true);
     const [hasMoreSwarm, setHasMoreSwarm] = useState(true);
-    const [isNsfwNode, setIsNsfwNode] = useState(false);
-
-    // Fetch node info to check if NSFW
-    useEffect(() => {
-        fetch('/api/node')
-            .then(res => res.json())
-            .then(data => {
-                setIsNsfwNode(data.isNsfw || false);
-            })
-            .catch(() => { });
-    }, []);
+    const isNsfwNode = config?.isNsfw === true;
 
     useEffect(() => {
         // Load node posts (local only)
