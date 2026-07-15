@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { Eye, EyeOff, AlertTriangle, Check } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
+import { shouldExposeAccountNsfwSettings } from '@/lib/nsfw/settings-visibility';
 
 interface NsfwSettings {
     nsfwEnabled: boolean;
@@ -14,6 +16,7 @@ interface NsfwSettings {
 
 export default function ContentSettingsPage() {
     const { isIdentityUnlocked, signUserAction, setShowUnlockPrompt } = useAuth();
+    const { config, isLoading: configLoading } = useRuntimeConfig();
     const [settings, setSettings] = useState<NsfwSettings | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -162,11 +165,43 @@ export default function ContentSettingsPage() {
         }
     };
 
-    if (loading) {
+    if (loading || configLoading) {
         return (
             <div style={{ maxWidth: '600px', margin: '0 auto', padding: '24px 16px 64px' }}>
                 <div style={{ textAlign: 'center', padding: '48px', color: 'var(--foreground-tertiary)' }}>
                     Loading...
+                </div>
+            </div>
+        );
+    }
+
+    if (!shouldExposeAccountNsfwSettings(config?.isNsfw ?? false)) {
+        return (
+            <div style={{ maxWidth: '600px', margin: '0 auto', padding: '24px 16px 64px' }}>
+                <header style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '16px',
+                    marginBottom: '32px',
+                }}>
+                    <Link href="/settings" style={{ color: 'var(--foreground)' }}>
+                        <ArrowLeftIcon />
+                    </Link>
+                    <div>
+                        <h1 style={{ fontSize: '24px', fontWeight: 700 }}>Content Settings</h1>
+                        <p style={{ color: 'var(--foreground-tertiary)', fontSize: '14px' }}>
+                            Content visibility is managed by this node
+                        </p>
+                    </div>
+                </header>
+
+                <div className="card" style={{ padding: '20px' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '8px' }}>
+                        NSFW content is enabled on this node
+                    </div>
+                    <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.6 }}>
+                        This node is designated NSFW, so NSFW viewing and account sensitivity are handled at the node level. There’s nothing to configure for this account.
+                    </div>
                 </div>
             </div>
         );

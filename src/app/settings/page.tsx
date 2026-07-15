@@ -3,8 +3,14 @@
 import Link from 'next/link';
 
 import { Rocket, Shield, Bell, Eye, UserX, HardDrive } from 'lucide-react';
+import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
+import { shouldExposeAccountNsfwSettings } from '@/lib/nsfw/settings-visibility';
 
 export default function SettingsPage() {
+    const { config, isLoading: configLoading } = useRuntimeConfig();
+    const showContentSettings = !configLoading
+        && shouldExposeAccountNsfwSettings(config?.isNsfw ?? false);
+
     return (
         <>
             <header style={{
@@ -43,21 +49,23 @@ export default function SettingsPage() {
                     </Link>
 
 
-                    <Link href="/settings/content" className="card" style={{
-                        display: 'block',
-                        padding: '20px',
-                        textDecoration: 'none',
-                        color: 'var(--foreground)',
-                        transition: 'border-color 0.15s ease',
-                    }}>
-                        <div style={{ fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <Eye size={18} />
-                            Content Settings
-                        </div>
-                        <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px' }}>
-                            NSFW preferences and content visibility
-                        </div>
-                    </Link>
+                    {showContentSettings && (
+                        <Link href="/settings/content" className="card" style={{
+                            display: 'block',
+                            padding: '20px',
+                            textDecoration: 'none',
+                            color: 'var(--foreground)',
+                            transition: 'border-color 0.15s ease',
+                        }}>
+                            <div style={{ fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Eye size={18} />
+                                Content Settings
+                            </div>
+                            <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px' }}>
+                                NSFW preferences and content visibility
+                            </div>
+                        </Link>
+                    )}
 
                     <Link href="/settings/privacy" className="card" style={{
                         display: 'block',
