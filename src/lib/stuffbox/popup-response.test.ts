@@ -1,0 +1,13 @@
+import { describe, expect, it } from 'vitest';
+import { renderStuffboxPopupResponse } from './popup-response';
+
+describe('renderStuffboxPopupResponse', () => {
+  it('notifies the main tab without navigating the popup into Synapsis', () => {
+    const html = renderStuffboxPopupResponse('https://synapsis.example', true, 'Stuffbox connected.');
+
+    expect(html).toContain("new BroadcastChannel('synapsis:stuffbox')");
+    expect(html).toContain("localStorage.setItem('synapsis:stuffbox:result'");
+    expect(html).toContain('window.close()');
+    expect(html).not.toContain('window.location.replace');
+  });
+});

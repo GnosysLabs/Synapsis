@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import AutoTextarea from '@/components/AutoTextarea';
 import { Post, Attachment } from '@/lib/types';
 import { ImageIcon, AlertTriangle, Film } from 'lucide-react';
@@ -8,7 +8,7 @@ import { VideoEmbed } from '@/components/VideoEmbed';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
-import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 
 interface MediaAttachment extends Attachment {
     mimeType?: string;
@@ -29,7 +29,9 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
     const [isPosting, setIsPosting] = useState(false);
     const [attachments, setAttachments] = useState<MediaAttachment[]>([]);
     const [isUploading, setIsUploading] = useState(false);
+    const [isCheckingStorage, setIsCheckingStorage] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
+    const [storageNotice, setStorageNotice] = useState<string | null>(null);
     const [pendingStorageFiles, setPendingStorageFiles] = useState<File[]>([]);
     const [showStorageConfiguration, setShowStorageConfiguration] = useState(false);
     const [linkPreview, setLinkPreview] = useState<any>(null);
@@ -38,6 +40,7 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
     const [isNsfw, setIsNsfw] = useState(false);
     const [canPostNsfw, setCanPostNsfw] = useState(false);
     const [isNsfwNode, setIsNsfwNode] = useState(false);
+    const mediaInputRef = useRef<HTMLInputElement>(null);
     const maxLength = 600;
     const remaining = maxLength - content.length;
     const previewMedia = linkPreview?.media?.length
@@ -164,6 +167,24 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
         await uploadMediaFiles(files);
     };
 
+    const handleAddMedia = async () => {
+        setUploadError(null);
+        setStorageNotice(null);
+        setIsCheckingStorage(true);
+        try {
+            const provider = await getStorageProvider();
+            if (!provider) {
+                setShowStorageConfiguration(true);
+                return;
+            }
+            mediaInputRef.current?.click();
+        } catch (error) {
+            setUploadError(error instanceof Error ? error.message : 'Unable to check media storage');
+        } finally {
+            setIsCheckingStorage(false);
+        }
+    };
+
     const handleRemoveAttachment = (id: string) => {
         setAttachments((prev) => prev.filter((item) => item.id !== id));
     };
@@ -176,7 +197,12 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
                     setShowStorageConfiguration(false);
                     const files = pendingStorageFiles;
                     setPendingStorageFiles([]);
-                    await uploadMediaFiles(files);
+                    if (files.length > 0) {
+                        await uploadMediaFiles(files);
+                        return;
+                    }
+                    setStorageNotice('Stuffbox connected. Choose your media to continue.');
+                    mediaInputRef.current?.click();
                 }}
                 onCancel={() => {
                     setShowStorageConfiguration(false);
@@ -274,6 +300,9 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
             {uploadError && (
                 <div className="compose-media-error">{uploadError}</div>
             )}
+            {storageNotice && (
+                <div style={{ color: 'var(--success)', fontSize: '13px', marginTop: '8px' }}>{storageNotice}</div>
+            )}
             <div className="compose-footer">
                 <div className="compose-footer-left">
                     <span className={`compose-counter ${remaining < 50 ? (remaining < 0 ? 'error' : 'warning') : ''}`}>
@@ -292,20 +321,24 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
                     )}
                 </div>
                 <div className="compose-actions">
-                    <label
+                    <button
+                        type="button"
                         className="compose-media-button"
                         title="Add media"
+                        onClick={handleAddMedia}
+                        disabled={isUploading || isCheckingStorage || attachments.length >= 4}
                     >
-                        {isUploading ? '...' : <ImageIcon size={20} />}
-                        <input
-                            type="file"
-                            accept="image/*,video/mp4,video/webm,video/quicktime"
-                            multiple
-                            onChange={handleMediaSelect}
-                            disabled={isUploading || attachments.length >= 4}
-                            className="compose-media-input"
-                        />
-                    </label>
+                        {isUploading || isCheckingStorage ? '...' : <ImageIcon size={20} />}
+                    </button>
+                    <input
+                        ref={mediaInputRef}
+                        type="file"
+                        accept="image/*,video/mp4,video/webm,video/quicktime"
+                        multiple
+                        onChange={handleMediaSelect}
+                        disabled={isUploading || attachments.length >= 4}
+                        className="compose-media-input"
+                    />
                     <button
                         className="btn btn-primary"
                         onClick={handleSubmit}

@@ -717,6 +717,9 @@ a.btn-primary:visited {
   color: var(--foreground-secondary);
   cursor: pointer;
   transition: all 0.15s ease;
+  border: none;
+  padding: 0;
+  background: transparent;
 }
 
 .compose-media-button:hover {
@@ -725,10 +728,7 @@ a.btn-primary:visited {
 }
 
 .compose-media-input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
+  display: none;
 }
 
 .compose-media-error {

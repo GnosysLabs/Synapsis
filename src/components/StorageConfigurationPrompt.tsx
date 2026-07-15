@@ -60,21 +60,52 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel, varia
             const data = await response.json().catch(() => ({}));
             if (!response.ok || !data.authorizationUrl) throw new Error(data.error || 'Unable to connect Stuffbox');
             const result = new Promise<void>((resolve, reject) => {
+                let settled = false;
+                let channel: BroadcastChannel | null = null;
                 const timeout = window.setTimeout(() => {
-                    window.removeEventListener('message', receive);
-                    reject(new Error('Stuffbox connection timed out.'));
+                    finish({ type: 'synapsis:stuffbox', success: false, message: 'Stuffbox connection timed out.' });
                 }, 10 * 60_000);
+                const popupClosed = window.setInterval(() => {
+                    if (popup.closed) finish({ type: 'synapsis:stuffbox', success: false, message: 'The Stuffbox window was closed before connecting.' });
+                }, 500);
+
+                function cleanup() {
+                    window.clearTimeout(timeout);
+                    window.clearInterval(popupClosed);
+                    window.removeEventListener('message', receive);
+                    window.removeEventListener('storage', receiveStorage);
+                    channel?.close();
+                }
+
+                function finish(data: { type?: string; success?: boolean; message?: string }) {
+                    if (settled || data.type !== 'synapsis:stuffbox') return;
+                    settled = true;
+                    cleanup();
+                    window.focus();
+                    if (data.success) resolve();
+                    else reject(new Error(data.message || 'Stuffbox could not be connected.'));
+                }
+
                 function receive(event: MessageEvent) {
                     if (event.origin !== window.location.origin || event.data?.type !== 'synapsis:stuffbox') return;
-                    window.clearTimeout(timeout);
-                    window.removeEventListener('message', receive);
-                    if (event.data.success) resolve();
-                    else reject(new Error(event.data.message || 'Stuffbox could not be connected.'));
+                    finish(event.data);
                 }
+
+                function receiveStorage(event: StorageEvent) {
+                    if (event.key !== 'synapsis:stuffbox:result' || !event.newValue) return;
+                    try { finish(JSON.parse(event.newValue)); } catch { /* Ignore unrelated storage values. */ }
+                }
+
                 window.addEventListener('message', receive);
+                window.addEventListener('storage', receiveStorage);
+                if ('BroadcastChannel' in window) {
+                    channel = new BroadcastChannel('synapsis:stuffbox');
+                    channel.onmessage = (event) => finish(event.data);
+                }
             });
             popup.location.href = data.authorizationUrl;
             await result;
+            if (!popup.closed) popup.close();
             await onConfigured();
         } catch (connectError) {
             if (!popup.closed) popup.close();

@@ -3,20 +3,10 @@ import { requireAuth } from '@/lib/auth';
 import { exchangeAuthorizationCode, StuffboxApiError } from '@/lib/stuffbox/client';
 import { consumeStuffboxConnectionState } from '@/lib/stuffbox/connection-state';
 import { saveStuffboxTokens } from '@/lib/stuffbox/tokens';
+import { renderStuffboxPopupResponse } from '@/lib/stuffbox/popup-response';
 
 function popupResponse(origin: string, success: boolean, message: string): NextResponse {
-  const safeJson = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
-  const payload = safeJson({ type: 'synapsis:stuffbox', success, message });
-  const targetOrigin = safeJson(origin);
-  const fallback = success ? '/settings/storage?stuffbox=connected' : '/settings/storage?stuffbox=error';
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Stuffbox</title></head><body>
-    <p>${success ? 'Stuffbox connected. You can close this window.' : 'Stuffbox could not be connected.'}</p>
-    <script>
-      if (window.opener) { window.opener.postMessage(${payload}, ${targetOrigin}); window.close(); }
-      else { window.location.replace(${safeJson(fallback)}); }
-    </script>
-  </body></html>`;
-  return new NextResponse(html, {
+  return new NextResponse(renderStuffboxPopupResponse(origin, success, message), {
     status: success ? 200 : 400,
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
   });

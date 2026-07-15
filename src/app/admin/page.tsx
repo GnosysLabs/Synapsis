@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import AutoTextarea from '@/components/AutoTextarea';
 import { StorageSessionPrompt } from '@/components/StorageSessionPrompt';
@@ -8,7 +8,7 @@ import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPro
 import { useToast } from '@/lib/contexts/ToastContext';
 import { useAccentColor } from '@/lib/contexts/AccentColorContext';
 import { refreshStorageSession } from '@/lib/storage/client';
-import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 
 export default function AdminPage() {
     const { showToast } = useToast();
@@ -30,6 +30,7 @@ export default function AdminPage() {
     });
     const [savingSettings, setSavingSettings] = useState(false);
     const [isUploadingBanner, setIsUploadingBanner] = useState(false);
+    const [isCheckingBannerStorage, setIsCheckingBannerStorage] = useState(false);
     const [bannerUploadError, setBannerUploadError] = useState<string | null>(null);
     const [showBannerSessionPrompt, setShowBannerSessionPrompt] = useState(false);
     const [showBannerStorageConfiguration, setShowBannerStorageConfiguration] = useState(false);
@@ -41,6 +42,7 @@ export default function AdminPage() {
     const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
     const [isUploadingFavicon, setIsUploadingFavicon] = useState(false);
     const [faviconUploadError, setFaviconUploadError] = useState<string | null>(null);
+    const bannerInputRef = useRef<HTMLInputElement>(null);
     useEffect(() => {
         fetch('/api/admin/me')
             .then((res) => res.json())
@@ -143,6 +145,23 @@ export default function AdminPage() {
         if (!file) return;
 
         await uploadBannerFile(file);
+    };
+
+    const handleChooseBanner = async () => {
+        setBannerUploadError(null);
+        setIsCheckingBannerStorage(true);
+        try {
+            const provider = await getStorageProvider();
+            if (!provider) {
+                setShowBannerStorageConfiguration(true);
+                return;
+            }
+            bannerInputRef.current?.click();
+        } catch (error) {
+            setBannerUploadError(error instanceof Error ? error.message : 'Unable to check media storage');
+        } finally {
+            setIsCheckingBannerStorage(false);
+        }
     };
 
     const handleBannerSessionSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -418,16 +437,17 @@ export default function AdminPage() {
                             <div>
                                 <label style={{ fontSize: '13px', fontWeight: 500, marginBottom: '4px', display: 'block' }}>Banner image</label>
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                                    <label className="btn btn-ghost btn-sm">
-                                        {isUploadingBanner ? 'Uploading...' : 'Upload banner'}
-                                        <input
-                                            type="file"
-                                            accept="image/*"
-                                            onChange={handleBannerUpload}
-                                            disabled={isUploadingBanner}
-                                            style={{ display: 'none' }}
-                                        />
-                                    </label>
+                                    <button className="btn btn-ghost btn-sm" type="button" onClick={handleChooseBanner} disabled={isUploadingBanner || isCheckingBannerStorage}>
+                                        {isUploadingBanner ? 'Uploading...' : isCheckingBannerStorage ? 'Checking storage…' : 'Upload banner'}
+                                    </button>
+                                    <input
+                                        ref={bannerInputRef}
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={handleBannerUpload}
+                                        disabled={isUploadingBanner}
+                                        style={{ display: 'none' }}
+                                    />
                                     {bannerUploadError && (
                                         <span style={{ fontSize: '12px', color: 'var(--danger)' }}>{bannerUploadError}</span>
                                     )}
@@ -608,7 +628,12 @@ export default function AdminPage() {
                 open={showBannerStorageConfiguration}
                 onConfigured={async () => {
                     setShowBannerStorageConfiguration(false);
-                    if (pendingBannerFile) await uploadBannerFile(pendingBannerFile, false);
+                    if (pendingBannerFile) {
+                        await uploadBannerFile(pendingBannerFile, false);
+                        return;
+                    }
+                    showToast('Stuffbox connected. Choose a banner to continue.', 'success');
+                    bannerInputRef.current?.click();
                 }}
                 onCancel={() => {
                     setShowBannerStorageConfiguration(false);

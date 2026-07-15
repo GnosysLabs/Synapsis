@@ -28,8 +28,21 @@ interface JsonResponse extends Record<string, unknown> {
   provider?: string | null;
 }
 
+export type StorageProvider = 'stuffbox' | 's3' | null;
+
 async function json(response: Response): Promise<JsonResponse> {
   return response.json().catch(() => ({})) as Promise<JsonResponse>;
+}
+
+export async function getStorageProvider(): Promise<StorageProvider> {
+  const response = await fetch('/api/storage/configuration', { cache: 'no-store' });
+  const configuration = await json(response);
+  if (!response.ok) {
+    throw new MediaUploadError(configuration.error || 'Unable to load storage configuration', undefined, response.status);
+  }
+  return configuration.provider === 'stuffbox' || configuration.provider === 's3'
+    ? configuration.provider
+    : null;
 }
 
 function directPut(
@@ -105,13 +118,8 @@ export async function uploadMediaFile(
   file: File,
   onProgress?: (progress: number) => void,
 ): Promise<UploadedMedia> {
-  const configurationResponse = await fetch('/api/storage/configuration', { cache: 'no-store' });
-  const configuration = await json(configurationResponse);
-  if (!configurationResponse.ok) {
-    throw new MediaUploadError(configuration.error || 'Unable to load storage configuration', undefined, configurationResponse.status);
-  }
-
-  if (configuration.provider === 'stuffbox') return uploadToStuffbox(file, onProgress);
-  if (configuration.provider === 's3') return uploadToS3(file);
+  const provider = await getStorageProvider();
+  if (provider === 'stuffbox') return uploadToStuffbox(file, onProgress);
+  if (provider === 's3') return uploadToS3(file);
   throw new MediaUploadError('Connect media storage before uploading.', 'STORAGE_NOT_CONFIGURED', 409);
 }

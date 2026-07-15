@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { StorageSessionPrompt } from '@/components/StorageSessionPrompt';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { refreshStorageSession } from '@/lib/storage/client';
-import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 
 interface UserStorageImageUploadProps {
     label: string;
@@ -29,6 +29,8 @@ export function UserStorageImageUpload({
 }: UserStorageImageUploadProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const [isUploading, setIsUploading] = useState(false);
+    const [isCheckingStorage, setIsCheckingStorage] = useState(false);
+    const [storageNotice, setStorageNotice] = useState('');
     const [showSessionPrompt, setShowSessionPrompt] = useState(false);
     const [showConfigurationPrompt, setShowConfigurationPrompt] = useState(false);
     const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -79,6 +81,24 @@ export function UserStorageImageUpload({
         await uploadFile(file);
     };
 
+    const handleChooseFile = async () => {
+        setIsCheckingStorage(true);
+        setStorageNotice('');
+        onError?.('');
+        try {
+            const provider = await getStorageProvider();
+            if (!provider) {
+                setShowConfigurationPrompt(true);
+                return;
+            }
+            inputRef.current?.click();
+        } catch (error) {
+            onError?.(error instanceof Error ? error.message : 'Unable to check media storage');
+        } finally {
+            setIsCheckingStorage(false);
+        }
+    };
+
     const handlePromptSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
 
@@ -120,17 +140,17 @@ export function UserStorageImageUpload({
                     {label}
                 </label>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <label className="btn btn-ghost btn-sm" style={{ cursor: isUploading ? 'default' : 'pointer' }}>
-                        {isUploading ? 'Uploading...' : 'Choose File'}
-                        <input
-                            ref={inputRef}
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileChange}
-                            disabled={isUploading}
-                            style={{ display: 'none' }}
-                        />
-                    </label>
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={handleChooseFile} disabled={isUploading || isCheckingStorage}>
+                        {isUploading ? 'Uploading...' : isCheckingStorage ? 'Checking storage…' : 'Choose File'}
+                    </button>
+                    <input
+                        ref={inputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                        disabled={isUploading}
+                        style={{ display: 'none' }}
+                    />
 
                     {value && (
                         <div
@@ -168,6 +188,11 @@ export function UserStorageImageUpload({
                         {helperText}
                     </p>
                 )}
+                {storageNotice && (
+                    <p style={{ fontSize: '13px', color: 'var(--success)', marginTop: '6px' }}>
+                        {storageNotice}
+                    </p>
+                )}
             </div>
 
             <StorageSessionPrompt
@@ -186,7 +211,12 @@ export function UserStorageImageUpload({
                 open={showConfigurationPrompt}
                 onConfigured={async () => {
                     setShowConfigurationPrompt(false);
-                    if (pendingFile) await uploadFile(pendingFile, false);
+                    if (pendingFile) {
+                        await uploadFile(pendingFile, false);
+                        return;
+                    }
+                    setStorageNotice('Stuffbox connected. Choose your file to continue.');
+                    inputRef.current?.click();
                 }}
                 onCancel={() => {
                     setShowConfigurationPrompt(false);
