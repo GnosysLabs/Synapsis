@@ -97,17 +97,22 @@ export function configuredStuffboxUrl(): string | null {
 }
 
 export async function createConnectionRequest(baseUrl: string, input: {
-  nodeName: string;
   callbackUrl: string;
   codeChallenge: string;
   state: string;
   scopes: readonly StuffboxScope[];
-}): Promise<{ id: string; authorizationUrl: string; expiresAt: string }> {
+}): Promise<{
+  id: string;
+  clientId: string;
+  callbackUrl: string;
+  authorizationUrl: string;
+  expiresAt: string;
+}> {
   const data = object(await request(baseUrl, '/api/v1/connection-requests', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      node_name: input.nodeName,
+      registration_mode: 'self_hosted',
       callback_url: input.callbackUrl,
       code_challenge: input.codeChallenge,
       code_challenge_method: 'S256',
@@ -117,12 +122,15 @@ export async function createConnectionRequest(baseUrl: string, input: {
   }));
   return {
     id: string(data, 'id', 'request_id'),
+    clientId: string(data, 'client_id'),
+    callbackUrl: string(data, 'callback_url'),
     authorizationUrl: string(data, 'authorizationUrl', 'authorization_url'),
     expiresAt: string(data, 'expiresAt', 'expires_at'),
   };
 }
 
 export async function exchangeAuthorizationCode(baseUrl: string, input: {
+  clientId: string;
   code: string;
   codeVerifier: string;
   redirectUri: string;
@@ -132,6 +140,7 @@ export async function exchangeAuthorizationCode(baseUrl: string, input: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       grant_type: 'authorization_code',
+      client_id: input.clientId,
       code: input.code,
       code_verifier: input.codeVerifier,
       redirect_uri: input.redirectUri,

@@ -29,12 +29,13 @@ export async function GET(request: NextRequest) {
     }
 
     const tokens = await exchangeAuthorizationCode(pending.baseUrl, {
+      clientId: pending.clientId,
       code,
       codeVerifier: pending.verifier,
-      redirectUri: pending.redirectUri,
+      redirectUri: pending.callbackUrl,
     });
     await saveStuffboxTokens(user.id, pending.baseUrl, tokens);
-    return popupResponse(new URL(pending.redirectUri).origin, true, 'Stuffbox connected.', attemptId);
+    return popupResponse(new URL(pending.callbackUrl).origin, true, 'Stuffbox connected.', attemptId);
   } catch (error) {
     if (error instanceof StuffboxApiError) {
       return popupResponse(origin, false, error.message, attemptId);

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
 import { requireAuth } from '@/lib/auth';
 import { configuredStuffboxUrl, createConnectionRequest, StuffboxApiError } from '@/lib/stuffbox/client';
 import { saveStuffboxConnectionState } from '@/lib/stuffbox/connection-state';
@@ -27,14 +26,10 @@ export async function POST(request: NextRequest) {
     }
 
     const origin = nodeOrigin(request);
-    const redirectUri = `${origin}/api/storage/stuffbox/callback`;
-    const node = user.nodeId
-      ? await db.query.nodes.findFirst({ where: { id: user.nodeId } })
-      : null;
+    const callbackUrl = `${origin}/api/storage/stuffbox/callback`;
     const pkce = generatePkce();
     const connection = await createConnectionRequest(baseUrl, {
-      nodeName: node?.name || new URL(origin).host,
-      callbackUrl: redirectUri,
+      callbackUrl,
       codeChallenge: pkce.challenge,
       state: pkce.state,
       scopes: STUFFBOX_SCOPES,
@@ -43,9 +38,10 @@ export async function POST(request: NextRequest) {
     await saveStuffboxConnectionState({
       userId: user.id,
       baseUrl,
+      clientId: connection.clientId,
       verifier: pkce.verifier,
       state: pkce.state,
-      redirectUri,
+      callbackUrl: connection.callbackUrl,
       expiresAt: Math.min(Date.parse(connection.expiresAt) || Date.now() + 10 * 60_000, Date.now() + 10 * 60_000),
     });
 

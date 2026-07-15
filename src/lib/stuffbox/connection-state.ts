@@ -7,9 +7,10 @@ const CONTEXT = 'stuffbox-connection-state';
 export interface StuffboxConnectionState {
   userId: string;
   baseUrl: string;
+  clientId: string;
   verifier: string;
   state: string;
-  redirectUri: string;
+  callbackUrl: string;
   expiresAt: number;
 }
 
@@ -30,8 +31,20 @@ export async function consumeStuffboxConnectionState(): Promise<StuffboxConnecti
   cookieStore.delete(COOKIE_NAME);
   if (!token) return null;
   try {
-    const value = JSON.parse(openStuffboxSecret(token, CONTEXT)) as StuffboxConnectionState;
-    return value.expiresAt > Date.now() ? value : null;
+    const value = JSON.parse(openStuffboxSecret(token, CONTEXT)) as Partial<StuffboxConnectionState>;
+    if (
+      typeof value.userId !== 'string'
+      || typeof value.baseUrl !== 'string'
+      || typeof value.clientId !== 'string'
+      || typeof value.verifier !== 'string'
+      || typeof value.state !== 'string'
+      || typeof value.callbackUrl !== 'string'
+      || typeof value.expiresAt !== 'number'
+      || value.expiresAt <= Date.now()
+    ) {
+      return null;
+    }
+    return value as StuffboxConnectionState;
   } catch {
     return null;
   }

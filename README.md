@@ -61,7 +61,7 @@ Uninstalling preserves the database and environment by default. Pass `--purge-da
 
 The node database is a local embedded Turso/SQLite file. Media remains in storage controlled by each user, so exported accounts retain portable media URLs and can move between Synapsis nodes without requiring the old node to transfer a shared upload directory.
 
-Stuffbox is the default integration. New installs use `https://stuffbox.xyz`; set `STUFFBOX_URL` to a different public URL when using another or self-hosted Stuffbox service. Synapsis uses a consent and PKCE flow, keeps the resulting tokens encrypted with `AUTH_SECRET`, and sends file bytes directly from the user's browser to Stuffbox.
+Stuffbox is the default integration. New installs use `https://stuffbox.xyz`; set `STUFFBOX_URL` to a different public URL when using another or self-hosted Stuffbox service. Each Synapsis install registers its callback automatically the first time a user connects, so node operators do not need to create or configure a Stuffbox client ID. Synapsis uses a consent and PKCE flow, keeps the resulting tokens encrypted with `AUTH_SECRET`, and sends file bytes directly from the user's browser to Stuffbox.
 
 User-owned S3-compatible storage remains available as an advanced fallback. Supported providers include AWS S3, Cloudflare R2, Backblaze B2, Wasabi, and Contabo.
 
