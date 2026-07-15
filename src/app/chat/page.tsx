@@ -67,6 +67,13 @@ type ConversationEncryptionState =
     }
     | { status: 'error'; conversationKey: string; code: string; message: string };
 
+interface ComposeIntentError {
+    handle: string;
+    message: string;
+}
+
+const CHAT_REQUEST_TIMEOUT_MS = 15_000;
+
 interface PreparedSend {
     accountDid: string;
     conversationKey: string;
@@ -106,6 +113,9 @@ export default function ChatPage() {
     const [sendError, setSendError] = useState<string | null>(null);
     const [conversationsError, setConversationsError] = useState<string | null>(null);
     const [messagesError, setMessagesError] = useState<string | null>(null);
+    const [composeIntentError, setComposeIntentError] = useState<ComposeIntentError | null>(null);
+    const [dismissedComposeHandle, setDismissedComposeHandle] = useState<string | null>(null);
+    const [composeRetryVersion, setComposeRetryVersion] = useState(0);
     const [conversationEncryption, setConversationEncryption] = useState<ConversationEncryptionState>({ status: 'idle' });
     const [searchQuery, setSearchQuery] = useState('');
     const [loadingMessages, setLoadingMessages] = useState(false);
@@ -192,12 +202,14 @@ export default function ChatPage() {
     const loadConversations = useCallback(async (isInitialLoad = true) => {
         const requestId = ++conversationsRequestRef.current;
         const requestAccountDid = user?.did ?? null;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS);
         try {
             if (isInitialLoad) {
                 setLoading(true);
                 setConversationsError(null);
             }
-            const res = await fetch('/api/swarm/chat/conversations');
+            const res = await fetch('/api/swarm/chat/conversations', { signal: controller.signal });
             if (!res.ok) throw new Error('Conversations could not be loaded');
             const data = await res.json();
             let nextConversations = (Array.isArray(data.conversations) ? data.conversations : []) as Conversation[];
@@ -246,9 +258,14 @@ export default function ChatPage() {
             console.error("Failed to load conversations", e);
             if (requestId === conversationsRequestRef.current
                 && renderedAccountDidRef.current === requestAccountDid) {
-                setConversationsError(e instanceof Error ? e.message : 'Conversations could not be loaded');
+                setConversationsError(controller.signal.aborted
+                    ? 'The node took too long to load conversations. Try again.'
+                    : e instanceof TypeError
+                        ? 'The connection to the node was interrupted. Try again.'
+                        : e instanceof Error ? e.message : 'Conversations could not be loaded');
             }
         } finally {
+            window.clearTimeout(timeout);
             if (requestId === conversationsRequestRef.current
                 && renderedAccountDidRef.current === requestAccountDid) {
                 setLoading(false);
@@ -613,6 +630,9 @@ export default function ChatPage() {
         setSendError(null);
         setConversationsError(null);
         setMessagesError(null);
+        setComposeIntentError(null);
+        setDismissedComposeHandle(null);
+        setComposeRetryVersion(0);
         setSending(false);
         setIsAtBottom(true);
         setConversationEncryption({ status: 'idle' });
@@ -636,65 +656,93 @@ export default function ChatPage() {
 
     // Handle Compose Intent
     useEffect(() => {
-        if (composeHandle && !selectedConversation && conversations.length >= 0) {
-            // Check if we already have a conversation with this user
-            const existing = conversations.find(c =>
-                c.participant2.handle.toLowerCase() === composeHandle.toLowerCase()
-            );
+        if (!composeHandle || selectedConversation || loading || dismissedComposeHandle === composeHandle) return;
 
-            if (existing) {
-                selectConversation(existing);
-                // Clear the query param so refresh doesn't keep resetting state
-                router.replace('/chat', { scroll: false });
-            } else if (!loading) {
-                // Fetch user details to create a draft conversation
-                const fetchUserAndInitDraft = async () => {
-                    const requestId = ++composeRequestRef.current;
-                    const requestAccountDid = renderedAccountDidRef.current;
-                    try {
-                        const res = await fetch(`/api/users/${encodeURIComponent(composeHandle)}`);
-                        const data = await res.json();
-                        if (requestId !== composeRequestRef.current
-                            || renderedAccountDidRef.current !== requestAccountDid) return;
-                        if (data.user) {
-                            if (data.user.isBot || data.user.canReceiveDms === false) {
-                                console.error('Cannot DM this account due to privacy settings');
-                                router.replace('/chat');
-                                return;
-                            }
-                            const draftConv: Conversation = {
-                                id: 'new',
-                                participant2: {
-                                    handle: data.user.handle,
-                                    displayName: data.user.displayName || data.user.handle,
-                                    avatarUrl: data.user.avatarUrl,
-                                    did: data.user.did
-                                },
-                                lastMessageAt: new Date().toISOString(),
-                                lastMessagePreview: 'New Conversation',
-                                unreadCount: 0
-                            };
-                            selectConversation(draftConv);
-                            router.replace('/chat', { scroll: false });
-                        } else {
-                            // User not found, clear compose param to show list
-                            console.error('User not found for compose');
-                            router.replace('/chat');
-                        }
-                    } catch (e) {
-                        if (requestId !== composeRequestRef.current
-                            || renderedAccountDidRef.current !== requestAccountDid) return;
-                        console.error("Failed to load user for compose", e);
-                        router.replace('/chat');
-                    }
-                };
-                fetchUserAndInitDraft();
-            }
+        // Check if we already have a conversation with this user.
+        const existing = conversations.find(c =>
+            c.participant2.handle.toLowerCase() === composeHandle.toLowerCase()
+        );
+        if (existing) {
+            setComposeIntentError(null);
+            selectConversation(existing);
+            // Clear the query param so refresh doesn't keep resetting state.
+            router.replace('/chat', { scroll: false });
+            return;
         }
+
+        // Keep a failed intent stable until the user retries. Conversation
+        // polling replaces the array every few seconds and must not turn the
+        // visible error back into a spinner on each successful poll.
+        if (composeIntentError?.handle === composeHandle) return;
+
+        const requestId = ++composeRequestRef.current;
+        const requestAccountDid = renderedAccountDidRef.current;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS);
+        setComposeIntentError(null);
+
+        // Fetch user details to create a draft conversation. A transient node
+        // restart must surface a retry action instead of leaving the compose
+        // route behind an unconditional full-page spinner.
+        const fetchUserAndInitDraft = async () => {
+            try {
+                const res = await fetch(`/api/users/${encodeURIComponent(composeHandle)}`, {
+                    signal: controller.signal,
+                });
+                if (!res.ok) throw new Error(`Account lookup failed (${res.status})`);
+                const data = await res.json();
+                if (requestId !== composeRequestRef.current
+                    || renderedAccountDidRef.current !== requestAccountDid) return;
+                if (data.user) {
+                    if (data.user.isBot || data.user.canReceiveDms === false) {
+                        setComposeIntentError({
+                            handle: composeHandle,
+                            message: 'This account cannot receive direct messages.',
+                        });
+                        return;
+                    }
+                    const draftConv: Conversation = {
+                        id: 'new',
+                        participant2: {
+                            handle: data.user.handle,
+                            displayName: data.user.displayName || data.user.handle,
+                            avatarUrl: data.user.avatarUrl,
+                            did: data.user.did
+                        },
+                        lastMessageAt: new Date().toISOString(),
+                        lastMessagePreview: 'New Conversation',
+                        unreadCount: 0
+                    };
+                    selectConversation(draftConv);
+                    router.replace('/chat', { scroll: false });
+                } else {
+                    setComposeIntentError({
+                        handle: composeHandle,
+                        message: 'That account could not be found.',
+                    });
+                }
+            } catch (error) {
+                if (requestId !== composeRequestRef.current
+                    || renderedAccountDidRef.current !== requestAccountDid) return;
+                console.error('Failed to load user for compose', error);
+                setComposeIntentError({
+                    handle: composeHandle,
+                    message: controller.signal.aborted
+                        ? 'The node took too long to respond. Try again.'
+                        : 'The connection to the node was interrupted. Try again.',
+                });
+            } finally {
+                window.clearTimeout(timeout);
+            }
+        };
+        void fetchUserAndInitDraft();
+
         return () => {
             composeRequestRef.current += 1;
+            controller.abort();
+            window.clearTimeout(timeout);
         };
-    }, [composeHandle, selectedConversation, conversations, loading, router, selectConversation]);
+    }, [composeHandle, selectedConversation, conversations, loading, router, selectConversation, composeIntentError, dismissedComposeHandle, composeRetryVersion]);
 
     // Redirect if not logged in
     useEffect(() => {
@@ -830,11 +878,52 @@ export default function ChatPage() {
         );
     }
 
-    // Prevent flash of list view while processing compose intent
-    if (composeHandle && !selectedConversation) {
+    // Prevent a flash of the list view while processing a compose intent, but
+    // never hide a failed request behind an endless spinner.
+    if (composeHandle && !selectedConversation && dismissedComposeHandle !== composeHandle) {
+        const currentComposeError = composeIntentError?.handle === composeHandle
+            ? composeIntentError.message
+            : null;
+        if (currentComposeError) {
+            return (
+                <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
+                    <section role="alert" style={{ width: '100%', maxWidth: 420, textAlign: 'center' }}>
+                        <h1 style={{ fontSize: 20, marginBottom: 10 }}>Couldn&apos;t open this conversation</h1>
+                        <p style={{ color: 'var(--foreground-secondary)', lineHeight: 1.5 }}>
+                            {currentComposeError}
+                        </p>
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: 18 }}>
+                            <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={() => {
+                                    setComposeIntentError(null);
+                                    setDismissedComposeHandle(null);
+                                    setComposeRetryVersion((version) => version + 1);
+                                }}
+                            >
+                                Try again
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => {
+                                    setComposeIntentError(null);
+                                    setDismissedComposeHandle(composeHandle);
+                                    router.replace('/chat', { scroll: false });
+                                }}
+                            >
+                                Back to messages
+                            </button>
+                        </div>
+                    </section>
+                </main>
+            );
+        }
         return (
-            <div aria-busy="true" style={{ display: 'flex', flexDirection: 'column', height: '100vh', alignItems: 'center', justifyContent: 'center' }}>
+            <div aria-busy="true" style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100vh', alignItems: 'center', justifyContent: 'center', color: 'var(--foreground-secondary)' }}>
                 <Loader2 className="animate-spin" size={32} aria-label="Opening conversation" />
+                <p>Opening conversation…</p>
             </div>
         );
     }
