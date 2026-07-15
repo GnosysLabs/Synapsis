@@ -3,12 +3,28 @@ import { describe, expect, it } from 'vitest';
 import {
     browserNotificationsEnabledKey,
     getBrowserNotificationContent,
+    parseBrowserNotificationPreferences,
 } from './browser';
 
 describe('browser notification presentation', () => {
     it('scopes the opt-in to the signed-in account', () => {
         expect(browserNotificationsEnabledKey('user-1'))
             .toBe('synapsis:browser-notifications:user-1');
+    });
+
+    it('defaults every notification category on and preserves explicit choices', () => {
+        expect(parseBrowserNotificationPreferences(null)).toEqual({
+            follow: true,
+            like: true,
+            repost: true,
+            mention: true,
+            reply: true,
+        });
+        expect(parseBrowserNotificationPreferences('{"like":false}')).toMatchObject({
+            follow: true,
+            like: false,
+            mention: true,
+        });
     });
 
     it('links post interactions to the relevant post', () => {

@@ -1,8 +1,20 @@
 export const BROWSER_NOTIFICATIONS_CHANGED_EVENT = 'synapsis:browser-notifications-changed';
 
+export type BrowserNotificationType = 'follow' | 'like' | 'repost' | 'mention' | 'reply';
+
+export type BrowserNotificationPreferences = Record<BrowserNotificationType, boolean>;
+
+export const DEFAULT_BROWSER_NOTIFICATION_PREFERENCES: BrowserNotificationPreferences = {
+    follow: true,
+    like: true,
+    repost: true,
+    mention: true,
+    reply: true,
+};
+
 export interface BrowserNotificationItem {
     id: string;
-    type: 'follow' | 'like' | 'repost' | 'mention' | 'reply';
+    type: BrowserNotificationType;
     actor: {
         handle: string;
         displayName: string | null;
@@ -19,6 +31,27 @@ export function browserNotificationsEnabledKey(userId: string): string {
 
 export function browserNotificationsSeenKey(userId: string): string {
     return `synapsis:browser-notifications-seen:${userId}`;
+}
+
+export function browserNotificationsPromptedKey(userId: string): string {
+    return `synapsis:browser-notifications-prompted:${userId}`;
+}
+
+export function browserNotificationPreferencesKey(userId: string): string {
+    return `synapsis:browser-notification-preferences:${userId}`;
+}
+
+export function parseBrowserNotificationPreferences(value: string | null): BrowserNotificationPreferences {
+    if (!value) return { ...DEFAULT_BROWSER_NOTIFICATION_PREFERENCES };
+    try {
+        const parsed = JSON.parse(value) as Partial<BrowserNotificationPreferences>;
+        return Object.fromEntries(
+            Object.entries(DEFAULT_BROWSER_NOTIFICATION_PREFERENCES)
+                .map(([type, defaultValue]) => [type, parsed[type as BrowserNotificationType] ?? defaultValue]),
+        ) as BrowserNotificationPreferences;
+    } catch {
+        return { ...DEFAULT_BROWSER_NOTIFICATION_PREFERENCES };
+    }
 }
 
 function interactionText(type: BrowserNotificationItem['type']): string {

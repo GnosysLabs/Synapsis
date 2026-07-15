@@ -8,7 +8,12 @@ import { ArrowLeftIcon } from '@/components/Icons';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import {
     BROWSER_NOTIFICATIONS_CHANGED_EVENT,
+    browserNotificationPreferencesKey,
     browserNotificationsEnabledKey,
+    DEFAULT_BROWSER_NOTIFICATION_PREFERENCES,
+    parseBrowserNotificationPreferences,
+    type BrowserNotificationPreferences,
+    type BrowserNotificationType,
 } from '@/lib/notifications/browser';
 
 type NotificationSupport = 'loading' | 'unsupported' | NotificationPermission;
@@ -18,6 +23,9 @@ export default function NotificationSettingsPage() {
     const userId = user?.id;
     const [support, setSupport] = useState<NotificationSupport>('loading');
     const [enabled, setEnabled] = useState(false);
+    const [preferences, setPreferences] = useState<BrowserNotificationPreferences>(
+        DEFAULT_BROWSER_NOTIFICATION_PREFERENCES,
+    );
 
     useEffect(() => {
         if (!userId) return;
@@ -29,6 +37,9 @@ export default function NotificationSettingsPage() {
             setSupport(Notification.permission);
             setEnabled(localStorage.getItem(browserNotificationsEnabledKey(userId)) === 'true'
                 && Notification.permission === 'granted');
+            setPreferences(parseBrowserNotificationPreferences(
+                localStorage.getItem(browserNotificationPreferencesKey(userId)),
+            ));
         }, 0);
         return () => window.clearTimeout(timeout);
     }, [userId]);
@@ -53,10 +64,26 @@ export default function NotificationSettingsPage() {
 
     const disableNotifications = () => {
         if (!userId) return;
-        localStorage.removeItem(browserNotificationsEnabledKey(userId));
+        localStorage.setItem(browserNotificationsEnabledKey(userId), 'false');
         setEnabled(false);
         window.dispatchEvent(new Event(BROWSER_NOTIFICATIONS_CHANGED_EVENT));
     };
+
+    const setPreference = (type: BrowserNotificationType, value: boolean) => {
+        if (!userId) return;
+        const next = { ...preferences, [type]: value };
+        setPreferences(next);
+        localStorage.setItem(browserNotificationPreferencesKey(userId), JSON.stringify(next));
+        window.dispatchEvent(new Event(BROWSER_NOTIFICATIONS_CHANGED_EVENT));
+    };
+
+    const notificationCategories: Array<{ type: BrowserNotificationType; label: string }> = [
+        { type: 'follow', label: 'New followers' },
+        { type: 'reply', label: 'Replies' },
+        { type: 'mention', label: 'Mentions' },
+        { type: 'like', label: 'Likes' },
+        { type: 'repost', label: 'Reposts' },
+    ];
 
     const statusText = support === 'unsupported'
         ? 'Browser notifications are not supported on this device.'
@@ -107,6 +134,39 @@ export default function NotificationSettingsPage() {
                     Notifications appear while Synapsis is open in a browser tab. Permission and this setting apply only to this device.
                 </p>
             </div>
+
+            {enabled && (
+                <div className="card" style={{ padding: '20px', marginTop: '16px' }}>
+                    <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '4px' }}>Notify me about</h2>
+                    <p style={{ color: 'var(--foreground-secondary)', fontSize: '14px', marginBottom: '14px' }}>
+                        Choose which interactions can send a browser notification.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        {notificationCategories.map(({ type, label }) => (
+                            <label
+                                key={type}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: '16px',
+                                    padding: '12px 0',
+                                    borderTop: '1px solid var(--border)',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                <span style={{ fontSize: '14px' }}>{label}</span>
+                                <input
+                                    type="checkbox"
+                                    checked={preferences[type]}
+                                    onChange={(event) => setPreference(type, event.target.checked)}
+                                    aria-label={`${label} browser notifications`}
+                                />
+                            </label>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
