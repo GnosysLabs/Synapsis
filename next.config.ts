@@ -27,7 +27,7 @@ function getBuildCommitCount(): string {
   }
 }
 
-const contentSecurityPolicy = [
+export const contentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
@@ -36,6 +36,7 @@ const contentSecurityPolicy = [
   `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''} https://challenges.cloudflare.com`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
+  "media-src 'self' blob: https:",
   "font-src 'self' data:",
   "connect-src 'self' https: wss:",
   "frame-src https://challenges.cloudflare.com",
