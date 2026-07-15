@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeftIcon, CalendarIcon } from '@/components/Icons';
+import { CalendarIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
 import { User, Post } from '@/lib/types';
 import AutoTextarea from '@/components/AutoTextarea';
@@ -521,27 +521,12 @@ export default function ProfilePage() {
                 padding: '16px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '24px',
                 borderBottom: '1px solid var(--border)',
                 position: 'sticky',
                 top: 0,
                 background: 'var(--background)',
                 zIndex: 10,
             }}>
-                <button
-                    onClick={() => router.back()}
-                    style={{
-                        color: 'var(--foreground)',
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        padding: 0,
-                        display: 'flex',
-                        alignItems: 'center',
-                    }}
-                >
-                    <ArrowLeftIcon />
-                </button>
                 <div>
                     <h1 style={{ fontSize: '18px', fontWeight: 600 }}>{user.displayName || user.handle}</h1>
                     <p style={{ fontSize: '13px', color: 'var(--foreground-tertiary)' }}>{user.postsCount} posts</p>
