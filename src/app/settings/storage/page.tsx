@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Box, ExternalLink } from 'lucide-react';
+import { Box, ExternalLink, Loader2 } from 'lucide-react';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
+import { getStoragePageState } from './storage-page-state';
 
 interface StorageStatus {
     provider: 'stuffbox' | null;
@@ -15,9 +16,11 @@ interface StorageStatus {
 export default function StorageSettingsPage() {
     const [status, setStatus] = useState<StorageStatus | null>(null);
     const [error, setError] = useState('');
+    const [isLoading, setIsLoading] = useState(true);
     const [isDisconnecting, setIsDisconnecting] = useState(false);
 
-    const loadStatus = useCallback(async () => {
+    const loadStatus = useCallback(async (showLoading = false) => {
+        if (showLoading) setIsLoading(true);
         try {
             const response = await fetch('/api/storage/configuration', { cache: 'no-store' });
             const data = await response.json().catch(() => ({}));
@@ -26,10 +29,12 @@ export default function StorageSettingsPage() {
             setError('');
         } catch (loadError) {
             setError(loadError instanceof Error ? loadError.message : 'Unable to load storage settings');
+        } finally {
+            if (showLoading) setIsLoading(false);
         }
     }, []);
 
-    useEffect(() => { void loadStatus(); }, [loadStatus]);
+    useEffect(() => { void loadStatus(true); }, [loadStatus]);
 
     const disconnectStuffbox = async () => {
         if (!window.confirm('Disconnect Stuffbox from this Synapsis account? Existing media links will keep working.')) return;
@@ -46,6 +51,19 @@ export default function StorageSettingsPage() {
             setIsDisconnecting(false);
         }
     };
+
+    const pageState = getStoragePageState(status, isLoading);
+
+    if (pageState === 'loading') {
+        return (
+            <main aria-busy="true" aria-label="Loading media storage" style={{ minHeight: '70vh', display: 'grid', placeItems: 'center', padding: '24px' }}>
+                <div role="status" style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--foreground-secondary)' }}>
+                    <Loader2 className="animate-spin" size={22} aria-hidden="true" />
+                    <span>Loading media storage…</span>
+                </div>
+            </main>
+        );
+    }
 
     return (
         <div style={{ maxWidth: '600px', margin: '0 auto', padding: '24px 16px 64px' }}>
@@ -65,7 +83,7 @@ export default function StorageSettingsPage() {
                 Storage belongs to your account rather than this node. That keeps your media available if you move your account elsewhere.
             </p>
 
-            <div className="card" style={{ padding: '20px', marginBottom: '16px' }}>
+            {status && <div className="card" style={{ padding: '20px', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
                     <Box size={22} />
                     <div style={{ flex: 1 }}>
@@ -82,9 +100,9 @@ export default function StorageSettingsPage() {
                         </button>
                     </div>
                 )}
-            </div>
+            </div>}
 
-            {status?.provider !== 'stuffbox' && (
+            {pageState === 'disconnected' && status && (
                 <div className="card" style={{ padding: '20px' }}>
                     <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px' }}>
                         Connect Stuffbox
@@ -92,7 +110,13 @@ export default function StorageSettingsPage() {
                     <p style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.5, marginBottom: '20px' }}>
                         Connect the official Synapsis storage partner to upload portable media from your account.
                     </p>
-                    <StorageConfigurationPrompt open onConfigured={loadStatus} onCancel={() => {}} variant="inline" />
+                    <StorageConfigurationPrompt
+                        open
+                        stuffboxAvailable={status.stuffboxAvailable}
+                        onConfigured={loadStatus}
+                        onCancel={() => {}}
+                        variant="inline"
+                    />
                 </div>
             )}
             {error && <p style={{ color: 'var(--error)', fontSize: '14px', marginTop: '14px' }}>{error}</p>}

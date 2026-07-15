@@ -14,12 +14,13 @@ interface StorageConfigurationPromptProps {
     onConfigured: () => void | Promise<void>;
     onCancel: () => void;
     variant?: 'modal' | 'inline';
+    stuffboxAvailable?: boolean;
 }
 
-export function StorageConfigurationPrompt({ open, onConfigured, onCancel, variant = 'modal' }: StorageConfigurationPromptProps) {
+export function StorageConfigurationPrompt({ open, onConfigured, onCancel, variant = 'modal', stuffboxAvailable: prefetchedStuffboxAvailable }: StorageConfigurationPromptProps) {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const [stuffboxAvailable, setStuffboxAvailable] = useState(false);
+    const [stuffboxAvailable, setStuffboxAvailable] = useState(prefetchedStuffboxAvailable ?? false);
     const [isConnectingStuffbox, setIsConnectingStuffbox] = useState(false);
     const connectionAbortRef = useRef<AbortController | null>(null);
     const connectionPopupRef = useRef<Window | null>(null);
@@ -51,6 +52,12 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel, varia
 
     useEffect(() => {
         if (!open) return;
+        if (prefetchedStuffboxAvailable !== undefined) {
+            setError('');
+            setStuffboxAvailable(prefetchedStuffboxAvailable);
+            setIsLoading(false);
+            return;
+        }
         let active = true;
         setError('');
         setIsLoading(true);
@@ -63,7 +70,7 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel, varia
             .catch((loadError) => active && setError(loadError instanceof Error ? loadError.message : 'Unable to load storage options'))
             .finally(() => active && setIsLoading(false));
         return () => { active = false; };
-    }, [open]);
+    }, [open, prefetchedStuffboxAvailable]);
 
     if (!open) return null;
     const connectStuffbox = async () => {
