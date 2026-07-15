@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Box, Cloud, HardDrive } from 'lucide-react';
+import { Box, Cloud, HardDrive } from 'lucide-react';
+import { ArrowLeftIcon } from '@/components/Icons';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 
 interface StorageStatus {
@@ -15,7 +16,6 @@ interface StorageStatus {
 export default function StorageSettingsPage() {
     const [status, setStatus] = useState<StorageStatus | null>(null);
     const [error, setError] = useState('');
-    const [showConnect, setShowConnect] = useState(false);
     const [isDisconnecting, setIsDisconnecting] = useState(false);
 
     const loadStatus = useCallback(async () => {
@@ -48,19 +48,25 @@ export default function StorageSettingsPage() {
         }
     };
 
-    return <>
-        <header style={{ padding: '16px', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--background)', zIndex: 10 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <Link href="/settings" className="btn btn-ghost btn-sm" aria-label="Back to settings"><ArrowLeft size={18} /></Link>
-                <h1 style={{ fontSize: '18px', fontWeight: 600 }}>Media Storage</h1>
-            </div>
-        </header>
-        <main style={{ maxWidth: '600px', margin: '0 auto', padding: '24px 16px 64px' }}>
+    return (
+        <div style={{ maxWidth: '600px', margin: '0 auto', padding: '24px 16px 64px' }}>
+            <header style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '32px' }}>
+                <Link href="/settings" style={{ color: 'var(--foreground)' }} aria-label="Back to settings">
+                    <ArrowLeftIcon />
+                </Link>
+                <div>
+                    <h1 style={{ fontSize: '24px', fontWeight: 700 }}>Media Storage</h1>
+                    <p style={{ color: 'var(--foreground-tertiary)', fontSize: '14px' }}>
+                        Manage where your account stores uploaded media
+                    </p>
+                </div>
+            </header>
+
             <p style={{ color: 'var(--foreground-secondary)', lineHeight: 1.5, marginBottom: '20px' }}>
                 Storage belongs to your account rather than this node. That keeps your media available if you move your account elsewhere.
             </p>
 
-            <div className="card" style={{ padding: '20px' }}>
+            <div className="card" style={{ padding: '20px', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
                     {status?.provider === 'stuffbox' ? <Box size={22} /> : status?.provider === 's3' ? <Cloud size={22} /> : <HardDrive size={22} />}
                     <div style={{ flex: 1 }}>
@@ -69,13 +75,23 @@ export default function StorageSettingsPage() {
                         {status?.s3Provider && status.provider === 's3' && <div style={{ color: 'var(--foreground-secondary)', fontSize: '13px', marginTop: '5px' }}>Provider: {status.s3Provider}</div>}
                     </div>
                 </div>
-                <div style={{ display: 'flex', gap: '10px', marginTop: '18px', flexWrap: 'wrap' }}>
-                    <button className="btn btn-primary" type="button" onClick={() => setShowConnect(true)} disabled={!status}>{status?.provider ? 'Change storage' : 'Connect storage'}</button>
-                    {status?.provider === 'stuffbox' && <button className="btn btn-ghost" type="button" onClick={disconnectStuffbox} disabled={isDisconnecting}>{isDisconnecting ? 'Disconnecting…' : 'Disconnect Stuffbox'}</button>}
-                </div>
+                {status?.provider === 'stuffbox' && (
+                    <button className="btn btn-ghost" type="button" onClick={disconnectStuffbox} disabled={isDisconnecting} style={{ marginTop: '18px' }}>
+                        {isDisconnecting ? 'Disconnecting…' : 'Disconnect Stuffbox'}
+                    </button>
+                )}
+            </div>
+
+            <div className="card" style={{ padding: '20px' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px' }}>
+                    {status?.provider ? 'Change storage' : 'Connect media storage'}
+                </h2>
+                <p style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.5, marginBottom: '20px' }}>
+                    Choose Stuffbox for the simplest setup, or connect an S3-compatible bucket you already own.
+                </p>
+                <StorageConfigurationPrompt open onConfigured={loadStatus} onCancel={() => {}} variant="inline" />
             </div>
             {error && <p style={{ color: 'var(--error)', fontSize: '14px', marginTop: '14px' }}>{error}</p>}
-        </main>
-        <StorageConfigurationPrompt open={showConnect} onConfigured={async () => { setShowConnect(false); await loadStatus(); }} onCancel={() => setShowConnect(false)} />
-    </>;
+        </div>
+    );
 }

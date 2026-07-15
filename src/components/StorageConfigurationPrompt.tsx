@@ -7,9 +7,10 @@ interface StorageConfigurationPromptProps {
     open: boolean;
     onConfigured: () => void | Promise<void>;
     onCancel: () => void;
+    variant?: 'modal' | 'inline';
 }
 
-export function StorageConfigurationPrompt({ open, onConfigured, onCancel }: StorageConfigurationPromptProps) {
+export function StorageConfigurationPrompt({ open, onConfigured, onCancel, variant = 'modal' }: StorageConfigurationPromptProps) {
     const [provider, setProvider] = useState('r2');
     const [endpoint, setEndpoint] = useState('');
     const [publicBaseUrl, setPublicBaseUrl] = useState('');
@@ -103,35 +104,38 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel }: Sto
         }
     };
 
-    return (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', background: 'rgba(0, 0, 0, 0.8)' }} onClick={onCancel}>
-            <div className="card" style={{ width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }} onClick={(event) => event.stopPropagation()}>
+    const content = (
+        <>
+            {variant === 'modal' && (
+                <>
                 <h3 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '8px' }}>Connect media storage</h3>
                 <p style={{ color: 'var(--foreground-secondary)', lineHeight: 1.5, marginBottom: '20px' }}>
                     Your media lives outside this Synapsis node, so your account stays portable.
                 </p>
+                </>
+            )}
 
-                <div style={{ border: '1px solid var(--border)', borderRadius: '12px', padding: '18px', background: 'var(--background-secondary)' }}>
+            <div style={{ border: '1px solid var(--border)', borderRadius: '12px', padding: '18px', background: 'var(--background-secondary)' }}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
                         <Box size={24} style={{ flex: '0 0 auto', marginTop: '2px' }} />
                         <div style={{ flex: 1 }}>
                             <div style={{ fontWeight: 600, marginBottom: '4px' }}>Stuffbox</div>
                             <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.45 }}>
-                                Connect once, then upload directly from your browser. Synapsis never sees your storage credentials.
+                                Connect once, then uploads just work. You own your media and can take it anywhere.
                             </div>
                         </div>
                     </div>
                     <button type="button" className="btn btn-primary" onClick={connectStuffbox} disabled={isSubmitting || isLoading || !stuffboxAvailable} style={{ width: '100%', marginTop: '16px' }}>
                         {isSubmitting && !showS3 ? 'Connecting…' : stuffboxAvailable ? <>Connect Stuffbox <ExternalLink size={15} /></> : isLoading ? 'Loading…' : 'Stuffbox unavailable on this node'}
                     </button>
-                </div>
+            </div>
 
-                <button type="button" className="btn btn-ghost" onClick={() => { setShowS3((value) => !value); setError(''); }} style={{ width: '100%', marginTop: '12px', justifyContent: 'space-between' }}>
-                    Use your own S3-compatible bucket <ChevronDown size={16} style={{ transform: showS3 ? 'rotate(180deg)' : undefined }} />
-                </button>
+            <button type="button" className="btn btn-ghost" onClick={() => { setShowS3((value) => !value); setError(''); }} style={{ width: '100%', marginTop: '12px', justifyContent: 'space-between' }}>
+                Use your own S3-compatible bucket <ChevronDown size={16} style={{ transform: showS3 ? 'rotate(180deg)' : undefined }} />
+            </button>
 
-                {showS3 && (
-                    <form onSubmit={connectS3} style={{ marginTop: '16px' }}>
+            {showS3 && (
+                <form onSubmit={connectS3} style={{ marginTop: '16px' }}>
                         <p style={{ color: 'var(--foreground-tertiary)', fontSize: '13px', lineHeight: 1.45, marginBottom: '14px' }}>
                             Advanced option. Credentials are encrypted locally; you may need to confirm your password again after the node restarts.
                         </p>
@@ -153,11 +157,22 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel }: Sto
                         <Field label="Secret access key" value={secretKey} onChange={setSecretKey} type="password" minLength={10} />
                         <Field label="Synapsis account password" value={password} onChange={setPassword} type="password" />
                         <button type="submit" className="btn btn-primary" disabled={isSubmitting} style={{ width: '100%' }}>{isSubmitting ? 'Connecting…' : 'Connect S3 storage'}</button>
-                    </form>
-                )}
+                </form>
+            )}
 
-                {error && <div style={{ color: 'var(--error)', fontSize: '13px', marginTop: '14px' }}>{error}</div>}
+            {error && <div style={{ color: 'var(--error)', fontSize: '13px', marginTop: '14px' }}>{error}</div>}
+            {variant === 'modal' && (
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}><button type="button" className="btn btn-ghost" onClick={onCancel} disabled={isSubmitting}>Cancel</button></div>
+            )}
+        </>
+    );
+
+    if (variant === 'inline') return content;
+
+    return (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', background: 'rgba(0, 0, 0, 0.8)' }} onClick={onCancel}>
+            <div className="card" style={{ width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }} onClick={(event) => event.stopPropagation()}>
+                {content}
             </div>
         </div>
     );
