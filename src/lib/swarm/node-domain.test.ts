@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
+import {
+  getCanonicalSwarmSeedDomain,
+  getPublicSwarmDomain,
+  isPublicSwarmDomain,
+} from './node-domain';
 
 describe('public swarm domains', () => {
   it.each([
@@ -31,3 +35,17 @@ describe('public swarm domains', () => {
   });
 });
 
+describe('swarm seed domains', () => {
+  it('maps the retired bootstrap hostname to the official node identity', () => {
+    expect(getCanonicalSwarmSeedDomain('node.synapsis.social')).toBe('synapsis.social');
+    expect(getCanonicalSwarmSeedDomain('https://NODE.SYNAPSIS.SOCIAL/')).toBe('synapsis.social');
+  });
+
+  it('leaves other valid seed domains unchanged', () => {
+    expect(getCanonicalSwarmSeedDomain('batorbros.bond')).toBe('batorbros.bond');
+  });
+
+  it('rejects non-public seed domains', () => {
+    expect(getCanonicalSwarmSeedDomain('localhost:43821')).toBeNull();
+  });
+});

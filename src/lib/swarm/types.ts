@@ -96,7 +96,7 @@ export interface SwarmStats {
 
 // Default seed nodes for bootstrapping
 export const DEFAULT_SEED_NODES = [
-  'node.synapsis.social',
+  'synapsis.social',
 ] as const;
 
 // Swarm configuration

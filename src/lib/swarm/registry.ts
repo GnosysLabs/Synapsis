@@ -8,7 +8,11 @@ import { db, swarmNodes, swarmSeeds, swarmSyncLog } from '@/db';
 import { eq, desc, and, gt, lt, sql } from 'drizzle-orm';
 import type { SwarmNodeInfo, SwarmCapability, SwarmSyncResult } from './types';
 import { SWARM_CONFIG, DEFAULT_SEED_NODES } from './types';
-import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
+import {
+  getCanonicalSwarmSeedDomain,
+  getPublicSwarmDomain,
+  isPublicSwarmDomain,
+} from './node-domain';
 
 /**
  * Get or create a swarm node entry
@@ -273,7 +277,11 @@ export async function getSeedNodes(): Promise<string[]> {
     orderBy: (swarmSeeds) => [swarmSeeds.priority],
   });
 
-  const publicSeeds = seeds.map(s => s.domain).filter(isPublicSwarmDomain);
+  const publicSeeds = Array.from(new Set(
+    seeds
+      .map((seed) => getCanonicalSwarmSeedDomain(seed.domain))
+      .filter((domain): domain is string => domain !== null)
+  ));
 
   return publicSeeds.length > 0
     ? publicSeeds
@@ -286,7 +294,7 @@ export async function getSeedNodes(): Promise<string[]> {
 export async function addSeedNode(domain: string, priority = 100): Promise<void> {
   if (!db) return;
 
-  const normalizedDomain = getPublicSwarmDomain(domain);
+  const normalizedDomain = getCanonicalSwarmSeedDomain(domain);
   if (!normalizedDomain) {
     throw new Error(`Seed nodes must use a public ICANN domain: ${domain}`);
   }

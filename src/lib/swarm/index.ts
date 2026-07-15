@@ -4,7 +4,7 @@
  * The Synapsis swarm is a decentralized network of nodes that discover
  * and communicate with each other using a hybrid approach:
  * 
- * 1. Seed nodes (like node.synapsis.social) provide initial bootstrap
+ * 1. Seed nodes (like synapsis.social) provide initial bootstrap
  * 2. Gossip protocol spreads node/handle information epidemically
  * 3. Any node can discover the full network without central authority
  * 4. Direct node-to-node interactions (likes, follows, etc.) for instant delivery

@@ -8,7 +8,11 @@ import { db, nodes, users, posts } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import type { SwarmAnnouncement, SwarmNodeInfo, SwarmCapability } from './types';
 import { upsertSwarmNode, getSeedNodes, markNodeSuccess, markNodeFailure } from './registry';
-import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
+import {
+  getCanonicalSwarmSeedDomain,
+  getPublicSwarmDomain,
+  isPublicSwarmDomain,
+} from './node-domain';
 
 const PUBLIC_SWARM_DOMAIN_ERROR = 'Public swarm participation requires a real ICANN domain';
 
@@ -84,7 +88,7 @@ export async function announceToNode(targetDomain: string): Promise<{ success: b
     return { success: false, error: PUBLIC_SWARM_DOMAIN_ERROR };
   }
 
-  const publicTargetDomain = getPublicSwarmDomain(targetDomain);
+  const publicTargetDomain = getCanonicalSwarmSeedDomain(targetDomain);
   if (!publicTargetDomain) {
     return { success: false, error: `Invalid public swarm domain: ${targetDomain}` };
   }

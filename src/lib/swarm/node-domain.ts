@@ -1,5 +1,9 @@
 import { parse } from 'tldts';
 
+const LEGACY_SWARM_SEED_DOMAINS: Readonly<Record<string, string>> = {
+  'node.synapsis.social': 'synapsis.social',
+};
+
 export function normalizeNodeDomain(domain: string): string {
   return domain
     .trim()
@@ -52,3 +56,14 @@ export function isPublicSwarmDomain(value: string | null | undefined): boolean {
   return getPublicSwarmDomain(value) !== null;
 }
 
+/**
+ * Resolve retired bootstrap hostnames to the node identity they represent.
+ * This keeps upgraded nodes working even before their persisted seed rows are
+ * rewritten by the accompanying data migration.
+ */
+export function getCanonicalSwarmSeedDomain(value: string | null | undefined): string | null {
+  const domain = getPublicSwarmDomain(value);
+  if (!domain) return null;
+
+  return LEGACY_SWARM_SEED_DOMAINS[domain] ?? domain;
+}
