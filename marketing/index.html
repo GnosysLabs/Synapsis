@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#070a0d" />
+    <meta name="description" content="Synapsis is the open social network built around your node, your identity, and your data. There's a swarm coming." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://get.synapsis.social/" />
+    <meta property="og:title" content="Synapsis — There's a swarm coming." />
+    <meta property="og:description" content="Your node. Your network. Your identity." />
+    <meta property="og:image" content="https://get.synapsis.social/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Synapsis — There's a swarm coming." />
+    <meta name="twitter:description" content="Your node. Your network. Your identity." />
+    <meta name="twitter:image" content="https://get.synapsis.social/og.png" />
+    <title>Synapsis — There's a swarm coming.</title>
+    <link rel="icon" href="/favicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/script.js" defer></script>
+  </head>
+  <body>
+    <canvas class="signal-field" aria-hidden="true"></canvas>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Synapsis home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>SYNAPSIS</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#network">The network</a>
+        <a href="#principles">Why Synapsis</a>
+        <a href="#operators">Run a node</a>
+      </nav>
+      <a class="header-cta" href="https://synapsis.social">Enter the swarm <span aria-hidden="true">↗</span></a>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-signal" aria-hidden="true">
+          <span class="pulse pulse-a"></span>
+          <span class="pulse pulse-b"></span>
+          <span class="pulse pulse-c"></span>
+          <span class="core"></span>
+        </div>
+        <div class="eyebrow"><span class="status-dot"></span> A new social layer is propagating</div>
+        <h1 id="hero-title">There’s a<br /><em>swarm coming.</em></h1>
+        <p class="hero-copy">A social network that belongs to the people running it. Sovereign identity, portable media, encrypted conversations, and independent nodes moving as one.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://synapsis.social">Join Synapsis <span aria-hidden="true">→</span></a>
+          <a class="button button-secondary" href="#operators">Run your own node</a>
+        </div>
+        <div class="hero-proof" aria-label="Key properties">
+          <span><b>01</b> Open source</span>
+          <span><b>02</b> Federated by design</span>
+          <span><b>03</b> Identity you control</span>
+        </div>
+      </section>
+
+      <section class="manifesto wrap" id="network">
+        <p class="section-kicker">The network, reconfigured</p>
+        <h2>Not another platform.<br />A shared signal layer.</h2>
+        <div class="manifesto-grid">
+          <p class="lead">Synapsis replaces the single social silo with a swarm of independent communities. Each node sets its own culture and rules. The network carries identity, discovery, and signed interactions between them.</p>
+          <p>You can join a node or operate your own. Either way, you aren’t renting a corner of somebody else’s audience. Your identity is based on cryptographic keys, your media can live in storage you choose, and your connections reach beyond one server.</p>
+        </div>
+      </section>
+
+      <section class="signal-diagram wrap" aria-label="How the Synapsis network works">
+        <div class="node node-you">
+          <span class="node-orbit"></span>
+          <b>YOU</b>
+          <small>Sovereign DID</small>
+        </div>
+        <div class="path path-one"><span></span></div>
+        <div class="path path-two"><span></span></div>
+        <div class="path path-three"><span></span></div>
+        <div class="node node-a"><b>NODE / 01</b><small>Your community</small></div>
+        <div class="node node-b"><b>NODE / 07</b><small>Independent</small></div>
+        <div class="node node-c"><b>NODE / 12</b><small>Still connected</small></div>
+        <div class="diagram-label">SIGNED SIGNALS<br />MOVE ACROSS THE SWARM</div>
+      </section>
+
+      <section class="features wrap" id="principles">
+        <div class="section-heading">
+          <p class="section-kicker">Built differently at the root</p>
+          <h2>Social, without surrender.</h2>
+        </div>
+
+        <article class="feature feature-wide">
+          <div class="feature-index">01 / IDENTITY</div>
+          <div>
+            <h3>You are not a database row.</h3>
+            <p>Your Synapsis identity is anchored by a decentralized identifier and your signing keys. It can be exported, carried, and verified across the network.</p>
+          </div>
+          <div class="identity-card" aria-hidden="true">
+            <span class="mini-label">SOVEREIGN IDENTITY</span>
+            <strong>did:key:z6Mk···p9X</strong>
+            <div class="key-line"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <span class="verified">● CRYPTOGRAPHICALLY VERIFIED</span>
+          </div>
+        </article>
+
+        <article class="feature">
+          <div class="feature-index">02 / STORAGE</div>
+          <h3>Your media. Your address.</h3>
+          <p>Connect Stuffbox or your own S3-compatible storage. Your photos and files stay at portable URLs under your control—even if you move between nodes.</p>
+          <div class="feature-meta">STUFFBOX · S3 · R2 · B2</div>
+        </article>
+
+        <article class="feature">
+          <div class="feature-index">03 / CONVERSATIONS</div>
+          <h3>Private means encrypted.</h3>
+          <p>One-to-one text messages use client-side end-to-end encryption, with a separate recovery PIN for bringing your identity to a new device.</p>
+          <div class="cipher" aria-hidden="true">7F A2 <b>LOCKED</b> C9 1D</div>
+        </article>
+
+        <article class="feature">
+          <div class="feature-index">04 / FEDERATION</div>
+          <h3>Independent. Not isolated.</h3>
+          <p>Nodes discover one another through the Swarm. Follows, reactions, reposts, and profiles cross boundaries as signed, verifiable interactions.</p>
+          <div class="feature-meta">DISCOVER · VERIFY · PROPAGATE</div>
+        </article>
+
+        <article class="feature">
+          <div class="feature-index">05 / COMMUNITY</div>
+          <h3>Your node, your rules.</h3>
+          <p>Operators control their node’s identity, moderation, registrations, and culture—without cutting their members off from the wider network.</p>
+          <div class="feature-meta">LOCAL CONTROL · GLOBAL REACH</div>
+        </article>
+      </section>
+
+      <section class="comparison wrap">
+        <div class="comparison-intro">
+          <p class="section-kicker">The difference</p>
+          <h2>The swarm has no center to capture.</h2>
+        </div>
+        <div class="comparison-table" role="table" aria-label="Platform versus Synapsis comparison">
+          <div class="table-row table-head" role="row">
+            <span role="columnheader">The old platform</span>
+            <span role="columnheader">The Synapsis network</span>
+          </div>
+          <div class="table-row" role="row"><span role="cell">One company owns the graph</span><span role="cell">Independent nodes share the graph</span></div>
+          <div class="table-row" role="row"><span role="cell">Your account is permission</span><span role="cell">Your identity is cryptographic</span></div>
+          <div class="table-row" role="row"><span role="cell">Media locked to the platform</span><span role="cell">Media storage you choose</span></div>
+          <div class="table-row" role="row"><span role="cell">Rules imposed from the center</span><span role="cell">Communities govern locally</span></div>
+          <div class="table-row" role="row"><span role="cell">A closed product</span><span role="cell">Apache-2.0 open source</span></div>
+        </div>
+      </section>
+
+      <section class="operators" id="operators">
+        <div class="wrap operator-grid">
+          <div>
+            <p class="section-kicker">For node operators</p>
+            <h2>Bring a VPS.<br />Leave with a network.</h2>
+            <p class="operator-copy">Synapsis runs as a native Node.js service with an embedded database. No Docker. No separate database server. Automatic updates keep every node moving with the network.</p>
+            <div class="requirements">
+              <span>LINUX + SYSTEMD</span><span>NODE.JS 20+</span><span>NGINX / CADDY</span>
+            </div>
+            <a class="button button-primary" href="https://githop.xyz/GnosysLabs/Synapsis">Read the source <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="terminal" aria-label="Synapsis installation example">
+            <div class="terminal-top"><span></span><span></span><span></span><b>root@your-node</b></div>
+            <pre><code><i>$</i> git clone https://githop.xyz/
+  GnosysLabs/Synapsis.git
+
+<i>$</i> cd Synapsis
+<i>$</i> sudo bash deploy/install.sh
+
+<span class="terminal-muted">Creating node identity...</span>
+<span class="terminal-muted">Connecting to the swarm...</span>
+<strong>● SYNAPSIS IS LIVE</strong></code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta wrap">
+        <p class="section-kicker">The signal is already moving</p>
+        <h2>Don’t wait for the future<br />of social to be handed to you.</h2>
+        <p>Join a node. Start a node. Bring your identity.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://synapsis.social">Enter the swarm <span aria-hidden="true">→</span></a>
+          <a class="button button-secondary" href="https://githop.xyz/GnosysLabs/Synapsis">Explore the code</a>
+        </div>
+        <div class="final-mark" aria-hidden="true"><i></i><i></i><i></i></div>
+      </section>
+    </main>
+
+    <footer class="site-footer wrap">
+      <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>SYNAPSIS</span></a>
+      <p>YOUR NODE. YOUR NETWORK. YOUR IDENTITY.</p>
+      <div><a href="https://synapsis.social">Network</a><a href="https://githop.xyz/GnosysLabs/Synapsis">Source</a></div>
+      <span>© <span id="year">2026</span> SYNAPSIS</span>
+    </footer>
+  </body>
+</html>
