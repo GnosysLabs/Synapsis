@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://synapsis.gnosyslabs.xyz/sitemap.xml
