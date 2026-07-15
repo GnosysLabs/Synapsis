@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
 
 interface RuntimeConfig {
   domain: string;
@@ -10,16 +10,22 @@ interface RuntimeConfig {
 interface ConfigContextType {
   config: RuntimeConfig | null;
   isLoading: boolean;
+  setNodeNsfw: (isNsfw: boolean) => void;
 }
 
 const ConfigContext = createContext<ConfigContextType>({
   config: null,
   isLoading: true,
+  setNodeNsfw: () => { },
 });
 
 export function ConfigProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<RuntimeConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const setNodeNsfw = useCallback((isNsfw: boolean) => {
+    setConfig((current) => current ? { ...current, isNsfw } : current);
+  }, []);
 
   useEffect(() => {
     // Fetch runtime config on mount
@@ -44,7 +50,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <ConfigContext.Provider value={{ config, isLoading }}>
+    <ConfigContext.Provider value={{ config, isLoading, setNodeNsfw }}>
       {children}
     </ConfigContext.Provider>
   );

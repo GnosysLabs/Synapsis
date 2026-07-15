@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { AvatarImage } from './AvatarImage';
 import { ProfileBanner } from './ProfileBanner';
+import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 
 interface Admin {
     handle: string;
@@ -34,6 +35,8 @@ function formatNetworkTotal(value: number | undefined): string {
 }
 
 export function RightSidebar() {
+    const { config } = useRuntimeConfig();
+    const localNodeIsNsfw = config?.isNsfw ?? false;
     const fallbackDescription = process.env.NEXT_PUBLIC_NODE_DESCRIPTION || 'A swarm social network node.';
     const [nodeInfo, setNodeInfo] = useState<NodeInfo>({
         name: process.env.NEXT_PUBLIC_NODE_NAME || 'Synapsis Node',
@@ -138,7 +141,7 @@ export function RightSidebar() {
                 {nodeInfo.bannerUrl && (
                     <ProfileBanner
                         url={nodeInfo.bannerUrl}
-                        nodeIsNsfw={nodeInfo.isNsfw}
+                        nodeIsNsfw={localNodeIsNsfw}
                         height={140}
                         borderBottom="1px solid var(--border)"
                     />
@@ -187,7 +190,7 @@ export function RightSidebar() {
                                         style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none', color: 'inherit' }}
                                     >
                                         <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
-                                            <AvatarImage avatarUrl={admin.avatarUrl} seed={admin.handle} isNsfw={admin.isNsfw} nodeIsNsfw={nodeInfo.isNsfw} alt={admin.displayName || admin.handle} />
+                                            <AvatarImage avatarUrl={admin.avatarUrl} seed={admin.handle} isNsfw={admin.isNsfw} nodeIsNsfw={localNodeIsNsfw} alt={admin.displayName || admin.handle} />
                                         </div>
                                         <div>
                                             <div style={{ fontWeight: 500, fontSize: '14px' }}>

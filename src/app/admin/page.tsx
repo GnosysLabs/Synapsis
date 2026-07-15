@@ -8,10 +8,12 @@ import { useToast } from '@/lib/contexts/ToastContext';
 import { useAccentColor } from '@/lib/contexts/AccentColorContext';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
+import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 
 export default function AdminPage() {
     const { showToast } = useToast();
     const { refreshAccentColor } = useAccentColor();
+    const { setNodeNsfw } = useRuntimeConfig();
     const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
     const [loading, setLoading] = useState(false);
     const [nodeSettings, setNodeSettings] = useState({
@@ -93,6 +95,11 @@ export default function AdminPage() {
                 savedNodeSettingsRef.current = payload;
                 const data = await res.json().catch(() => ({}));
                 if (data.node) {
+                    // Keep the global local-node classification and the sidebar's
+                    // node payload in the same React batch. Otherwise profile
+                    // media briefly sees "remote NSFW node on a safe local node"
+                    // and applies a blur until the next full config refresh.
+                    setNodeNsfw(data.node.isNsfw === true);
                     window.dispatchEvent(new CustomEvent('synapsis:node-updated', { detail: data.node }));
                 }
                 showToast('Settings saved!', 'success');
