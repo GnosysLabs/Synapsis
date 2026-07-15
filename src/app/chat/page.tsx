@@ -17,7 +17,7 @@ import {
     type StoredChatMessage,
 } from '@/lib/e2ee/client';
 import { encryptE2EEMessage } from '@/lib/e2ee/client-crypto';
-import type { E2EEKeyBundle, E2EEMessageEnvelope } from '@/lib/e2ee/protocol';
+import type { E2EEKeyBundle, E2EEKeyMaterial, E2EEMessageEnvelope } from '@/lib/e2ee/protocol';
 import { useE2EEIdentity } from '@/lib/e2ee/use-e2ee-identity';
 
 interface Conversation {
@@ -132,6 +132,7 @@ export default function ChatPage() {
     const appliedSharedPostRef = useRef<string | null>(null);
     const messagesRequestRef = useRef(0);
     const conversationsRequestRef = useRef(0);
+    const conversationsAbortRef = useRef<AbortController | null>(null);
     const peerResolutionRef = useRef(0);
     const composeRequestRef = useRef(0);
     const sendRequestRef = useRef(0);
@@ -141,8 +142,12 @@ export default function ChatPage() {
     const selectedConversationKeyRef = useRef<string | null>(null);
     const preparedSendsRef = useRef(new Map<string, PreparedSend>());
     const activeSendKeysRef = useRef(new Set<string>());
+    const e2eeMaterialRef = useRef<{ accountDid: string; material: E2EEKeyMaterial } | null>(null);
 
     renderedAccountDidRef.current = user?.did ?? null;
+    e2eeMaterialRef.current = user?.did && e2eeIdentity.state.status === 'ready'
+        ? { accountDid: user.did, material: e2eeIdentity.state.material }
+        : null;
     selectedConversationRef.current = selectedConversation;
     selectedConversationKeyRef.current = selectedConversation
         ? encryptionConversationKey(selectedConversation)
@@ -201,8 +206,11 @@ export default function ChatPage() {
 
     const loadConversations = useCallback(async (isInitialLoad = true) => {
         const requestId = ++conversationsRequestRef.current;
-        const requestAccountDid = user?.did ?? null;
+        const requestAccountDid = renderedAccountDidRef.current;
+        const e2eeMaterial = e2eeMaterialRef.current;
+        conversationsAbortRef.current?.abort();
         const controller = new AbortController();
+        conversationsAbortRef.current = controller;
         const timeout = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS);
         try {
             if (isInitialLoad) {
@@ -225,15 +233,14 @@ export default function ChatPage() {
                 setLoading(false);
             }
 
-            if (user?.did && e2eeIdentity.state.status === 'ready') {
-                const material = e2eeIdentity.state.material;
+            if (requestAccountDid && e2eeMaterial?.accountDid === requestAccountDid) {
                 nextConversations = await Promise.all(nextConversations.map(async (conversation) => {
                     if (!conversation.lastMessage) return conversation;
                     try {
                         const { content } = await decryptStoredChatMessage(
                             conversation.lastMessage,
-                            user.did!,
-                            material,
+                            requestAccountDid,
+                            e2eeMaterial.material,
                         );
                         const normalized = content.replace(/\s+/g, ' ').trim();
                         const characters = Array.from(normalized);
@@ -255,9 +262,10 @@ export default function ChatPage() {
                 setConversationsError(null);
             }
         } catch (e) {
-            console.error("Failed to load conversations", e);
-            if (requestId === conversationsRequestRef.current
-                && renderedAccountDidRef.current === requestAccountDid) {
+            const isCurrentRequest = requestId === conversationsRequestRef.current
+                && renderedAccountDidRef.current === requestAccountDid;
+            if (isCurrentRequest) {
+                console.error("Failed to load conversations", e);
                 setConversationsError(controller.signal.aborted
                     ? 'The node took too long to load conversations. Try again.'
                     : e instanceof TypeError
@@ -266,12 +274,15 @@ export default function ChatPage() {
             }
         } finally {
             window.clearTimeout(timeout);
+            if (conversationsAbortRef.current === controller) {
+                conversationsAbortRef.current = null;
+            }
             if (requestId === conversationsRequestRef.current
                 && renderedAccountDidRef.current === requestAccountDid) {
                 setLoading(false);
             }
         }
-    }, [user?.did, e2eeIdentity.state]);
+    }, []);
 
     const markAsRead = useCallback(async (conversationId: string) => {
         const requestAccountDid = renderedAccountDidRef.current;
@@ -641,7 +652,7 @@ export default function ChatPage() {
 
     // Load conversations
     useEffect(() => {
-        if (!user) return;
+        if (!user?.did || !activeE2EEKeyId) return;
         void loadConversations(true);
 
         const pollInterval = setInterval(() => {
@@ -650,9 +661,11 @@ export default function ChatPage() {
 
         return () => {
             clearInterval(pollInterval);
+            conversationsAbortRef.current?.abort();
+            conversationsAbortRef.current = null;
             conversationsRequestRef.current += 1;
         };
-    }, [user, activeE2EEKeyId, loadConversations]);
+    }, [user?.did, activeE2EEKeyId, loadConversations]);
 
     // Handle Compose Intent
     useEffect(() => {

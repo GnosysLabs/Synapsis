@@ -27,8 +27,10 @@ export type E2EEIdentityState =
   | { status: 'ready'; material: E2EEKeyMaterial; vault: ConfiguredVaultStatus }
   | { status: 'error'; message: string };
 
+const LOADING_IDENTITY_STATE: E2EEIdentityState = { status: 'loading' };
+
 export function useE2EEIdentity(did?: string | null, handle?: string | null) {
-  const [state, setState] = useState<E2EEIdentityState>({ status: 'loading' });
+  const [state, setState] = useState<E2EEIdentityState>(LOADING_IDENTITY_STATE);
   const [stateOwnerDid, setStateOwnerDid] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -38,13 +40,13 @@ export function useE2EEIdentity(did?: string | null, handle?: string | null) {
   const bootstrap = useCallback(async () => {
     const generation = ++generationRef.current;
     if (!did) {
-      setState({ status: 'loading' });
+      setState(LOADING_IDENTITY_STATE);
       setStateOwnerDid(null);
       setBusy(false);
       setActionError(null);
       return;
     }
-    setState({ status: 'loading' });
+    setState(LOADING_IDENTITY_STATE);
     setStateOwnerDid(null);
     setBusy(false);
     setActionError(null);
@@ -190,7 +192,7 @@ export function useE2EEIdentity(did?: string | null, handle?: string | null) {
 
   const visibleState: E2EEIdentityState = did && stateOwnerDid === did
     ? state
-    : { status: 'loading' };
+    : LOADING_IDENTITY_STATE;
 
   return { state: visibleState, busy, actionError, setup, unlock, reset, retry: bootstrap };
 }

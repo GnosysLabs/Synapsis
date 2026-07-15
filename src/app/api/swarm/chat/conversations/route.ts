@@ -5,8 +5,8 @@
  */
 
 import { NextResponse } from 'next/server';
-import { db, chatMessages } from '@/db';
-import { eq, and, isNull, sql } from 'drizzle-orm';
+import { db, chatMessages, users } from '@/db';
+import { and, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
 import { E2EE_CHAT_ACTION, E2EE_PROTOCOL_VERSION, e2eeMessageEnvelopeSchema } from '@/lib/e2ee/protocol';
 
@@ -33,82 +33,80 @@ export async function GET() {
       },
     });
 
-    // Calculate unread count for each conversation
-    const conversationsWithUnread = await Promise.all(
-      conversations.map(async (conv) => {
-        const unreadCount = await db
-          .select({ count: sql<number>`count(*)` })
+    const conversationIds = conversations.map((conversation) => conversation.id);
+    const participantLookupHandles = new Set<string>();
+    const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
+    for (const conversation of conversations) {
+      const participantHandle = conversation.participant2Handle;
+      participantLookupHandles.add(participantHandle);
+      const separator = participantHandle.lastIndexOf('@');
+      if (separator > 0 && participantHandle.slice(separator + 1) === localNodeDomain) {
+        participantLookupHandles.add(participantHandle.slice(0, separator));
+      }
+    }
+
+    // The inbox must be local-data-only. The previous implementation issued an
+    // unread query, a user query, and potentially an outbound federation request
+    // for every row. A single unavailable peer could therefore block the entire
+    // response. Batch local metadata here; independent federation paths refresh
+    // the remote-user cache without being on the inbox critical path.
+    const [unreadRows, cachedUsers] = await Promise.all([
+      conversationIds.length > 0
+        ? db
+          .select({
+            conversationId: chatMessages.conversationId,
+            count: sql<number>`count(*)`,
+          })
           .from(chatMessages)
-          .where(
-            and(
-              eq(chatMessages.conversationId, conv.id),
-              isNull(chatMessages.readAt),
-              sql`${chatMessages.senderHandle} != ${session.user.handle}`
-            )
-          );
+          .where(and(
+            inArray(chatMessages.conversationId, conversationIds),
+            isNull(chatMessages.readAt),
+            ne(chatMessages.senderHandle, session.user.handle),
+          ))
+          .groupBy(chatMessages.conversationId)
+        : Promise.resolve([]),
+      participantLookupHandles.size > 0
+        ? db
+          .select({
+            handle: users.handle,
+            displayName: users.displayName,
+            avatarUrl: users.avatarUrl,
+            did: users.did,
+            publicKey: users.publicKey,
+            isBot: users.isBot,
+          })
+          .from(users)
+          .where(inArray(users.handle, [...participantLookupHandles]))
+        : Promise.resolve([]),
+    ]);
 
-        // Parse participant info
+    const unreadByConversation = new Map(
+      unreadRows.map((row) => [row.conversationId, Number(row.count || 0)]),
+    );
+    const usersByHandle = new Map(cachedUsers.map((user) => [user.handle, user]));
+
+    const conversationsWithUnread = conversations.map((conv) => {
         const participant2Handle = conv.participant2Handle;
-        const isRemote = participant2Handle.includes('@');
-
-        let participant2Info = {
-          handle: participant2Handle,
-          displayName: participant2Handle,
-          avatarUrl: null as string | null,
-          did: '' as string,
-        };
-
-        // Try to get cached user info
-        let cachedUser = await db.query.users.findFirst({
-          where: { handle: participant2Handle },
-        });
-
-        // If not found, check if it's a local user with a domain suffix
-        if (!cachedUser && participant2Handle.includes('@')) {
-          const [handlePart, domainPart] = participant2Handle.split('@');
-          if (!domainPart || domainPart === process.env.NEXT_PUBLIC_NODE_DOMAIN) {
-            cachedUser = await db.query.users.findFirst({
-              where: { handle: handlePart },
-            });
-          }
-        }
-
-        // LAZY LOAD: If remote and (not cached OR missing avatar), try to fetch it now
-        if (isRemote && (!cachedUser || !cachedUser.avatarUrl)) {
-          try {
-            const [rHandle, rDomain] = participant2Handle.split('@');
-            const { fetchSwarmUserProfile } = await import('@/lib/swarm/interactions');
-            const profileData = await fetchSwarmUserProfile(rHandle, rDomain, 0);
-
-            if (profileData?.profile) {
-              const { upsertRemoteUser } = await import('@/lib/swarm/user-cache');
-              await upsertRemoteUser({
-                handle: participant2Handle,
-                displayName: profileData.profile.displayName,
-                avatarUrl: profileData.profile.avatarUrl || null,
-                did: profileData.profile.did || '',
-                isBot: profileData.profile.isBot || false,
-                publicKey: profileData.profile.publicKey,
-              });
-
-              // Re-query to get the new cached user
-              cachedUser = await db.query.users.findFirst({
-                where: { handle: participant2Handle },
-              });
+        const separator = participant2Handle.lastIndexOf('@');
+        const localHandle = separator > 0
+          && participant2Handle.slice(separator + 1) === localNodeDomain
+          ? participant2Handle.slice(0, separator)
+          : null;
+        const cachedUser = usersByHandle.get(participant2Handle)
+          || (localHandle ? usersByHandle.get(localHandle) : undefined);
+        const participant2Info = cachedUser
+          ? {
+              handle: cachedUser.handle,
+              displayName: cachedUser.displayName || cachedUser.handle,
+              avatarUrl: cachedUser.avatarUrl || null,
+              did: cachedUser.did || '',
             }
-          } catch (e) {
-            console.error(`[Lazy Load] Failed for ${participant2Handle}:`, e);
-          }
-        }
-
-        if (cachedUser) {
-          participant2Info = {
-            handle: cachedUser.handle,
-            displayName: cachedUser.displayName || cachedUser.handle,
-            avatarUrl: cachedUser.avatarUrl || null,
-            did: cachedUser.did || '',
-          };
-        }
+          : {
+              handle: participant2Handle,
+              displayName: participant2Handle,
+              avatarUrl: null as string | null,
+              did: '',
+            };
 
         const latest = conv.messages[0] || null;
         let lastMessage: {
@@ -164,10 +162,9 @@ export async function GET() {
             isBot: cachedUser?.isBot || false,
           },
           lastMessage,
-          unreadCount: Number(unreadCount[0]?.count || 0),
+          unreadCount: unreadByConversation.get(conv.id) || 0,
         };
-      })
-    );
+      });
 
     return NextResponse.json({
       conversations: conversationsWithUnread.filter(c => !c.participant2.isBot),
