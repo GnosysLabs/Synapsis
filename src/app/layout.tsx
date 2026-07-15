@@ -13,26 +13,24 @@ const sairaCondensed = Saira_Condensed({
   variable: "--font-saira",
 });
 
-import { db } from "@/db";
+import { getLocalNode } from "@/lib/node/local-node";
+import { buildNodeLinkMetadata, DEFAULT_NODE_DESCRIPTION } from "@/lib/node/metadata";
 
 export async function generateMetadata(): Promise<Metadata> {
-  let title = "Synapsis";
+  let node = null;
 
   try {
-    const node = await db.query.nodes.findFirst();
-    if (node?.name) {
-      title = node.name;
-    }
+    node = await getLocalNode();
   } catch (e) {
     console.error("Failed to fetch node info for metadata", e);
   }
 
   return {
-    title: {
-      default: title,
-      template: `%s | ${title}`,
-    },
-    description: "Synapsis is designed to function like a global signal layer rather than a culture-bound platform. Anyone can run their own node and still participate in a shared, interconnected network, with global identity, clean terminology, and a modern interface that feels current rather than experimental.",
+    ...buildNodeLinkMetadata(
+      node,
+      process.env.NEXT_PUBLIC_NODE_NAME || "Synapsis",
+      process.env.NEXT_PUBLIC_NODE_DESCRIPTION || DEFAULT_NODE_DESCRIPTION
+    ),
     manifest: "/manifest.json",
     icons: {
       icon: "/api/favicon",
