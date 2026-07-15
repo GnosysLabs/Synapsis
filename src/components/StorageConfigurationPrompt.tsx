@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Box, ChevronDown, ExternalLink } from 'lucide-react';
+import { getStorageProvider } from '@/lib/stuffbox/browser-upload';
 
 interface StorageConfigurationPromptProps {
     open: boolean;
@@ -61,13 +62,33 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel, varia
             if (!response.ok || !data.authorizationUrl) throw new Error(data.error || 'Unable to connect Stuffbox');
             const result = new Promise<void>((resolve, reject) => {
                 let settled = false;
+                let verifyingClosedPopup = false;
                 let channel: BroadcastChannel | null = null;
                 const timeout = window.setTimeout(() => {
                     finish({ type: 'synapsis:stuffbox', success: false, message: 'Stuffbox connection timed out.' });
                 }, 10 * 60_000);
                 const popupClosed = window.setInterval(() => {
-                    if (popup.closed) finish({ type: 'synapsis:stuffbox', success: false, message: 'The Stuffbox window was closed before connecting.' });
+                    if (popup.closed) void verifyConnectionAfterPopupClosed();
                 }, 500);
+
+                async function verifyConnectionAfterPopupClosed() {
+                    if (settled || verifyingClosedPopup) return;
+                    verifyingClosedPopup = true;
+                    window.clearInterval(popupClosed);
+
+                    for (let attempt = 0; attempt < 4 && !settled; attempt += 1) {
+                        await new Promise(resolveDelay => window.setTimeout(resolveDelay, 250));
+                        if (settled) return;
+                        try {
+                            if (await getStorageProvider() === 'stuffbox') {
+                                finish({ type: 'synapsis:stuffbox', success: true, message: 'Stuffbox connected.' });
+                                return;
+                            }
+                        } catch { /* Retry while the callback finishes saving the connection. */ }
+                    }
+
+                    finish({ type: 'synapsis:stuffbox', success: false, message: 'The Stuffbox window was closed before connecting.' });
+                }
 
                 function cleanup() {
                     window.clearTimeout(timeout);

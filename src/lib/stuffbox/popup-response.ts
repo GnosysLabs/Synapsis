@@ -18,7 +18,7 @@ export function renderStuffboxPopupResponse(origin: string, success: boolean, me
       try {
         localStorage.setItem('synapsis:stuffbox:result', JSON.stringify({ ...payload, sentAt: Date.now() }));
       } catch {}
-      window.setTimeout(() => window.close(), 75);
+      window.setTimeout(() => window.close(), 250);
     </script>
   </body></html>`;
 }

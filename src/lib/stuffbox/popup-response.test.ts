@@ -7,7 +7,7 @@ describe('renderStuffboxPopupResponse', () => {
 
     expect(html).toContain("new BroadcastChannel('synapsis:stuffbox')");
     expect(html).toContain("localStorage.setItem('synapsis:stuffbox:result'");
-    expect(html).toContain('window.close()');
+    expect(html).toContain('window.setTimeout(() => window.close(), 250)');
     expect(html).not.toContain('window.location.replace');
   });
 });
