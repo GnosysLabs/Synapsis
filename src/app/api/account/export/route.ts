@@ -7,25 +7,36 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, verifyPassword } from '@/lib/auth';
-import { db, posts, media, follows, users, remoteFollows, chatConversations, chatMessages, bots, botContentSources, botActivityLogs } from '@/db';
-import { eq } from 'drizzle-orm';
+import { db } from '@/db';
 import * as crypto from 'crypto';
 import { decryptApiKey, deserializeEncryptedData } from '@/lib/bots/encryption';
+import { canonicalize, verifySignedActionSignature } from '@/lib/crypto/user-signing';
+import {
+    decryptPrivateKey as decryptStoredPrivateKey,
+    deserializeEncryptedKey,
+} from '@/lib/crypto/private-key';
+import {
+    E2EE_KEY_BUNDLE_ACTION,
+    e2eeKeyBundleSchema,
+    signedUserActionSchema,
+    type SignedUserAction,
+} from '@/lib/e2ee/protocol';
+import { encryptionKeyIdFromPublicKey } from '@/lib/e2ee/bundle-proof';
 
 // We'll use a simple in-memory zip approach
 // For production, consider using a streaming zip library
 
 interface ExportManifest {
-    version: string;
+    version: '1.1';
     did: string;
     handle: string;
     sourceNode: string;
     exportedAt: string;
     expiresAt: string; // Export expiration timestamp
     publicKey: string;
-    privateKeyEncrypted: string; // Encrypted with user's password
-    salt: string; // For key derivation
-    iv: string; // For AES encryption
+    privateKeyEncrypted: string; // Original serialized AES-GCM key blob
+    payloadDigestAlgorithm: 'sha256';
+    payloadDigest: string; // Canonical digest of every non-manifest export field
     signature: string; // Proof of ownership
 }
 
@@ -59,6 +70,8 @@ interface ExportDMConversation {
     participant2Handle: string;
     lastMessageAt: string | null;
     lastMessagePreview: string | null;
+    encryptionMode: string;
+    e2eeActivatedAt: string | null;
     messages: ExportDMMessage[];
 }
 
@@ -69,9 +82,23 @@ interface ExportDMMessage {
     senderNodeDomain: string | null;
     senderDid: string | null;
     content: string | null;
+    protocolVersion: number;
+    clientMessageId: string | null;
+    encryptedEnvelope: string | null;
+    e2eeSignature: string | null;
+    e2eeActionNonce: string | null;
+    e2eeActionTs: number | null;
     deliveredAt: string | null;
     readAt: string | null;
     createdAt: string;
+}
+
+interface ExportE2EEContinuityAnchor {
+    did: string;
+    keyId: string;
+    keyVersion: number;
+    publicKey: string;
+    proofAction: SignedUserAction;
 }
 
 interface ExportBot {
@@ -81,53 +108,89 @@ interface ExportBot {
     bio: string | null;
     avatarUrl: string | null;
     headerUrl: string | null;
-    personalityConfig: any;
+    personalityConfig: unknown;
     llmProvider: string;
     llmModel: string;
     llmApiKey: string; // Decrypted
     botPrivateKey: string; // Decrypted
     publicKey: string;
-    scheduleConfig: any;
+    scheduleConfig: unknown;
     autonomousMode: boolean;
     isActive: boolean;
-    sources: any[];
-    activityLogs: any[];
+    sources: unknown[];
+    activityLogs: unknown[];
 }
 
-/**
- * Encrypt the private key with user's password using AES-256-GCM
- */
-function encryptPrivateKey(privateKey: string, password: string): { encrypted: string; salt: string; iv: string } {
-    const salt = crypto.randomBytes(32);
-    const iv = crypto.randomBytes(16);
-
-    // Derive key from password
-    const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
-
-    // Encrypt
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    let encrypted = cipher.update(privateKey, 'utf8', 'base64');
-    encrypted += cipher.final('base64');
-    const authTag = cipher.getAuthTag();
-
-    // Combine encrypted data with auth tag
-    const combined = Buffer.concat([Buffer.from(encrypted, 'base64'), authTag]).toString('base64');
-
-    return {
-        encrypted: combined,
-        salt: salt.toString('base64'),
-        iv: iv.toString('base64'),
-    };
+interface ExportPayload {
+    profile: ExportProfile;
+    posts: ExportPost[];
+    following: ExportFollowing[];
+    dms: ExportDMConversation[];
+    bots: ExportBot[];
+    e2eeKeyBundle: ExportE2EEContinuityAnchor | null;
 }
 
 /**
  * Sign the manifest to prove ownership
  */
 function signManifest(manifest: Omit<ExportManifest, 'signature'>, privateKey: string): string {
-    const data = JSON.stringify(manifest);
+    const data = canonicalize(manifest);
     const sign = crypto.createSign('sha256');
     sign.update(data);
     return sign.sign(privateKey, 'base64');
+}
+
+function digestExportPayload(payload: ExportPayload): string {
+    return crypto.createHash('sha256').update(canonicalize(payload)).digest('hex');
+}
+
+function signingKeyMatchesPublicKey(privateKey: string, publicKey: string): boolean {
+    try {
+        const derivedPublicKey = crypto.createPublicKey(privateKey).export({ type: 'spki', format: 'der' });
+        const expectedPublicKey = crypto.createPublicKey(publicKey).export({ type: 'spki', format: 'der' });
+        return derivedPublicKey.length === expectedPublicKey.length
+            && crypto.timingSafeEqual(derivedPublicKey, expectedPublicKey);
+    } catch {
+        return false;
+    }
+}
+
+async function exportE2EEContinuityAnchor(
+    row: {
+        did: string;
+        keyId: string;
+        keyVersion: number;
+        publicKey: string;
+        proofAction: string;
+    } | undefined,
+    user: { did: string; handle: string; publicKey: string },
+): Promise<ExportE2EEContinuityAnchor | null> {
+    if (!row) return null;
+
+    const proof = signedUserActionSchema.parse(JSON.parse(row.proofAction));
+    const bundle = e2eeKeyBundleSchema.parse(proof.data);
+    if (proof.action !== E2EE_KEY_BUNDLE_ACTION
+        || proof.did !== user.did
+        || proof.handle.toLowerCase() !== user.handle.toLowerCase()
+        || row.did !== proof.did
+        || row.keyId !== bundle.keyId
+        || row.keyVersion !== bundle.version
+        || row.publicKey !== bundle.publicKey
+        || Math.abs(bundle.createdAt - proof.ts) > 5 * 60 * 1_000
+        || Buffer.from(bundle.publicKey, 'base64url').length !== 32
+        || Buffer.from(bundle.recoveryCommitment, 'base64url').length !== 32
+        || await encryptionKeyIdFromPublicKey(bundle.publicKey) !== bundle.keyId
+        || !await verifySignedActionSignature(proof, user.publicKey)) {
+        throw new Error('Stored E2EE continuity proof is invalid');
+    }
+
+    return {
+        did: row.did,
+        keyId: row.keyId,
+        keyVersion: row.keyVersion,
+        publicKey: row.publicKey,
+        proofAction: proof,
+    };
 }
 
 export async function POST(req: NextRequest) {
@@ -154,6 +217,23 @@ export async function POST(req: NextRequest) {
         // Check if account has already moved
         if (user.movedTo) {
             return NextResponse.json({ error: 'This account has already been migrated' }, { status: 400 });
+        }
+
+        if (!user.privateKeyEncrypted) {
+            return NextResponse.json({ error: 'Account signing key is unavailable' }, { status: 500 });
+        }
+
+        let signingPrivateKey: string;
+        try {
+            signingPrivateKey = decryptStoredPrivateKey(
+                deserializeEncryptedKey(user.privateKeyEncrypted),
+                password,
+            );
+        } catch {
+            return NextResponse.json({ error: 'Account signing key could not be unlocked' }, { status: 500 });
+        }
+        if (!signingKeyMatchesPublicKey(signingPrivateKey, user.publicKey)) {
+            return NextResponse.json({ error: 'Account signing key does not match this account' }, { status: 500 });
         }
 
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
@@ -186,6 +266,11 @@ export async function POST(req: NextRequest) {
                 messages: true
             }
         });
+
+        const currentE2EEKeyBundle = await db.query.e2eeKeyBundles.findFirst({
+            where: { userId: user.id },
+        });
+        const e2eeKeyBundle = await exportE2EEContinuityAnchor(currentE2EEKeyBundle, user);
 
         // Fetch Bots
         const userBots = await db.query.bots.findMany({
@@ -248,13 +333,21 @@ export async function POST(req: NextRequest) {
             participant2Handle: conv.participant2Handle,
             lastMessageAt: conv.lastMessageAt?.toISOString() || null,
             lastMessagePreview: conv.lastMessagePreview,
+            encryptionMode: conv.encryptionMode,
+            e2eeActivatedAt: conv.e2eeActivatedAt?.toISOString() || null,
             messages: conv.messages.map(msg => ({
                 senderHandle: msg.senderHandle,
                 senderDisplayName: msg.senderDisplayName,
                 senderAvatarUrl: msg.senderAvatarUrl,
                 senderNodeDomain: msg.senderNodeDomain,
                 senderDid: msg.senderDid,
-                content: msg.content,
+                content: msg.protocolVersion === 0 ? msg.content : null,
+                protocolVersion: msg.protocolVersion,
+                clientMessageId: msg.clientMessageId,
+                encryptedEnvelope: msg.encryptedEnvelope,
+                e2eeSignature: msg.e2eeSignature,
+                e2eeActionNonce: msg.e2eeActionNonce,
+                e2eeActionTs: msg.e2eeActionTs,
                 deliveredAt: msg.deliveredAt?.toISOString() || null,
                 readAt: msg.readAt?.toISOString() || null,
                 createdAt: msg.createdAt.toISOString()
@@ -311,39 +404,41 @@ export async function POST(req: NextRequest) {
             };
         });
 
-        // Encrypt private key
-        const privateKey = user.privateKeyEncrypted || '';
-        const { encrypted, salt, iv } = encryptPrivateKey(privateKey, password);
+        const exportPayload: ExportPayload = {
+            profile,
+            posts: exportPosts,
+            following: exportFollowing,
+            dms: exportDMs,
+            bots: exportBots,
+            e2eeKeyBundle,
+        };
 
-        // Build manifest (without signature first)
+        // Version 1.1 fails closed on older importers and binds a canonical
+        // digest of every non-manifest field into the signed manifest.
         const exportedAt = new Date();
         const expiresAt = new Date(exportedAt.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
         const manifestData: Omit<ExportManifest, 'signature'> = {
-            version: '1.0',
+            version: '1.1',
             did: user.did,
             handle: user.handle,
             sourceNode: nodeDomain,
             exportedAt: exportedAt.toISOString(),
             expiresAt: expiresAt.toISOString(),
             publicKey: user.publicKey,
-            privateKeyEncrypted: encrypted,
-            salt,
-            iv,
+            privateKeyEncrypted: user.privateKeyEncrypted,
+            payloadDigestAlgorithm: 'sha256',
+            payloadDigest: digestExportPayload(exportPayload),
         };
 
         // Sign the manifest
-        const signature = signManifest(manifestData, privateKey);
+        const signature = signManifest(manifestData, signingPrivateKey);
         const manifest: ExportManifest = { ...manifestData, signature };
 
         // Build the export package as JSON (ZIP would require additional library)
         // For MVP, we'll use a JSON format that can be easily converted to ZIP later
         const exportPackage = {
             manifest,
-            profile,
-            posts: exportPosts,
-            following: exportFollowing,
-            dms: exportDMs,
-            bots: exportBots,
+            ...exportPayload,
         };
 
         return NextResponse.json({

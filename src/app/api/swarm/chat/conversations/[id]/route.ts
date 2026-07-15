@@ -5,10 +5,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, chatConversations, chatMessages, users } from '@/db';
-import { eq, and } from 'drizzle-orm';
+import { db, chatConversations } from '@/db';
+import { eq } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
-import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 import { z } from 'zod';
 
 // Schema for conversation ID parameter
@@ -62,67 +61,31 @@ export async function DELETE(
     }
 
     if (deleteFor === 'both') {
+      const participant2Handle = conversation.participant2Handle;
+      if (participant2Handle.includes('@')) {
+        return NextResponse.json({
+          error: 'Delete for everyone is not supported across nodes. You can still delete this conversation for yourself.',
+          code: 'REMOTE_DELETE_FOR_EVERYONE_UNSUPPORTED',
+        }, { status: 409 });
+      }
+
       // Delete the entire conversation and all messages (cascade will handle messages)
       await db.delete(chatConversations).where(eq(chatConversations.id, id));
 
-      // Send deletion request to the other party
-      const participant2Handle = conversation.participant2Handle;
-      const isRemote = participant2Handle.includes('@');
+      // Local user - find and delete their conversation too.
+      const recipientUser = await db.query.users.findFirst({
+        where: { handle: participant2Handle },
+      });
 
-      if (isRemote) {
-        // Extract domain from handle (format: handle@domain)
-        const domain = normalizeNodeDomain(participant2Handle.split('@')[1]);
-        const handle = participant2Handle.split('@')[0];
-
-        try {
-          if (await isNodeBlocked(domain)) {
-            return NextResponse.json({ success: true });
-          }
-
-          const protocol = domain.includes('localhost') ? 'http' : 'https';
-          const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
-
-          // SECURITY: Sign the deletion request
-          const { signPayload, getNodePrivateKey } = await import('@/lib/swarm/signature');
-          const privateKey = await getNodePrivateKey();
-
-          const payload = {
-            senderHandle: session.user.handle,
-            senderNodeDomain: nodeDomain,
-            recipientHandle: handle,
-            conversationId: id,
-            timestamp: new Date().toISOString(),
-          };
-
-          const signature = signPayload(payload, privateKey);
-
-          await fetch(`${protocol}://${domain}/api/swarm/chat/delete`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...payload, signature }),
-          });
-
-          console.log(`[Chat Delete] Sent deletion request to ${domain}`);
-        } catch (error) {
-          console.error('[Chat Delete] Failed to notify remote node:', error);
-          // Continue anyway - local deletion succeeded
-        }
-      } else {
-        // Local user - find and delete their conversation too
-        const recipientUser = await db.query.users.findFirst({
-          where: { handle: participant2Handle },
+      if (recipientUser) {
+        // Find their conversation with us
+        const recipientConversation = await db.query.chatConversations.findFirst({
+          where: { AND: [{ participant1Id: recipientUser.id }, { participant2Handle: session.user.handle }] },
         });
 
-        if (recipientUser) {
-          // Find their conversation with us
-          const recipientConversation = await db.query.chatConversations.findFirst({
-            where: { AND: [{ participant1Id: recipientUser.id }, { participant2Handle: session.user.handle }] },
-          });
-
-          if (recipientConversation) {
-            await db.delete(chatConversations).where(eq(chatConversations.id, recipientConversation.id));
-            console.log(`[Chat Delete] Deleted conversation for local user ${participant2Handle}`);
-          }
+        if (recipientConversation) {
+          await db.delete(chatConversations).where(eq(chatConversations.id, recipientConversation.id));
+          console.log(`[Chat Delete] Deleted conversation for local user ${participant2Handle}`);
         }
       }
 

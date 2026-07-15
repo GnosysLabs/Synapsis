@@ -7,8 +7,8 @@ import { eq, inArray } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
 import { generateKeyPair } from '@/lib/crypto/keys';
+import { didKeyMatchesPublicKey, generateDID } from '@/lib/crypto/did-key';
 import { encryptPrivateKey, serializeEncryptedKey } from '@/lib/crypto/private-key';
-import { base58btc } from 'multiformats/bases/base58';
 import { cookies } from 'next/headers';
 import { upsertHandleEntries } from '@/lib/federation/handles';
 import { registrationDisplayName } from '@/lib/auth/display-name';
@@ -133,18 +133,7 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
     return bcrypt.compare(password, hash);
 }
 
-/**
- * Generate a DID for a new user
- * Uses did:key format (W3C standard) - the DID contains the public key itself
- */
-export function generateDID(publicKey: string): string {
-    // Encode the SPKI public key in base58btc (multibase)
-    const publicKeyBytes = Buffer.from(publicKey, 'base64');
-    const encoded = base58btc.encode(new Uint8Array(publicKeyBytes));
-    
-    // Create did:key - the 'z' prefix indicates base58btc encoding
-    return `did:key:${encoded}`;
-}
+export { generateDID } from '@/lib/crypto/did-key';
 
 /**
  * Generate legacy DID format (for backward compatibility)
@@ -397,6 +386,26 @@ export async function authenticateUser(
         // Update local user object to return new keys
         user.publicKey = publicKey;
         user.privateKeyEncrypted = serializeEncryptedKey(encryptedPrivateKey);
+    }
+
+    // Older login migrations rotated an RSA signing key without rotating the
+    // self-certifying did:key identifier. Repair that mismatch transparently so
+    // clients can verify the current account key from the DID itself.
+    if (user.did.startsWith('did:key:') && !didKeyMatchesPublicKey(user.did, user.publicKey)) {
+        const expectedDid = generateDID(user.publicKey);
+        if (user.did !== expectedDid) {
+            await db.update(users)
+                .set({ did: expectedDid, updatedAt: new Date() })
+                .where(eq(users.id, user.id));
+            user.did = expectedDid;
+
+            await upsertHandleEntries([{
+                handle: user.handle,
+                did: expectedDid,
+                nodeDomain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+                updatedAt: new Date().toISOString(),
+            }]);
+        }
     }
 
     return user;

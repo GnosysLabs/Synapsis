@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { TriangleAlert, X } from 'lucide-react';
 import { decryptPrivateKey } from '@/lib/crypto/private-key-client';
@@ -31,7 +30,6 @@ interface AuthScreenProps {
 }
 
 export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProps) {
-    const router = useRouter();
     const [mode, setMode] = useState<'login' | 'register' | 'import'>('login');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -53,10 +51,12 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
 
     const [importFile, setImportFile] = useState<File | null>(null);
     const [importPassword, setImportPassword] = useState('');
+    const [importEmail, setImportEmail] = useState('');
     const [importHandle, setImportHandle] = useState('');
     const [acceptedCompliance, setAcceptedCompliance] = useState(false);
     const [importAgeVerified, setImportAgeVerified] = useState(false);
     const [importSuccess, setImportSuccess] = useState<string | null>(null);
+    const [importWarnings, setImportWarnings] = useState<string[]>([]);
 
     // Fetch node info
     useEffect(() => {
@@ -105,7 +105,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
         if (turnstileWidgetId.current && window.turnstile) {
             try {
                 window.turnstile.remove(turnstileWidgetId.current);
-            } catch (e) {
+            } catch {
                 // Ignore errors
             }
         }
@@ -130,7 +130,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             if (turnstileWidgetId.current && window.turnstile) {
                 try {
                     window.turnstile.remove(turnstileWidgetId.current);
-                } catch (e) {
+                } catch {
                     // Ignore errors
                 }
             }
@@ -165,7 +165,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
 
     const handleImport = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!importFile || !importPassword || !importHandle || !acceptedCompliance) {
+        if (!importFile || !importPassword || !importEmail || !importHandle || !acceptedCompliance) {
             setError('Please fill in all fields and accept the compliance agreement');
             return;
         }
@@ -178,6 +178,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
         setLoading(true);
         setError('');
         setImportSuccess(null);
+        setImportWarnings([]);
 
         try {
             const fileContent = await importFile.text();
@@ -189,6 +190,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                 body: JSON.stringify({
                     exportData,
                     password: importPassword,
+                    destinationEmail: importEmail,
                     newHandle: importHandle,
                     acceptedCompliance,
                 }),
@@ -200,16 +202,21 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                 throw new Error(data.error || 'Import failed');
             }
 
-            setImportSuccess(data.message);
-            // Soft navigation to preserve AuthContext/KeyStore state
-            setTimeout(() => {
-                router.refresh();
-                if (onSuccess) {
-                    onSuccess();
-                } else {
-                    router.push('/');
-                }
-            }, 2000);
+            const warnings = Array.isArray(data.warnings)
+                ? data.warnings.filter((warning: unknown): warning is string => typeof warning === 'string')
+                : [];
+            setImportSuccess(data.message || 'Account imported successfully.');
+            setImportWarnings(warnings);
+            if (warnings.length === 0) {
+                setTimeout(() => {
+                    if (onSuccess) {
+                        onSuccess();
+                        window.location.reload();
+                    } else {
+                        window.location.assign('/');
+                    }
+                }, 2000);
+            }
 
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Import failed');
@@ -280,7 +287,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
 
                     // Import and set in memory store
                     // Remove PEM headers if present and clean whitespace
-                    let cleanKey = privateKeyDecrypted
+                    const cleanKey = privateKeyDecrypted
                         .replace(/-----BEGIN [A-Z ]+-----/, '')
                         .replace(/-----END [A-Z ]+-----/, '')
                         .replace(/\s/g, '');
@@ -306,7 +313,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             if (data.user?.privateKeyEncrypted) {
                 try {
                     // Update AuthContext first so it has the user and key
-                    login(data.user);
+                    await login(data.user);
 
                     // Now unlock (passing user explicitly to avoid async state delay)
                     await unlockIdentity(password, data.user);
@@ -315,12 +322,14 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                 }
             }
 
-            // Soft navigation to preserve AuthContext/KeyStore state
-            router.refresh();
+            // Start Chat in a fresh JavaScript realm before it creates or loads
+            // the E2EE account key. Turnstile-enabled credential handling remains
+            // part of the login trust boundary and is documented accordingly.
             if (onSuccess) {
                 onSuccess();
+                window.location.reload();
             } else {
-                router.push('/');
+                window.location.assign('/');
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
@@ -688,7 +697,29 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                 color: '#000',
                                 fontSize: '14px',
                             }}>
-                                {importSuccess} Redirecting...
+                                <div>{importSuccess}</div>
+                                {importWarnings.length > 0 ? (
+                                    <>
+                                        <ul style={{ margin: '8px 0 10px', paddingLeft: 20 }}>
+                                            {importWarnings.map((warning) => <li key={warning}>{warning}</li>)}
+                                        </ul>
+                                        <button
+                                            type="button"
+                                            className="btn"
+                                            onClick={() => {
+                                                if (onSuccess) {
+                                                    onSuccess();
+                                                    window.location.reload();
+                                                } else {
+                                                    window.location.assign('/');
+                                                }
+                                            }}
+                                            style={{ width: '100%', justifyContent: 'center' }}
+                                        >
+                                            Continue
+                                        </button>
+                                    </>
+                                ) : ' Redirecting…'}
                             </div>
                         )}
 
@@ -736,6 +767,25 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                 placeholder="Enter the password for this account"
                                 required
                             />
+                        </div>
+
+                        <div style={{ marginBottom: '16px' }}>
+                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
+                                Email on this node
+                            </label>
+                            <input
+                                type="email"
+                                className="input"
+                                value={importEmail}
+                                onChange={(e) => setImportEmail(e.target.value)}
+                                placeholder="you@example.com"
+                                autoComplete="email"
+                                required
+                                maxLength={320}
+                            />
+                            <span style={{ display: 'block', color: 'var(--foreground-tertiary)', fontSize: '12px', marginTop: '4px' }}>
+                                You&apos;ll use this email to sign in after the import.
+                            </span>
                         </div>
 
                         <div style={{ marginBottom: '16px' }}>
@@ -801,7 +851,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                 <span style={{ fontSize: '12px', color: 'var(--foreground-secondary)', lineHeight: 1.4 }}>
                                     <strong style={{ color: 'var(--warning)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                                         <TriangleAlert size={12} /> Compliance:
-                                    </strong> I agree to comply with this node's rules and take responsibility for my migrated content.
+                                    </strong> I agree to comply with this node&apos;s rules and take responsibility for my migrated content.
                                 </span>
                             </label>
                         </div>
@@ -834,7 +884,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                             type="submit"
                             className="btn btn-primary btn-lg"
                             style={{ width: '100%' }}
-                            disabled={loading || !importFile || !importPassword || !importHandle || !acceptedCompliance || (nodeInfo.isNsfw && !importAgeVerified)}
+                            disabled={loading || !importFile || !importPassword || !importEmail || !importHandle || !acceptedCompliance || (nodeInfo.isNsfw && !importAgeVerified)}
                         >
                             {loading ? 'Importing...' : 'Import Account'}
                         </button>

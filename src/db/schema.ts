@@ -85,6 +85,8 @@ export const users = sqliteTable('users', {
 }, (table) => [
   index('users_handle_idx').on(table.handle),
   index('users_did_idx').on(table.did),
+  uniqueIndex('users_handle_unique_idx').on(table.handle),
+  uniqueIndex('users_did_unique_idx').on(table.did),
   index('users_suspended_idx').on(table.isSuspended),
   index('users_silenced_idx').on(table.isSilenced),
   index('users_is_bot_idx').on(table.isBot),
@@ -807,6 +809,11 @@ export const chatConversations = sqliteTable('chat_conversations', {
   lastMessageAt: integer('last_message_at', { mode: 'timestamp' }),
   lastMessagePreview: text('last_message_preview'),
 
+  // Existing conversations begin as legacy. The first encrypted message marks
+  // the cutover without pretending older plaintext history was retroactively protected.
+  encryptionMode: text('encryption_mode').default('legacy').notNull(),
+  e2eeActivatedAt: integer('e2ee_activated_at', { mode: 'timestamp' }),
+
   // Metadata
   createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
@@ -820,8 +827,8 @@ export const chatConversations = sqliteTable('chat_conversations', {
 
 /**
  * Individual chat messages within conversations.
- * Messages are stored as plain text on the server.
- * Both sender and recipient can view the message content.
+ * Legacy messages can contain plaintext. E2EE v1 messages store only a signed,
+ * opaque encrypted envelope and leave `content` null.
  */
 export const chatMessages = sqliteTable('chat_messages', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
@@ -839,6 +846,14 @@ export const chatMessages = sqliteTable('chat_messages', {
   // Message content (plain text for verified chat)
   content: text('content'),
 
+  // End-to-end encrypted message fields. Protocol version 0 means legacy plaintext.
+  protocolVersion: integer('protocol_version').default(0).notNull(),
+  clientMessageId: text('client_message_id'),
+  encryptedEnvelope: text('encrypted_envelope'),
+  e2eeSignature: text('e2ee_signature'),
+  e2eeActionNonce: text('e2ee_action_nonce'),
+  e2eeActionTs: integer('e2ee_action_ts'),
+
   // Swarm sync info
   swarmMessageId: text('swarm_message_id').unique(), // Format: swarm:domain:uuid
 
@@ -852,6 +867,7 @@ export const chatMessages = sqliteTable('chat_messages', {
   index('chat_messages_conversation_idx').on(table.conversationId),
   index('chat_messages_created_idx').on(table.createdAt),
   index('chat_messages_swarm_id_idx').on(table.swarmMessageId),
+  uniqueIndex('chat_messages_conversation_client_id_unique').on(table.conversationId, table.clientMessageId),
 ]);
 
 
@@ -878,6 +894,87 @@ export const chatTypingIndicators = sqliteTable('chat_typing_indicators', {
 // ============================================
 // CRYPTO & SECURITY
 // ============================================
+
+/**
+ * Current account encryption key, certified by the account's existing DID key.
+ * Private material is never stored here.
+ */
+export const e2eeKeyBundles = sqliteTable('e2ee_key_bundles', {
+  userId: text('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  did: text('did').notNull(),
+  keyId: text('key_id').notNull(),
+  keyVersion: integer('key_version').notNull(),
+  publicKey: text('public_key').notNull(),
+  proofAction: text('proof_action').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('e2ee_key_bundles_did_unique').on(table.did),
+  uniqueIndex('e2ee_key_bundles_key_id_unique').on(table.keyId),
+]);
+
+/**
+ * PIN recovery vault. The PIN verifier is HMACed with a node secret and the
+ * server share is separately encrypted, so a database-only leak is not an
+ * offline PIN oracle. This is not a substitute for threshold/HSM recovery.
+ */
+export const e2eeKeyVaults = sqliteTable('e2ee_key_vaults', {
+  userId: text('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  keyId: text('key_id').notNull(),
+  keyVersion: integer('key_version').notNull(),
+  ownerDid: text('owner_did').notNull(),
+  publicKey: text('public_key').notNull(),
+  ciphertext: text('ciphertext').notNull(),
+  nonce: text('nonce').notNull(),
+  salt: text('salt').notNull(),
+  kdfAlgorithm: text('kdf_algorithm').notNull(),
+  kdfOpsLimit: integer('kdf_ops_limit').notNull(),
+  kdfMemLimit: integer('kdf_mem_limit').notNull(),
+  pinVerifierMac: text('pin_verifier_mac').notNull(),
+  serverShareEncrypted: text('server_share_encrypted').notNull(),
+  failedAttempts: integer('failed_attempts').default(0).notNull(),
+  lockedUntil: integer('locked_until', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('e2ee_key_vaults_key_id_unique').on(table.keyId),
+]);
+
+/**
+ * Verified cache of remote users' DID-certified encryption keys. Key changes
+ * must carry a fresh signature by the same account signing identity.
+ */
+export const e2eeRemoteKeyBundles = sqliteTable('e2ee_remote_key_bundles', {
+  did: text('did').primaryKey(),
+  handle: text('handle').notNull(),
+  keyId: text('key_id').notNull(),
+  keyVersion: integer('key_version').notNull(),
+  publicKey: text('public_key').notNull(),
+  proofAction: text('proof_action').notNull(),
+  signingPublicKey: text('signing_public_key').notNull(),
+  firstSeenAt: integer('first_seen_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  index('e2ee_remote_key_bundles_key_id_idx').on(table.keyId),
+  index('e2ee_remote_key_bundles_handle_idx').on(table.handle),
+]);
+
+/**
+ * Durable replay tombstones survive conversation deletion, preventing a valid
+ * old signed envelope from recreating a message after the user removed it.
+ */
+export const e2eeMessageReceipts = sqliteTable('e2ee_message_receipts', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  ownerUserId: text('owner_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  senderDid: text('sender_did').notNull(),
+  messageId: text('message_id').notNull(),
+  protocolVersion: integer('protocol_version').default(1).notNull(),
+  receivedAt: integer('received_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('e2ee_message_receipts_owner_sender_message_unique')
+    .on(table.ownerUserId, table.senderDid, table.messageId),
+  index('e2ee_message_receipts_received_idx').on(table.receivedAt),
+]);
 
 /**
  * Replay protection for signed user actions.

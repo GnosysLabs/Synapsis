@@ -6,10 +6,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, chatConversations, chatMessages, users } from '@/db';
-import { eq, desc, and, lt, isNull, sql, inArray } from 'drizzle-orm';
+import { db, chatMessages, users } from '@/db';
+import { eq, and, isNull } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
 import { z } from 'zod';
+import { E2EE_CHAT_ACTION, E2EE_PROTOCOL_VERSION, e2eeMessageEnvelopeSchema } from '@/lib/e2ee/protocol';
 
 // Schema for query parameters
 const messagesQuerySchema = z.object({
@@ -22,6 +23,8 @@ const messagesQuerySchema = z.object({
 const markReadSchema = z.object({
     conversationId: z.string().uuid(),
 });
+
+type ChatUser = typeof users.$inferSelect;
 
 
 export async function GET(request: NextRequest) {
@@ -83,8 +86,8 @@ export async function GET(request: NextRequest) {
     });
 
     // Fetch users
-    const usersByDid: Record<string, any> = {};
-    const usersByHandle: Record<string, any> = {};
+    const usersByDid: Record<string, ChatUser> = {};
+    const usersByHandle: Record<string, ChatUser> = {};
 
     if (senderDids.size > 0) {
       const found = await db.query.users.findMany({
@@ -102,7 +105,7 @@ export async function GET(request: NextRequest) {
     }
 
     const messagesMapped = messages.map((msg) => {
-      const isSentByMe = msg.senderHandle === session.user.handle;
+      const isSentByMe = msg.senderDid === session.user.did || msg.senderHandle === session.user.handle;
 
       // Resolve fresh user data
       const user = msg.senderDid ? usersByDid[msg.senderDid] : usersByHandle[msg.senderHandle];
@@ -110,13 +113,39 @@ export async function GET(request: NextRequest) {
       const displayName = user?.displayName || msg.senderDisplayName || msg.senderHandle;
       const avatarUrl = user?.avatarUrl || msg.senderAvatarUrl;
 
+      let encryptedEnvelope = null;
+      let signedAction = null;
+      if (msg.protocolVersion === E2EE_PROTOCOL_VERSION && msg.encryptedEnvelope) {
+        try {
+          encryptedEnvelope = e2eeMessageEnvelopeSchema.parse(JSON.parse(msg.encryptedEnvelope));
+          if (!msg.senderDid || !msg.e2eeSignature || !msg.e2eeActionNonce || !msg.e2eeActionTs) {
+            throw new Error('Encrypted message signature metadata is incomplete');
+          }
+          signedAction = {
+            action: E2EE_CHAT_ACTION,
+            data: encryptedEnvelope,
+            did: msg.senderDid,
+            handle: encryptedEnvelope.senderHandle,
+            ts: msg.e2eeActionTs,
+            nonce: msg.e2eeActionNonce,
+            sig: msg.e2eeSignature,
+          };
+        } catch (error) {
+          console.error(`[E2EE Chat] Invalid stored envelope ${msg.id}:`, error);
+        }
+      }
+
       return {
         id: msg.id,
         senderHandle: msg.senderHandle,
         senderDisplayName: displayName,
         senderAvatarUrl: avatarUrl,
         senderDid: msg.senderDid,
-        content: msg.content,
+        content: msg.protocolVersion === 0 ? msg.content : null,
+        protocolVersion: msg.protocolVersion,
+        encryptedEnvelope,
+        signedAction,
+        senderPublicKey: user?.publicKey || null,
         deliveredAt: msg.deliveredAt,
         readAt: msg.readAt,
         createdAt: msg.createdAt,
@@ -127,7 +156,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       messages: messagesMapped.reverse(), // Oldest first for display
       nextCursor: messages.length === limit ? messages[messages.length - 1].createdAt.toISOString() : null,
-    });
+    }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid input', details: error.issues }, { status: 400 });

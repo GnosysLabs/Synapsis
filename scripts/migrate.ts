@@ -2,8 +2,43 @@ import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/tursodatabase/migrator';
 import { closeDb, db } from '../src/db';
 
+interface DuplicateIdentityRow {
+  field: 'did' | 'handle';
+  value: string;
+  duplicateCount: number;
+}
+
+async function assertIdentityUniqueness(): Promise<void> {
+  const tables = await db.all<{ name: string }>(sql.raw(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users' LIMIT 1",
+  ));
+  if (tables.length === 0) return;
+
+  const duplicates = await db.all<DuplicateIdentityRow>(sql.raw(`
+    SELECT 'did' AS field, did AS value, COUNT(*) AS duplicateCount
+    FROM users
+    GROUP BY did
+    HAVING COUNT(*) > 1
+    UNION ALL
+    SELECT 'handle' AS field, handle AS value, COUNT(*) AS duplicateCount
+    FROM users
+    GROUP BY handle
+    HAVING COUNT(*) > 1
+    LIMIT 20
+  `));
+  if (duplicates.length === 0) return;
+
+  const sample = duplicates
+    .map((row) => `${row.field}=${JSON.stringify(row.value)} (${row.duplicateCount} rows)`)
+    .join(', ');
+  throw new Error(
+    `Database identity preflight failed: duplicate users must be resolved before migration: ${sample}`,
+  );
+}
+
 async function main() {
   try {
+    await assertIdentityUniqueness();
     const result = await migrate(db, { migrationsFolder: './drizzle' });
 
     if (result) {

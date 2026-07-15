@@ -19,6 +19,16 @@ set -a
 source "$ENV_FILE"
 set +a
 
+# Existing installations predate encrypted-message recovery. Enroll them with
+# a distinct stable secret before migrations/builds make E2EE available.
+if [[ -z "${E2EE_RECOVERY_SECRET:-}" ]]; then
+  command -v openssl >/dev/null || { echo "Missing required command: openssl" >&2; exit 1; }
+  E2EE_RECOVERY_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
+  printf '\nE2EE_RECOVERY_SECRET=%s\n' "$E2EE_RECOVERY_SECRET" >> "$ENV_FILE"
+  export E2EE_RECOVERY_SECRET
+  echo "Added E2EE_RECOVERY_SECRET to $ENV_FILE. Back it up separately from the database."
+fi
+
 install_update_units() {
   units_changed=0
   for unit in synapsis.service synapsis-maintenance.service synapsis-update.service synapsis-update.timer; do

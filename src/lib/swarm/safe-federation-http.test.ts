@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  E2EE_FEDERATION_MAX_REQUEST_BYTES,
   SafeFederationError,
   createSafeFederationRequester,
   isPublicFederationAddress,
@@ -200,6 +201,17 @@ describe('E2EE federation URL and DNS policy', () => {
 });
 
 describe('E2EE federation HTTP behavior', () => {
+  it('rejects an oversized request body before DNS or network activity', async () => {
+    const dnsResolver = vi.fn(async () => [{ address: '8.8.8.8', family: 4 as const }]);
+    const request = createSafeFederationRequester({ development: false, dnsResolver });
+
+    await expect(request('https://node.synapsis.social/api/chat/receive', {
+      method: 'POST',
+      body: 'x'.repeat(E2EE_FEDERATION_MAX_REQUEST_BYTES + 1),
+    })).rejects.toSatisfy(expectCode('REQUEST_TOO_LARGE'));
+    expect(dnsResolver).not.toHaveBeenCalled();
+  });
+
   it('supports GET, bounded buffering, UTF-8 text, and JSON parsing', async () => {
     const server = await startServer((_request, response) => {
       response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
@@ -337,6 +349,12 @@ describe('E2EE federation HTTP behavior', () => {
     ).rejects.toSatisfy(expectCode('INVALID_HEADER'));
     await expect(
       request('http://127.0.0.1:1/', { headers: { 'content-length': '999' } })
+    ).rejects.toSatisfy(expectCode('INVALID_HEADER'));
+    await expect(
+      request('http://127.0.0.1:1/', { headers: { authorization: 'Bearer secret' } })
+    ).rejects.toSatisfy(expectCode('INVALID_HEADER'));
+    await expect(
+      request('http://127.0.0.1:1/', { headers: { cookie: 'session=secret' } })
     ).rejects.toSatisfy(expectCode('INVALID_HEADER'));
   });
 });

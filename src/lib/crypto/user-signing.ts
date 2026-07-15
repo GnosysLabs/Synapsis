@@ -9,8 +9,6 @@
  * - Nonce: 16+ bytes random base64url.
  */
 
-import { v4 as uuidv4 } from 'uuid';
-
 // ============================================
 // KEY STORAGE (In-Memory Only)
 // ============================================
@@ -79,10 +77,8 @@ export function clearUserPrivateKey(): void {
 // CRYPTO HELPERS (WebCrypto / Node)
 // ============================================
 
-// Detect environment for Crypto
-const cryptoSubtle = typeof window !== 'undefined'
-  ? window.crypto.subtle // Browser
-  : (globalThis.crypto as any)?.subtle || require('crypto').webcrypto?.subtle; // Node
+// Modern browsers and the supported Node.js runtime both expose WebCrypto.
+const cryptoSubtle = globalThis.crypto?.subtle;
 
 if (!cryptoSubtle) {
   throw new Error('WebCrypto is not supported in this environment');
@@ -115,9 +111,12 @@ export async function exportPrivateKey(key: CryptoKey): Promise<ArrayBuffer> {
  * Import Private Key from PKCS8 (after decryption)
  */
 export async function importPrivateKey(keyData: ArrayBuffer | Uint8Array): Promise<CryptoKey> {
+  const normalizedKeyData = keyData instanceof ArrayBuffer
+    ? keyData
+    : Uint8Array.from(keyData).buffer;
   return await cryptoSubtle.importKey(
     'pkcs8',
-    keyData,
+    normalizedKeyData,
     {
       name: 'ECDSA',
       namedCurve: 'P-256',
@@ -170,7 +169,7 @@ export async function importPublicKey(base64Key: string): Promise<CryptoKey> {
  * - No Dates, Maps, Sets, Functions
  * - No NaN, Infinity
  */
-export function canonicalize(obj: any): string {
+export function canonicalize(obj: unknown): string {
   if (obj === undefined) return ''; // Should not happen for valid inputs
   if (obj === null) return 'null';
 
@@ -199,12 +198,13 @@ export function canonicalize(obj: any): string {
     if (obj instanceof Date) throw new Error('Serialization failed: Date objects not allowed');
     if (obj instanceof RegExp) throw new Error('Serialization failed: RegExp objects not allowed');
 
-    const keys = Object.keys(obj).sort();
+    const record = obj as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
     const pairs: string[] = [];
 
     for (const key of keys) {
-      if (obj[key] === undefined) continue;
-      const val = canonicalize(obj[key]);
+      if (record[key] === undefined) continue;
+      const val = canonicalize(record[key]);
       pairs.push(`${JSON.stringify(key)}:${val}`);
     }
 
@@ -218,14 +218,14 @@ export function canonicalize(obj: any): string {
  * Create a Signed Action
  * @returns { SignedAction } Includes ts, nonce, and strict signature
  */
-export async function createSignedAction(
+export async function createSignedAction<TData>(
   action: string,
-  data: any,
+  data: TData,
   userDid: string,
   userHandle: string
 ): Promise<{
   action: string;
-  data: any;
+  data: TData;
   did: string;
   handle: string;
   ts: number;
@@ -273,6 +273,34 @@ export async function createSignedAction(
     ...payloadToSign,
     sig
   };
+}
+
+export async function verifySignedActionSignature(
+  signedAction: {
+    action: string;
+    data: unknown;
+    did: string;
+    handle: string;
+    ts: number;
+    nonce: string;
+    sig: string;
+  },
+  publicKeyString: string,
+): Promise<boolean> {
+  try {
+    const { sig, ...payload } = signedAction;
+    const canonicalString = canonicalize(payload);
+    const signature = base64ToArrayBuffer(base64UrlToBase64(sig));
+    const publicKey = await importPublicKey(publicKeyString);
+    return cryptoSubtle.verify(
+      { name: 'ECDSA', hash: { name: 'SHA-256' } },
+      publicKey,
+      signature,
+      new TextEncoder().encode(canonicalString),
+    );
+  } catch {
+    return false;
+  }
 }
 
 

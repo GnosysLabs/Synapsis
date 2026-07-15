@@ -6,10 +6,11 @@
  */
 
 import { createSignedAction, hasUserPrivateKey } from '@/lib/crypto/user-signing';
+import type { E2EEMessageEnvelope } from '@/lib/e2ee/protocol';
 
 export interface SignedFetchOptions {
   method?: string;
-  body?: any;
+  body?: unknown;
   headers?: Record<string, string>;
 }
 
@@ -26,7 +27,7 @@ export interface SignedFetchOptions {
 export async function signedFetch(
   url: string,
   action: string,
-  data: any,
+  data: unknown,
   userDid: string,
   userHandle: string,
   options: SignedFetchOptions = {}
@@ -115,9 +116,9 @@ export const signedAPI = {
   async createPost(
     content: string,
     mediaIds: string[],
-    linkPreview: any,
+    linkPreview: unknown,
     replyToId: string | undefined,
-    swarmReplyTo: any | undefined,
+    swarmReplyTo: unknown | undefined,
     isNsfw: boolean,
     userDid: string,
     userHandle: string
@@ -213,11 +214,11 @@ export const signedAPI = {
   /**
    * Send a chat message
    */
-  async sendChat(recipientDid: string, recipientHandle: string, content: string, userDid: string, userHandle: string) {
+  async sendChat(envelope: E2EEMessageEnvelope, userDid: string, userHandle: string) {
     return signedFetch(
       '/api/chat/send',
-      'chat',
-      { recipientDid, recipientHandle, content },
+      'chat_e2ee',
+      envelope,
       userDid,
       userHandle
     );

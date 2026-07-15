@@ -20,10 +20,14 @@ const EXACT_DEVELOPMENT_LOOPBACK_URL =
   /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?(?:[/?#]|$)/i;
 const FORBIDDEN_REQUEST_HEADERS = new Set([
   'accept-encoding',
+  'authorization',
   'connection',
   'content-length',
+  'cookie',
+  'expect',
   'host',
   'proxy-authorization',
+  'proxy-connection',
   'te',
   'trailer',
   'transfer-encoding',

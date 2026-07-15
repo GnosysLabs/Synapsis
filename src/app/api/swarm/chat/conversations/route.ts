@@ -4,12 +4,13 @@
  * GET: List all conversations for the current user
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { db, chatConversations, chatMessages, users } from '@/db';
-import { eq, desc, and, isNull, sql } from 'drizzle-orm';
+import { NextResponse } from 'next/server';
+import { db, chatMessages } from '@/db';
+import { eq, and, isNull, sql } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
+import { E2EE_CHAT_ACTION, E2EE_PROTOCOL_VERSION, e2eeMessageEnvelopeSchema } from '@/lib/e2ee/protocol';
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     if (!db) {
       return NextResponse.json({ conversations: [] });
@@ -87,12 +88,13 @@ export async function GET(request: NextRequest) {
                 avatarUrl: profileData.profile.avatarUrl || null,
                 did: profileData.profile.did || '',
                 isBot: profileData.profile.isBot || false,
+                publicKey: profileData.profile.publicKey,
               });
 
               // Re-query to get the new cached user
               cachedUser = await db.query.users.findFirst({
                 where: { handle: participant2Handle },
-              }) as any;
+              });
             }
           } catch (e) {
             console.error(`[Lazy Load] Failed for ${participant2Handle}:`, e);
@@ -102,18 +104,66 @@ export async function GET(request: NextRequest) {
         if (cachedUser) {
           participant2Info = {
             handle: cachedUser.handle,
-            displayName: (cachedUser as any).displayName || cachedUser.handle,
-            avatarUrl: (cachedUser as any).avatarUrl || null,
-            did: (cachedUser as any).did || '',
+            displayName: cachedUser.displayName || cachedUser.handle,
+            avatarUrl: cachedUser.avatarUrl || null,
+            did: cachedUser.did || '',
           };
         }
 
+        const latest = conv.messages[0] || null;
+        let lastMessage: {
+          protocolVersion: number;
+          content: string | null;
+          encryptedEnvelope: unknown;
+          signedAction: unknown;
+          senderPublicKey: string | null;
+        } | null = latest ? {
+          protocolVersion: 0,
+          content: latest.content,
+          encryptedEnvelope: null,
+          signedAction: null,
+          senderPublicKey: null as string | null,
+        } : null;
+
+        if (latest?.protocolVersion === E2EE_PROTOCOL_VERSION && latest.encryptedEnvelope
+          && latest.senderDid && latest.e2eeSignature && latest.e2eeActionNonce && latest.e2eeActionTs) {
+          try {
+            const encryptedEnvelope = e2eeMessageEnvelopeSchema.parse(JSON.parse(latest.encryptedEnvelope));
+            const senderPublicKey = latest.senderDid === session.user.did
+              ? session.user.publicKey
+              : cachedUser?.did === latest.senderDid
+                ? cachedUser.publicKey
+                : null;
+            lastMessage = {
+              protocolVersion: E2EE_PROTOCOL_VERSION,
+              content: null,
+              encryptedEnvelope,
+              signedAction: {
+                action: E2EE_CHAT_ACTION,
+                data: encryptedEnvelope,
+                did: latest.senderDid,
+                handle: encryptedEnvelope.senderHandle,
+                ts: latest.e2eeActionTs,
+                nonce: latest.e2eeActionNonce,
+                sig: latest.e2eeSignature,
+              },
+              senderPublicKey,
+            };
+          } catch (error) {
+            console.error(`[E2EE Chat] Invalid conversation preview ${latest.id}:`, error);
+            lastMessage = null;
+          }
+        }
+
+        const { messages: _rawMessages, ...conversation } = conv;
+        void _rawMessages;
         return {
-          ...conv,
+          ...conversation,
           participant2: {
             ...participant2Info,
-            isBot: (cachedUser as any)?.isBot || false,
+            isBot: cachedUser?.isBot || false,
           },
+          lastMessage,
           unreadCount: Number(unreadCount[0]?.count || 0),
         };
       })
@@ -121,7 +171,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       conversations: conversationsWithUnread.filter(c => !c.participant2.isBot),
-    });
+    }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('List conversations error:', error);
     return NextResponse.json({ error: 'Failed to list conversations' }, { status: 500 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -114,8 +114,8 @@ export default function MigrationPage() {
                 </h2>
 
                 <p style={{ color: 'var(--foreground-secondary)', marginBottom: '20px', lineHeight: 1.6 }}>
-                    Download a complete backup of your account including your identity, posts, and media.
-                    You can use this file to migrate to another Synapsis node by selecting "Import" on the login page of that node.
+                    Download a signed backup of your account identity, posts, and media.
+                    You can use this file to migrate to another Synapsis node by selecting &quot;Import&quot; on the login page of that node.
                 </p>
 
                 <div style={{
@@ -139,9 +139,26 @@ export default function MigrationPage() {
                         <li>Your profile information</li>
                         <li>All your posts</li>
                         <li>Your following list</li>
-                        <li>All DMs and conversation history</li>
+                        <li>DM conversation records and encrypted message envelopes</li>
                         <li>Your automated bots and their configuration</li>
                     </ul>
+                </div>
+
+                <div style={{
+                    display: 'flex',
+                    gap: '12px',
+                    padding: '16px',
+                    marginBottom: '20px',
+                    background: 'rgba(245, 158, 11, 0.1)',
+                    border: '1px solid rgba(245, 158, 11, 0.35)',
+                    borderRadius: '8px',
+                }}>
+                    <TriangleAlert size={20} style={{ flexShrink: 0, color: '#f59e0b' }} />
+                    <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', margin: 0, lineHeight: 1.5 }}>
+                        Encrypted DM keys are not portable yet. This export preserves encrypted message records,
+                        but E2EE history will not open after importing it on another node. Keep access to this
+                        browser and node if you need to read that history.
+                    </p>
                 </div>
 
                 <div style={{ marginBottom: '20px' }}>

@@ -13,6 +13,20 @@ const rateLimits = new Map<string, number[]>();
 // Configuration for cleanup
 const CLEANUP_INTERVAL_MS = 60 * 1000; // Run cleanup every minute
 const MAX_IDLE_DID_MS = 10 * 60 * 1000; // Remove DIDs with no recent activity after 10 minutes
+const MAX_RATE_LIMIT_KEYS = 10_000;
+
+function evictOldestKey(): void {
+  let oldestKey: string | null = null;
+  let oldestTimestamp = Number.POSITIVE_INFINITY;
+  for (const [key, timestamps] of rateLimits) {
+    const newest = timestamps.at(-1) ?? 0;
+    if (newest < oldestTimestamp) {
+      oldestTimestamp = newest;
+      oldestKey = key;
+    }
+  }
+  if (oldestKey) rateLimits.delete(oldestKey);
+}
 
 /**
  * Check if a DID is rate limited
@@ -23,6 +37,7 @@ const MAX_IDLE_DID_MS = 10 * 60 * 1000; // Remove DIDs with no recent activity a
  */
 export function isRateLimited(did: string, maxRequests = 5, windowMs = 60000): boolean {
   const now = Date.now();
+  if (!rateLimits.has(did) && rateLimits.size >= MAX_RATE_LIMIT_KEYS) evictOldestKey();
   const timestamps = rateLimits.get(did) || [];
   
   // Filter to only keep timestamps within the window (sliding window)

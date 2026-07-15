@@ -65,6 +65,12 @@ Stuffbox is the default integration. New installs use `https://stuffbox.xyz`; se
 
 User-owned S3-compatible storage remains available as an advanced fallback. Supported providers include AWS S3, Cloudflare R2, Backblaze B2, Wasabi, and Contabo.
 
+## Encrypted direct messages
+
+New one-to-one text DMs use client-side end-to-end encryption with a separate PIN for new-device recovery. The PIN does not change the normal login flow or ordinary sending experience. Node installs generate a distinct `E2EE_RECOVERY_SECRET`; preserve it in a secret manager or protected operational backup because the database alone cannot restore PIN recovery.
+
+V1 is intentionally limited and experimental: metadata remains visible, legacy DMs remain plaintext, and it does not provide forward secrecy or protection from a malicious home node that serves modified client code. See [the E2EE DM security and operations contract](docs/e2ee-dms.md) before enabling or describing the feature.
+
 ## Development
 
 ```bash

@@ -15,6 +15,8 @@
 import { getActiveSwarmNodes } from './registry';
 import type { SwarmNodeInfo } from './types';
 import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
+import { getPublicSwarmDomain } from './node-domain';
+import { safeFederationRequest } from './safe-federation-http';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 
 // ============================================
@@ -390,6 +392,49 @@ export interface SwarmProfileResponse {
   timestamp: string;
 }
 
+const DEVELOPMENT_LOOPBACK_DOMAIN =
+  /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isSwarmUserPost(value: unknown): value is SwarmUserPost {
+  if (!isRecord(value)) return false;
+
+  return (
+    typeof value.id === 'string' &&
+    typeof value.content === 'string' &&
+    typeof value.createdAt === 'string' &&
+    typeof value.isNsfw === 'boolean' &&
+    typeof value.likesCount === 'number' &&
+    typeof value.repostsCount === 'number' &&
+    typeof value.repliesCount === 'number'
+  );
+}
+
+function isSwarmProfileResponse(value: unknown): value is SwarmProfileResponse {
+  if (!isRecord(value) || !isRecord(value.profile) || !Array.isArray(value.posts)) {
+    return false;
+  }
+
+  const profile = value.profile;
+  return (
+    typeof profile.handle === 'string' &&
+    typeof profile.displayName === 'string' &&
+    typeof profile.followersCount === 'number' &&
+    typeof profile.followingCount === 'number' &&
+    typeof profile.postsCount === 'number' &&
+    typeof profile.createdAt === 'string' &&
+    typeof profile.isNsfw === 'boolean' &&
+    typeof profile.nodeIsNsfw === 'boolean' &&
+    typeof profile.nodeDomain === 'string' &&
+    typeof value.nodeDomain === 'string' &&
+    typeof value.timestamp === 'string' &&
+    value.posts.every(isSwarmUserPost)
+  );
+}
+
 /**
  * Fetch a user profile from a swarm node
  */
@@ -401,33 +446,51 @@ export async function fetchSwarmUserProfile(
 ): Promise<SwarmProfileResponse | null> {
   try {
     const normalizedDomain = normalizeNodeDomain(domain);
-    if (await isNodeBlocked(normalizedDomain)) {
+    const publicDomain = getPublicSwarmDomain(normalizedDomain);
+    const developmentDomain =
+      process.env.NODE_ENV === 'development' &&
+      DEVELOPMENT_LOOPBACK_DOMAIN.test(normalizedDomain)
+        ? normalizedDomain
+        : null;
+    const targetDomain = publicDomain ?? developmentDomain;
+    const cleanHandle = handle.trim().replace(/^@/, '').toLowerCase();
+
+    if (
+      !targetDomain ||
+      !/^[a-z0-9_]{1,64}$/.test(cleanHandle) ||
+      (await isNodeBlocked(targetDomain))
+    ) {
       return null;
     }
 
-    const baseUrl = domain.startsWith('http')
-      ? domain
-      : normalizedDomain.startsWith('localhost') || normalizedDomain.startsWith('127.0.0.1')
-        ? `http://${normalizedDomain}`
-        : `https://${normalizedDomain}`;
+    const baseUrl = developmentDomain
+      ? `http://${targetDomain}`
+      : `https://${targetDomain}`;
+    const url = new URL(`/api/swarm/users/${encodeURIComponent(cleanHandle)}`, baseUrl);
+    url.searchParams.set(
+      'limit',
+      String(Number.isSafeInteger(postsLimit) ? Math.min(Math.max(postsLimit, 0), 50) : 25)
+    );
+    if (cursor) url.searchParams.set('cursor', cursor.slice(0, 128));
 
-    const url = `${baseUrl}/api/swarm/users/${handle}?limit=${postsLimit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    const response = await fetch(url, {
+    const response = await safeFederationRequest(url.toString(), {
       headers: { 'Accept': 'application/json' },
-      signal: controller.signal,
+      maxResponseBytes: 1024 * 1024,
     });
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return null;
     }
 
-    return await response.json();
+    const payload = response.json();
+    if (
+      !isSwarmProfileResponse(payload) ||
+      payload.profile.handle.toLowerCase() !== cleanHandle
+    ) {
+      return null;
+    }
+
+    return payload;
   } catch (error) {
     console.error(`[Swarm] Failed to fetch profile for ${handle}@${domain}:`, error);
     return null;
@@ -452,7 +515,6 @@ export async function cacheSwarmUserPosts(
     }
 
     const { db, remotePosts } = await import('@/db');
-    const { eq } = await import('drizzle-orm');
 
     if (!db) {
       return { cached: 0, skipped: 0 };
@@ -672,8 +734,7 @@ export async function deliverSwarmPost(
  */
 export async function getSwarmFollowerDomains(userId: string): Promise<string[]> {
   try {
-    const { db, remoteFollowers } = await import('@/db');
-    const { eq } = await import('drizzle-orm');
+    const { db } = await import('@/db');
 
     if (!db) return [];
 

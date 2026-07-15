@@ -38,12 +38,14 @@ chown -R synapsis:synapsis "$APP_DIR"
 
 if [[ ! -e "$ENV_FILE" ]]; then
   auth_secret="$(openssl rand -base64 48 | tr -d '\n')"
+  e2ee_recovery_secret="$(openssl rand -base64 48 | tr -d '\n')"
   port="43821"
   install -m 0600 -o root -g synapsis /dev/null "$ENV_FILE"
   {
     echo "DATABASE_PATH=$DATA_DIR/synapsis.db"
     echo "PORT=$port"
     echo "AUTH_SECRET=$auth_secret"
+    echo "E2EE_RECOVERY_SECRET=$e2ee_recovery_secret"
     echo "ADMIN_EMAILS=admin@example.com"
     echo "NEXT_PUBLIC_NODE_DOMAIN=localhost:$port"
     echo "STUFFBOX_URL=https://stuffbox.xyz"

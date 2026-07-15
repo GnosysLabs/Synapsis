@@ -4,8 +4,8 @@
  * Handles node discovery and announcement in the swarm network.
  */
 
-import { db, nodes, users, posts } from '@/db';
-import { eq, sql } from 'drizzle-orm';
+import { db, users, posts } from '@/db';
+import { sql } from 'drizzle-orm';
 import type { SwarmAnnouncement, SwarmNodeInfo, SwarmCapability } from './types';
 import { getCurrentBuildInfo } from '@/lib/version';
 import { upsertSwarmNode, getSeedNodes, markNodeSuccess, markNodeFailure } from './registry';
@@ -55,7 +55,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     postCount = Number(postResult[0]?.count ?? 0);
   }
 
-  const capabilities: SwarmCapability[] = ['handles', 'gossip', 'interactions'];
+  const capabilities: SwarmCapability[] = ['handles', 'gossip', 'interactions', 'e2ee_dm_v1'];
 
   return {
     domain,

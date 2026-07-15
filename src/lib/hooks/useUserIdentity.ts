@@ -6,21 +6,16 @@
  * across page refreshes and tabs.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { decryptPrivateKey } from '@/lib/crypto/private-key-client';
 import {
   persistUnlockedKey,
   tryRestoreKey,
   clearPersistentKey,
-  hasPersistentKey,
 } from '@/lib/crypto/key-persistence';
 import {
   keyStore,
   importPrivateKey,
-  generateKeyPair,
-  exportPrivateKey,
-  exportPublicKey,
-  base64UrlToBase64,
   createSignedAction
 } from '@/lib/crypto/user-signing';
 
@@ -35,10 +30,12 @@ export function useUserIdentity() {
   const [identity, setIdentity] = useState<UserIdentity | null>(null);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
+  const generationRef = useRef(0);
 
   // Check status on mount and try to restore from persistence
   useEffect(() => {
     const checkAndRestore = async () => {
+      const generation = ++generationRef.current;
       setIsRestoring(true);
       try {
         // First check if already in memory (hot reload scenario)
@@ -58,9 +55,13 @@ export function useUserIdentity() {
 
         // Try to restore from persistent storage
         const restoredKeyBytes = await tryRestoreKey(globalIdentity.did);
+        if (generation !== generationRef.current
+          || keyStore.getIdentity()?.did !== globalIdentity.did) return;
         if (restoredKeyBytes) {
           // Import the restored key as non-extractable
           const cryptoKey = await importPrivateKey(restoredKeyBytes);
+          if (generation !== generationRef.current
+            || keyStore.getIdentity()?.did !== globalIdentity.did) return;
           keyStore.setPrivateKey(cryptoKey);
           setIdentity({ ...globalIdentity, isUnlocked: true });
           setIsUnlocked(true);
@@ -73,7 +74,7 @@ export function useUserIdentity() {
       } catch (error) {
         console.error('[Identity] Error during restore:', error);
       } finally {
-        setIsRestoring(false);
+        if (generation === generationRef.current) setIsRestoring(false);
       }
     };
 
@@ -90,6 +91,7 @@ export function useUserIdentity() {
     publicKey: string;
     privateKeyEncrypted?: string;
   }) => {
+    const generation = ++generationRef.current;
     keyStore.clear();
 
     const coreIdentity = {
@@ -98,17 +100,26 @@ export function useUserIdentity() {
       publicKey: userData.publicKey
     };
     keyStore.setIdentity(coreIdentity);
-    
-    // Try to auto-restore if we have persisted key
-    const restoredKeyBytes = await tryRestoreKey(userData.did);
-    if (restoredKeyBytes) {
-      const cryptoKey = await importPrivateKey(restoredKeyBytes);
-      keyStore.setPrivateKey(cryptoKey);
-      setIdentity({ ...coreIdentity, isUnlocked: true });
-      setIsUnlocked(true);
-    } else {
-      setIdentity({ ...coreIdentity, isUnlocked: false });
-      setIsUnlocked(false);
+    setIdentity({ ...coreIdentity, isUnlocked: false });
+    setIsUnlocked(false);
+    setIsRestoring(true);
+
+    try {
+      // Try to auto-restore if we have persisted key. Every async boundary is
+      // account-bound so an older refresh cannot overwrite a newer switch.
+      const restoredKeyBytes = await tryRestoreKey(userData.did);
+      if (generation !== generationRef.current
+        || keyStore.getIdentity()?.did !== userData.did) return;
+      if (restoredKeyBytes) {
+        const cryptoKey = await importPrivateKey(restoredKeyBytes);
+        if (generation !== generationRef.current
+          || keyStore.getIdentity()?.did !== userData.did) return;
+        keyStore.setPrivateKey(cryptoKey);
+        setIdentity({ ...coreIdentity, isUnlocked: true });
+        setIsUnlocked(true);
+      }
+    } finally {
+      if (generation === generationRef.current) setIsRestoring(false);
     }
   }, []);
 
@@ -124,6 +135,8 @@ export function useUserIdentity() {
     userPublicKey?: string
   ) => {
     try {
+      const generation = ++generationRef.current;
+      setIsRestoring(false);
       console.log('[Identity] Unlocking with DID:', userDid, 'Handle:', userHandle);
 
       // Set identity first if provided
@@ -151,6 +164,12 @@ export function useUserIdentity() {
       const binaryDer = Buffer.from(privateKeyBase64, 'base64');
       const cryptoKey = await importPrivateKey(binaryDer);
 
+      if (generation !== generationRef.current
+        || !userDid
+        || keyStore.getIdentity()?.did !== userDid) {
+        throw new Error('Active account changed while the identity was unlocking');
+      }
+
       // Store in memory
       keyStore.setPrivateKey(cryptoKey);
       
@@ -161,6 +180,8 @@ export function useUserIdentity() {
       }
 
       await persistUnlockedKey(privateKeyBase64, password, userDid);
+      if (generation !== generationRef.current
+        || keyStore.getIdentity()?.did !== userDid) return;
       
       console.log('[Identity] Private key stored in memory and persisted');
 
@@ -181,28 +202,34 @@ export function useUserIdentity() {
    * Lock the identity (manual lock, keeps identity info)
    */
   const lockIdentity = useCallback(async () => {
+    const generation = ++generationRef.current;
     const identifier = keyStore.getIdentity()?.did;
     keyStore.clear();
-    await clearPersistentKey(identifier);
     setIsUnlocked(false);
+    setIsRestoring(false);
     setIdentity(prev => prev ? { ...prev, isUnlocked: false } : null);
+    await clearPersistentKey(identifier);
+    if (generation !== generationRef.current) return;
   }, []);
 
   /**
    * Clear the identity (logout)
    */
   const clearIdentity = useCallback(async () => {
+    const generation = ++generationRef.current;
     const identifier = keyStore.getIdentity()?.did;
     keyStore.clear();
-    await clearPersistentKey(identifier);
     setIdentity(null);
     setIsUnlocked(false);
+    setIsRestoring(false);
+    await clearPersistentKey(identifier);
+    if (generation !== generationRef.current) return;
   }, []);
 
   /**
    * Sign a user action
    */
-  const signUserAction = useCallback(async (action: string, data: any) => {
+  const signUserAction = useCallback(async (action: string, data: unknown) => {
     const pk = keyStore.getPrivateKey();
     const id = keyStore.getIdentity();
 

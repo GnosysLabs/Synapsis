@@ -10,13 +10,41 @@ import crypto from 'crypto';
 import { db, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import { canonicalize } from '@/lib/crypto/user-signing';
-import { isNodeBlocked } from './node-blocklist';
+import { isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
 import { getPublicSwarmDomain } from './node-domain';
+import { safeFederationRequest } from './safe-federation-http';
+
+const NODE_PUBLIC_KEY_CACHE_TTL_MS = 60_000;
+const MAX_NODE_PUBLIC_KEY_CACHE_ENTRIES = 1_000;
+const nodePublicKeyCache = new Map<string, { publicKey: string; expiresAt: number }>();
+const pendingNodePublicKeyRequests = new Map<string, Promise<string | null>>();
+
+function cacheNodePublicKey(domain: string, publicKey: string): void {
+  if (!nodePublicKeyCache.has(domain)
+    && nodePublicKeyCache.size >= MAX_NODE_PUBLIC_KEY_CACHE_ENTRIES) {
+    const oldest = nodePublicKeyCache.keys().next().value as string | undefined;
+    if (oldest) nodePublicKeyCache.delete(oldest);
+  }
+  nodePublicKeyCache.set(domain, {
+    publicKey,
+    expiresAt: Date.now() + NODE_PUBLIC_KEY_CACHE_TTL_MS,
+  });
+}
+
+function resolveFederationDomain(domain: string): { domain: string; protocol: 'http' | 'https' } | null {
+  const normalized = normalizeNodeDomain(domain);
+  const developmentLoopback = process.env.NODE_ENV === 'development'
+    && /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i.test(normalized);
+  if (developmentLoopback) return { domain: normalized, protocol: 'http' };
+
+  const publicDomain = getPublicSwarmDomain(normalized);
+  return publicDomain ? { domain: publicDomain, protocol: 'https' } : null;
+}
 
 /**
  * Sign a payload with the node's private key
  */
-export function signPayload(payload: any, privateKey: string): string {
+export function signPayload(payload: unknown, privateKey: string): string {
   const canonicalPayload = canonicalize(payload);
   const sign = crypto.createSign('SHA256');
   sign.update(canonicalPayload);
@@ -40,7 +68,7 @@ function normalizePublicKey(publicKey: string): crypto.KeyObject | string {
 /**
  * Verify a signature using the sender's public key
  */
-export function verifySignature(payload: any, signature: string, publicKey: string): boolean {
+export function verifySignature(payload: unknown, signature: string, publicKey: string): boolean {
   try {
     const canonicalPayload = canonicalize(payload);
     const verify = crypto.createVerify('SHA256');
@@ -58,29 +86,51 @@ export function verifySignature(payload: any, signature: string, publicKey: stri
  */
 export async function getNodePublicKey(domain: string): Promise<string | null> {
   try {
-    const normalizedDomain = getPublicSwarmDomain(domain);
-    if (!normalizedDomain) {
+    const target = resolveFederationDomain(domain);
+    if (!target) {
       console.warn(`[Signature] Refusing public key fetch for non-public node ${domain}`);
       return null;
     }
+    const normalizedDomain = target.domain;
     if (await isNodeBlocked(normalizedDomain)) {
       console.warn(`[Signature] Refusing public key fetch for blocked node ${normalizedDomain}`);
       return null;
     }
 
-    // Check if we have a cached node info
-    const response = await fetch(`https://${normalizedDomain}/api/node`, {
-      headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (!response.ok) {
-      console.error(`[Signature] Failed to fetch node info from ${normalizedDomain}: ${response.status}`);
-      return null;
+    const cached = nodePublicKeyCache.get(normalizedDomain);
+    if (cached && cached.expiresAt > Date.now()) {
+      nodePublicKeyCache.delete(normalizedDomain);
+      nodePublicKeyCache.set(normalizedDomain, cached);
+      return cached.publicKey;
     }
+    if (cached) nodePublicKeyCache.delete(normalizedDomain);
 
-    const data = await response.json();
-    return data.publicKey || null;
+    const pending = pendingNodePublicKeyRequests.get(normalizedDomain);
+    if (pending) return await pending;
+
+    const keyRequest = (async (): Promise<string | null> => {
+      const response = await safeFederationRequest(`${target.protocol}://${normalizedDomain}/api/node`, {
+        headers: { 'Accept': 'application/json' },
+        timeoutMs: 5_000,
+        maxResponseBytes: 64 * 1024,
+      });
+
+      if (response.status < 200 || response.status >= 300) {
+        console.error(`[Signature] Failed to fetch node info from ${normalizedDomain}: ${response.status}`);
+        return null;
+      }
+
+      const data = response.json() as { publicKey?: unknown };
+      const publicKey = typeof data.publicKey === 'string' ? data.publicKey : null;
+      if (publicKey) cacheNodePublicKey(normalizedDomain, publicKey);
+      return publicKey;
+    })();
+    pendingNodePublicKeyRequests.set(normalizedDomain, keyRequest);
+    try {
+      return await keyRequest;
+    } finally {
+      pendingNodePublicKeyRequests.delete(normalizedDomain);
+    }
   } catch (error) {
     console.error(`[Signature] Error fetching public key from ${domain}:`, error);
     return null;
@@ -96,15 +146,16 @@ export async function getNodePublicKey(domain: string): Promise<string | null> {
  * @returns true if signature is valid, false otherwise
  */
 export async function verifySwarmRequest(
-  payload: any,
+  payload: unknown,
   signature: string,
   senderDomain: string
 ): Promise<boolean> {
-  const normalizedDomain = getPublicSwarmDomain(senderDomain);
-  if (!normalizedDomain) {
+  const target = resolveFederationDomain(senderDomain);
+  if (!target) {
     console.warn(`[Signature] Rejected non-public swarm node ${senderDomain}`);
     return false;
   }
+  const normalizedDomain = target.domain;
   if (await isNodeBlocked(normalizedDomain)) {
     console.warn(`[Signature] Rejected blocked node ${normalizedDomain}`);
     return false;
@@ -134,17 +185,18 @@ export async function verifySwarmRequest(
  * @returns true if signature is valid, false otherwise
  */
 export async function verifyUserInteraction(
-  payload: any,
+  payload: unknown,
   signature: string,
   userHandle: string,
   userDomain: string
 ): Promise<boolean> {
   try {
-    const normalizedDomain = getPublicSwarmDomain(userDomain);
-    if (!normalizedDomain) {
+    const target = resolveFederationDomain(userDomain);
+    if (!target) {
       console.warn(`[Signature] Rejected user interaction from non-public node ${userDomain}`);
       return false;
     }
+    const normalizedDomain = target.domain;
     if (await isNodeBlocked(normalizedDomain)) {
       console.warn(`[Signature] Rejected user interaction from blocked node ${normalizedDomain}`);
       return false;
@@ -152,7 +204,7 @@ export async function verifyUserInteraction(
 
     // Try to get cached user
     const fullHandle = `${userHandle}@${normalizedDomain}`;
-    let user = await db?.query.users.findFirst({
+    const user = await db?.query.users.findFirst({
       where: { handle: fullHandle },
     });
 
@@ -162,18 +214,28 @@ export async function verifyUserInteraction(
       publicKey = user.publicKey;
     } else {
       // Fetch from remote node
-      const response = await fetch(`https://${normalizedDomain}/api/users/${userHandle}`, {
+      const response = await safeFederationRequest(`${target.protocol}://${normalizedDomain}/api/users/${encodeURIComponent(userHandle)}`, {
         headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(5000),
+        timeoutMs: 5_000,
+        maxResponseBytes: 64 * 1024,
       });
       
-      if (!response.ok) {
+      if (response.status < 200 || response.status >= 300) {
         console.error(`[Signature] Failed to fetch user ${userHandle}@${normalizedDomain}: ${response.status}`);
         return false;
       }
 
-      const userData = await response.json();
-      publicKey = userData.user?.publicKey || userData.publicKey;
+      const userData = response.json() as {
+        publicKey?: unknown;
+        user?: {
+          avatarUrl?: string | null;
+          did?: string;
+          displayName?: string | null;
+          publicKey?: unknown;
+        };
+      };
+      const resolvedPublicKey = userData.user?.publicKey || userData.publicKey;
+      publicKey = typeof resolvedPublicKey === 'string' ? resolvedPublicKey : null;
 
       // Cache the user if we don't have them
       if (!user && publicKey && db) {
@@ -217,7 +279,7 @@ export async function getNodePrivateKey(): Promise<string> {
 /**
  * Create a signed payload for sending to another node
  */
-export async function createSignedPayload(payload: any): Promise<{ payload: any; signature: string }> {
+export async function createSignedPayload<T>(payload: T): Promise<{ payload: T; signature: string }> {
   const privateKey = await getNodePrivateKey();
   const signature = signPayload(payload, privateKey);
   return { payload, signature };

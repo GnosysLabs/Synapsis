@@ -15,18 +15,17 @@ import {
     keyStore,
     createSignedAction,
     canonicalize,
-    exportPublicKey,
-    importPublicKey,
-    base64UrlToBase64
+    exportPublicKey
 } from './user-signing';
-import { verifyUserAction, type SignedAction } from '../auth/verify-signature';
+import { verifyUserAction } from '../auth/verify-signature';
 
-// Mock DB interactions
-const mockDbMethods = {
-    findFirst: vi.fn(),
-    values: vi.fn(() => ({ onConflictDoUpdate: vi.fn() })),
-    insert: vi.fn(() => ({ values: vi.fn(() => ({ onConflictDoUpdate: vi.fn() })) }))
-};
+const { mockIsRateLimited } = vi.hoisted(() => ({
+    mockIsRateLimited: vi.fn(() => false),
+}));
+
+vi.mock('@/lib/rate-limit', () => ({
+    isRateLimited: mockIsRateLimited,
+}));
 
 // We need to hoist the variable if we use it in vi.mock
 // Or simpler for this case, simply define it inline or use a factory that doesn't capture outer scope incorrectly.
@@ -36,7 +35,15 @@ vi.mock('@/db', () => ({
             users: { findFirst: vi.fn() },
             remoteIdentityCache: { findFirst: vi.fn() }
         },
+        select: vi.fn(() => ({
+            from: vi.fn(() => ({
+                where: vi.fn(() => ({
+                    limit: vi.fn().mockResolvedValue([]),
+                })),
+            })),
+        })),
         insert: vi.fn(() => ({ values: vi.fn() })),
+        delete: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
     },
     users: { did: 'did', publicKey: 'publicKey' },
     signedActionDedupe: { actionId: 'actionId' },
@@ -45,10 +52,6 @@ vi.mock('@/db', () => ({
 
 // Access the mocked module to manipulate it in tests
 import { db } from '@/db';
-
-// Mock Database unique constraint error for replay test
-const duplicateKeyError = new Error('Duplicate key');
-(duplicateKeyError as any).code = '23505';
 
 describe('Cryptographic User Signing', () => {
     let userKeyPair: CryptoKeyPair;
@@ -63,6 +66,7 @@ describe('Cryptographic User Signing', () => {
         userPublicKeyBase64 = await exportPublicKey(userKeyPair.publicKey);
 
         vi.clearAllMocks();
+        mockIsRateLimited.mockReturnValue(false);
     });
 
     it('should canonicalize objects strictly', () => {
@@ -97,17 +101,17 @@ describe('Cryptographic User Signing', () => {
         const signed = await createSignedAction('create_post', payload, testDid, testHandle);
 
         // Mock DB finding the user
-        (db.query.users.findFirst as any).mockResolvedValue({
+        vi.mocked(db.query.users.findFirst).mockResolvedValue({
             id: 'uuid-123',
             did: testDid,
             handle: testHandle,
             publicKey: userPublicKeyBase64,
-        });
+        } as never);
 
         // Mock DB insert (dedupe) success
-        (db.insert as any).mockReturnValue({
+        vi.mocked(db.insert).mockReturnValue({
             values: vi.fn().mockResolvedValue(true)
-        });
+        } as never);
 
         const result = await verifyUserAction(signed);
 
@@ -124,12 +128,12 @@ describe('Cryptographic User Signing', () => {
         // Tamper with data
         signed.data.content = 'Hacked';
 
-        (db.query.users.findFirst as any).mockResolvedValue({
+        vi.mocked(db.query.users.findFirst).mockResolvedValue({
             id: 'uuid-123',
             did: testDid,
             handle: testHandle,
             publicKey: userPublicKeyBase64,
-        });
+        } as never);
 
         const result = await verifyUserAction(signed);
 
@@ -141,25 +145,77 @@ describe('Cryptographic User Signing', () => {
         const payload = { content: 'Replay Me' };
         const signed = await createSignedAction('create_post', payload, testDid, testHandle);
 
-        (db.query.users.findFirst as any).mockResolvedValue({
+        vi.mocked(db.query.users.findFirst).mockResolvedValue({
             id: 'uuid-123',
             did: testDid,
             handle: testHandle,
             publicKey: userPublicKeyBase64,
-        });
+        } as never);
 
         // Mock Duplicate Key Error
-        const duplicateKeyError = new Error('Duplicate key');
-        (duplicateKeyError as any).code = '23505';
+        const duplicateKeyError = Object.assign(new Error('Duplicate key'), { code: '23505' });
 
         // Second attempt fails with unique violation
-        (db.insert as any).mockReturnValue({
+        vi.mocked(db.insert).mockReturnValue({
             values: vi.fn().mockRejectedValue(duplicateKeyError)
-        });
+        } as never);
 
         // Verify failure path
         const result = await verifyUserAction(signed);
         expect(result.valid).toBe(false);
         expect(result.error).toBe('REPLAYED_NONCE');
+    });
+
+    it('should not persist a unique action rejected by the authenticated rate limit', async () => {
+        const signed = await createSignedAction(
+            'create_post',
+            { content: 'Over limit' },
+            testDid,
+            testHandle,
+        );
+
+        vi.mocked(db.query.users.findFirst).mockResolvedValue({
+            id: 'uuid-123',
+            did: testDid,
+            handle: testHandle,
+            publicKey: userPublicKeyBase64,
+        } as never);
+        mockIsRateLimited.mockReturnValue(true);
+
+        const result = await verifyUserAction(signed);
+
+        expect(result).toEqual({ valid: false, error: 'RATE_LIMITED' });
+        expect(db.select).toHaveBeenCalledOnce();
+        expect(mockIsRateLimited).toHaveBeenCalledOnce();
+        expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('should reject an existing replay without charging quota or inserting again', async () => {
+        const signed = await createSignedAction(
+            'create_post',
+            { content: 'Already accepted' },
+            testDid,
+            testHandle,
+        );
+
+        vi.mocked(db.query.users.findFirst).mockResolvedValue({
+            id: 'uuid-123',
+            did: testDid,
+            handle: testHandle,
+            publicKey: userPublicKeyBase64,
+        } as never);
+        vi.mocked(db.select).mockReturnValue({
+            from: vi.fn(() => ({
+                where: vi.fn(() => ({
+                    limit: vi.fn().mockResolvedValue([{ actionId: 'already-stored' }]),
+                })),
+            })),
+        } as never);
+
+        const result = await verifyUserAction(signed);
+
+        expect(result).toEqual({ valid: false, error: 'REPLAYED_NONCE' });
+        expect(mockIsRateLimited).not.toHaveBeenCalled();
+        expect(db.insert).not.toHaveBeenCalled();
     });
 });
