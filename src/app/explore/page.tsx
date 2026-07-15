@@ -11,6 +11,7 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
+import { mapSwarmPostToPost, type InteractiveSwarmPost } from '@/lib/swarm/feed-post';
 
 interface User {
     id: string;
@@ -61,36 +62,13 @@ function UserCard({ user }: { user: User }) {
     );
 }
 
-interface SwarmPost {
-    id: string;
-    content: string;
-    createdAt: string;
-    author: {
-        handle: string;
-        displayName: string;
-        avatarUrl?: string;
-        isNsfw: boolean;
-    };
-    nodeDomain: string;
-    nodeIsNsfw: boolean;
-    likeCount: number;
-    repostCount: number;
-    replyCount: number;
-    media?: { url: string; mimeType?: string; altText?: string }[];
-    linkPreviewUrl?: string;
-    linkPreviewTitle?: string;
-    linkPreviewDescription?: string;
-    linkPreviewImage?: string;
-    isLiked?: boolean;
-}
-
 export default function ExplorePage() {
     const { user, did, handle } = useAuth();
     const { config } = useRuntimeConfig();
     const [query, setQuery] = useState('');
     const [activeTab, setActiveTab] = useState<'node' | 'swarm' | 'users' | 'search'>('node');
     const [nodePosts, setNodePosts] = useState<Post[]>([]);
-    const [swarmPosts, setSwarmPosts] = useState<SwarmPost[]>([]);
+    const [swarmPosts, setSwarmPosts] = useState<InteractiveSwarmPost[]>([]);
     const [swarmSources, setSwarmSources] = useState<{ domain: string; postCount: number }[]>([]);
     const [users, setUsers] = useState<User[]>([]);
     const [searchResults, setSearchResults] = useState<{ posts: Post[]; users: User[] }>({ posts: [], users: [] });
@@ -433,37 +411,7 @@ export default function ExplorePage() {
                             </div>
                             <div className="explore-posts">
                                 {swarmPosts.map((post) => {
-                                    // Transform swarm post to Post format for PostCard
-                                    const transformedPost: Post = {
-                                        id: `swarm:${post.nodeDomain}:${post.id}`,
-                                        originalPostId: post.id,
-                                        content: post.content,
-                                        createdAt: post.createdAt,
-                                        likesCount: post.likeCount,
-                                        repostsCount: post.repostCount,
-                                        repliesCount: post.replyCount,
-                                        isSwarm: true,
-                                        nodeDomain: post.nodeDomain,
-                                        author: {
-                                            id: `swarm:${post.nodeDomain}:${post.author.handle}`,
-                                            handle: post.author.handle,
-                                            displayName: post.author.displayName,
-                                            avatarUrl: post.author.avatarUrl,
-                                            isNsfw: post.author.isNsfw,
-                                            nodeIsNsfw: post.nodeIsNsfw,
-                                        },
-                                        media: post.media?.map((m, idx) => ({
-                                            id: `swarm:${post.nodeDomain}:${post.id}:media:${idx}`,
-                                            url: m.url,
-                                            altText: m.altText || null,
-                                            mimeType: m.mimeType || null,
-                                        })) || [],
-                                        linkPreviewUrl: post.linkPreviewUrl || null,
-                                        linkPreviewTitle: post.linkPreviewTitle || null,
-                                        linkPreviewDescription: post.linkPreviewDescription || null,
-                                        linkPreviewImage: post.linkPreviewImage || null,
-                                        isLiked: post.isLiked || false,
-                                    };
+                                    const transformedPost = mapSwarmPostToPost(post);
                                     return (
                                         <PostCard
                                             key={`${post.nodeDomain}:${post.id}`}

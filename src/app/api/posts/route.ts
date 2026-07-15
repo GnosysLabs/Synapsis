@@ -10,6 +10,7 @@ import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { isLocalNodeNsfw } from '@/lib/node/local-node';
 import { hasPublishablePostContent } from '@/lib/posts/content-policy';
 import { decodeFeedCursor, encodeFeedCursor } from '@/lib/posts/feed-pagination';
+import { mapSwarmPostToPost } from '@/lib/swarm/feed-post';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_WINDOW_HOURS = 72;
@@ -759,46 +760,7 @@ export async function GET(request: Request) {
                 includeNsfw,
             });
 
-            const mapSwarmPostToFeedPost = (sp: (typeof swarmResult.posts)[number]): any => ({
-                id: `swarm:${sp.nodeDomain}:${sp.id}`,
-                originalPostId: sp.id, // Keep the original ID for replies
-                content: sp.content,
-                createdAt: new Date(sp.createdAt),
-                likesCount: sp.likeCount,
-                repostsCount: sp.repostCount,
-                repliesCount: sp.replyCount,
-                isSwarm: true,
-                nodeDomain: sp.nodeDomain,
-                repostOfId: sp.repostOfId ? `swarm:${sp.nodeDomain}:${sp.repostOfId}` : null,
-                repostOf: sp.repostOf ? mapSwarmPostToFeedPost(sp.repostOf) : null,
-                author: {
-                    id: `swarm:${sp.nodeDomain}:${sp.author.handle}`,
-                    handle: sp.author.handle,
-                    displayName: sp.author.displayName,
-                    avatarUrl: sp.author.avatarUrl,
-                    isSwarm: true,
-                    isBot: sp.author.isBot,
-                    isNsfw: sp.author.isNsfw,
-                    nodeIsNsfw: sp.nodeIsNsfw,
-                    nodeDomain: sp.nodeDomain,
-                },
-                media: sp.media?.map((m, idx) => ({
-                    id: `swarm:${sp.nodeDomain}:${sp.id}:media:${idx}`,
-                    url: m.url,
-                    altText: m.altText || null,
-                    mimeType: m.mimeType || null,
-                })) || [],
-                linkPreviewUrl: sp.linkPreviewUrl || null,
-                linkPreviewTitle: sp.linkPreviewTitle || null,
-                linkPreviewDescription: sp.linkPreviewDescription || null,
-                linkPreviewImage: sp.linkPreviewImage || null,
-                linkPreviewType: sp.linkPreviewType || null,
-                linkPreviewVideoUrl: sp.linkPreviewVideoUrl || null,
-                linkPreviewMedia: sp.linkPreviewMedia || null,
-                replyTo: null,
-            });
-
-            const swarmPosts = swarmResult.posts.map(mapSwarmPostToFeedPost);
+            const swarmPosts = swarmResult.posts.map(mapSwarmPostToPost);
 
             let mutedIds = new Set<string>();
             let blockedIds = new Set<string>();
