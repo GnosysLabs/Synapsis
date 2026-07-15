@@ -255,19 +255,23 @@ function NotificationItem({
                     <Link
                         href={`/posts/${notification.post.id}`}
                         style={{
-                            display: 'flex',
+                            display: 'inline-flex',
                             alignItems: 'center',
-                            gap: '10px',
-                            marginTop: '8px',
-                            padding: '8px',
-                            background: 'var(--background-secondary)',
-                            borderRadius: '8px',
+                            gap: '8px',
+                            width: 'fit-content',
+                            maxWidth: '100%',
+                            marginTop: '10px',
+                            padding: '5px 10px 5px 5px',
+                            background: 'var(--background)',
+                            border: '1px solid var(--border)',
+                            borderRadius: '10px',
                             color: 'var(--foreground-secondary)',
-                            fontSize: '14px',
+                            fontSize: '13px',
+                            lineHeight: 1.3,
                             textDecoration: 'none',
                             overflow: 'hidden',
                         }}
-                        aria-label={`View liked post: ${postPreview?.label || 'View post'}`}
+                        aria-label={`View post: ${postPreview?.label || 'View post'}`}
                     >
                         {postPreview?.imageUrl && (
                             // eslint-disable-next-line @next/next/no-img-element
@@ -275,9 +279,9 @@ function NotificationItem({
                                 src={postPreview.imageUrl}
                                 alt={postPreview.imageAlt}
                                 style={{
-                                    width: 52,
-                                    height: 52,
-                                    borderRadius: '6px',
+                                    width: 48,
+                                    height: 48,
+                                    borderRadius: '7px',
                                     objectFit: 'cover',
                                     flexShrink: 0,
                                 }}
@@ -285,6 +289,7 @@ function NotificationItem({
                         )}
                         <span style={{
                             minWidth: 0,
+                            maxWidth: '320px',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
