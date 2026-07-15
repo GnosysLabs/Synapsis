@@ -8,6 +8,9 @@ import { db, nodes, users, posts } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import type { SwarmAnnouncement, SwarmNodeInfo, SwarmCapability } from './types';
 import { upsertSwarmNode, getSeedNodes, markNodeSuccess, markNodeFailure } from './registry';
+import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
+
+const PUBLIC_SWARM_DOMAIN_ERROR = 'Public swarm participation requires a real ICANN domain';
 
 function normalizeOptionalUrl(value: string | null | undefined): string | undefined {
   if (!value) {
@@ -77,6 +80,15 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
  * SECURITY: Signs the announcement with the node's private key
  */
 export async function announceToNode(targetDomain: string): Promise<{ success: boolean; error?: string }> {
+  if (!isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN)) {
+    return { success: false, error: PUBLIC_SWARM_DOMAIN_ERROR };
+  }
+
+  const publicTargetDomain = getPublicSwarmDomain(targetDomain);
+  if (!publicTargetDomain) {
+    return { success: false, error: `Invalid public swarm domain: ${targetDomain}` };
+  }
+
   try {
     const announcement = await buildAnnouncement();
     
@@ -90,7 +102,7 @@ export async function announceToNode(targetDomain: string): Promise<{ success: b
       signature,
     };
     
-    const baseUrl = targetDomain.startsWith('http') ? targetDomain : `https://${targetDomain}`;
+    const baseUrl = `https://${publicTargetDomain}`;
     const url = `${baseUrl}/api/swarm/announce`;
 
     const response = await fetch(url, {
@@ -104,20 +116,23 @@ export async function announceToNode(targetDomain: string): Promise<{ success: b
 
     if (!response.ok) {
       const error = await response.text();
-      await markNodeFailure(targetDomain);
+      await markNodeFailure(publicTargetDomain);
       return { success: false, error: `HTTP ${response.status}: ${error}` };
     }
 
     // The remote node should respond with their info
     const remoteInfo = await response.json() as SwarmNodeInfo;
+    if (getPublicSwarmDomain(remoteInfo.domain) !== publicTargetDomain) {
+      return { success: false, error: 'Remote node returned a different domain identity' };
+    }
     
     // Add/update the remote node in our registry
     await upsertSwarmNode(remoteInfo, 'direct');
-    await markNodeSuccess(targetDomain);
+    await markNodeSuccess(publicTargetDomain);
 
     return { success: true };
   } catch (error) {
-    await markNodeFailure(targetDomain);
+    await markNodeFailure(publicTargetDomain);
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error' 
@@ -134,6 +149,10 @@ export async function announceToSeeds(): Promise<{
 }> {
   const seeds = await getSeedNodes();
   const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
+
+  if (!isPublicSwarmDomain(ourDomain)) {
+    return { successful: [], failed: [] };
+  }
   
   // Don't announce to ourselves
   const targetSeeds = seeds.filter(s => s !== ourDomain);
@@ -157,8 +176,11 @@ export async function announceToSeeds(): Promise<{
  * Fetch node info from a remote node
  */
 export async function fetchNodeInfo(domain: string): Promise<SwarmNodeInfo | null> {
+  const publicDomain = getPublicSwarmDomain(domain);
+  if (!publicDomain) return null;
+
   try {
-    const baseUrl = domain.startsWith('http') ? domain : `https://${domain}`;
+    const baseUrl = `https://${publicDomain}`;
     
     // Try the swarm endpoint first
     let response = await fetch(`${baseUrl}/api/swarm/info`, {
@@ -178,8 +200,11 @@ export async function fetchNodeInfo(domain: string): Promise<SwarmNodeInfo | nul
 
     const data = await response.json();
     
+    const returnedDomain = getPublicSwarmDomain(data.domain || publicDomain);
+    if (returnedDomain !== publicDomain) return null;
+
     return {
-      domain: data.domain || domain,
+      domain: returnedDomain,
       name: data.name,
       description: data.description,
       logoUrl: data.logoUrl,
@@ -203,13 +228,18 @@ export async function discoverNode(
   discoveredVia?: string
 ): Promise<{ success: boolean; isNew: boolean; error?: string }> {
   const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
+  const publicDomain = getPublicSwarmDomain(domain);
+
+  if (!publicDomain) {
+    return { success: false, isNew: false, error: `Invalid public swarm domain: ${domain}` };
+  }
   
   // Don't discover ourselves
-  if (domain === ourDomain) {
+  if (publicDomain === getPublicSwarmDomain(ourDomain)) {
     return { success: false, isNew: false, error: 'Cannot discover self' };
   }
 
-  const info = await fetchNodeInfo(domain);
+  const info = await fetchNodeInfo(publicDomain);
   
   if (!info) {
     return { success: false, isNew: false, error: 'Could not fetch node info' };

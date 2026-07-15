@@ -13,6 +13,7 @@ import { runGossipRound } from '@/lib/swarm/gossip';
 import { announceToSeeds } from '@/lib/swarm/discovery';
 import { getSwarmStats } from '@/lib/swarm/registry';
 import { syncRemoteFollowsPosts } from '@/lib/background/remote-sync';
+import { isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 
 const BOT_INTERVAL_MS = 60 * 1000; // 1 minute
 const GOSSIP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -121,6 +122,7 @@ export function startBackgroundTasks(origin?: string) {
 
   // Default origin for remote sync (can be overridden)
   const syncOrigin = origin || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:43821';
+  const publicSwarmEnabled = isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
 
   log('STARTUP', 'Background task scheduler starting...');
   log('STARTUP', `Bot interval: ${BOT_INTERVAL_MS / 1000}s, Gossip interval: ${GOSSIP_INTERVAL_MS / 1000}s, Remote sync interval: ${REMOTE_SYNC_INTERVAL_MS / 1000}s`);
@@ -129,8 +131,12 @@ export function startBackgroundTasks(origin?: string) {
   setTimeout(async () => {
     log('STARTUP', 'Starting background tasks...');
     
-    // Announce to swarm on startup
-    await announceToSwarm();
+    if (publicSwarmEnabled) {
+      // Announce to swarm on startup
+      await announceToSwarm();
+    } else {
+      log('SWARM', 'Public swarm disabled: NEXT_PUBLIC_NODE_DOMAIN is not a public ICANN domain');
+    }
     
     // Run initial bot check
     await runBotTasks();
@@ -140,11 +146,15 @@ export function startBackgroundTasks(origin?: string) {
     
     // Schedule recurring tasks
     setInterval(runBotTasks, BOT_INTERVAL_MS);
-    setInterval(runSwarmGossip, GOSSIP_INTERVAL_MS);
+    if (publicSwarmEnabled) {
+      setInterval(runSwarmGossip, GOSSIP_INTERVAL_MS);
+    }
     setInterval(() => runRemoteSync(syncOrigin), REMOTE_SYNC_INTERVAL_MS);
     
     // First gossip after 30s (let announcement propagate)
-    setTimeout(runSwarmGossip, 30 * 1000);
+    if (publicSwarmEnabled) {
+      setTimeout(runSwarmGossip, 30 * 1000);
+    }
     
     log('STARTUP', 'Background tasks running');
   }, STARTUP_DELAY_MS);

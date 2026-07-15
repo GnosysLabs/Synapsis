@@ -20,6 +20,7 @@ import {
 } from './registry';
 import { upsertHandleEntries } from '@/lib/federation/handles';
 import { buildAnnouncement } from './discovery';
+import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
 
 /**
  * Build a gossip payload to send to another node
@@ -71,8 +72,8 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
 
   return {
     sender: ourDomain,
-    nodes: [selfNode, ...nodes],
-    handles,
+    nodes: isPublicSwarmDomain(ourDomain) ? [selfNode, ...nodes] : nodes,
+    handles: handles.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)),
     timestamp: new Date().toISOString(),
     since,
   };
@@ -91,8 +92,9 @@ export async function processGossip(
 
   // Process incoming handles
   let handlesResult = { added: 0, updated: 0 };
-  if (payload.handles && payload.handles.length > 0) {
-    handlesResult = await upsertHandleEntries(payload.handles);
+  const publicHandles = payload.handles?.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)) ?? [];
+  if (publicHandles.length > 0) {
+    handlesResult = await upsertHandleEntries(publicHandles);
   }
 
   // Build our response with nodes/handles to share back
@@ -118,6 +120,19 @@ export async function gossipToNode(
   since?: string
 ): Promise<SwarmSyncResult> {
   const startTime = Date.now();
+  const publicTargetDomain = getPublicSwarmDomain(targetDomain);
+
+  if (!isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN) || !publicTargetDomain) {
+    return {
+      success: false,
+      nodesReceived: 0,
+      nodesSent: 0,
+      handlesReceived: 0,
+      handlesSent: 0,
+      error: 'Public swarm participation requires real ICANN domains',
+      durationMs: Date.now() - startTime,
+    };
+  }
 
   try {
     const payload = await buildGossipPayload(since);
@@ -132,7 +147,7 @@ export async function gossipToNode(
       signature,
     };
 
-    const baseUrl = targetDomain.startsWith('http') ? targetDomain : `https://${targetDomain}`;
+    const baseUrl = `https://${publicTargetDomain}`;
     const url = `${baseUrl}/api/swarm/gossip`;
 
     const response = await fetch(url, {
@@ -148,8 +163,8 @@ export async function gossipToNode(
 
     if (!response.ok) {
       const error = `HTTP ${response.status}`;
-      await markNodeFailure(targetDomain);
-      await logSync(targetDomain, 'push', {
+      await markNodeFailure(publicTargetDomain);
+      await logSync(publicTargetDomain, 'push', {
         success: false,
         nodesReceived: 0,
         nodesSent: payload.nodes.length,
@@ -172,14 +187,15 @@ export async function gossipToNode(
     const gossipResponse = await response.json() as SwarmGossipResponse;
 
     // Process the response (nodes and handles they sent back)
-    const nodeResult = await upsertSwarmNodes(gossipResponse.nodes, targetDomain);
+    const nodeResult = await upsertSwarmNodes(gossipResponse.nodes, publicTargetDomain);
 
     let handlesResult = { added: 0, updated: 0 };
-    if (gossipResponse.handles && gossipResponse.handles.length > 0) {
-      handlesResult = await upsertHandleEntries(gossipResponse.handles);
+    const publicHandles = gossipResponse.handles?.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)) ?? [];
+    if (publicHandles.length > 0) {
+      handlesResult = await upsertHandleEntries(publicHandles);
     }
 
-    await markNodeSuccess(targetDomain);
+    await markNodeSuccess(publicTargetDomain);
 
     const result: SwarmSyncResult = {
       success: true,
@@ -190,13 +206,13 @@ export async function gossipToNode(
       durationMs,
     };
 
-    await logSync(targetDomain, 'push', result);
+    await logSync(publicTargetDomain, 'push', result);
     return result;
   } catch (error) {
     const durationMs = Date.now() - startTime;
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
 
-    await markNodeFailure(targetDomain);
+    await markNodeFailure(publicTargetDomain);
 
     const result: SwarmSyncResult = {
       success: false,
@@ -208,7 +224,7 @@ export async function gossipToNode(
       durationMs,
     };
 
-    await logSync(targetDomain, 'push', result);
+    await logSync(publicTargetDomain, 'push', result);
     return result;
   }
 }
@@ -222,6 +238,10 @@ export async function runGossipRound(): Promise<{
   totalNodesReceived: number;
   totalHandlesReceived: number;
 }> {
+  if (!isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN)) {
+    return { contacted: 0, successful: 0, totalNodesReceived: 0, totalHandlesReceived: 0 };
+  }
+
   // Get random nodes to gossip with
   const targets = await getNodesForGossip(SWARM_CONFIG.gossipFanout);
 

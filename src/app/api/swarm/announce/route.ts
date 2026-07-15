@@ -12,6 +12,7 @@ import { upsertSwarmNode } from '@/lib/swarm/registry';
 import { buildAnnouncement } from '@/lib/swarm/discovery';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import type { SwarmNodeInfo } from '@/lib/swarm/types';
+import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 
 const optionalUrlSchema = z.preprocess((value) => {
   if (typeof value !== 'string') {
@@ -55,9 +56,23 @@ export async function POST(request: Request) {
     const data = signedAnnouncementSchema.parse(body);
     
     const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
+
+    if (!isPublicSwarmDomain(ourDomain)) {
+      return NextResponse.json(
+        { error: 'This node is not configured for public swarm participation' },
+        { status: 503 }
+      );
+    }
+
+    if (!isPublicSwarmDomain(data.domain)) {
+      return NextResponse.json(
+        { error: 'Swarm nodes must use a public ICANN domain' },
+        { status: 400 }
+      );
+    }
     
     // Don't process announcements from ourselves
-    if (data.domain === ourDomain) {
+    if (getPublicSwarmDomain(data.domain) === getPublicSwarmDomain(ourDomain)) {
       return NextResponse.json(
         { error: 'Cannot announce to self' },
         { status: 400 }

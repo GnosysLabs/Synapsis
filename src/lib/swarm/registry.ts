@@ -8,7 +8,7 @@ import { db, swarmNodes, swarmSeeds, swarmSyncLog } from '@/db';
 import { eq, desc, and, gt, lt, sql } from 'drizzle-orm';
 import type { SwarmNodeInfo, SwarmCapability, SwarmSyncResult } from './types';
 import { SWARM_CONFIG, DEFAULT_SEED_NODES } from './types';
-import { normalizeNodeDomain } from './node-blocklist';
+import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
 
 /**
  * Get or create a swarm node entry
@@ -21,11 +21,14 @@ export async function upsertSwarmNode(
     return { isNew: false };
   }
 
-  const existing = await db.query.swarmNodes.findFirst({
-    where: { domain: normalizeNodeDomain(node.domain) },
-  });
+  const normalizedDomain = getPublicSwarmDomain(node.domain);
+  if (!normalizedDomain) {
+    throw new Error(`Swarm nodes must use a public ICANN domain: ${node.domain}`);
+  }
 
-  const normalizedDomain = normalizeNodeDomain(node.domain);
+  const existing = await db.query.swarmNodes.findFirst({
+    where: { domain: normalizedDomain },
+  });
 
   const capabilities = node.capabilities ? JSON.stringify(node.capabilities) : null;
 
@@ -86,8 +89,10 @@ export async function upsertSwarmNodes(
   // Filter out our own domain
   const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
   const filteredNodes = nodes.filter(n => n.domain !== ourDomain);
-  const normalizedOurDomain = ourDomain ? normalizeNodeDomain(ourDomain) : null;
-  const safeNodes = filteredNodes.filter(n => normalizeNodeDomain(n.domain) !== normalizedOurDomain);
+  const normalizedOurDomain = getPublicSwarmDomain(ourDomain);
+  const safeNodes = filteredNodes.filter(n =>
+    isPublicSwarmDomain(n.domain) && getPublicSwarmDomain(n.domain) !== normalizedOurDomain
+  );
 
   for (const node of safeNodes) {
     const result = await upsertSwarmNode(node, discoveredVia);
@@ -115,7 +120,7 @@ export async function getActiveSwarmNodes(limit = 100): Promise<SwarmNodeInfo[]>
     limit,
   });
 
-  return nodes.map(nodeToInfo);
+  return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
 }
 
 /**
@@ -133,7 +138,7 @@ export async function getNodesForGossip(count: number): Promise<SwarmNodeInfo[]>
     limit: count,
   });
 
-  return nodes.map(nodeToInfo);
+  return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
 }
 
 /**
@@ -150,7 +155,7 @@ export async function getNodesSince(since: Date, limit = 100): Promise<SwarmNode
     limit,
   });
 
-  return nodes.map(nodeToInfo);
+  return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
 }
 
 /**
@@ -268,11 +273,11 @@ export async function getSeedNodes(): Promise<string[]> {
     orderBy: (swarmSeeds) => [swarmSeeds.priority],
   });
 
-  if (seeds.length === 0) {
-    return [...DEFAULT_SEED_NODES];
-  }
+  const publicSeeds = seeds.map(s => s.domain).filter(isPublicSwarmDomain);
 
-  return seeds.map(s => s.domain);
+  return publicSeeds.length > 0
+    ? publicSeeds
+    : DEFAULT_SEED_NODES.filter(isPublicSwarmDomain);
 }
 
 /**
@@ -281,8 +286,13 @@ export async function getSeedNodes(): Promise<string[]> {
 export async function addSeedNode(domain: string, priority = 100): Promise<void> {
   if (!db) return;
 
+  const normalizedDomain = getPublicSwarmDomain(domain);
+  if (!normalizedDomain) {
+    throw new Error(`Seed nodes must use a public ICANN domain: ${domain}`);
+  }
+
   await db.insert(swarmSeeds)
-    .values({ domain, priority })
+    .values({ domain: normalizedDomain, priority })
     .onConflictDoUpdate({
       target: swarmSeeds.domain,
       set: { priority, isEnabled: true },
@@ -303,13 +313,14 @@ export async function getSwarmStats() {
   }
 
   const allNodes = await db.query.swarmNodes.findMany();
-  const activeNodes = allNodes.filter(n => n.isActive);
+  const publicNodes = allNodes.filter(n => isPublicSwarmDomain(n.domain));
+  const activeNodes = publicNodes.filter(n => n.isActive);
 
   const totalUsers = activeNodes.reduce((sum, n) => sum + (n.userCount || 0), 0);
   const totalPosts = activeNodes.reduce((sum, n) => sum + (n.postCount || 0), 0);
 
   return {
-    totalNodes: allNodes.length,
+    totalNodes: publicNodes.length,
     activeNodes: activeNodes.length,
     totalUsers,
     totalPosts,

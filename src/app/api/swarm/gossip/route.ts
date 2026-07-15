@@ -12,6 +12,7 @@ import { processGossip } from '@/lib/swarm/gossip';
 import { markNodeSuccess } from '@/lib/swarm/registry';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import type { SwarmGossipPayload } from '@/lib/swarm/types';
+import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 
 const handleSchema = z.object({
   handle: z.string(),
@@ -61,9 +62,23 @@ export async function POST(request: Request) {
     const data = signedGossipSchema.parse(body);
     
     const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
+
+    if (!isPublicSwarmDomain(ourDomain)) {
+      return NextResponse.json(
+        { error: 'This node is not configured for public swarm participation' },
+        { status: 503 }
+      );
+    }
+
+    if (!isPublicSwarmDomain(data.sender)) {
+      return NextResponse.json(
+        { error: 'Swarm nodes must use a public ICANN domain' },
+        { status: 400 }
+      );
+    }
     
     // Don't process gossip from ourselves
-    if (data.sender === ourDomain) {
+    if (getPublicSwarmDomain(data.sender) === getPublicSwarmDomain(ourDomain)) {
       return NextResponse.json(
         { error: 'Cannot gossip with self' },
         { status: 400 }

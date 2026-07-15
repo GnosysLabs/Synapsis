@@ -19,6 +19,7 @@ import {
   discoverNode,
 } from '@/lib/swarm/discovery';
 import { runGossipRound, gossipToNode } from '@/lib/swarm/gossip';
+import { isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 
 /**
  * GET /api/swarm/nodes
@@ -74,6 +75,13 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const { action, domain, priority } = actionSchema.parse(body);
+
+    if (domain && !isPublicSwarmDomain(domain)) {
+      return NextResponse.json(
+        { error: 'Swarm nodes must use a public ICANN domain' },
+        { status: 400 }
+      );
+    }
 
     switch (action) {
       case 'announce': {

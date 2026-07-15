@@ -1,14 +1,8 @@
 import { db, swarmNodes } from '@/db';
 import { and, eq, inArray } from 'drizzle-orm';
+import { normalizeNodeDomain } from './node-domain';
 
-export function normalizeNodeDomain(domain: string): string {
-  return domain
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/\/.*$/, '')
-    .replace(/^@/, '');
-}
+export { normalizeNodeDomain } from './node-domain';
 
 export async function isNodeBlocked(domain: string | null | undefined): Promise<boolean> {
   if (!db || !domain) return false;
