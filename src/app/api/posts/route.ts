@@ -8,6 +8,7 @@ import { buildNotificationTarget } from '@/lib/notifications';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { isLocalNodeNsfw } from '@/lib/node/local-node';
+import { hasPublishablePostContent } from '@/lib/posts/content-policy';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_WINDOW_HOURS = 72;
@@ -147,7 +148,7 @@ const feedPostRelations = {
 } as const;
 
 const createPostSchema = z.object({
-    content: z.string().min(1).max(POST_MAX_LENGTH),
+    content: z.string().max(POST_MAX_LENGTH),
     replyToId: z.string().uuid().optional(), // Must be UUID (swarm replies use separate field)
     swarmReplyTo: z.object({
         postId: z.string(),
@@ -176,6 +177,14 @@ const createPostSchema = z.object({
             mimeType: z.string().optional().nullable(),
         })).optional().nullable(),
     }).optional().nullable(),
+}).superRefine((post, context) => {
+    if (!hasPublishablePostContent(post.content, post.mediaIds)) {
+        context.addIssue({
+            code: 'custom',
+            path: ['content'],
+            message: 'Add text or attach media before posting',
+        });
+    }
 });
 
 function isSignedActionPayload(payload: unknown): payload is SignedAction {
@@ -220,9 +229,32 @@ export async function POST(request: Request) {
             }) : null,
         } : {};
 
+        const requestedMediaIds = [...new Set(data.mediaIds || [])];
+        let unattachedMedia: typeof media.$inferSelect[] = [];
+        if (requestedMediaIds.length > 0) {
+            unattachedMedia = await db.query.media.findMany({
+                where: { AND: [{ id: { in: requestedMediaIds } }, { userId: user.id }, { postId: { isNull: true } }] },
+            });
+        }
+
+        if (unattachedMedia.length !== requestedMediaIds.length) {
+            return NextResponse.json(
+                { error: 'One or more media attachments are unavailable. Please upload them again.' },
+                { status: 400 },
+            );
+        }
+
+        const postContent = data.content.trim();
+        if (!hasPublishablePostContent(postContent, unattachedMedia.map(item => item.id))) {
+            return NextResponse.json(
+                { error: 'Add text or attach media before posting.' },
+                { status: 400 },
+            );
+        }
+
         const [post] = await db.insert(posts).values({
             userId: user.id,
-            content: data.content,
+            content: postContent,
             replyToId: data.replyToId,
             ...swarmReplyFields,
             isNsfw: data.isNsfw || user.isNsfw || false, // Inherit from account if account is NSFW
@@ -236,13 +268,6 @@ export async function POST(request: Request) {
             linkPreviewVideoUrl: data.linkPreview?.videoUrl,
             linkPreviewMediaJson: serializeLinkPreviewMedia(data.linkPreview?.media),
         }).returning();
-
-        let unattachedMedia: typeof media.$inferSelect[] = [];
-        if (data.mediaIds?.length) {
-            unattachedMedia = await db.query.media.findMany({
-                where: { AND: [{ id: { in: data.mediaIds } }, { userId: user.id }, { postId: { isNull: true } }] },
-            });
-        }
 
         try {
             if (data.swarmReplyTo) {
@@ -287,11 +312,11 @@ export async function POST(request: Request) {
                 }
             }
 
-            if (data.mediaIds?.length) {
+            if (requestedMediaIds.length > 0) {
                 await db.update(media)
                     .set({ postId: post.id })
                     .where(and(
-                        inArray(media.id, data.mediaIds),
+                        inArray(media.id, requestedMediaIds),
                         eq(media.userId, user.id),
                         isNull(media.postId),
                     ));
@@ -318,9 +343,9 @@ export async function POST(request: Request) {
         }
 
         let attachedMedia: typeof media.$inferSelect[] = [];
-        if (data.mediaIds?.length) {
+        if (requestedMediaIds.length > 0) {
             attachedMedia = await db.query.media.findMany({
-                where: { AND: [{ id: { in: data.mediaIds } }, { userId: user.id }, { postId: post.id }] },
+                where: { AND: [{ id: { in: requestedMediaIds } }, { userId: user.id }, { postId: post.id }] },
             });
         }
 
@@ -374,7 +399,7 @@ export async function POST(request: Request) {
         (async () => {
             try {
                 const { extractMentions } = await import('@/lib/swarm/interactions');
-                const mentions = extractMentions(data.content);
+                const mentions = extractMentions(postContent);
 
                 for (const mention of mentions) {
                     // Only handle local mentions (no domain)
@@ -420,7 +445,7 @@ export async function POST(request: Request) {
             } catch (err) {
                 // Log error with context but don't fail the request - mention notifications are best-effort
                 console.error('[Posts] Error creating mention notifications:', err);
-                console.error('[Posts] Context:', { postId: post.id, userId: user.id, content: data.content?.slice(0, 100) });
+                console.error('[Posts] Context:', { postId: post.id, userId: user.id, content: postContent.slice(0, 100) });
             }
         })();
 
@@ -430,7 +455,7 @@ export async function POST(request: Request) {
                 const { deliverSwarmMentions } = await import('@/lib/swarm/interactions');
 
                 const result = await deliverSwarmMentions(
-                    data.content,
+                    postContent,
                     post.id,
                     {
                         handle: user.handle,

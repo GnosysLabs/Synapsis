@@ -47,6 +47,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     const mediaInputRef = useRef<HTMLInputElement>(null);
     const maxLength = 600;
     const remaining = maxLength - content.length;
+    const canSubmit = content.trim().length > 0 || attachments.length > 0;
     const previewMedia = linkPreview?.media?.length
         ? linkPreview.media
         : linkPreview?.image
@@ -109,7 +110,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     };
 
     const handleSubmit = async () => {
-        if (!content.trim() || isPosting || isUploading) return;
+        if (!canSubmit || isPosting || isUploading) return;
 
         // With persistence, identity should be unlocked. If not, user needs to re-login
         if (!isIdentityUnlocked) {
@@ -364,7 +365,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                     <button
                         className="btn btn-primary"
                         onClick={handleSubmit}
-                        disabled={!content.trim() || remaining < 0 || isPosting || isUploading}
+                        disabled={!canSubmit || remaining < 0 || isPosting || isUploading}
                     >
                         {isPosting ? 'Posting...' : isReply ? 'Reply' : 'Post'}
                     </button>

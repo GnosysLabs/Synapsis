@@ -652,7 +652,9 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                         <span className="post-time">{authorHandle}</span>
                     </div>
                 </div>
-                <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
+                {post.content.trim() && (
+                    <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
+                )}
             </article>
         );
     }
