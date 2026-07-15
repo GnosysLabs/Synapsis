@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { hasNewStuffboxConnection } from './browser-upload';
+import { getStorageProvider, hasNewStuffboxConnection } from './browser-upload';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -23,3 +23,12 @@ describe('hasNewStuffboxConnection', () => {
   });
 });
 
+describe('getStorageProvider', () => {
+  it('does not accept a legacy S3 provider', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      provider: 's3',
+    }), { status: 200 })));
+
+    await expect(getStorageProvider()).resolves.toBeNull();
+  });
+});

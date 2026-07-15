@@ -44,7 +44,7 @@ export default function SettingsPage() {
                             Media Storage
                         </div>
                         <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px' }}>
-                            Connect Stuffbox or an S3-compatible bucket
+                            Connect and manage Stuffbox
                         </div>
                     </Link>
 

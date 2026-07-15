@@ -29,7 +29,7 @@ interface JsonResponse extends Record<string, unknown> {
   stuffboxUpdatedAt?: string | null;
 }
 
-export type StorageProvider = 'stuffbox' | 's3' | null;
+export type StorageProvider = 'stuffbox' | null;
 
 async function json(response: Response): Promise<JsonResponse> {
   return response.json().catch(() => ({})) as Promise<JsonResponse>;
@@ -41,9 +41,7 @@ export async function getStorageProvider(): Promise<StorageProvider> {
   if (!response.ok) {
     throw new MediaUploadError(configuration.error || 'Unable to load storage configuration', undefined, response.status);
   }
-  return configuration.provider === 'stuffbox' || configuration.provider === 's3'
-    ? configuration.provider
-    : null;
+  return configuration.provider === 'stuffbox' ? 'stuffbox' : null;
 }
 
 export async function hasNewStuffboxConnection(startedAt: string): Promise<boolean> {
@@ -119,23 +117,11 @@ async function uploadToStuffbox(file: File, onProgress?: (progress: number) => v
   return complete.media as UploadedMedia;
 }
 
-async function uploadToS3(file: File): Promise<UploadedMedia> {
-  const formData = new FormData();
-  formData.append('file', file);
-  const response = await fetch('/api/media/upload', { method: 'POST', body: formData });
-  const data = await json(response);
-  if (!response.ok || !data.media?.url) {
-    throw new MediaUploadError(data.error || 'Upload failed', data.code, response.status);
-  }
-  return data.media as UploadedMedia;
-}
-
 export async function uploadMediaFile(
   file: File,
   onProgress?: (progress: number) => void,
 ): Promise<UploadedMedia> {
   const provider = await getStorageProvider();
   if (provider === 'stuffbox') return uploadToStuffbox(file, onProgress);
-  if (provider === 's3') return uploadToS3(file);
-  throw new MediaUploadError('Connect media storage before uploading.', 'STORAGE_NOT_CONFIGURED', 409);
+  throw new MediaUploadError('Connect Stuffbox before uploading.', 'STORAGE_NOT_CONFIGURED', 409);
 }

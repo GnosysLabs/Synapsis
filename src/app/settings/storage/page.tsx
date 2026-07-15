@@ -2,15 +2,14 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Box, Cloud, ExternalLink, HardDrive } from 'lucide-react';
+import { Box, ExternalLink } from 'lucide-react';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 
 interface StorageStatus {
-    provider: 'stuffbox' | 's3' | null;
+    provider: 'stuffbox' | null;
     stuffboxAvailable: boolean;
     stuffboxBaseUrl: string | null;
-    s3Provider: string | null;
 }
 
 export default function StorageSettingsPage() {
@@ -68,10 +67,9 @@ export default function StorageSettingsPage() {
 
             <div className="card" style={{ padding: '20px', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                    {status?.provider === 'stuffbox' ? <Box size={22} /> : status?.provider === 's3' ? <Cloud size={22} /> : <HardDrive size={22} />}
+                    <Box size={22} />
                     <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600 }}>{!status ? 'Loading…' : status.provider === 'stuffbox' ? 'Stuffbox.xyz connected' : status.provider === 's3' ? 'S3 storage connected' : 'No media storage connected'}</div>
-                        {status?.s3Provider && status.provider === 's3' && <div style={{ color: 'var(--foreground-secondary)', fontSize: '13px', marginTop: '5px' }}>Provider: {status.s3Provider}</div>}
+                        <div style={{ fontWeight: 600 }}>{!status ? 'Loading…' : status.provider === 'stuffbox' ? 'Stuffbox.xyz connected' : 'Stuffbox not connected'}</div>
                     </div>
                 </div>
                 {status?.provider === 'stuffbox' && (
@@ -89,10 +87,10 @@ export default function StorageSettingsPage() {
             {status?.provider !== 'stuffbox' && (
                 <div className="card" style={{ padding: '20px' }}>
                     <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px' }}>
-                        {status?.provider ? 'Change storage' : 'Connect media storage'}
+                        Connect Stuffbox
                     </h2>
                     <p style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.5, marginBottom: '20px' }}>
-                        Choose Stuffbox for the simplest setup, or connect an S3-compatible bucket you already own.
+                        Connect the official Synapsis storage partner to upload portable media from your account.
                     </p>
                     <StorageConfigurationPrompt open onConfigured={loadStatus} onCancel={() => {}} variant="inline" />
                 </div>

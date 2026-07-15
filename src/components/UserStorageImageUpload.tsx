@@ -1,9 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { StorageSessionPrompt } from '@/components/StorageSessionPrompt';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
-import { refreshStorageSession } from '@/lib/storage/client';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 
 interface UserStorageImageUploadProps {
@@ -31,12 +29,8 @@ export function UserStorageImageUpload({
     const [isUploading, setIsUploading] = useState(false);
     const [isCheckingStorage, setIsCheckingStorage] = useState(false);
     const [storageNotice, setStorageNotice] = useState('');
-    const [showSessionPrompt, setShowSessionPrompt] = useState(false);
     const [showConfigurationPrompt, setShowConfigurationPrompt] = useState(false);
     const [pendingFile, setPendingFile] = useState<File | null>(null);
-    const [password, setPassword] = useState('');
-    const [promptError, setPromptError] = useState('');
-    const [isRefreshingSession, setIsRefreshingSession] = useState(false);
 
     const resetFileInput = () => {
         if (inputRef.current) {
@@ -53,19 +47,10 @@ export function UserStorageImageUpload({
             onChange(media.url);
             onError?.('');
             setPendingFile(null);
-            setShowSessionPrompt(false);
-            setPassword('');
-            setPromptError('');
         } catch (error) {
             if (error instanceof MediaUploadError && error.code === 'STORAGE_NOT_CONFIGURED' && allowPrompt) {
                 setPendingFile(file);
                 setShowConfigurationPrompt(true);
-                return;
-            }
-            if (error instanceof MediaUploadError && error.status === 401 && allowPrompt) {
-                setPendingFile(file);
-                setPromptError('');
-                setShowSessionPrompt(true);
                 return;
             }
             onError?.(error instanceof Error ? error.message : 'Upload failed');
@@ -97,40 +82,6 @@ export function UserStorageImageUpload({
         } finally {
             setIsCheckingStorage(false);
         }
-    };
-
-    const handlePromptSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-        event.preventDefault();
-
-        if (!pendingFile) {
-            setShowSessionPrompt(false);
-            return;
-        }
-
-        if (!password.trim()) {
-            setPromptError('Please enter your password');
-            return;
-        }
-
-        setIsRefreshingSession(true);
-        setPromptError('');
-
-        try {
-            await refreshStorageSession(password.trim());
-            await uploadFile(pendingFile, false);
-        } catch (error) {
-            setPromptError(error instanceof Error ? error.message : 'Failed to confirm password');
-        } finally {
-            setIsRefreshingSession(false);
-        }
-    };
-
-    const handlePromptCancel = () => {
-        setShowSessionPrompt(false);
-        setPendingFile(null);
-        setPassword('');
-        setPromptError('');
-        resetFileInput();
     };
 
     return (
@@ -195,18 +146,6 @@ export function UserStorageImageUpload({
                 )}
             </div>
 
-            <StorageSessionPrompt
-                open={showSessionPrompt}
-                isSubmitting={isRefreshingSession}
-                password={password}
-                error={promptError}
-                onPasswordChange={(nextPassword) => {
-                    setPassword(nextPassword);
-                    setPromptError('');
-                }}
-                onSubmit={handlePromptSubmit}
-                onCancel={handlePromptCancel}
-            />
             <StorageConfigurationPrompt
                 open={showConfigurationPrompt}
                 onConfigured={async () => {

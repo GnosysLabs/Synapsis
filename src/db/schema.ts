@@ -67,14 +67,15 @@ export const users = sqliteTable('users', {
   movedTo: text('moved_to'), // New actor URL if this account migrated away
   movedFrom: text('moved_from'), // Old actor URL if this account migrated here
   migratedAt: integer('migrated_at', { mode: 'timestamp' }), // When the migration occurred
-  // Optional user-owned S3-compatible storage, configured on first media upload
-  storageProvider: text('storage_provider'), // 's3', 'r2', 'b2', 'wasabi', 'contabo'
-  storageEndpoint: text('storage_endpoint'), // S3 endpoint URL (optional for AWS)
-  storagePublicBaseUrl: text('storage_public_base_url'), // Public URL for viewing files (required for R2, B2, Contabo)
-  storageRegion: text('storage_region'), // Region (e.g., 'us-east-1')
-  storageBucket: text('storage_bucket'), // Bucket name
-  storageAccessKeyEncrypted: text('storage_access_key_encrypted'), // Encrypted access key
-  storageSecretKeyEncrypted: text('storage_secret_key_encrypted'), // Encrypted secret key
+  // Legacy S3 fields retained so upgrades do not require a destructive table rebuild.
+  // New media storage connections use Stuffbox exclusively.
+  storageProvider: text('storage_provider'),
+  storageEndpoint: text('storage_endpoint'),
+  storagePublicBaseUrl: text('storage_public_base_url'),
+  storageRegion: text('storage_region'),
+  storageBucket: text('storage_bucket'),
+  storageAccessKeyEncrypted: text('storage_access_key_encrypted'),
+  storageSecretKeyEncrypted: text('storage_secret_key_encrypted'),
   followersCount: integer('followers_count').default(0).notNull(),
   followingCount: integer('following_count').default(0).notNull(),
   postsCount: integer('posts_count').default(0).notNull(),

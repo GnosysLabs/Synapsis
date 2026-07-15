@@ -988,7 +988,7 @@ export default function ChatPage() {
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2, fontSize: '11px', color: 'var(--foreground-secondary)' }}>
                                     <LockKeyhole size={11} aria-hidden="true" />
                                     <span>{selectedEncryptionReady
-                                        ? 'End-to-end encryption ready'
+                                        ? 'End-to-end encrypted messaging'
                                         : selectedEncryptionError
                                             ? 'Encryption unavailable'
                                             : 'Verifying encryption…'}</span>

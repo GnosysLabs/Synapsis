@@ -3,11 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import AutoTextarea from '@/components/AutoTextarea';
-import { StorageSessionPrompt } from '@/components/StorageSessionPrompt';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { useToast } from '@/lib/contexts/ToastContext';
 import { useAccentColor } from '@/lib/contexts/AccentColorContext';
-import { refreshStorageSession } from '@/lib/storage/client';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 
@@ -35,12 +33,8 @@ export default function AdminPage() {
     const [isUploadingBanner, setIsUploadingBanner] = useState(false);
     const [isCheckingBannerStorage, setIsCheckingBannerStorage] = useState(false);
     const [bannerUploadError, setBannerUploadError] = useState<string | null>(null);
-    const [showBannerSessionPrompt, setShowBannerSessionPrompt] = useState(false);
     const [showBannerStorageConfiguration, setShowBannerStorageConfiguration] = useState(false);
     const [pendingBannerFile, setPendingBannerFile] = useState<File | null>(null);
-    const [bannerPassword, setBannerPassword] = useState('');
-    const [bannerPromptError, setBannerPromptError] = useState('');
-    const [isRefreshingBannerSession, setIsRefreshingBannerSession] = useState(false);
     const [isUploadingLogo, setIsUploadingLogo] = useState(false);
     const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
     const [isUploadingFavicon, setIsUploadingFavicon] = useState(false);
@@ -127,19 +121,10 @@ export default function AdminPage() {
             setNodeSettings(nextSettings);
             await handleSaveSettings(nextSettings);
             setPendingBannerFile(null);
-            setShowBannerSessionPrompt(false);
-            setBannerPassword('');
-            setBannerPromptError('');
         } catch (error) {
             if (error instanceof MediaUploadError && error.code === 'STORAGE_NOT_CONFIGURED' && allowPrompt) {
                 setPendingBannerFile(file);
                 setShowBannerStorageConfiguration(true);
-                return;
-            }
-            if (error instanceof MediaUploadError && error.status === 401 && allowPrompt) {
-                setPendingBannerFile(file);
-                setBannerPromptError('');
-                setShowBannerSessionPrompt(true);
                 return;
             }
             console.error('Banner upload failed', error);
@@ -172,39 +157,6 @@ export default function AdminPage() {
         } finally {
             setIsCheckingBannerStorage(false);
         }
-    };
-
-    const handleBannerSessionSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-        event.preventDefault();
-
-        if (!pendingBannerFile) {
-            setShowBannerSessionPrompt(false);
-            return;
-        }
-
-        if (!bannerPassword.trim()) {
-            setBannerPromptError('Please enter your password');
-            return;
-        }
-
-        setIsRefreshingBannerSession(true);
-        setBannerPromptError('');
-
-        try {
-            await refreshStorageSession(bannerPassword.trim());
-            await uploadBannerFile(pendingBannerFile, false);
-        } catch (error) {
-            setBannerPromptError(error instanceof Error ? error.message : 'Failed to confirm password');
-        } finally {
-            setIsRefreshingBannerSession(false);
-        }
-    };
-
-    const handleBannerSessionCancel = () => {
-        setShowBannerSessionPrompt(false);
-        setPendingBannerFile(null);
-        setBannerPassword('');
-        setBannerPromptError('');
     };
 
     const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -621,19 +573,6 @@ export default function AdminPage() {
                 </div>
             )}
 
-            <StorageSessionPrompt
-                open={showBannerSessionPrompt}
-                isSubmitting={isRefreshingBannerSession}
-                password={bannerPassword}
-                error={bannerPromptError}
-                description="Please confirm your password to continue uploading this banner to your storage."
-                onPasswordChange={(nextPassword) => {
-                    setBannerPassword(nextPassword);
-                    setBannerPromptError('');
-                }}
-                onSubmit={handleBannerSessionSubmit}
-                onCancel={handleBannerSessionCancel}
-            />
             <StorageConfigurationPrompt
                 open={showBannerStorageConfiguration}
                 onConfigured={async () => {

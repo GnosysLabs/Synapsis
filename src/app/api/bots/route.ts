@@ -17,8 +17,6 @@ import {
   BotHandleTakenError,
   BotValidationError,
 } from '@/lib/bots/botManager';
-import { generateAndUploadAvatarToUserStorage } from '@/lib/storage/s3';
-import { createStorageSession, getStorageSession } from '@/lib/storage/session';
 
 // Schema for creating a bot
 const createBotSchema = z.object({
@@ -45,7 +43,6 @@ const createBotSchema = z.object({
     timezone: z.string().optional(),
   }).optional(),
   autonomousMode: z.boolean().optional(),
-  ownerPassword: z.string().optional(),
 });
 
 /**
@@ -62,37 +59,11 @@ export async function POST(request: Request) {
     const body = await request.json();
     const data = createBotSchema.parse(body);
 
-    const storageSession =
-      (await getStorageSession(user.id)) ||
-      (data.ownerPassword ? await createStorageSession(user, data.ownerPassword) : null);
-
-    // Generate bot avatar using owner's S3 storage if no avatar URL
-    let botAvatarUrl: string | null | undefined = data.avatarUrl;
-    if (!botAvatarUrl && storageSession) {
-      try {
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
-        const botHandle = `${data.handle.toLowerCase()}@${nodeDomain}`;
-
-        botAvatarUrl = await generateAndUploadAvatarToUserStorage(
-          botHandle,
-          storageSession.endpoint || undefined,
-          storageSession.publicBaseUrl || undefined,
-          storageSession.region || 'us-east-1',
-          storageSession.bucket,
-          storageSession.accessKeyId,
-          storageSession.secretAccessKey
-        );
-      } catch (err) {
-        console.error('[Bot API] Failed to generate bot avatar:', err);
-        // Continue without avatar - user can set it later
-      }
-    }
-
     const bot = await createBot(user.id, {
       name: data.name,
       handle: data.handle,
       bio: data.bio,
-      avatarUrl: botAvatarUrl ?? undefined,
+      avatarUrl: data.avatarUrl,
       headerUrl: data.headerUrl,
       personality: data.personality,
       llmProvider: data.llmProvider,

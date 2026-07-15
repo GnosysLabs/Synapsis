@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { destroySession, getSession } from '@/lib/auth';
-import { clearStorageSession } from '@/lib/storage/session';
 import { z } from 'zod';
 
 const logoutSchema = z.object({
@@ -14,10 +13,6 @@ export async function POST(request: Request) {
         const data = logoutSchema.parse(body);
 
         const targetUserId = data.userId ?? currentSession?.user.id;
-
-        if (targetUserId) {
-            await clearStorageSession(targetUserId);
-        }
 
         await destroySession(targetUserId);
 
