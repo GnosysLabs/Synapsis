@@ -6,6 +6,8 @@ import { requireAuth, verifyPassword } from '@/lib/auth';
 import { encryptPrivateKey, serializeEncryptedKey } from '@/lib/crypto/private-key';
 import { testS3Credentials, type StorageProvider } from '@/lib/storage/s3';
 import { createStorageSession } from '@/lib/storage/session';
+import { configuredStuffboxUrl } from '@/lib/stuffbox/client';
+import { getStuffboxConnection } from '@/lib/stuffbox/tokens';
 
 const configurationSchema = z.object({
   password: z.string().min(1),
@@ -17,6 +19,25 @@ const configurationSchema = z.object({
   accessKey: z.string().min(10),
   secretKey: z.string().min(10),
 });
+
+export async function GET() {
+  try {
+    const user = await requireAuth();
+    const stuffbox = await getStuffboxConnection(user.id);
+    return NextResponse.json({
+      provider: stuffbox ? 'stuffbox' : user.storageProvider ? 's3' : null,
+      stuffboxAvailable: Boolean(configuredStuffboxUrl()),
+      stuffboxBaseUrl: stuffbox?.baseUrl ?? null,
+      s3Provider: user.storageProvider ?? null,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Authentication required') {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+    console.error('Storage status error:', error);
+    return NextResponse.json({ error: 'Failed to load storage status' }, { status: 500 });
+  }
+}
 
 export async function POST(request: Request) {
   try {

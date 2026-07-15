@@ -8,6 +8,7 @@ import { VideoEmbed } from '@/components/VideoEmbed';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
+import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 
 interface MediaAttachment extends Attachment {
     mimeType?: string;
@@ -131,31 +132,22 @@ export function Compose({ onPost, replyingTo, onCancelReply, placeholder = "What
 
         for (const file of selectedFiles) {
             try {
-                const formData = new FormData();
-                formData.append('file', file);
-                const res = await fetch('/api/media/upload', {
-                    method: 'POST',
-                    body: formData,
-                });
-                const data = await res.json();
-
-                if (!res.ok || !data.media?.id) {
-                    if (data.code === 'STORAGE_NOT_CONFIGURED') {
-                        setPendingStorageFiles(selectedFiles);
-                        setShowStorageConfiguration(true);
-                        setIsUploading(false);
-                        return;
-                    }
-                    throw new Error(data.error || 'Upload failed');
-                }
+                const media = await uploadMediaFile(file);
 
                 uploaded.push({
-                    id: data.media.id,
-                    url: data.media.url || data.url,
-                    altText: data.media.altText ?? null,
-                    mimeType: data.media.mimeType ?? file.type,
+                    id: media.id,
+                    url: media.url,
+                    altText: media.altText ?? null,
+                    mimeType: media.mimeType ?? file.type,
                 });
             } catch (error) {
+                if (error instanceof MediaUploadError && error.code === 'STORAGE_NOT_CONFIGURED') {
+                    setAttachments((prev) => [...prev, ...uploaded].slice(0, 4));
+                    setPendingStorageFiles(selectedFiles.slice(uploaded.length));
+                    setShowStorageConfiguration(true);
+                    setIsUploading(false);
+                    return;
+                }
                 console.error('Upload failed', error);
                 setUploadError('One or more uploads failed. Try again.');
             }

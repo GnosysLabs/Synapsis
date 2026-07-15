@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { Rocket, Shield, Bell, Eye, UserX } from 'lucide-react';
+import { Rocket, Shield, Bell, Eye, UserX, HardDrive } from 'lucide-react';
 
 export default function SettingsPage() {
     return (
@@ -24,6 +24,23 @@ export default function SettingsPage() {
             <div style={{ maxWidth: '600px', margin: '0 auto', padding: '24px 16px 64px' }}>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+
+
+                    <Link href="/settings/storage" className="card" style={{
+                        display: 'block',
+                        padding: '20px',
+                        textDecoration: 'none',
+                        color: 'var(--foreground)',
+                        transition: 'border-color 0.15s ease',
+                    }}>
+                        <div style={{ fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <HardDrive size={18} />
+                            Media Storage
+                        </div>
+                        <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px' }}>
+                            Connect Stuffbox or an S3-compatible bucket
+                        </div>
+                    </Link>
 
 
                     <Link href="/settings/content" className="card" style={{

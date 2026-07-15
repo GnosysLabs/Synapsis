@@ -97,6 +97,22 @@ export const users = sqliteTable('users', {
   }).onDelete('cascade'),
 ]);
 
+// ============================================
+// STUFFBOX CONNECTIONS
+// ============================================
+
+export const stuffboxConnections = sqliteTable('stuffbox_connections', {
+  userId: text('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  baseUrl: text('base_url').notNull(),
+  accessTokenEncrypted: text('access_token_encrypted').notNull(),
+  accessTokenExpiresAt: integer('access_token_expires_at', { mode: 'timestamp' }).notNull(),
+  refreshTokenEncrypted: text('refresh_token_encrypted').notNull(),
+  refreshTokenExpiresAt: integer('refresh_token_expires_at', { mode: 'timestamp' }),
+  scopes: text('scopes').notNull(),
+  connectedAt: integer('connected_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+});
+
 
 // ============================================
 // POSTS
@@ -155,6 +171,8 @@ export const media = sqliteTable('media', {
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   postId: text('post_id').references(() => posts.id, { onDelete: 'cascade' }),
   url: text('url').notNull(),
+  storageProvider: text('storage_provider'),
+  storageAssetId: text('storage_asset_id'),
   altText: text('alt_text'),
   mimeType: text('mime_type'),
   width: integer('width'),

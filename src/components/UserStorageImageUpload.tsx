@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { StorageSessionPrompt } from '@/components/StorageSessionPrompt';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { refreshStorageSession } from '@/lib/storage/client';
+import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 
 interface UserStorageImageUploadProps {
     label: string;
@@ -45,41 +46,26 @@ export function UserStorageImageUpload({
         setIsUploading(true);
 
         try {
-            const formData = new FormData();
-            formData.append('file', file);
+            const media = await uploadMediaFile(file);
 
-            const res = await fetch('/api/media/upload', {
-                method: 'POST',
-                body: formData,
-            });
-            const data = await res.json();
-
-            if (!res.ok || !data.url) {
-                const message = data.error || 'Upload failed';
-
-                if (data.code === 'STORAGE_NOT_CONFIGURED' && allowPrompt) {
-                    setPendingFile(file);
-                    setShowConfigurationPrompt(true);
-                    return;
-                }
-
-                if (res.status === 401 && allowPrompt) {
-                    setPendingFile(file);
-                    setPromptError('');
-                    setShowSessionPrompt(true);
-                    return;
-                }
-
-                throw new Error(message);
-            }
-
-            onChange(data.media?.url || data.url);
+            onChange(media.url);
             onError?.('');
             setPendingFile(null);
             setShowSessionPrompt(false);
             setPassword('');
             setPromptError('');
         } catch (error) {
+            if (error instanceof MediaUploadError && error.code === 'STORAGE_NOT_CONFIGURED' && allowPrompt) {
+                setPendingFile(file);
+                setShowConfigurationPrompt(true);
+                return;
+            }
+            if (error instanceof MediaUploadError && error.status === 401 && allowPrompt) {
+                setPendingFile(file);
+                setPromptError('');
+                setShowSessionPrompt(true);
+                return;
+            }
             onError?.(error instanceof Error ? error.message : 'Upload failed');
         } finally {
             setIsUploading(false);

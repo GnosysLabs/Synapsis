@@ -15,6 +15,10 @@ export const relations = defineRelations(schema, (r) => ({
       alias: 'ownedBots',
     }),
     posts: r.many.posts({ from: r.users.id, to: r.posts.userId }),
+    stuffboxConnection: r.one.stuffboxConnections({
+      from: r.users.id,
+      to: r.stuffboxConnections.userId,
+    }),
     followersRelation: r.many.follows({
       from: r.users.id,
       to: r.follows.followingId,
@@ -56,6 +60,13 @@ export const relations = defineRelations(schema, (r) => ({
   media: {
     user: r.one.users({ from: r.media.userId, to: r.users.id, optional: false }),
     post: r.one.posts({ from: r.media.postId, to: r.posts.id }),
+  },
+  stuffboxConnections: {
+    user: r.one.users({
+      from: r.stuffboxConnections.userId,
+      to: r.users.id,
+      optional: false,
+    }),
   },
   follows: {
     follower: r.one.users({

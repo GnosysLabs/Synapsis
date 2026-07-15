@@ -45,9 +45,11 @@ Uninstalling preserves the database and environment by default. Pass `--purge-da
 
 ## Storage and account portability
 
-The node database is a local embedded Turso/SQLite file. Media remains in each user's S3-compatible bucket so exported accounts can retain portable media URLs and move between Synapsis nodes without requiring the old node to transfer a shared upload directory.
+The node database is a local embedded Turso/SQLite file. Media remains in storage controlled by each user, so exported accounts retain portable media URLs and can move between Synapsis nodes without requiring the old node to transfer a shared upload directory.
 
-Supported S3-compatible providers include AWS S3, Cloudflare R2, Backblaze B2, Wasabi, and Contabo. Synapsis stores each user's credentials encrypted with `AUTH_SECRET`.
+Stuffbox is the default integration. Set `STUFFBOX_URL` to the public URL of the Stuffbox service users should connect. Synapsis uses a consent and PKCE flow, keeps the resulting tokens encrypted with `AUTH_SECRET`, and sends file bytes directly from the user's browser to Stuffbox.
+
+User-owned S3-compatible storage remains available as an advanced fallback. Supported providers include AWS S3, Cloudflare R2, Backblaze B2, Wasabi, and Contabo.
 
 ## Development
 
@@ -77,7 +79,7 @@ npm run build
 - **Framework:** Next.js 16 and React 19
 - **Database:** embedded Turso with Drizzle ORM's relational-query v2 API
 - **Identity:** DIDs and per-user signing keys
-- **Media:** user-owned S3-compatible storage
+- **Media:** user-owned Stuffbox or S3-compatible storage
 - **Federation:** Synapsis Swarm discovery and signed interactions
 - **Deployment:** native Node.js process managed by systemd
 

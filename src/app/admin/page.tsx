@@ -8,6 +8,7 @@ import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPro
 import { useToast } from '@/lib/contexts/ToastContext';
 import { useAccentColor } from '@/lib/contexts/AccentColorContext';
 import { refreshStorageSession } from '@/lib/storage/client';
+import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 
 export default function AdminPage() {
     const { showToast } = useToast();
@@ -105,33 +106,11 @@ export default function AdminPage() {
         setIsUploadingBanner(true);
 
         try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const res = await fetch('/api/media/upload', {
-                method: 'POST',
-                body: formData,
-            });
-            const data = await res.json();
-
-            if (!res.ok || !data.url) {
-                if (data.code === 'STORAGE_NOT_CONFIGURED' && allowPrompt) {
-                    setPendingBannerFile(file);
-                    setShowBannerStorageConfiguration(true);
-                    return;
-                }
-                if (res.status === 401 && allowPrompt) {
-                    setPendingBannerFile(file);
-                    setBannerPromptError('');
-                    setShowBannerSessionPrompt(true);
-                    return;
-                }
-
-                throw new Error(data.error || 'Upload failed');
-            }
+            const media = await uploadMediaFile(file);
 
             const nextSettings = {
                 ...nodeSettings,
-                bannerUrl: data.media?.url || data.url,
+                bannerUrl: media.url,
             };
             setNodeSettings(nextSettings);
             await handleSaveSettings(nextSettings);
@@ -140,6 +119,17 @@ export default function AdminPage() {
             setBannerPassword('');
             setBannerPromptError('');
         } catch (error) {
+            if (error instanceof MediaUploadError && error.code === 'STORAGE_NOT_CONFIGURED' && allowPrompt) {
+                setPendingBannerFile(file);
+                setShowBannerStorageConfiguration(true);
+                return;
+            }
+            if (error instanceof MediaUploadError && error.status === 401 && allowPrompt) {
+                setPendingBannerFile(file);
+                setBannerPromptError('');
+                setShowBannerSessionPrompt(true);
+                return;
+            }
             console.error('Banner upload failed', error);
             setBannerUploadError(error instanceof Error ? error.message : 'Upload failed. Please try again.');
         } finally {
