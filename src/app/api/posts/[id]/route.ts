@@ -178,7 +178,7 @@ export async function GET(
             const replies = await db.query.posts.findMany({
                 where: { AND: [{ replyToId: id }, { isRemoved: false }] },
                 with: postDetailRelations,
-                orderBy: () => [desc(posts.createdAt)],
+                orderBy: (posts, { desc }) => [desc(posts.createdAt)],
             });
 
             mainPost = {

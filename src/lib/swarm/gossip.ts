@@ -57,7 +57,7 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
     const sinceDate = since ? new Date(since) : undefined;
     const handleEntries = await db.query.handleRegistry.findMany({
       where: sinceDate ? { updatedAt: { gt: sinceDate } } : undefined,
-      orderBy: () => [desc(handleRegistry.updatedAt)],
+      orderBy: (handleRegistry, { desc }) => [desc(handleRegistry.updatedAt)],
       limit: SWARM_CONFIG.maxHandlesPerGossip,
     });
 

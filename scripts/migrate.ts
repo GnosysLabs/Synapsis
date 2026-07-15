@@ -1,14 +1,20 @@
+import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/tursodatabase/migrator';
-import { db } from '../src/db';
+import { closeDb, db } from '../src/db';
 
 async function main() {
-  const result = await migrate(db, { migrationsFolder: './drizzle' });
+  try {
+    const result = await migrate(db, { migrationsFolder: './drizzle' });
 
-  if (result) {
-    throw new Error(`Database migration failed: ${JSON.stringify(result)}`);
+    if (result) {
+      throw new Error(`Database migration failed: ${JSON.stringify(result)}`);
+    }
+
+    await db.run(sql.raw('PRAGMA wal_checkpoint(TRUNCATE)'));
+    console.log('Database migrations are up to date.');
+  } finally {
+    await closeDb();
   }
-
-  console.log('Database migrations are up to date.');
 }
 
 main().catch((error) => {

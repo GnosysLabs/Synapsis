@@ -194,7 +194,7 @@ export async function GET(request: Request) {
                     ...(moderatedIds.length ? { userId: { notIn: moderatedIds } } : {}),
                 },
                 with: searchPostRelations,
-                orderBy: () => [desc(posts.createdAt)],
+                orderBy: (posts, { desc }) => [desc(posts.createdAt)],
                 limit,
             });
             searchPosts = postResults;

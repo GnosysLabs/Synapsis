@@ -50,7 +50,7 @@ export async function GET(request: Request) {
                 userId: user.id,
                 ...(unreadOnly ? { readAt: { isNull: true as const } } : {}),
             },
-            orderBy: () => [desc(notifications.createdAt)],
+            orderBy: (notifications, { desc }) => [desc(notifications.createdAt)],
             limit,
         });
 

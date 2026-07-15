@@ -24,7 +24,7 @@ export async function GET(request: Request) {
             with: {
                 author: true,
             },
-            orderBy: () => [desc(posts.createdAt)],
+            orderBy: (posts, { desc }) => [desc(posts.createdAt)],
             limit,
         });
 

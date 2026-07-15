@@ -341,7 +341,7 @@ export async function GET(request: Request, context: RouteContext) {
         const localPosts = await db.query.posts.findMany({
             where: whereConditions,
             with: userPostRelations,
-            orderBy: () => [desc(posts.createdAt)],
+            orderBy: (posts, { desc }) => [desc(posts.createdAt)],
             limit: cursor ? limit : limit * 2,
         });
 
@@ -351,7 +351,7 @@ export async function GET(request: Request, context: RouteContext) {
         };
         const swarmRepostRows = await db.query.userSwarmReposts.findMany({
             where: swarmRepostWhere,
-            orderBy: () => [desc(userSwarmReposts.repostedAt)],
+            orderBy: (userSwarmReposts, { desc }) => [desc(userSwarmReposts.repostedAt)],
             limit: cursor ? limit : limit * 2,
         });
         let userPosts: any[] = [

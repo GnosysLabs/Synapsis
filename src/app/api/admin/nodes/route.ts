@@ -16,7 +16,7 @@ export async function GET() {
     await requireAdmin();
 
     const nodes = await db.query.swarmNodes.findMany({
-      orderBy: () => [desc(swarmNodes.isBlocked), desc(swarmNodes.blockedAt), desc(swarmNodes.lastSeenAt)],
+      orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.isBlocked), desc(swarmNodes.blockedAt), desc(swarmNodes.lastSeenAt)],
     });
 
     return NextResponse.json({

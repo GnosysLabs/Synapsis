@@ -109,7 +109,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         author: true,
         media: true,
       },
-      orderBy: () => [desc(posts.createdAt)],
+      orderBy: (posts, { desc }) => [desc(posts.createdAt)],
       limit: 50,
     });
 

@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
     // Get messages
     const messages = await db.query.chatMessages.findMany({
       where: whereCondition,
-      orderBy: () => [desc(chatMessages.createdAt)],
+      orderBy: (chatMessages, { desc }) => [desc(chatMessages.createdAt)],
       limit,
     });
 

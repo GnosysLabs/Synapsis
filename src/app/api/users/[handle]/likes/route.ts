@@ -147,7 +147,7 @@ export async function GET(request: Request, context: RouteContext) {
                     with: likedPostRelations,
                 },
             },
-            orderBy: () => [desc(likes.createdAt)],
+            orderBy: (likes, { desc }) => [desc(likes.createdAt)],
             limit,
         });
 
@@ -157,7 +157,7 @@ export async function GET(request: Request, context: RouteContext) {
 
         const swarmLikedRows = await db.query.userSwarmLikes.findMany({
             where: { userId: user.id },
-            orderBy: () => [desc(userSwarmLikes.likedAt)],
+            orderBy: (userSwarmLikes, { desc }) => [desc(userSwarmLikes.likedAt)],
             limit,
         });
 

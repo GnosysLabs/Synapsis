@@ -224,13 +224,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const localPosts = await db.query.posts.findMany({
       where: { AND: [{ userId: user.id }, { isRemoved: false }, { replyToId: { isNull: true } }, { swarmReplyToId: { isNull: true } }] },
       with: profilePostRelations,
-      orderBy: () => [desc(posts.createdAt)],
+      orderBy: (posts, { desc }) => [desc(posts.createdAt)],
       limit: limit * 2,
     });
 
     const remoteRepostRows = await db.query.userSwarmReposts.findMany({
       where: { userId: user.id },
-      orderBy: () => [desc(userSwarmReposts.repostedAt)],
+      orderBy: (userSwarmReposts, { desc }) => [desc(userSwarmReposts.repostedAt)],
       limit: limit * 2,
     });
 

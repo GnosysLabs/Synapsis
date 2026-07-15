@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
         const reportRows = await db.query.reports.findMany({
             where: status === 'all' ? undefined : { status: status },
-            orderBy: () => [desc(reports.createdAt)],
+            orderBy: (reports, { desc }) => [desc(reports.createdAt)],
             limit,
             with: {
                 reporter: true,

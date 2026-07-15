@@ -107,7 +107,7 @@ export async function getLogsForBot(
         },
       } : {}),
     },
-    orderBy: () => [desc(botActivityLogs.createdAt)], // Reverse chronological
+    orderBy: (botActivityLogs, { desc }) => [desc(botActivityLogs.createdAt)], // Reverse chronological
     limit: options.limit || 100,
     offset: options.offset || 0,
   });
@@ -140,7 +140,7 @@ export async function getErrorLogs(
 ): Promise<ActivityLog[]> {
   const logs = await db.query.botActivityLogs.findMany({
     where: { AND: [{ botId: botId }, { success: false }] },
-    orderBy: () => [desc(botActivityLogs.createdAt)],
+    orderBy: (botActivityLogs, { desc }) => [desc(botActivityLogs.createdAt)],
     limit,
   });
   

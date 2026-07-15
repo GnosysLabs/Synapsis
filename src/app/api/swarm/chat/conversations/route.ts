@@ -23,10 +23,10 @@ export async function GET(request: NextRequest) {
     // Get all conversations for this user
     const conversations = await db.query.chatConversations.findMany({
       where: { participant1Id: session.user.id },
-      orderBy: () => [desc(chatConversations.lastMessageAt)],
+      orderBy: (chatConversations, { desc }) => [desc(chatConversations.lastMessageAt)],
       with: {
         messages: {
-          orderBy: () => [desc(chatMessages.createdAt)],
+          orderBy: (chatMessages, { desc }) => [desc(chatMessages.createdAt)],
           limit: 1,
         },
       },

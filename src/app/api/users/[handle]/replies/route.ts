@@ -143,7 +143,7 @@ export async function GET(request: Request, context: RouteContext) {
         ...(cursorDate ? { createdAt: { lt: cursorDate } } : {}),
       },
       with: replyRelations,
-      orderBy: () => [desc(posts.createdAt)],
+      orderBy: (posts, { desc }) => [desc(posts.createdAt)],
       limit,
     });
 

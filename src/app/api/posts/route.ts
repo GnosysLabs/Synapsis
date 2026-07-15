@@ -631,7 +631,7 @@ export async function GET(request: Request) {
             feedPosts = await db.query.posts.findMany({
                 where: whereCondition,
                 with: feedPostRelations,
-                orderBy: () => [desc(posts.createdAt)],
+                orderBy: (posts, { desc }) => [desc(posts.createdAt)],
                 limit,
             });
         } else if (type === 'public') {
@@ -639,13 +639,13 @@ export async function GET(request: Request) {
             const localPosts = await db.query.posts.findMany({
                 where: baseFilter,
                 with: feedPostRelations,
-                orderBy: () => [desc(posts.createdAt)],
+                orderBy: (posts, { desc }) => [desc(posts.createdAt)],
                 limit: limit * 2,
             });
 
             // Get all cached remote posts
             const remotePostsData = await db.query.remotePosts.findMany({
-                orderBy: () => [desc(remotePosts.publishedAt)],
+                orderBy: (remotePosts, { desc }) => [desc(remotePosts.publishedAt)],
                 limit: limit,
             });
 
@@ -676,7 +676,7 @@ export async function GET(request: Request) {
             feedPosts = await db.query.posts.findMany({
                 where: whereCondition,
                 with: feedPostRelations,
-                orderBy: () => [desc(posts.createdAt)],
+                orderBy: (posts, { desc }) => [desc(posts.createdAt)],
                 limit,
             });
         } else if (type === 'replies' && userId) {
@@ -700,7 +700,7 @@ export async function GET(request: Request) {
             feedPosts = await db.query.posts.findMany({
                 where: whereCondition,
                 with: feedPostRelations,
-                orderBy: () => [desc(posts.createdAt)],
+                orderBy: (posts, { desc }) => [desc(posts.createdAt)],
                 limit,
             });
         } else if (type === 'curated') {
@@ -868,7 +868,7 @@ export async function GET(request: Request) {
                 const localPosts = await db.query.posts.findMany({
                     where: whereCondition,
                     with: feedPostRelations,
-                    orderBy: () => [desc(posts.createdAt)],
+                    orderBy: (posts, { desc }) => [desc(posts.createdAt)],
                     limit: cursor ? limit : limit * 2, // Get more on first load to account for mixing with remote
                 });
 
@@ -878,7 +878,7 @@ export async function GET(request: Request) {
                 };
                 const swarmRepostRows = await db.query.userSwarmReposts.findMany({
                     where: swarmRepostWhere,
-                    orderBy: () => [desc(userSwarmReposts.repostedAt)],
+                    orderBy: (userSwarmReposts, { desc }) => [desc(userSwarmReposts.repostedAt)],
                     limit: cursor ? limit : limit * 2,
                 });
 
@@ -967,7 +967,7 @@ export async function GET(request: Request) {
                 feedPosts = await db.query.posts.findMany({
                     where: baseFilter,
                     with: feedPostRelations,
-                    orderBy: () => [desc(posts.createdAt)],
+                    orderBy: (posts, { desc }) => [desc(posts.createdAt)],
                     limit,
                 });
             }

@@ -111,7 +111,7 @@ export async function getActiveSwarmNodes(limit = 100): Promise<SwarmNodeInfo[]>
 
   const nodes = await db.query.swarmNodes.findMany({
     where: { AND: [{ isActive: true }, { isBlocked: false }] },
-    orderBy: () => [desc(swarmNodes.lastSeenAt)],
+    orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.lastSeenAt)],
     limit,
   });
 
@@ -146,7 +146,7 @@ export async function getNodesSince(since: Date, limit = 100): Promise<SwarmNode
 
   const nodes = await db.query.swarmNodes.findMany({
     where: { AND: [{ updatedAt: { gt: since } }, { isBlocked: false }] },
-    orderBy: () => [desc(swarmNodes.updatedAt)],
+    orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.updatedAt)],
     limit,
   });
 
@@ -265,7 +265,7 @@ export async function getSeedNodes(): Promise<string[]> {
 
   const seeds = await db.query.swarmSeeds.findMany({
     where: { isEnabled: true },
-    orderBy: () => [swarmSeeds.priority],
+    orderBy: (swarmSeeds) => [swarmSeeds.priority],
   });
 
   if (seeds.length === 0) {

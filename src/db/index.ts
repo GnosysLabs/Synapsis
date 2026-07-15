@@ -10,7 +10,25 @@ if (databasePath !== ':memory:') {
     mkdirSync(dirname(databasePath), { recursive: true });
 }
 
-export const db = drizzle(databasePath, { relations });
+const createDb = () => drizzle(databasePath, { relations });
+type SynapsisDatabase = ReturnType<typeof createDb>;
+
+const globalForDb = globalThis as typeof globalThis & {
+    synapsisDb?: SynapsisDatabase;
+};
+
+export const db = globalForDb.synapsisDb ?? createDb();
+
+globalForDb.synapsisDb = db;
+
+export async function closeDb(): Promise<void> {
+    if (!globalForDb.synapsisDb) {
+        return;
+    }
+
+    await globalForDb.synapsisDb.$client.close();
+    delete globalForDb.synapsisDb;
+}
 
 // Embedded Turso is always available; DATABASE_PATH only changes its location.
 export const isDbAvailable = () => true;

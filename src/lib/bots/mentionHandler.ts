@@ -150,7 +150,7 @@ export async function detectMentions(botId: string): Promise<MentionDetectionRes
           },
         },
       },
-      orderBy: () => [desc(posts.createdAt)],
+      orderBy: (posts, { desc }) => [desc(posts.createdAt)],
       limit: 1000, // Reasonable limit for scanning
     });
 
@@ -217,7 +217,7 @@ export async function getUnprocessedMentions(botId: string): Promise<Mention[]> 
   try {
     const mentions = await db.query.botMentions.findMany({
       where: { AND: [{ botId: botId }, { isProcessed: false }] },
-      orderBy: () => [asc(botMentions.createdAt)], // Chronological order (oldest first)
+      orderBy: (botMentions, { asc }) => [asc(botMentions.createdAt)], // Chronological order (oldest first)
     });
 
     return mentions.map(m => ({
@@ -252,7 +252,7 @@ export async function getAllMentions(botId: string): Promise<Mention[]> {
   try {
     const mentions = await db.query.botMentions.findMany({
       where: { botId: botId },
-      orderBy: () => [desc(botMentions.createdAt)],
+      orderBy: (botMentions, { desc }) => [desc(botMentions.createdAt)],
     });
 
     return mentions.map(m => ({
