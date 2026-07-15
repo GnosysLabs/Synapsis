@@ -1,8 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Box, ChevronDown, ExternalLink } from 'lucide-react';
-import { getStorageProvider } from '@/lib/stuffbox/browser-upload';
+import { hasNewStuffboxConnection } from '@/lib/stuffbox/browser-upload';
+import {
+    monitorStuffboxConnection,
+    StuffboxConnectionCancelledError,
+    type StuffboxConnectionResult,
+} from '@/lib/stuffbox/connection-monitor';
 
 interface StorageConfigurationPromptProps {
     open: boolean;
@@ -25,6 +30,34 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel, varia
     const [isLoading, setIsLoading] = useState(false);
     const [stuffboxAvailable, setStuffboxAvailable] = useState(false);
     const [showS3, setShowS3] = useState(false);
+    const [isConnectingStuffbox, setIsConnectingStuffbox] = useState(false);
+    const connectionAbortRef = useRef<AbortController | null>(null);
+    const connectionPopupRef = useRef<Window | null>(null);
+
+    const closeConnectionPopup = () => {
+        try { connectionPopupRef.current?.close(); } catch { /* COOP may sever the popup handle. */ }
+        connectionPopupRef.current = null;
+    };
+
+    const cancelStuffboxConnection = () => {
+        connectionAbortRef.current?.abort();
+        connectionAbortRef.current = null;
+        closeConnectionPopup();
+        setIsConnectingStuffbox(false);
+    };
+
+    useEffect(() => () => {
+        connectionAbortRef.current?.abort();
+        try { connectionPopupRef.current?.close(); } catch { /* Best-effort cleanup. */ }
+    }, []);
+
+    useEffect(() => {
+        if (open) return;
+        connectionAbortRef.current?.abort();
+        connectionAbortRef.current = null;
+        try { connectionPopupRef.current?.close(); } catch { /* Best-effort cleanup. */ }
+        connectionPopupRef.current = null;
+    }, [open]);
 
     useEffect(() => {
         if (!open) return;
@@ -47,92 +80,72 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel, varia
 
     const connectStuffbox = async () => {
         setError('');
-        setIsSubmitting(true);
+        setIsConnectingStuffbox(true);
         const popup = window.open('', 'synapsis-stuffbox', 'popup,width=620,height=760');
         if (!popup) {
             setError('Your browser blocked the Stuffbox window. Allow popups and try again.');
-            setIsSubmitting(false);
+            setIsConnectingStuffbox(false);
             return;
         }
+        connectionPopupRef.current = popup;
         popup.document.body.textContent = 'Connecting to Stuffbox…';
+        const controller = new AbortController();
+        connectionAbortRef.current = controller;
 
         try {
-            const response = await fetch('/api/storage/stuffbox/connect', { method: 'POST' });
+            const response = await fetch('/api/storage/stuffbox/connect', {
+                method: 'POST',
+                signal: controller.signal,
+            });
             const data = await response.json().catch(() => ({}));
-            if (!response.ok || !data.authorizationUrl) throw new Error(data.error || 'Unable to connect Stuffbox');
-            const result = new Promise<void>((resolve, reject) => {
-                let settled = false;
-                let verifyingClosedPopup = false;
-                let channel: BroadcastChannel | null = null;
-                const timeout = window.setTimeout(() => {
-                    finish({ type: 'synapsis:stuffbox', success: false, message: 'Stuffbox connection timed out.' });
-                }, 10 * 60_000);
-                const popupClosed = window.setInterval(() => {
-                    if (popup.closed) void verifyConnectionAfterPopupClosed();
-                }, 500);
+            if (!response.ok || !data.authorizationUrl || !data.connectionStartedAt || !data.connectionAttempt) {
+                throw new Error(data.error || 'Unable to connect Stuffbox');
+            }
+            const result = monitorStuffboxConnection({
+                signal: controller.signal,
+                checkConnected: async () => hasNewStuffboxConnection(data.connectionStartedAt),
+                subscribe: (finish) => {
+                    let channel: BroadcastChannel | null = null;
+                    const finishCurrentAttempt = (result: StuffboxConnectionResult) => {
+                        if (result.attemptId === data.connectionAttempt) finish(result);
+                    };
 
-                async function verifyConnectionAfterPopupClosed() {
-                    if (settled || verifyingClosedPopup) return;
-                    verifyingClosedPopup = true;
-                    window.clearInterval(popupClosed);
-
-                    for (let attempt = 0; attempt < 4 && !settled; attempt += 1) {
-                        await new Promise(resolveDelay => window.setTimeout(resolveDelay, 250));
-                        if (settled) return;
-                        try {
-                            if (await getStorageProvider() === 'stuffbox') {
-                                finish({ type: 'synapsis:stuffbox', success: true, message: 'Stuffbox connected.' });
-                                return;
-                            }
-                        } catch { /* Retry while the callback finishes saving the connection. */ }
+                    function receive(event: MessageEvent) {
+                        if (event.origin !== window.location.origin || event.data?.type !== 'synapsis:stuffbox') return;
+                        finishCurrentAttempt(event.data as StuffboxConnectionResult);
                     }
 
-                    finish({ type: 'synapsis:stuffbox', success: false, message: 'The Stuffbox window was closed before connecting.' });
-                }
+                    function receiveStorage(event: StorageEvent) {
+                        if (event.key !== 'synapsis:stuffbox:result' || !event.newValue) return;
+                        try { finishCurrentAttempt(JSON.parse(event.newValue)); } catch { /* Ignore unrelated storage values. */ }
+                    }
 
-                function cleanup() {
-                    window.clearTimeout(timeout);
-                    window.clearInterval(popupClosed);
-                    window.removeEventListener('message', receive);
-                    window.removeEventListener('storage', receiveStorage);
-                    channel?.close();
-                }
-
-                function finish(data: { type?: string; success?: boolean; message?: string }) {
-                    if (settled || data.type !== 'synapsis:stuffbox') return;
-                    settled = true;
-                    cleanup();
-                    window.focus();
-                    if (data.success) resolve();
-                    else reject(new Error(data.message || 'Stuffbox could not be connected.'));
-                }
-
-                function receive(event: MessageEvent) {
-                    if (event.origin !== window.location.origin || event.data?.type !== 'synapsis:stuffbox') return;
-                    finish(event.data);
-                }
-
-                function receiveStorage(event: StorageEvent) {
-                    if (event.key !== 'synapsis:stuffbox:result' || !event.newValue) return;
-                    try { finish(JSON.parse(event.newValue)); } catch { /* Ignore unrelated storage values. */ }
-                }
-
-                window.addEventListener('message', receive);
-                window.addEventListener('storage', receiveStorage);
-                if ('BroadcastChannel' in window) {
-                    channel = new BroadcastChannel('synapsis:stuffbox');
-                    channel.onmessage = (event) => finish(event.data);
-                }
+                    window.addEventListener('message', receive);
+                    window.addEventListener('storage', receiveStorage);
+                    if ('BroadcastChannel' in window) {
+                        channel = new BroadcastChannel('synapsis:stuffbox');
+                        channel.onmessage = (event) => finishCurrentAttempt(event.data);
+                    }
+                    return () => {
+                        window.removeEventListener('message', receive);
+                        window.removeEventListener('storage', receiveStorage);
+                        channel?.close();
+                    };
+                },
             });
             popup.location.href = data.authorizationUrl;
             await result;
-            if (!popup.closed) popup.close();
+            window.focus();
+            closeConnectionPopup();
             await onConfigured();
         } catch (connectError) {
-            if (!popup.closed) popup.close();
-            setError(connectError instanceof Error ? connectError.message : 'Unable to connect Stuffbox');
+            closeConnectionPopup();
+            if (!controller.signal.aborted && !(connectError instanceof StuffboxConnectionCancelledError)) {
+                setError(connectError instanceof Error ? connectError.message : 'Unable to connect Stuffbox');
+            }
         } finally {
-            setIsSubmitting(false);
+            connectionAbortRef.current = null;
+            setIsConnectingStuffbox(false);
         }
     };
 
@@ -177,12 +190,17 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel, varia
                             </div>
                         </div>
                     </div>
-                    <button type="button" className="btn btn-primary" onClick={connectStuffbox} disabled={isSubmitting || isLoading || !stuffboxAvailable} style={{ width: '100%', marginTop: '16px' }}>
-                        {isSubmitting && !showS3 ? 'Connecting…' : stuffboxAvailable ? <>Connect Stuffbox <ExternalLink size={15} /></> : isLoading ? 'Loading…' : 'Stuffbox unavailable on this node'}
+                    <button type="button" className="btn btn-primary" onClick={isConnectingStuffbox ? cancelStuffboxConnection : connectStuffbox} disabled={isSubmitting || isLoading || !stuffboxAvailable} style={{ width: '100%', marginTop: '16px' }}>
+                        {isConnectingStuffbox ? 'Cancel connection' : stuffboxAvailable ? <>Connect Stuffbox <ExternalLink size={15} /></> : isLoading ? 'Loading…' : 'Stuffbox unavailable on this node'}
                     </button>
+                    {isConnectingStuffbox && (
+                        <div style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.45, marginTop: '10px', textAlign: 'center' }}>
+                            Approve access in the Stuffbox window. This page will continue automatically.
+                        </div>
+                    )}
             </div>
 
-            <button type="button" className="btn btn-ghost" onClick={() => { setShowS3((value) => !value); setError(''); }} style={{ width: '100%', marginTop: '12px', justifyContent: 'space-between' }}>
+            <button type="button" className="btn btn-ghost" onClick={() => { setShowS3((value) => !value); setError(''); }} disabled={isConnectingStuffbox} style={{ width: '100%', marginTop: '12px', justifyContent: 'space-between' }}>
                 Use your own S3-compatible bucket <ChevronDown size={16} style={{ transform: showS3 ? 'rotate(180deg)' : undefined }} />
             </button>
 
@@ -214,7 +232,7 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel, varia
 
             {error && <div style={{ color: 'var(--error)', fontSize: '13px', marginTop: '14px' }}>{error}</div>}
             {variant === 'modal' && (
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}><button type="button" className="btn btn-ghost" onClick={onCancel} disabled={isSubmitting}>Cancel</button></div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}><button type="button" className="btn btn-ghost" onClick={() => { cancelStuffboxConnection(); onCancel(); }} disabled={isSubmitting}>Cancel</button></div>
             )}
         </>
     );
@@ -222,7 +240,7 @@ export function StorageConfigurationPrompt({ open, onConfigured, onCancel, varia
     if (variant === 'inline') return content;
 
     return (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', background: 'rgba(0, 0, 0, 0.8)' }} onClick={onCancel}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', background: 'rgba(0, 0, 0, 0.8)' }} onClick={() => { cancelStuffboxConnection(); onCancel(); }}>
             <div className="card" style={{ width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }} onClick={(event) => event.stopPropagation()}>
                 {content}
             </div>

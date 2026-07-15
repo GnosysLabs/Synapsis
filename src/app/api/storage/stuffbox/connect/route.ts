@@ -49,7 +49,11 @@ export async function POST(request: NextRequest) {
       expiresAt: Math.min(Date.parse(connection.expiresAt) || Date.now() + 10 * 60_000, Date.now() + 10 * 60_000),
     });
 
-    return NextResponse.json({ authorizationUrl: connection.authorizationUrl });
+    return NextResponse.json({
+      authorizationUrl: connection.authorizationUrl,
+      connectionStartedAt: new Date().toISOString(),
+      connectionAttempt: pkce.state,
+    });
   } catch (error) {
     if (error instanceof Error && error.message === 'Authentication required') {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });

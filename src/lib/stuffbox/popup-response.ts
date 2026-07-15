@@ -1,6 +1,6 @@
-export function renderStuffboxPopupResponse(origin: string, success: boolean, message: string): string {
+export function renderStuffboxPopupResponse(origin: string, success: boolean, message: string, attemptId?: string): string {
   const safeJson = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c');
-  const payload = safeJson({ type: 'synapsis:stuffbox', success, message });
+  const payload = safeJson({ type: 'synapsis:stuffbox', success, message, attemptId });
   const targetOrigin = safeJson(origin);
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Stuffbox</title></head><body>

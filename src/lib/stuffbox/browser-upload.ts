@@ -26,6 +26,7 @@ interface JsonResponse extends Record<string, unknown> {
   error?: string;
   code?: string;
   provider?: string | null;
+  stuffboxUpdatedAt?: string | null;
 }
 
 export type StorageProvider = 'stuffbox' | 's3' | null;
@@ -43,6 +44,21 @@ export async function getStorageProvider(): Promise<StorageProvider> {
   return configuration.provider === 'stuffbox' || configuration.provider === 's3'
     ? configuration.provider
     : null;
+}
+
+export async function hasNewStuffboxConnection(startedAt: string): Promise<boolean> {
+  const response = await fetch('/api/storage/configuration', { cache: 'no-store' });
+  const configuration = await json(response);
+  if (!response.ok) {
+    throw new MediaUploadError(configuration.error || 'Unable to verify the Stuffbox connection', undefined, response.status);
+  }
+
+  const updatedAt = typeof configuration.stuffboxUpdatedAt === 'string'
+    ? Date.parse(configuration.stuffboxUpdatedAt)
+    : Number.NaN;
+  return configuration.provider === 'stuffbox'
+    && Number.isFinite(updatedAt)
+    && updatedAt >= Date.parse(startedAt);
 }
 
 function directPut(

@@ -28,6 +28,7 @@ export async function GET() {
       provider: stuffbox ? 'stuffbox' : user.storageProvider ? 's3' : null,
       stuffboxAvailable: Boolean(configuredStuffboxUrl()),
       stuffboxBaseUrl: stuffbox?.baseUrl ?? null,
+      stuffboxUpdatedAt: stuffbox?.updatedAt.toISOString() ?? null,
       s3Provider: user.storageProvider ?? null,
     });
   } catch (error) {
