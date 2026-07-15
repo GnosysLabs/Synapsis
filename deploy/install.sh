@@ -46,6 +46,7 @@ if [[ ! -e "$ENV_FILE" ]]; then
     echo "AUTH_SECRET=$auth_secret"
     echo "ADMIN_EMAILS=admin@example.com"
     echo "NEXT_PUBLIC_NODE_DOMAIN=localhost:$port"
+    echo "STUFFBOX_URL=https://stuffbox.xyz"
   } > "$ENV_FILE"
 fi
 
