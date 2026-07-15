@@ -3,7 +3,8 @@ import { db, likes, posts, users, userSwarmLikes } from '@/db';
 import { eq, desc, and, inArray } from 'drizzle-orm';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { isSwarmNode } from '@/lib/swarm/interactions';
-import { getRemoteBaseUrl, mapRemoteProfilePost, parseRemoteHandle } from '@/lib/swarm/remote-profile-posts';
+import { getRemoteBaseUrl, mapRemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
+import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
@@ -44,10 +45,11 @@ const parseMediaJson = (mediaJson: string | null) => {
 export async function GET(request: Request, context: RouteContext) {
     try {
         const { handle } = await context.params;
-        const cleanHandle = handle.toLowerCase().replace(/^@/, '');
+        const resolvedHandle = resolveUserHandle(handle);
+        const cleanHandle = resolvedHandle.canonicalHandle;
         const { searchParams } = new URL(request.url);
         const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
-        const remote = parseRemoteHandle(handle);
+        const remote = resolvedHandle.remote;
 
         const fetchRemoteLikesRoute = async () => {
             if (!remote) {
@@ -110,7 +112,7 @@ export async function GET(request: Request, context: RouteContext) {
         const user = await db.query.users.findFirst({
             where: { handle: cleanHandle },
         });
-        const isRemotePlaceholder = user && cleanHandle.includes('@');
+        const isRemotePlaceholder = Boolean(user && remote);
 
         if (!user || isRemotePlaceholder) {
             if (!remote) {

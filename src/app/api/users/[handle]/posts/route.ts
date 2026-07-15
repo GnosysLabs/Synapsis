@@ -4,7 +4,8 @@ import { eq, desc, and, inArray, lt, sql, isNull } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
-import { getRemoteBaseUrl, mapRemoteProfilePost, parseRemoteHandle } from '@/lib/swarm/remote-profile-posts';
+import { getRemoteBaseUrl, mapRemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
+import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
 const embeddedPostRelations = {
@@ -213,12 +214,13 @@ async function populateViewerLikeState(
 export async function GET(request: Request, context: RouteContext) {
     try {
         const { handle } = await context.params;
-        const cleanHandle = handle.toLowerCase().replace(/^@/, '');
+        const resolvedHandle = resolveUserHandle(handle);
+        const cleanHandle = resolvedHandle.canonicalHandle;
         const { searchParams } = new URL(request.url);
         const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
         const cursor = searchParams.get('cursor');
 
-        const remote = parseRemoteHandle(handle);
+        const remote = resolvedHandle.remote;
         const fetchRemotePostsRoute = async () => {
             if (!remote) {
                 return NextResponse.json({ posts: [], nextCursor: null });
@@ -303,7 +305,7 @@ export async function GET(request: Request, context: RouteContext) {
         const user = await db.query.users.findFirst({
             where: { handle: cleanHandle },
         });
-        const isRemotePlaceholder = user && cleanHandle.includes('@');
+        const isRemotePlaceholder = Boolean(user && remote);
 
         if (!user || isRemotePlaceholder) {
             if (!remote) {

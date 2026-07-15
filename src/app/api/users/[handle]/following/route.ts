@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db, follows, users, remoteFollows } from '@/db';
 import { eq } from 'drizzle-orm';
 import { hydrateSwarmUsers } from '@/lib/swarm/user-hydration';
+import { resolveUserHandle } from '@/lib/swarm/user-handle';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -26,21 +27,22 @@ const fetchSwarmFollowing = async (handle: string, domain: string, limit: number
 export async function GET(request: Request, context: RouteContext) {
     try {
         const { handle } = await context.params;
-        const cleanHandle = handle.toLowerCase().replace(/^@/, '');
+        const resolvedHandle = resolveUserHandle(handle);
+        const cleanHandle = resolvedHandle.canonicalHandle;
         const { searchParams } = new URL(request.url);
         const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
 
         // Check if this is a remote user
-        const [remoteHandle, remoteDomain] = cleanHandle.split('@');
+        const remote = resolvedHandle.remote;
 
-        if (remoteDomain) {
+        if (remote) {
             // Fetch from remote swarm node
-            const swarmData = await fetchSwarmFollowing(remoteHandle, remoteDomain, limit);
+            const swarmData = await fetchSwarmFollowing(remote.handle, remote.domain, limit);
             if (swarmData?.following) {
                 // Transform to include full handles for local users on that node
                 const following = swarmData.following.map((f: any) => ({
-                    id: f.isRemote ? f.handle : `${f.handle}@${remoteDomain}`,
-                    handle: f.isRemote ? f.handle : `${f.handle}@${remoteDomain}`,
+                    id: f.isRemote ? f.handle : `${f.handle}@${remote.domain}`,
+                    handle: f.isRemote ? f.handle : `${f.handle}@${remote.domain}`,
                     displayName: f.displayName,
                     avatarUrl: f.avatarUrl,
                     bio: f.bio,

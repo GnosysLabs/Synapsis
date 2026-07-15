@@ -4,14 +4,16 @@ import { getSession } from '@/lib/auth';
 import { db, users, follows } from '@/db';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
+import { resolveUserHandle } from '@/lib/swarm/user-handle';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
 export async function GET(request: Request, context: RouteContext) {
     try {
         const { handle } = await context.params;
-        const cleanHandle = handle.toLowerCase().replace(/^@/, '');
-        const [remoteHandle, remoteDomain] = cleanHandle.split('@');
+        const resolvedHandle = resolveUserHandle(handle);
+        const cleanHandle = resolvedHandle.canonicalHandle;
+        const remote = resolvedHandle.remote;
 
         // Return mock user if no database
         if (!db) {
@@ -36,26 +38,26 @@ export async function GET(request: Request, context: RouteContext) {
         });
 
         // If user exists but is a remote placeholder (handle contains @), fetch fresh data from remote
-        const isRemotePlaceholder = user && cleanHandle.includes('@');
+        const isRemotePlaceholder = Boolean(user && remote);
 
         if (!user || isRemotePlaceholder) {
-            if (remoteHandle && remoteDomain) {
+            if (remote) {
                 // Only fetch from swarm nodes
-                let isSwarm = await isSwarmNode(remoteDomain);
+                let isSwarm = await isSwarmNode(remote.domain);
                 if (!isSwarm) {
-                    const discovery = await discoverNode(remoteDomain);
+                    const discovery = await discoverNode(remote.domain);
                     isSwarm = discovery.success;
                 }
 
                 if (isSwarm) {
-                    const profileData = await fetchSwarmUserProfile(remoteHandle, remoteDomain, 0);
+                    const profileData = await fetchSwarmUserProfile(remote.handle, remote.domain, 0);
                     if (profileData?.profile) {
                         const profile = profileData.profile;
                         const rawBotOwnerHandle = profile.botOwnerHandle?.toLowerCase().replace(/^@/, '') || null;
                         const normalizedBotOwnerHandle = rawBotOwnerHandle
                             ? rawBotOwnerHandle.includes('@')
                                 ? rawBotOwnerHandle
-                                : `${rawBotOwnerHandle}@${remoteDomain}`
+                                : `${rawBotOwnerHandle}@${remote.domain}`
                             : null;
                         const botOwnerLocalHandle = rawBotOwnerHandle
                             ? rawBotOwnerHandle.split('@')[0]
@@ -64,7 +66,7 @@ export async function GET(request: Request, context: RouteContext) {
                         // CACHE: Upsert the remote user into our local database
                         const { upsertRemoteUser } = await import('@/lib/swarm/user-cache');
                         await upsertRemoteUser({
-                            handle: `${profile.handle}@${remoteDomain}`,
+                            handle: `${profile.handle}@${remote.domain}`,
                             displayName: profile.displayName,
                             avatarUrl: profile.avatarUrl || null,
                             did: profile.did || '',
@@ -74,8 +76,8 @@ export async function GET(request: Request, context: RouteContext) {
 
                         return NextResponse.json({
                             user: {
-                                id: `swarm:${remoteDomain}:${profile.handle}`,
-                                handle: `${profile.handle}@${remoteDomain}`,
+                                id: `swarm:${remote.domain}:${profile.handle}`,
+                                handle: `${profile.handle}@${remote.domain}`,
                                 displayName: profile.displayName,
                                 bio: profile.bio || null,
                                 avatarUrl: profile.avatarUrl || null,
@@ -87,10 +89,10 @@ export async function GET(request: Request, context: RouteContext) {
                                 createdAt: profile.createdAt,
                                 isRemote: true,
                                 isSwarm: true,
-                                nodeDomain: remoteDomain,
+                                nodeDomain: remote.domain,
                                 isBot: profile.isBot || false,
                                 botOwner: normalizedBotOwnerHandle && botOwnerLocalHandle ? {
-                                    id: `swarm:${remoteDomain}:${botOwnerLocalHandle}`,
+                                    id: `swarm:${remote.domain}:${botOwnerLocalHandle}`,
                                     handle: normalizedBotOwnerHandle,
                                     displayName: botOwnerLocalHandle,
                                     avatarUrl: null,
@@ -110,6 +112,9 @@ export async function GET(request: Request, context: RouteContext) {
             if (!isRemotePlaceholder) {
                 return NextResponse.json({ error: 'User not found' }, { status: 404 });
             }
+        }
+        if (!user) {
+            return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
         if (user.isSuspended) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });

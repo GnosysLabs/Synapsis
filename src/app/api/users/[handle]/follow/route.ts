@@ -7,25 +7,18 @@ import { requireSignedAction } from '@/lib/auth/verify-signature';
 import { isSwarmNode, deliverSwarmFollow, deliverSwarmUnfollow, cacheSwarmUserPosts } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { buildNotificationTarget } from '@/lib/notifications';
+import { resolveUserHandle } from '@/lib/swarm/user-handle';
 
 type RouteContext = { params: Promise<{ handle: string }> };
-
-const parseRemoteHandle = (handle: string) => {
-    const clean = handle.toLowerCase().replace(/^@/, '');
-    const parts = clean.split('@').filter(Boolean);
-    if (parts.length === 2) {
-        return { handle: parts[0], domain: parts[1] };
-    }
-    return null;
-};
 
 // Check follow status
 export async function GET(request: Request, context: RouteContext) {
     try {
         const currentUser = await requireAuth();
         const { handle } = await context.params;
-        const cleanHandle = handle.toLowerCase().replace(/^@/, '');
-        const remote = parseRemoteHandle(handle);
+        const resolvedHandle = resolveUserHandle(handle);
+        const cleanHandle = resolvedHandle.canonicalHandle;
+        const remote = resolvedHandle.remote;
 
         if (currentUser.isSuspended || currentUser.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -88,8 +81,9 @@ export async function POST(request: Request, context: RouteContext) {
         // Let's assume the client sends targetHandle in 'data' of signed action to be secure.
 
         const { handle } = await context.params;
-        const cleanHandle = handle.toLowerCase().replace(/^@/, '');
-        const remote = parseRemoteHandle(handle);
+        const resolvedHandle = resolveUserHandle(handle);
+        const cleanHandle = resolvedHandle.canonicalHandle;
+        const remote = resolvedHandle.remote;
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         if (currentUser.isSuspended || currentUser.isSilenced) {
@@ -254,8 +248,9 @@ export async function DELETE(request: Request, context: RouteContext) {
         const currentUser = await requireSignedAction(signedAction);
 
         const { handle } = await context.params;
-        const cleanHandle = handle.toLowerCase().replace(/^@/, '');
-        const remote = parseRemoteHandle(handle);
+        const resolvedHandle = resolveUserHandle(handle);
+        const cleanHandle = resolvedHandle.canonicalHandle;
+        const remote = resolvedHandle.remote;
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         if (remote) {

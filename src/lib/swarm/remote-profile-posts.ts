@@ -1,11 +1,6 @@
-export const parseRemoteHandle = (handle: string) => {
-  const clean = handle.toLowerCase().replace(/^@/, '');
-  const parts = clean.split('@').filter(Boolean);
-  if (parts.length === 2) {
-    return { handle: parts[0], domain: parts[1] };
-  }
-  return null;
-};
+import { resolveUserHandle } from './user-handle';
+
+export const parseRemoteHandle = (handle: string) => resolveUserHandle(handle).remote;
 
 export const getRemoteBaseUrl = (domain: string) =>
   domain.startsWith('http')

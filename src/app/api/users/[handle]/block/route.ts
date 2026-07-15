@@ -3,6 +3,7 @@ import { db } from '@/db';
 import { users, blocks, follows } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth';
+import { resolveUserHandle } from '@/lib/swarm/user-handle';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -11,9 +12,10 @@ export async function GET(req: NextRequest, context: RouteContext) {
     try {
         const currentUser = await requireAuth();
         const { handle } = await context.params;
+        const targetHandle = resolveUserHandle(handle).canonicalHandle;
 
         const targetUser = await db.query.users.findFirst({
-            where: { handle: handle },
+            where: { handle: targetHandle },
         });
 
         if (!targetUser) {
@@ -39,9 +41,10 @@ export async function POST(req: NextRequest, context: RouteContext) {
     try {
         const currentUser = await requireAuth();
         const { handle } = await context.params;
+        const targetHandle = resolveUserHandle(handle).canonicalHandle;
 
         const targetUser = await db.query.users.findFirst({
-            where: { handle: handle },
+            where: { handle: targetHandle },
         });
 
         if (!targetUser) {
@@ -96,9 +99,10 @@ export async function DELETE(req: NextRequest, context: RouteContext) {
     try {
         const currentUser = await requireAuth();
         const { handle } = await context.params;
+        const targetHandle = resolveUserHandle(handle).canonicalHandle;
 
         const targetUser = await db.query.users.findFirst({
-            where: { handle: handle },
+            where: { handle: targetHandle },
         });
 
         if (!targetUser) {
