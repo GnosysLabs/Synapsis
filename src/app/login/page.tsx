@@ -577,9 +577,6 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                     </div>
                                 </div>
 
-                                <p style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', marginBottom: '16px' }}>
-                                    You can connect your own S3-compatible storage when you first upload media.
-                                </p>
                             </>
                         )}
 
@@ -726,10 +723,6 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                 </label>
                                     </div>
                                 </div>
-
-                                <p style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', marginBottom: '16px' }}>
-                                    You can connect your own S3-compatible storage when you first upload media.
-                                </p>
 
                         <div style={{ marginBottom: '16px' }}>
                             <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
