@@ -63,7 +63,9 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     description,
     logoUrl,
     publicKey,
-    softwareVersion: buildInfo.commit || buildInfo.version,
+    softwareVersion: buildInfo.commitCount !== null
+      ? String(buildInfo.commitCount)
+      : buildInfo.version,
     userCount,
     postCount,
     capabilities,

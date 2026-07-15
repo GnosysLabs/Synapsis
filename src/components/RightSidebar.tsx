@@ -32,6 +32,7 @@ export function RightSidebar() {
     const [version, setVersion] = useState<{
         version: string;
         commit: string | null;
+        commitCount: number | null;
         buildDate: string | null;
     } | null>(null);
 
@@ -80,7 +81,7 @@ export function RightSidebar() {
         fetch('/api/version')
             .then(res => res.json())
             .then(data => setVersion(data))
-            .catch(() => setVersion({ version: 'unknown', commit: null, buildDate: null }));
+            .catch(() => setVersion({ version: 'unknown', commit: null, commitCount: null, buildDate: null }));
 
         return () => window.removeEventListener('synapsis:node-updated', handleNodeUpdated);
     }, []);
@@ -154,8 +155,8 @@ export function RightSidebar() {
                 <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px' }}>
                     Running{' '}
                     <a href="https://synapsis.gnosyslabs.xyz" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Synapsis</a>
-                    {version?.commit
-                        ? ` ${version.commit.slice(0, 7)}`
+                    {version?.commitCount !== null && version?.commitCount !== undefined
+                        ? ` ${version.commitCount}`
                         : version?.version
                             ? ` ${version.version}`
                             : ''}

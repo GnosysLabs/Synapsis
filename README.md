@@ -33,7 +33,7 @@ The installer creates:
 - Service: `synapsis.service`
 - Mandatory update timer: `synapsis-update.timer`
 
-Every node checks `origin/main` about once per minute. When a new commit is available, Synapsis fast-forwards the checkout, replaces the single `backups/latest` database snapshot, installs dependencies, runs migrations, builds, and restarts automatically. The currently deployed commit is shown in the Network Info card and exposed by `/api/version`.
+Every node checks `origin/main` about once per minute. When a new commit is available, Synapsis fast-forwards the checkout, replaces the single `backups/latest` database snapshot, installs dependencies, runs migrations, builds, and restarts automatically. The repository commit count is shown in the Network Info card; `/api/version` exposes both that number and the full deployed commit hash.
 
 For a node installed before automatic updates existed, bootstrap the timer once with:
 
