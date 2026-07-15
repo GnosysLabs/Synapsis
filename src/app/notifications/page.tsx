@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { getProfilePath } from '@/lib/utils/handle';
 import { AvatarImage } from '@/components/AvatarImage';
+import { getNotificationPostPreview } from '@/lib/notifications/post-preview';
 
 interface NotificationActor {
     id: string;
@@ -24,7 +25,14 @@ interface NotificationTarget {
 
 interface NotificationPost {
     id: string;
-    content: string;
+    content: string | null;
+    authorHandle: string | null;
+    media: Array<{
+        url: string;
+        mimeType: string | null;
+        altText: string | null;
+    }>;
+    linkPreviewImage: string | null;
 }
 
 interface Notification {
@@ -206,6 +214,9 @@ function NotificationItem({
     const isUnread = !notification.readAt;
     const actor = notification.actor;
     const actorProfilePath = actor ? getProfilePath(actor.handle) : '#';
+    const postPreview = notification.post
+        ? getNotificationPostPreview(notification.post)
+        : null;
 
     return (
         <div
@@ -244,20 +255,42 @@ function NotificationItem({
                     <Link
                         href={`/posts/${notification.post.id}`}
                         style={{
-                            display: 'block',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
                             marginTop: '8px',
-                            padding: '8px 12px',
+                            padding: '8px',
                             background: 'var(--background-secondary)',
                             borderRadius: '8px',
                             color: 'var(--foreground-secondary)',
                             fontSize: '14px',
                             textDecoration: 'none',
                             overflow: 'hidden',
+                        }}
+                        aria-label={`View liked post: ${postPreview?.label || 'View post'}`}
+                    >
+                        {postPreview?.imageUrl && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                                src={postPreview.imageUrl}
+                                alt={postPreview.imageAlt}
+                                style={{
+                                    width: 52,
+                                    height: 52,
+                                    borderRadius: '6px',
+                                    objectFit: 'cover',
+                                    flexShrink: 0,
+                                }}
+                            />
+                        )}
+                        <span style={{
+                            minWidth: 0,
+                            overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
-                        }}
-                    >
-                        {notification.post.content}
+                        }}>
+                            {postPreview?.label || 'View post'}
+                        </span>
                     </Link>
                 )}
             </div>

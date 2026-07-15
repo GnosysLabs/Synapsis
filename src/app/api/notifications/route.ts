@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db, notifications } from '@/db';
 import { requireAuth } from '@/lib/auth';
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 const markSchema = z.object({
@@ -52,6 +52,14 @@ export async function GET(request: Request) {
             },
             orderBy: (notifications, { desc }) => [desc(notifications.createdAt)],
             limit,
+            with: {
+                post: {
+                    with: {
+                        author: true,
+                        media: true,
+                    },
+                },
+            },
         });
 
         // For remote actors missing avatar, fetch fresh data
@@ -108,8 +116,14 @@ export async function GET(request: Request) {
                 } : null,
                 post: row.postId ? {
                     id: row.postId,
-                    content: row.postContent,
-                    authorHandle: row.actorHandle, // The actor is the post author for likes/reposts
+                    content: row.post?.content || row.postContent,
+                    authorHandle: row.post?.author?.handle || null,
+                    media: row.post?.media.map((item) => ({
+                        url: item.url,
+                        mimeType: item.mimeType,
+                        altText: item.altText,
+                    })) || [],
+                    linkPreviewImage: row.post?.linkPreviewImage || null,
                 } : null,
             };
         });
