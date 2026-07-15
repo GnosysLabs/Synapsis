@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { Eye, EyeOff, AlertTriangle, Check } from 'lucide-react';
+import { useAuth } from '@/lib/contexts/AuthContext';
 
 interface NsfwSettings {
     nsfwEnabled: boolean;
@@ -12,6 +13,7 @@ interface NsfwSettings {
 }
 
 export default function ContentSettingsPage() {
+    const { isIdentityUnlocked, signUserAction, setShowUnlockPrompt } = useAuth();
     const [settings, setSettings] = useState<NsfwSettings | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -40,6 +42,12 @@ export default function ContentSettingsPage() {
     const handleToggleNsfw = async () => {
         if (!settings) return;
 
+        if (!isIdentityUnlocked) {
+            setError('Unlock your identity to change this setting.');
+            setShowUnlockPrompt(true);
+            return;
+        }
+
         // If enabling and not verified, show age modal
         if (!settings.nsfwEnabled && !settings.ageVerifiedAt) {
             setShowAgeModal(true);
@@ -50,10 +58,13 @@ export default function ContentSettingsPage() {
         setSaving(true);
         setError(null);
         try {
+            const signedPayload = await signUserAction('update_nsfw_settings', {
+                nsfwEnabled: !settings.nsfwEnabled,
+            });
             const res = await fetch('/api/settings/nsfw', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nsfwEnabled: !settings.nsfwEnabled }),
+                body: JSON.stringify(signedPayload),
             });
 
             if (res.ok) {
@@ -65,21 +76,32 @@ export default function ContentSettingsPage() {
                 const data = await res.json();
                 setError(data.error || 'Failed to update');
             }
-        } catch {
-            setError('Failed to update settings');
+        } catch (error) {
+            setError(error instanceof Error ? error.message : 'Failed to update settings');
         } finally {
             setSaving(false);
         }
     };
 
     const handleAgeConfirm = async () => {
+        if (!isIdentityUnlocked) {
+            setShowAgeModal(false);
+            setError('Unlock your identity to change this setting.');
+            setShowUnlockPrompt(true);
+            return;
+        }
+
         setSaving(true);
         setError(null);
         try {
+            const signedPayload = await signUserAction('update_nsfw_settings', {
+                nsfwEnabled: true,
+                confirmAge: true,
+            });
             const res = await fetch('/api/settings/nsfw', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nsfwEnabled: true, confirmAge: true }),
+                body: JSON.stringify(signedPayload),
             });
 
             if (res.ok) {
@@ -96,8 +118,8 @@ export default function ContentSettingsPage() {
                 const data = await res.json();
                 setError(data.error || 'Failed to verify');
             }
-        } catch {
-            setError('Failed to verify age');
+        } catch (error) {
+            setError(error instanceof Error ? error.message : 'Failed to verify age');
         } finally {
             setSaving(false);
         }
@@ -106,13 +128,22 @@ export default function ContentSettingsPage() {
     const handleToggleAccountNsfw = async () => {
         if (!settings) return;
 
+        if (!isIdentityUnlocked) {
+            setError('Unlock your identity to change this setting.');
+            setShowUnlockPrompt(true);
+            return;
+        }
+
         setSaving(true);
         setError(null);
         try {
+            const signedPayload = await signUserAction('update_account_nsfw', {
+                isNsfw: !settings.isNsfw,
+            });
             const res = await fetch('/api/settings/account-nsfw', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ isNsfw: !settings.isNsfw }),
+                body: JSON.stringify(signedPayload),
             });
 
             if (res.ok) {
@@ -124,8 +155,8 @@ export default function ContentSettingsPage() {
                 const data = await res.json();
                 setError(data.error || 'Failed to update');
             }
-        } catch {
-            setError('Failed to update settings');
+        } catch (error) {
+            setError(error instanceof Error ? error.message : 'Failed to update settings');
         } finally {
             setSaving(false);
         }

@@ -29,6 +29,13 @@ export interface SignedAction {
   sig: string;
 }
 
+export class SignedActionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SignedActionError';
+  }
+}
+
 /**
  * Verify a signed action against a specific public key
  */
@@ -146,7 +153,7 @@ export async function requireSignedAction(signedAction: SignedAction): Promise<t
   const result = await verifyUserAction(signedAction);
 
   if (!result.valid) {
-    throw new Error(result.error || 'Invalid signature');
+    throw new SignedActionError(result.error || 'Invalid signature');
   }
 
   return result.user!;
