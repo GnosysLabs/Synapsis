@@ -14,6 +14,8 @@ export interface User {
     isRemote?: boolean;
     profileUrl?: string | null;
     isBot?: boolean;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
     isSwarm?: boolean; // Whether this user is from a Synapsis swarm node
     nodeDomain?: string | null; // Domain of the node this user is from (for swarm users)
     did?: string;

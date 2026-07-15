@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
                 avatarUrl: users.avatarUrl,
                 createdAt: users.createdAt,
                 isBot: users.isBot,
+                isNsfw: users.isNsfw,
             })
             .from(users)
             .where(sql`${users.isSuspended} IS FALSE AND ${users.handle} NOT LIKE '%@%'`)

@@ -20,6 +20,8 @@ interface User {
     profileUrl?: string | null;
     isRemote?: boolean;
     isBot?: boolean;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
 }
 
 function UserCard({ user }: { user: User }) {
@@ -27,7 +29,7 @@ function UserCard({ user }: { user: User }) {
     return (
         <Link href={`/u/${user.handle}`} className="user-card">
             <div className="avatar">
-                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} alt={user.displayName || user.handle} />
+                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
             </div>
             <div className="user-card-info">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -66,8 +68,10 @@ interface SwarmPost {
         handle: string;
         displayName: string;
         avatarUrl?: string;
+        isNsfw: boolean;
     };
     nodeDomain: string;
+    nodeIsNsfw: boolean;
     likeCount: number;
     repostCount: number;
     replyCount: number;
@@ -453,6 +457,8 @@ export default function ExplorePage() {
                                             handle: post.author.handle,
                                             displayName: post.author.displayName,
                                             avatarUrl: post.author.avatarUrl,
+                                            isNsfw: post.author.isNsfw,
+                                            nodeIsNsfw: post.nodeIsNsfw,
                                         },
                                         media: post.media?.map((m, idx) => ({
                                             id: `swarm:${post.nodeDomain}:${post.id}:media:${idx}`,

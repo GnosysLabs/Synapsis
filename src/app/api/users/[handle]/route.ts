@@ -96,6 +96,8 @@ export async function GET(request: Request, context: RouteContext) {
                                     avatarUrl: null,
                                 } : null,
                                 did: profile.did,
+                                isNsfw: profile.isNsfw,
+                                nodeIsNsfw: profile.nodeIsNsfw,
                             }
                         });
                     }
@@ -131,6 +133,7 @@ export async function GET(request: Request, context: RouteContext) {
             publicKey: user.publicKey, // Signing key
             did: user.did, // V2 Identity
             dmPrivacy: user.dmPrivacy,
+            isNsfw: user.isNsfw,
         };
 
         // Check if viewer can DM this user

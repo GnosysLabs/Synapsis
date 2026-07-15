@@ -30,6 +30,8 @@ export interface AuthAccount {
     publicKey: string;
     privateKeyEncrypted: string | null;
     email: string | null;
+    isNsfw: boolean;
+    nsfwEnabled: boolean;
     isActive: boolean;
 }
 
@@ -111,6 +113,8 @@ function toAuthAccount(session: SessionRecord, activeToken: string | null): Auth
         publicKey: session.user.publicKey,
         privateKeyEncrypted: session.user.privateKeyEncrypted,
         email: session.user.email,
+        isNsfw: session.user.isNsfw,
+        nsfwEnabled: session.user.nsfwEnabled,
         isActive: session.token === activeToken,
     };
 }

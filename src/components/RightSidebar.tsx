@@ -3,11 +3,13 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { AvatarImage } from './AvatarImage';
+import { ProfileBanner } from './ProfileBanner';
 
 interface Admin {
     handle: string;
     displayName: string | null;
     avatarUrl: string | null;
+    isNsfw: boolean;
 }
 
 interface NodeInfo {
@@ -17,6 +19,7 @@ interface NodeInfo {
     rules: string;
     bannerUrl: string;
     admins: Admin[];
+    isNsfw: boolean;
 }
 
 export function RightSidebar() {
@@ -28,6 +31,7 @@ export function RightSidebar() {
         rules: '',
         bannerUrl: '',
         admins: [] as Admin[],
+        isNsfw: false,
     });
     const [version, setVersion] = useState<{
         version: string;
@@ -109,12 +113,11 @@ export function RightSidebar() {
         <aside className="aside">
             <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
                 {nodeInfo.bannerUrl && (
-                    <div
-                        style={{
-                            height: '140px',
-                            background: `url(${nodeInfo.bannerUrl}) center/cover no-repeat`,
-                            borderBottom: '1px solid var(--border)',
-                        }}
+                    <ProfileBanner
+                        url={nodeInfo.bannerUrl}
+                        nodeIsNsfw={nodeInfo.isNsfw}
+                        height={140}
+                        borderBottom="1px solid var(--border)"
                     />
                 )}
 
@@ -175,7 +178,7 @@ export function RightSidebar() {
                                     style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none', color: 'inherit' }}
                                 >
                                     <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
-                                        <AvatarImage avatarUrl={admin.avatarUrl} seed={admin.handle} alt={admin.displayName || admin.handle} />
+                                        <AvatarImage avatarUrl={admin.avatarUrl} seed={admin.handle} isNsfw={admin.isNsfw} nodeIsNsfw={nodeInfo.isNsfw} alt={admin.displayName || admin.handle} />
                                     </div>
                                     <div>
                                         <div style={{ fontWeight: 500, fontSize: '14px' }}>

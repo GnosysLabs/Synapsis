@@ -15,6 +15,7 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
+import { ProfileBanner } from '@/components/ProfileBanner';
 
 interface BotOwner {
     id: string;
@@ -30,6 +31,8 @@ interface UserSummary {
     bio?: string | null;
     avatarUrl?: string | null;
     isBot?: boolean;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
 }
 
 type ProfileMediaField = 'avatarUrl' | 'headerUrl';
@@ -45,7 +48,7 @@ function UserRow({ user }: { user: UserSummary }) {
     return (
         <Link href={`/u/${user.handle}`} className="user-row">
             <div className="avatar">
-                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} alt={user.displayName || user.handle} />
+                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
             </div>
             <div className="user-row-content">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -579,17 +582,12 @@ export default function ProfilePage() {
             <div style={{ borderBottom: '1px solid var(--border)' }}>
                 {/* Banner */}
                 {/* Banner */}
-                <div
-                    style={{
-                        width: '100%',
-                        aspectRatio: '3 / 1',
-                        background: (isEditing ? profileForm.headerUrl : user.headerUrl)
-                            ? `url(${isEditing ? profileForm.headerUrl : user.headerUrl}) center/cover`
-                            : 'linear-gradient(135deg, var(--accent-muted) 0%, var(--background-tertiary) 100%)',
-                        position: 'relative',
-                    }}
-                >
-                </div>
+                <ProfileBanner
+                    url={isEditing ? profileForm.headerUrl : user.headerUrl}
+                    isNsfw={user.isNsfw}
+                    nodeIsNsfw={user.nodeIsNsfw}
+                    aspectRatio="3 / 1"
+                />
 
                 {/* Avatar & Actions */}
                 <div style={{ padding: '0 16px' }}>
@@ -609,7 +607,7 @@ export default function ProfilePage() {
                                 position: 'relative',
                             }}
                         >
-                            <AvatarImage avatarUrl={isEditing ? profileForm.avatarUrl : user.avatarUrl} seed={user.handle} alt={user.displayName || user.handle} />
+                            <AvatarImage avatarUrl={isEditing ? profileForm.avatarUrl : user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
                         </div>
 
                         <div style={{ paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>

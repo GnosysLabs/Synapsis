@@ -746,6 +746,8 @@ export async function GET(request: Request) {
                     avatarUrl: sp.author.avatarUrl,
                     isSwarm: true,
                     isBot: sp.author.isBot,
+                    isNsfw: sp.author.isNsfw,
+                    nodeIsNsfw: sp.nodeIsNsfw,
                     nodeDomain: sp.nodeDomain,
                 },
                 media: sp.media?.map((m, idx) => ({

@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 
 interface RuntimeConfig {
   domain: string;
+  isNsfw: boolean;
 }
 
 interface ConfigContextType {
@@ -27,12 +28,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       .then((data) => {
         setConfig({
           domain: data.domain || 'localhost:43821',
+          isNsfw: data.isNsfw === true,
         });
       })
       .catch(() => {
         // Fallback to build-time value if fetch fails
         setConfig({
           domain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+          isNsfw: false,
         });
       })
       .finally(() => {

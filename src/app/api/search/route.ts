@@ -33,6 +33,8 @@ type SearchUser = {
     profileUrl?: string | null;
     isRemote?: boolean;
     isBot?: boolean;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
 };
 
 const parseRemoteHandleQuery = (query: string): { handle: string; domain: string } | null => {
@@ -102,6 +104,7 @@ export async function GET(request: Request) {
                     avatarUrl: users.avatarUrl,
                     bio: users.bio,
                     isBot: users.isBot,
+                    isNsfw: users.isNsfw,
                 })
                     .from(users)
                     .where(and(
@@ -133,6 +136,7 @@ export async function GET(request: Request) {
                     avatarUrl: users.avatarUrl,
                     bio: users.bio,
                     isBot: users.isBot,
+                    isNsfw: users.isNsfw,
                 })
                     .from(users)
                     .where(userConditions)
@@ -168,6 +172,8 @@ export async function GET(request: Request) {
                                 profileUrl: `https://${parsedRemote.domain}/@${parsedRemote.handle}`,
                                 isRemote: true,
                                 isBot: profileData.profile.isBot,
+                                isNsfw: profileData.profile.isNsfw,
+                                nodeIsNsfw: profileData.profile.nodeIsNsfw,
                             };
                             if (!searchUsers.some((user) => user.handle.toLowerCase() === remoteUser.handle.toLowerCase())) {
                                 searchUsers = [remoteUser, ...searchUsers].slice(0, limit);

@@ -12,6 +12,8 @@ export interface User {
     did?: string;
     publicKey?: string;
     privateKeyEncrypted?: string;
+    isNsfw?: boolean;
+    nsfwEnabled?: boolean;
 }
 
 export interface AuthAccount extends User {

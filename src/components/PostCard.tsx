@@ -640,7 +640,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                 <div className="post-header">
                     <Link href={`/u/${profileHandle}`} className="avatar-link" onClick={(e) => e.stopPropagation()}>
                         <div className="avatar">
-                            <AvatarImage avatarUrl={post.author.avatarUrl} seed={post.author.handle} alt={post.author.displayName || post.author.handle} />
+                            <AvatarImage avatarUrl={post.author.avatarUrl} seed={post.author.handle} isNsfw={post.author.isNsfw} nodeIsNsfw={post.author.nodeIsNsfw} alt={post.author.displayName || post.author.handle} />
                         </div>
                     </Link>
                     <div className="post-author">
@@ -718,7 +718,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                 <div className="post-header">
                     <Link href={`/u/${profileHandle}`} className="avatar-link" onClick={(e) => e.stopPropagation()}>
                         <div className="avatar">
-                            <AvatarImage avatarUrl={post.author.avatarUrl} seed={post.author.handle} alt={post.author.displayName || post.author.handle} />
+                            <AvatarImage avatarUrl={post.author.avatarUrl} seed={post.author.handle} isNsfw={post.author.isNsfw} nodeIsNsfw={post.author.nodeIsNsfw} alt={post.author.displayName || post.author.handle} />
                         </div>
                     </Link>
                     <div className="post-author">

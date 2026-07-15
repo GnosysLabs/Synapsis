@@ -20,6 +20,8 @@ interface User {
     profileUrl?: string | null;
     isRemote?: boolean;
     isBot?: boolean;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
 }
 
 
@@ -83,7 +85,7 @@ function UserCard({ user }: { user: User }) {
             className="hover-bg"
         >
             <div className="avatar">
-                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} alt={user.displayName || user.handle} />
+                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

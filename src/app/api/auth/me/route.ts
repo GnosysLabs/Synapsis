@@ -40,6 +40,8 @@ export async function GET() {
                 did: session.user.did,
                 publicKey: session.user.publicKey,
                 privateKeyEncrypted: session.user.privateKeyEncrypted,
+                isNsfw: session.user.isNsfw,
+                nsfwEnabled: session.user.nsfwEnabled,
             },
             accounts,
         });

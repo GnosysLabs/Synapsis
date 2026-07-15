@@ -21,6 +21,8 @@ export interface SwarmUserProfile {
   postsCount: number;
   createdAt: string;
   isBot?: boolean;
+  isNsfw: boolean;
+  nodeIsNsfw: boolean;
   botOwnerHandle?: string; // Handle of the bot's owner (e.g., "user" or "user@domain")
   nodeDomain: string;
   publicKey?: string; // Signing key for verifying actions
@@ -42,6 +44,8 @@ export interface SwarmUserPost {
     displayName?: string;
     avatarUrl?: string;
     isBot?: boolean;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
     nodeDomain?: string;
   };
   media?: { url: string; mimeType?: string; altText?: string }[];
@@ -81,7 +85,7 @@ function parseMediaJson(mediaJson: string | null) {
   }
 }
 
-function mapLocalPostToSwarmPost(post: any, nodeDomain: string): SwarmUserPost {
+function mapLocalPostToSwarmPost(post: any, nodeDomain: string, nodeIsNsfw: boolean): SwarmUserPost {
   return {
     id: post.id,
     originalPostId: post.id,
@@ -97,6 +101,8 @@ function mapLocalPostToSwarmPost(post: any, nodeDomain: string): SwarmUserPost {
       displayName: post.author.displayName || post.author.handle,
       avatarUrl: post.author.avatarUrl || undefined,
       isBot: post.author.isBot || undefined,
+      isNsfw: post.author.isNsfw,
+      nodeIsNsfw,
       nodeDomain,
     } : undefined,
     media: (post.media || []).map((item: any) => ({
@@ -112,14 +118,15 @@ function mapLocalPostToSwarmPost(post: any, nodeDomain: string): SwarmUserPost {
     linkPreviewVideoUrl: post.linkPreviewVideoUrl || undefined,
     linkPreviewMedia: parseLinkPreviewMediaJson(post.linkPreviewMediaJson),
     repostOfId: post.repostOfId || undefined,
-    repostOf: post.repostOf ? mapLocalPostToSwarmPost(post.repostOf, nodeDomain) : undefined,
+    repostOf: post.repostOf ? mapLocalPostToSwarmPost(post.repostOf, nodeDomain, nodeIsNsfw) : undefined,
   };
 }
 
 function mapUserSwarmRepostToSwarmPost(
   row: typeof userSwarmReposts.$inferSelect,
   author: typeof users.$inferSelect,
-  nodeDomain: string
+  nodeDomain: string,
+  nodeIsNsfw: boolean
 ): SwarmUserPost {
   return {
     id: row.id,
@@ -136,6 +143,8 @@ function mapUserSwarmRepostToSwarmPost(
       displayName: author.displayName || author.handle,
       avatarUrl: author.avatarUrl || undefined,
       isBot: author.isBot || undefined,
+      isNsfw: author.isNsfw,
+      nodeIsNsfw,
       nodeDomain,
     },
     repostOfId: row.originalPostId,
@@ -153,6 +162,7 @@ function mapUserSwarmRepostToSwarmPost(
         handle: row.authorHandle.includes('@') ? row.authorHandle : `${row.authorHandle}@${row.nodeDomain}`,
         displayName: row.authorDisplayName || row.authorHandle,
         avatarUrl: row.authorAvatarUrl || undefined,
+        nodeIsNsfw: false,
         nodeDomain: row.nodeDomain,
       },
       media: parseMediaJson(row.mediaJson),
@@ -185,6 +195,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
 
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
+    let node = await db.query.nodes.findFirst({ where: { domain: nodeDomain } });
+    if (!node) {
+      const localNodes = await db.query.nodes.findMany({ limit: 2 });
+      if (localNodes.length === 1) node = localNodes[0];
+    }
+    const nodeIsNsfw = node?.isNsfw === true;
 
     // Find the user
     const user = await db.query.users.findFirst({
@@ -215,6 +231,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
       postsCount: user.postsCount,
       createdAt: user.createdAt.toISOString(),
       isBot: user.isBot || undefined,
+      isNsfw: user.isNsfw,
+      nodeIsNsfw,
       botOwnerHandle: user.isBot && user.botOwner ? user.botOwner.handle : undefined,
       nodeDomain,
       publicKey: user.publicKey, // Expose signing key
@@ -235,8 +253,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
 
     const swarmPosts: SwarmUserPost[] = [
-      ...localPosts.map((post) => mapLocalPostToSwarmPost(post, nodeDomain)),
-      ...remoteRepostRows.map((row) => mapUserSwarmRepostToSwarmPost(row, user, nodeDomain)),
+      ...localPosts.map((post) => mapLocalPostToSwarmPost(post, nodeDomain, nodeIsNsfw)),
+      ...remoteRepostRows.map((row) => mapUserSwarmRepostToSwarmPost(row, user, nodeDomain, nodeIsNsfw)),
     ]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, limit);

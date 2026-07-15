@@ -341,7 +341,7 @@ export function Sidebar() {
                                             }}
                                         >
                                             <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
-                                                <AvatarImage avatarUrl={account.avatarUrl} seed={account.handle} alt={account.displayName || account.handle} />
+                                                <AvatarImage avatarUrl={account.avatarUrl} seed={account.handle} isNsfw={account.isNsfw} alt={account.displayName || account.handle} />
                                             </div>
                                             <div style={{ minWidth: 0, flex: 1, display: 'grid', gap: '2px' }}>
                                                 <div style={{ fontWeight: 700, fontSize: '15px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -428,7 +428,7 @@ export function Sidebar() {
                         }}
                     >
                         <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
-                            <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} alt={user.displayName} />
+                            <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} alt={user.displayName} />
                         </div>
                         <div style={{ minWidth: 0, flex: 1, textAlign: 'left' }}>
                             <div style={{ fontWeight: 600, fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.displayName}</div>

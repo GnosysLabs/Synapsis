@@ -34,13 +34,14 @@ export async function GET() {
             .map(e => e.trim().toLowerCase())
             .filter(Boolean);
 
-        let admins: { handle: string; displayName: string | null; avatarUrl: string | null }[] = [];
+        let admins: { handle: string; displayName: string | null; avatarUrl: string | null; isNsfw: boolean }[] = [];
         if (adminEmails.length > 0) {
             const adminUsers = await db
                 .select({
                     handle: users.handle,
                     displayName: users.displayName,
                     avatarUrl: users.avatarUrl,
+                    isNsfw: users.isNsfw,
                 })
                 .from(users)
                 .where(inArray(users.email, adminEmails));
@@ -56,6 +57,7 @@ export async function GET() {
                 publicKey,
                 admins,
                 turnstileSiteKey: null,
+                isNsfw: false,
             });
         }
 
