@@ -16,6 +16,11 @@ import { safeFederationRequest } from './safe-federation-http';
 
 const NODE_PUBLIC_KEY_CACHE_TTL_MS = 60_000;
 const MAX_NODE_PUBLIC_KEY_CACHE_ENTRIES = 1_000;
+const NODE_PUBLIC_KEY_MAX_RESPONSE_BYTES = 16 * 1024;
+// Older nodes expose their key only through /api/node. That document may
+// include embedded branding assets, so keep a bounded compatibility fallback
+// while new nodes use the deliberately small key-only endpoint.
+const LEGACY_NODE_INFO_MAX_RESPONSE_BYTES = 256 * 1024;
 const nodePublicKeyCache = new Map<string, { publicKey: string; expiresAt: number }>();
 const pendingNodePublicKeyRequests = new Map<string, Promise<string | null>>();
 
@@ -109,14 +114,22 @@ export async function getNodePublicKey(domain: string): Promise<string | null> {
     if (pending) return await pending;
 
     const keyRequest = (async (): Promise<string | null> => {
-      const response = await safeFederationRequest(`${target.protocol}://${normalizedDomain}/api/node`, {
+      let response = await safeFederationRequest(`${target.protocol}://${normalizedDomain}/api/node/key`, {
         headers: { 'Accept': 'application/json' },
         timeoutMs: 5_000,
-        maxResponseBytes: 64 * 1024,
+        maxResponseBytes: NODE_PUBLIC_KEY_MAX_RESPONSE_BYTES,
       });
 
+      if (response.status === 404 || response.status === 405) {
+        response = await safeFederationRequest(`${target.protocol}://${normalizedDomain}/api/node`, {
+          headers: { 'Accept': 'application/json' },
+          timeoutMs: 5_000,
+          maxResponseBytes: LEGACY_NODE_INFO_MAX_RESPONSE_BYTES,
+        });
+      }
+
       if (response.status < 200 || response.status >= 300) {
-        console.error(`[Signature] Failed to fetch node info from ${normalizedDomain}: ${response.status}`);
+        console.error(`[Signature] Failed to fetch node public key from ${normalizedDomain}: ${response.status}`);
         return null;
       }
 
