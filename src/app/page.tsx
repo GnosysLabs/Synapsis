@@ -9,6 +9,7 @@ import { Compose } from '@/components/Compose';
 import { Post } from '@/lib/types';
 import { EyeOff } from 'lucide-react';
 import { signedAPI } from '@/lib/api/signed-fetch';
+import { DEFAULT_HOME_FEED, HOME_FEED_LABELS, type HomeFeedType } from '@/lib/posts/home-feed';
 
 interface FeedMeta {
   score: number;
@@ -28,7 +29,7 @@ export default function Home() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<Post | null>(null);
-  const [feedType, setFeedType] = useState<'following' | 'curated'>('following');
+  const [feedType, setFeedType] = useState<HomeFeedType>(DEFAULT_HOME_FEED);
   const [feedMeta, setFeedMeta] = useState<{
     algorithm: string;
     windowHours: number;
@@ -57,7 +58,7 @@ export default function Home() {
     feedTypeRef.current = feedType;
   }, [feedType]);
 
-  const loadFeed = async (type: 'following' | 'curated', cursor?: string | null) => {
+  const loadFeed = async (type: HomeFeedType, cursor?: string | null) => {
     if (cursor && loadingCursorRef.current === cursor) return;
     if (cursor) loadingCursorRef.current = cursor;
 
@@ -232,13 +233,13 @@ export default function Home() {
               className={`feed-toggle-btn ${feedType === 'following' ? 'active' : ''}`}
               onClick={() => setFeedType('following')}
             >
-              Following
+              {HOME_FEED_LABELS.following}
             </button>
             <button
               className={`feed-toggle-btn ${feedType === 'curated' ? 'active' : ''}`}
               onClick={() => setFeedType('curated')}
             >
-              Curated
+              {HOME_FEED_LABELS.curated}
             </button>
           </div>
         </div>
@@ -261,7 +262,7 @@ export default function Home() {
 
       {feedType === 'curated' && feedMeta && (
         <div className="feed-meta card">
-          <div className="feed-meta-title">Curated feed</div>
+          <div className="feed-meta-title">For You</div>
           <div className="feed-meta-body">
             This feed highlights fresh posts and active discussions, with a boost for people you follow. It is designed to surface what matters without hiding your own activity.
           </div>
@@ -278,7 +279,7 @@ export default function Home() {
             <>
               <p>No posts from the swarm yet</p>
               <p style={{ fontSize: '13px', marginTop: '8px' }}>
-                The curated feed shows posts from other nodes in the Synapsis network.
+                The For You feed shows posts from other nodes in the Synapsis network.
                 Check back later as nodes are discovered, or switch to Following to see posts from people you follow.
               </p>
             </>
