@@ -20,6 +20,7 @@ import { AvatarImage } from '@/components/AvatarImage';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import { getMediaKind } from '@/lib/media/upload-policy';
 import { tokenizePostContent } from '@/lib/mentions/parser';
+import { setReposterInSummary } from '@/lib/posts/node-feed';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -134,6 +135,12 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
     const [likePending, setLikePending] = useState(false);
     const [reposted, setReposted] = useState(post.isReposted || false);
     const [repostsCount, setRepostsCount] = useState(post.repostsCount || 0);
+    const [reposters, setReposters] = useState(post.repostedBy || []);
+    const [reposterCount, setReposterCount] = useState(Math.max(
+        post.repostedByCount || 0,
+        post.repostedBy?.length || 0,
+        post.repostsCount || 0,
+    ));
     const [repostPending, setRepostPending] = useState(false);
     const [reporting, setReporting] = useState(false);
     const [deleting, setDeleting] = useState(false);
@@ -164,7 +171,21 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
         setLikesCount(post.likesCount || 0);
         setReposted(post.isReposted || false);
         setRepostsCount(post.repostsCount || 0);
-    }, [post.isLiked, post.likesCount, post.isReposted, post.repostsCount, post.id]);
+        setReposters(post.repostedBy || []);
+        setReposterCount(Math.max(
+            post.repostedByCount || 0,
+            post.repostedBy?.length || 0,
+            post.repostsCount || 0,
+        ));
+    }, [
+        post.isLiked,
+        post.likesCount,
+        post.isReposted,
+        post.repostsCount,
+        post.repostedBy,
+        post.repostedByCount,
+        post.id,
+    ]);
 
     useEffect(() => {
         let cancelled = false;
@@ -283,11 +304,24 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
 
         const currentReposted = reposted;
         const currentRepostsCount = repostsCount;
+        const currentReposters = reposters;
+        const currentReposterCount = reposterCount;
         const nextReposted = !currentReposted;
         const nextRepostsCount = Math.max(0, currentRepostsCount + (currentReposted ? -1 : 1));
+        const nextReposterCount = Math.max(0, currentReposterCount + (currentReposted ? -1 : 1));
+        const nextSummary = currentUser
+            ? setReposterInSummary(
+                currentReposters,
+                nextReposterCount,
+                { ...currentUser, nodeDomain: domain },
+                nextReposted,
+            )
+            : { repostedBy: currentReposters, repostedByCount: currentReposterCount };
 
         setReposted(nextReposted);
         setRepostsCount(nextRepostsCount);
+        setReposters(nextSummary.repostedBy);
+        setReposterCount(nextSummary.repostedByCount);
         setRepostPending(true);
 
         try {
@@ -295,6 +329,8 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
         } catch (error) {
             setReposted(currentReposted);
             setRepostsCount(currentRepostsCount);
+            setReposters(currentReposters);
+            setReposterCount(currentReposterCount);
             showToast(error instanceof Error ? error.message : 'Failed to update repost', 'error');
         } finally {
             setRepostPending(false);
@@ -680,8 +716,8 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
     const repostHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
     const hasOwnContent = decodeHtmlEntities(post.content).trim().length > 0;
     const isRepostEvent = Boolean(post.repostOf);
-    const visibleReposters = (post.repostedBy || []).slice(0, 3);
-    const hiddenReposters = Math.max(0, (post.repostedByCount || visibleReposters.length) - visibleReposters.length);
+    const visibleReposters = reposters.slice(0, 3);
+    const hiddenReposters = Math.max(0, reposterCount - visibleReposters.length);
     const effectivePreview = {
         url: hydratedPreview?.url || post.linkPreviewUrl || null,
         title: hydratedPreview?.title || post.linkPreviewTitle || null,

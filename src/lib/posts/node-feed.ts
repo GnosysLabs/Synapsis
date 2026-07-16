@@ -25,6 +25,31 @@ export type NodeFeedStory<TPost> = TPost & {
     repostedByCount: number;
 };
 
+export interface RepostSummary<TReposter> {
+    repostedBy: TReposter[];
+    repostedByCount: number;
+}
+
+/**
+ * Keep one actor's presence in a repost summary deterministic. Included actors
+ * are placed first so the active viewer remains visible inside the three-avatar
+ * limit, while the supplied count remains the source of truth for hidden actors.
+ */
+export function setReposterInSummary<TReposter extends { id: string }>(
+    repostedBy: TReposter[] | undefined,
+    repostedByCount: number | undefined,
+    reposter: TReposter,
+    included: boolean,
+): RepostSummary<TReposter> {
+    const otherReposters = (repostedBy || []).filter((actor) => actor.id !== reposter.id);
+    const nextReposters = included ? [reposter, ...otherReposters] : otherReposters;
+
+    return {
+        repostedBy: nextReposters,
+        repostedByCount: Math.max(repostedByCount || 0, nextReposters.length),
+    };
+}
+
 /**
  * Build one Node-feed story per original post while retaining every unique
  * reposter for the compact activity summary.

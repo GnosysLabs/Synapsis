@@ -16,7 +16,12 @@ import {
     rankCuratedFeed,
 } from '@/lib/posts/curated-feed';
 import { registerPostMentions } from '@/lib/mentions/delivery';
-import { assembleNodeFeedStories, collapseSharedFeedPosts } from '@/lib/posts/node-feed';
+import {
+    assembleNodeFeedStories,
+    collapseSharedFeedPosts,
+    setReposterInSummary,
+    type NodeFeedReposter,
+} from '@/lib/posts/node-feed';
 import type { Post } from '@/lib/types';
 
 const POST_MAX_LENGTH = 600;
@@ -33,12 +38,14 @@ type FeedPostWithChildren = {
     nodeDomain?: string | null;
     originalPostId?: string | null;
     feedActivityAt?: string;
+    repostsCount?: number;
     repostedBy?: Array<{
         id: string;
         handle: string;
         displayName: string | null;
         avatarUrl: string | null;
         isNsfw: boolean;
+        nodeDomain?: string | null;
     }>;
     repostedByCount?: number;
 };
@@ -138,15 +145,33 @@ function collectNestedPosts(posts: FeedPostWithChildren[]): FeedPostWithChildren
 function applyInteractionFlags(
     posts: FeedPostWithChildren[],
     likedIds: Set<string>,
-    repostedIds: Set<string>
+    repostedIds: Set<string>,
+    viewerReposter: NodeFeedReposter,
 ): FeedPostWithChildren[] {
-    return posts.map((post) => ({
-        ...post,
-        isLiked: likedIds.has(post.id),
-        isReposted: repostedIds.has(post.id),
-        repostOf: post.repostOf ? applyInteractionFlags([post.repostOf], likedIds, repostedIds)[0] : post.repostOf,
-        replyTo: post.replyTo ? applyInteractionFlags([post.replyTo], likedIds, repostedIds)[0] : post.replyTo,
-    }));
+    return posts.map((post) => {
+        const isReposted = repostedIds.has(post.id);
+        const viewerSummary = isReposted
+            ? setReposterInSummary(
+                post.repostedBy,
+                Math.max(post.repostedByCount || 0, post.repostsCount || 0),
+                viewerReposter,
+                true,
+            )
+            : null;
+
+        return {
+            ...post,
+            ...viewerSummary,
+            isLiked: likedIds.has(post.id),
+            isReposted,
+            repostOf: post.repostOf
+                ? applyInteractionFlags([post.repostOf], likedIds, repostedIds, viewerReposter)[0]
+                : post.repostOf,
+            replyTo: post.replyTo
+                ? applyInteractionFlags([post.replyTo], likedIds, repostedIds, viewerReposter)[0]
+                : post.replyTo,
+        };
+    });
 }
 
 const embeddedPostRelations = {
@@ -1052,7 +1077,15 @@ export async function GET(request: Request) {
                 feedPosts = applyInteractionFlags(
                     feedPosts as FeedPostWithChildren[],
                     likedPostIds,
-                    repostedPostIds
+                    repostedPostIds,
+                    {
+                        id: viewer.id,
+                        handle: viewer.handle,
+                        displayName: viewer.displayName,
+                        avatarUrl: viewer.avatarUrl,
+                        isNsfw: viewer.isNsfw,
+                        nodeDomain,
+                    },
                 );
             }
         } catch (error) {

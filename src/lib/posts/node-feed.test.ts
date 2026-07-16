@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { assembleNodeFeedStories, collapseSharedFeedPosts, type NodeFeedReposter } from './node-feed';
+import {
+    assembleNodeFeedStories,
+    collapseSharedFeedPosts,
+    setReposterInSummary,
+    type NodeFeedReposter,
+} from './node-feed';
 import type { Post, User } from '@/lib/types';
 
 const actor = (id: string): NodeFeedReposter => ({
@@ -86,5 +91,44 @@ describe('assembleNodeFeedStories', () => {
         );
 
         expect(result.map((post) => post.id)).toEqual(['newly-resurfaced', 'new-post']);
+    });
+});
+
+describe('setReposterInSummary', () => {
+    it('adds the viewer first without inflating an existing total', () => {
+        const viewer = user('viewer');
+        const result = setReposterInSummary([user('alice'), user('bob')], 5, viewer, true);
+
+        expect(result.repostedBy.map((reposter) => reposter.id)).toEqual(['viewer', 'alice', 'bob']);
+        expect(result.repostedByCount).toBe(5);
+    });
+
+    it('replaces stale viewer metadata and never duplicates their avatar', () => {
+        const staleViewer = { ...user('viewer'), avatarUrl: '/old-avatar.png' };
+        const freshViewer = { ...user('viewer'), avatarUrl: '/new-avatar.png' };
+        const result = setReposterInSummary(
+            [user('alice'), staleViewer, user('bob')],
+            3,
+            freshViewer,
+            true,
+        );
+
+        expect(result.repostedBy.map((reposter) => reposter.id)).toEqual(['viewer', 'alice', 'bob']);
+        expect(result.repostedBy[0].avatarUrl).toBe('/new-avatar.png');
+        expect(result.repostedByCount).toBe(3);
+    });
+
+    it('removes the viewer while preserving other reposters and the supplied total', () => {
+        const result = setReposterInSummary(
+            [user('viewer'), user('alice')],
+            1,
+            user('viewer'),
+            false,
+        );
+
+        expect(result).toEqual({
+            repostedBy: [user('alice')],
+            repostedByCount: 1,
+        });
     });
 });
