@@ -10,7 +10,9 @@ const dataDir = process.env.MAINTENANCE_DATA_DIR
 const appDir = process.env.MAINTENANCE_APP_DIR || process.cwd();
 const brandingPath = join(dataDir, 'maintenance-branding.json');
 const logoPath = join(dataDir, 'maintenance-logo');
+const faviconPath = join(dataDir, 'maintenance-favicon');
 const defaultLogoPath = join(appDir, 'public', 'logotext.svg');
+const defaultFaviconPath = join(appDir, 'public', 'favicon.png');
 
 function validAccent(value) {
     return typeof value === 'string' && /^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(value)
@@ -31,6 +33,7 @@ async function captureBranding() {
             ? node.logoUrl
             : null,
         logoContentType: null,
+        faviconContentType: null,
     };
 
     const logoResponse = await fetch(`${baseUrl}/api/node/logo`, { cache: 'no-store' });
@@ -46,6 +49,21 @@ async function captureBranding() {
         }
     } else {
         await rm(logoPath, { force: true });
+    }
+
+    const faviconResponse = await fetch(`${baseUrl}/api/favicon`, { cache: 'no-store' });
+    if (faviconResponse.ok) {
+        const contentType = faviconResponse.headers.get('content-type')?.split(';')[0];
+        if (contentType?.startsWith('image/')) {
+            const faviconTempPath = `${faviconPath}.tmp`;
+            await writeFile(faviconTempPath, Buffer.from(await faviconResponse.arrayBuffer()));
+            await rename(faviconTempPath, faviconPath);
+            branding.faviconContentType = contentType;
+        } else {
+            await rm(faviconPath, { force: true });
+        }
+    } else {
+        await rm(faviconPath, { force: true });
     }
 
     const brandingTempPath = `${brandingPath}.tmp`;
@@ -67,11 +85,16 @@ const accentColor = validAccent(branding.accentColor);
 const logoContentType = typeof branding.logoContentType === 'string' && branding.logoContentType.startsWith('image/')
     ? branding.logoContentType
     : 'application/octet-stream';
+const faviconContentType = typeof branding.faviconContentType === 'string' && branding.faviconContentType.startsWith('image/')
+    ? branding.faviconContentType
+    : 'image/png';
 const externalLogoUrl = typeof branding.externalLogoUrl === 'string' && /^https?:\/\//i.test(branding.externalLogoUrl)
     ? branding.externalLogoUrl
     : null;
 const hasStoredLogo = existsSync(logoPath);
 const hasDefaultLogo = existsSync(defaultLogoPath);
+const hasStoredFavicon = existsSync(faviconPath);
+const hasDefaultFavicon = existsSync(defaultFaviconPath);
 const logoMarkup = hasStoredLogo || externalLogoUrl || hasDefaultLogo
     ? '<img class="logo" src="/maintenance-logo" alt="Node logo">'
     : '<div class="brand-fallback">Synapsis</div>';
@@ -82,6 +105,7 @@ const page = `<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090909">
+  <link rel="icon" href="/maintenance-favicon">
   <title>Update in progress</title>
   <style>
     :root { --accent: ${accentColor}; color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -118,7 +142,23 @@ const page = `<!doctype html>
 </html>`;
 
 const server = http.createServer((request, response) => {
-    if (request.url?.split('?')[0] === '/maintenance-logo') {
+    const requestPath = request.url?.split('?')[0];
+
+    if (requestPath === '/maintenance-favicon') {
+        const selectedFaviconPath = hasStoredFavicon ? faviconPath : defaultFaviconPath;
+        if (hasStoredFavicon || hasDefaultFavicon) {
+            const favicon = readFileSync(selectedFaviconPath);
+            response.writeHead(200, {
+                'Content-Type': hasStoredFavicon ? faviconContentType : 'image/png',
+                'Content-Length': favicon.byteLength,
+                'Cache-Control': 'no-store, max-age=0',
+            });
+            response.end(favicon);
+            return;
+        }
+    }
+
+    if (requestPath === '/maintenance-logo') {
         if (hasStoredLogo) {
             const logo = readFileSync(logoPath);
             response.writeHead(200, {
