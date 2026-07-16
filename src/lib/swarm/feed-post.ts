@@ -8,6 +8,9 @@ export type InteractiveSwarmPost = SwarmPost & {
 
 export function mapSwarmPostToPost(post: InteractiveSwarmPost): Post {
     const normalizedId = `swarm:${post.nodeDomain}:${post.id}`;
+    const qualifiedAuthorHandle = post.author.handle.includes('@')
+        ? post.author.handle
+        : `${post.author.handle}@${post.nodeDomain}`;
 
     return {
         id: normalizedId,
@@ -27,7 +30,7 @@ export function mapSwarmPostToPost(post: InteractiveSwarmPost): Post {
             : null,
         author: {
             id: `swarm:${post.nodeDomain}:${post.author.handle}`,
-            handle: post.author.handle,
+            handle: qualifiedAuthorHandle,
             displayName: post.author.displayName,
             avatarUrl: post.author.avatarUrl,
             isSwarm: true,

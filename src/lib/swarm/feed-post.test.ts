@@ -50,7 +50,7 @@ describe('mapSwarmPostToPost', () => {
             content: 'Original post body',
             nodeDomain: 'remote.example',
             author: {
-                handle: 'original-author',
+                handle: 'original-author@remote.example',
                 nodeIsNsfw: true,
             },
             media: [{
@@ -59,6 +59,12 @@ describe('mapSwarmPostToPost', () => {
                 mimeType: 'image/jpeg',
             }],
         });
+    });
+
+    it('qualifies a bare swarm author handle with its node domain', () => {
+        const mapped = mapSwarmPostToPost(original);
+
+        expect(mapped.author.handle).toBe('original-author@remote.example');
     });
 
     it('preserves interaction and link-preview fields', () => {

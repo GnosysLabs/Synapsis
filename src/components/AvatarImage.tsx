@@ -5,8 +5,16 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { shouldBlurProfileMedia } from '@/lib/nsfw/profile-media';
 
-export function getDiceBearAvatarUrl(seed: string): string {
-    return `https://api.dicebear.com/9.x/bottts-neutral/svg?seed=${encodeURIComponent(seed)}`;
+export function getDiceBearAvatarSeed(seed: string, nodeDomain?: string | null): string {
+    const cleanSeed = seed.trim().replace(/^@/, '');
+    const cleanDomain = nodeDomain?.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+
+    if (!cleanSeed || cleanSeed.includes('@') || !cleanDomain) return cleanSeed;
+    return `${cleanSeed}@${cleanDomain}`;
+}
+
+export function getDiceBearAvatarUrl(seed: string, nodeDomain?: string | null): string {
+    return `https://api.dicebear.com/9.x/bottts-neutral/svg?seed=${encodeURIComponent(getDiceBearAvatarSeed(seed, nodeDomain))}`;
 }
 
 interface AvatarImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, 'src'> {
@@ -14,14 +22,15 @@ interface AvatarImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, 'sr
     seed: string;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
+    nodeDomain?: string | null;
 }
 
-export function AvatarImage({ avatarUrl, seed, isNsfw = false, nodeIsNsfw, alt = '', onError, style, ...props }: AvatarImageProps) {
+export function AvatarImage({ avatarUrl, seed, isNsfw = false, nodeIsNsfw, nodeDomain, alt = '', onError, style, ...props }: AvatarImageProps) {
     const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
     const { user } = useAuth();
     const { config } = useRuntimeConfig();
     const customAvatar = avatarUrl?.trim();
-    const src = customAvatar && failedAvatarUrl !== customAvatar ? customAvatar : getDiceBearAvatarUrl(seed);
+    const src = customAvatar && failedAvatarUrl !== customAvatar ? customAvatar : getDiceBearAvatarUrl(seed, nodeDomain);
     const localNodeIsNsfw = config?.isNsfw ?? false;
     const blurred = shouldBlurProfileMedia({
         accountIsNsfw: isNsfw,

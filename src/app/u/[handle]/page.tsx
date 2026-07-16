@@ -24,6 +24,7 @@ interface UserSummary {
     avatarUrl?: string | null;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
+    nodeDomain?: string | null;
 }
 
 type ProfileMediaField = 'avatarUrl' | 'headerUrl';
@@ -39,7 +40,7 @@ function UserRow({ user }: { user: UserSummary }) {
     return (
         <Link href={`/u/${user.handle}`} className="user-row">
             <div className="avatar">
-                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
+                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} nodeDomain={user.nodeDomain} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
             </div>
             <div className="user-row-content">
                 <span style={{ fontWeight: 600 }}>{user.displayName || user.handle}</span>
@@ -542,7 +543,7 @@ export default function ProfilePage() {
                                 position: 'relative',
                             }}
                         >
-                            <AvatarImage avatarUrl={isEditing ? profileForm.avatarUrl : user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
+                            <AvatarImage avatarUrl={isEditing ? profileForm.avatarUrl : user.avatarUrl} seed={user.handle} nodeDomain={user.nodeDomain} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
                         </div>
 
                         <div style={{ paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>

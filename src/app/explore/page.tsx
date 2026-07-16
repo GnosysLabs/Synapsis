@@ -23,6 +23,7 @@ interface User {
     isRemote?: boolean;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
+    nodeDomain?: string | null;
 }
 
 function UserCard({ user }: { user: User }) {
@@ -30,7 +31,7 @@ function UserCard({ user }: { user: User }) {
     return (
         <Link href={`/u/${user.handle}`} className="user-card">
             <div className="avatar">
-                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
+                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} nodeDomain={user.nodeDomain} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
             </div>
             <div className="user-card-info">
                 <span className="user-card-name">{user.displayName || user.handle}</span>
