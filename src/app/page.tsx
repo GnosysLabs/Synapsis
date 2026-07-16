@@ -7,7 +7,7 @@ import { PostCard } from '@/components/PostCard';
 import { Compose } from '@/components/Compose';
 import { Post } from '@/lib/types';
 import { signedAPI } from '@/lib/api/signed-fetch';
-import { DEFAULT_HOME_FEED, HOME_FEED_LABELS, type HomeFeedType } from '@/lib/posts/home-feed';
+import { DEFAULT_HOME_FEED, HOME_FEED_API_TYPES, HOME_FEED_LABELS, type HomeFeedType } from '@/lib/posts/home-feed';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 
 export default function Home() {
@@ -60,9 +60,8 @@ export default function Home() {
       setLoading(true);
     }
     try {
-      const endpoint = type === 'curated'
-        ? `/api/posts?type=curated${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`
-        : `/api/posts?type=home${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const apiType = HOME_FEED_API_TYPES[type];
+      const endpoint = `/api/posts?type=${apiType}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
 
       const res = await fetch(endpoint);
       const data = await res.json();
@@ -159,10 +158,10 @@ export default function Home() {
 
     if (res.ok) {
       const data = await res.json();
-      if (feedType === 'curated') {
+      if (feedType === 'explore') {
         setPosts([]);
         setNextCursor(null);
-        loadFeed('curated');
+        loadFeed('explore');
       } else {
         setPosts([{ ...data.post, author: user }, ...posts]);
       }
@@ -212,18 +211,30 @@ export default function Home() {
       <header className="home-feed-header">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: '20px', fontWeight: 600 }}>Home</h1>
-          <div className="feed-toggle">
+          <div className="feed-toggle" role="tablist" aria-label="Home feed">
+            <button
+              className={`feed-toggle-btn ${feedType === 'node' ? 'active' : ''}`}
+              onClick={() => setFeedType('node')}
+              role="tab"
+              aria-selected={feedType === 'node'}
+            >
+              {HOME_FEED_LABELS.node}
+            </button>
             <button
               className={`feed-toggle-btn ${feedType === 'following' ? 'active' : ''}`}
               onClick={() => setFeedType('following')}
+              role="tab"
+              aria-selected={feedType === 'following'}
             >
               {HOME_FEED_LABELS.following}
             </button>
             <button
-              className={`feed-toggle-btn ${feedType === 'curated' ? 'active' : ''}`}
-              onClick={() => setFeedType('curated')}
+              className={`feed-toggle-btn ${feedType === 'explore' ? 'active' : ''}`}
+              onClick={() => setFeedType('explore')}
+              role="tab"
+              aria-selected={feedType === 'explore'}
             >
-              {HOME_FEED_LABELS.curated}
+              {HOME_FEED_LABELS.explore}
             </button>
           </div>
         </div>
@@ -235,20 +246,29 @@ export default function Home() {
         onCancelReply={() => setReplyingTo(null)}
       />
 
-      {feedType === 'following' && (
+      {feedType === 'node' && (
         <div className="feed-meta card">
-          <div className="feed-meta-title">Following feed</div>
+          <div className="feed-meta-title">Node feed</div>
           <div className="feed-meta-body">
-            This feed shows posts from accounts you follow in chronological order, with the most recent posts appearing first.
+            All posts published by accounts hosted on this node, with the newest posts first.
           </div>
         </div>
       )}
 
-      {feedType === 'curated' && feedMeta && (
+      {feedType === 'following' && (
         <div className="feed-meta card">
-          <div className="feed-meta-title">For You</div>
+          <div className="feed-meta-title">Following feed</div>
           <div className="feed-meta-body">
-            This feed balances fresh posts and active discussions with a varied mix of people, communities, and post types.
+            Posts from accounts you follow across the Synapsis network, with the newest posts first.
+          </div>
+        </div>
+      )}
+
+      {feedType === 'explore' && feedMeta && (
+        <div className="feed-meta card">
+          <div className="feed-meta-title">Explore</div>
+          <div className="feed-meta-body">
+            Discover posts from nodes across the Synapsis network, balanced for freshness, active discussions, and variety.
           </div>
         </div>
       )}
@@ -259,17 +279,22 @@ export default function Home() {
         </div>
       ) : posts.length === 0 ? (
         <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
-          {feedType === 'curated' ? (
+          {feedType === 'explore' ? (
             <>
               <p>No posts from the swarm yet</p>
               <p style={{ fontSize: '13px', marginTop: '8px' }}>
-                The For You feed shows posts from other nodes in the Synapsis network.
-                Check back later as nodes are discovered, or switch to Following to see posts from people you follow.
+                Explore brings together posts from nodes across the Synapsis network.
+                Check back as nodes are discovered, or switch to Node or Following.
               </p>
+            </>
+          ) : feedType === 'following' ? (
+            <>
+              <p>No posts from accounts you follow yet</p>
+              <p style={{ fontSize: '13px', marginTop: '8px' }}>Follow people locally or across the swarm to build this feed.</p>
             </>
           ) : (
             <>
-              <p>No posts yet</p>
+              <p>No posts on this node yet</p>
               <p style={{ fontSize: '13px', marginTop: '8px' }}>Be the first to post something!</p>
             </>
           )}
