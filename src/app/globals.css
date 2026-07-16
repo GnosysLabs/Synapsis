@@ -942,6 +942,8 @@ a.btn-primary:visited {
 
 .compose-media-item {
   position: relative;
+  width: 80px;
+  height: 80px;
   border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid var(--border);
@@ -949,21 +951,63 @@ a.btn-primary:visited {
   max-height: 80px;
 }
 
+.compose-media-item.uploading img,
+.compose-media-item.uploading video {
+  opacity: 0.82;
+}
+
 .compose-media-item img {
-  height: 80px;
-  width: auto;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   display: block;
 }
 
 .compose-media-item video {
-  height: 80px;
-  width: auto;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   display: block;
 }
 
 .compose-media-item.audio {
   width: min(100%, 320px);
+  height: 80px;
   max-height: none;
+}
+
+.compose-media-upload-status {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.compose-media-upload-status span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 65%, transparent);
+  transition: width 120ms linear;
+}
+
+.compose-media-retry {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  min-height: 28px;
+  border: 1px solid color-mix(in srgb, var(--error) 65%, transparent);
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.82);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .compose-audio-preview {
@@ -2213,6 +2257,8 @@ a.btn-primary:visited {
   }
 
   .compose-media-item {
+    width: 100px;
+    height: 100px;
     max-height: 100px;
   }
 

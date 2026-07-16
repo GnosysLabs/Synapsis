@@ -20,8 +20,18 @@ import {
 } from '@/lib/mentions/parser';
 
 interface MediaAttachment extends Attachment {
+    clientId?: string;
     mimeType?: string;
     filename?: string;
+    previewUrl?: string;
+    file?: File;
+    uploadState?: 'uploading' | 'ready' | 'failed';
+    uploadProgress?: number;
+}
+
+interface PendingMediaUpload {
+    id: string;
+    file: File;
 }
 
 interface MentionSuggestion {
@@ -52,7 +62,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     const [isCheckingStorage, setIsCheckingStorage] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
     const [storageNotice, setStorageNotice] = useState<string | null>(null);
-    const [pendingStorageFiles, setPendingStorageFiles] = useState<File[]>([]);
+    const [pendingStorageUploads, setPendingStorageUploads] = useState<PendingMediaUpload[]>([]);
     const [showStorageConfiguration, setShowStorageConfiguration] = useState(false);
     const [linkPreview, setLinkPreview] = useState<LinkPreviewData | null>(null);
     const [lastDetectedUrl, setLastDetectedUrl] = useState<string | null>(null);
@@ -61,6 +71,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     const [isNsfwNode, setIsNsfwNode] = useState(false);
     const mediaInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const attachmentsRef = useRef<MediaAttachment[]>([]);
     const mentionListId = useId();
     const [activeMention, setActiveMention] = useState<ActiveMentionQuery | null>(null);
     const [mentionSuggestions, setMentionSuggestions] = useState<MentionSuggestion[]>([]);
@@ -68,7 +79,8 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
     const maxLength = 600;
     const remaining = maxLength - content.length;
-    const canSubmit = content.trim().length > 0 || attachments.length > 0;
+    const hasUnreadyAttachments = attachments.some((item) => item.uploadState && item.uploadState !== 'ready');
+    const canSubmit = (content.trim().length > 0 || attachments.length > 0) && !hasUnreadyAttachments;
     const previewMedia = linkPreview?.media?.length
         ? linkPreview.media
         : linkPreview?.image
@@ -96,6 +108,16 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                 }
             })
             .catch(() => { });
+    }, []);
+
+    useEffect(() => {
+        attachmentsRef.current = attachments;
+    }, [attachments]);
+
+    useEffect(() => () => {
+        for (const attachment of attachmentsRef.current) {
+            if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        }
     }, []);
 
     // Detect URLs in content
@@ -227,6 +249,9 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
             }
 
             setContent('');
+            for (const attachment of attachments) {
+                if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+            }
             setAttachments([]);
             setLinkPreview(null);
             setLastDetectedUrl(null);
@@ -239,42 +264,93 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
         }
     };
 
+    const updatePendingAttachment = (id: string, update: Partial<MediaAttachment>) => {
+        setAttachments((current) => current.map((attachment) => (
+            attachment.id === id ? { ...attachment, ...update } : attachment
+        )));
+    };
+
+    const uploadPendingAttachments = async (pendingUploads: PendingMediaUpload[]) => {
+        if (pendingUploads.length === 0) return;
+
+        setUploadError(null);
+        setIsUploading(true);
+
+        for (let index = 0; index < pendingUploads.length; index += 1) {
+            const pending = pendingUploads[index];
+            if (!attachmentsRef.current.some((attachment) => attachment.id === pending.id)) continue;
+
+            updatePendingAttachment(pending.id, { uploadState: 'uploading', uploadProgress: 0 });
+            try {
+                const media = await uploadMediaFile(pending.file, (progress) => {
+                    updatePendingAttachment(pending.id, { uploadProgress: progress });
+                });
+
+                setAttachments((current) => current.map((attachment) => (
+                    attachment.id === pending.id
+                        ? {
+                            ...attachment,
+                            id: media.id,
+                            url: media.url,
+                            altText: media.altText ?? null,
+                            mimeType: media.mimeType ?? pending.file.type,
+                            file: undefined,
+                            uploadState: 'ready',
+                            uploadProgress: 1,
+                        }
+                        : attachment
+                )));
+            } catch (error) {
+                console.error('Upload failed', error);
+                updatePendingAttachment(pending.id, { uploadState: 'failed', uploadProgress: 0 });
+
+                if (error instanceof MediaUploadError && error.code === 'STORAGE_NOT_CONFIGURED') {
+                    const remaining = pendingUploads.slice(index);
+                    for (const waiting of remaining) {
+                        updatePendingAttachment(waiting.id, { uploadState: 'failed', uploadProgress: 0 });
+                    }
+                    setPendingStorageUploads(remaining);
+                    setShowStorageConfiguration(true);
+                    setIsUploading(false);
+                    return;
+                }
+
+                setUploadError('One or more uploads failed. Retry the failed attachment.');
+            }
+        }
+
+        setIsUploading(false);
+    };
+
     const uploadMediaFiles = async (files: File[]) => {
         const remainingSlots = Math.max(0, 4 - attachments.length);
         const selectedFiles = files.slice(0, remainingSlots);
         if (selectedFiles.length === 0) return;
 
         setUploadError(null);
-        setIsUploading(true);
+        const pendingUploads = selectedFiles.map((file) => {
+            const id = `local-${crypto.randomUUID()}`;
+            return { id, file };
+        });
+        const optimisticAttachments = pendingUploads.map(({ id, file }): MediaAttachment => {
+            const previewUrl = URL.createObjectURL(file);
+            return {
+                id,
+                clientId: id,
+                url: previewUrl,
+                previewUrl,
+                file,
+                altText: null,
+                mimeType: file.type,
+                filename: file.name,
+                uploadState: 'uploading',
+                uploadProgress: 0,
+            };
+        });
 
-        const uploaded: MediaAttachment[] = [];
-
-        for (const file of selectedFiles) {
-            try {
-                const media = await uploadMediaFile(file);
-
-                uploaded.push({
-                    id: media.id,
-                    url: media.url,
-                    altText: media.altText ?? null,
-                    mimeType: media.mimeType ?? file.type,
-                    filename: file.name,
-                });
-            } catch (error) {
-                if (error instanceof MediaUploadError && error.code === 'STORAGE_NOT_CONFIGURED') {
-                    setAttachments((prev) => [...prev, ...uploaded].slice(0, 4));
-                    setPendingStorageFiles(selectedFiles.slice(uploaded.length));
-                    setShowStorageConfiguration(true);
-                    setIsUploading(false);
-                    return;
-                }
-                console.error('Upload failed', error);
-                setUploadError('One or more uploads failed. Try again.');
-            }
-        }
-
-        setAttachments((prev) => [...prev, ...uploaded].slice(0, 4));
-        setIsUploading(false);
+        attachmentsRef.current = [...attachmentsRef.current, ...optimisticAttachments].slice(0, 4);
+        setAttachments(attachmentsRef.current);
+        await uploadPendingAttachments(pendingUploads);
     };
 
     const handleMediaSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -303,7 +379,18 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     };
 
     const handleRemoveAttachment = (id: string) => {
-        setAttachments((prev) => prev.filter((item) => item.id !== id));
+        setAttachments((current) => {
+            const removed = current.find((item) => item.id === id);
+            if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+            const next = current.filter((item) => item.id !== id);
+            attachmentsRef.current = next;
+            return next;
+        });
+    };
+
+    const handleRetryAttachment = async (attachment: MediaAttachment) => {
+        if (!attachment.file || isUploading) return;
+        await uploadPendingAttachments([{ id: attachment.id, file: attachment.file }]);
     };
 
     return (
@@ -312,10 +399,10 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                 open={showStorageConfiguration}
                 onConfigured={async () => {
                     setShowStorageConfiguration(false);
-                    const files = pendingStorageFiles;
-                    setPendingStorageFiles([]);
-                    if (files.length > 0) {
-                        await uploadMediaFiles(files);
+                    const pendingUploads = pendingStorageUploads;
+                    setPendingStorageUploads([]);
+                    if (pendingUploads.length > 0) {
+                        await uploadPendingAttachments(pendingUploads);
                         return;
                     }
                     setStorageNotice('Stuffbox connected. Choose your media to continue.');
@@ -323,7 +410,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                 }}
                 onCancel={() => {
                     setShowStorageConfiguration(false);
-                    setPendingStorageFiles([]);
+                    setPendingStorageUploads([]);
                 }}
             />
             {replyingTo && !isReply && (
@@ -408,16 +495,34 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                     {attachments.map((item) => {
                         const mediaKind = getMediaKind(item.mimeType);
                         return (
-                            <div className={`compose-media-item ${mediaKind === 'audio' ? 'audio' : ''}`} key={item.id}>
+                            <div
+                                className={`compose-media-item ${mediaKind === 'audio' ? 'audio' : ''} ${item.uploadState || 'ready'}`}
+                                key={item.clientId || item.id}
+                            >
                                 {mediaKind === 'video' ? (
-                                    <video src={item.url} muted playsInline preload="metadata" />
+                                    <video src={item.previewUrl || item.url} muted playsInline preload="metadata" />
                                 ) : mediaKind === 'audio' ? (
                                     <div className="compose-audio-preview">
                                         <Music2 size={22} />
                                         <span>{item.filename || 'Audio track'}</span>
                                     </div>
                                 ) : (
-                                    <img src={item.url} alt={item.altText || 'Upload preview'} />
+                                    <img src={item.previewUrl || item.url} alt={item.altText || 'Upload preview'} />
+                                )}
+                                {item.uploadState === 'uploading' && (
+                                    <div className="compose-media-upload-status" role="status" aria-label="Uploading attachment">
+                                        <span style={{ width: `${Math.max(6, (item.uploadProgress || 0) * 100)}%` }} />
+                                    </div>
+                                )}
+                                {item.uploadState === 'failed' && (
+                                    <button
+                                        type="button"
+                                        className="compose-media-retry"
+                                        onClick={() => handleRetryAttachment(item)}
+                                        disabled={isUploading}
+                                    >
+                                        Retry
+                                    </button>
                                 )}
                                 <button
                                     type="button"
