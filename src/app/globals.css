@@ -1786,15 +1786,13 @@ a.btn-primary:visited {
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 15%, transparent);
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
 .sidebar-compose-button:hover {
   border-color: var(--accent-hover);
   background: var(--accent-hover);
   transform: translateY(-1px);
-  box-shadow: 0 12px 34px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .sidebar-compose-button:active {
