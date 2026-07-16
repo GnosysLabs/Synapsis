@@ -11,6 +11,7 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { getMediaKind } from '@/lib/media/upload-policy';
+import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 import { AvatarImage } from '@/components/AvatarImage';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import {
@@ -501,7 +502,13 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                                 key={item.clientId || item.id}
                             >
                                 {mediaKind === 'video' ? (
-                                    <video src={item.previewUrl || item.url} muted playsInline preload="metadata" />
+                                    <video
+                                        src={item.previewUrl || item.url}
+                                        muted
+                                        playsInline
+                                        preload="auto"
+                                        onLoadedMetadata={(event) => primeVideoPreviewFrame(event.currentTarget)}
+                                    />
                                 ) : mediaKind === 'audio' ? (
                                     <div className="compose-audio-preview">
                                         <Music2 size={22} />
