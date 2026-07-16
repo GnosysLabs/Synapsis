@@ -85,4 +85,26 @@ describe('mapSwarmPostToPost', () => {
             linkPreviewType: 'card',
         });
     });
+
+    it('maps posts from the current node back to local post IDs', () => {
+        const mapped = mapSwarmPostToPost({
+            ...original,
+            repostOfId: 'local-original-id',
+            repostOf: { ...original, id: 'local-original-id', nodeDomain: 'RPRH.link' },
+            nodeDomain: 'RPRH.link',
+        }, { localDomain: 'https://rprh.link/' });
+
+        expect(mapped).toMatchObject({
+            id: 'original-id',
+            isSwarm: false,
+            repostOfId: 'local-original-id',
+            repostOf: {
+                id: 'local-original-id',
+                isSwarm: false,
+            },
+            author: {
+                isSwarm: false,
+            },
+        });
+    });
 });

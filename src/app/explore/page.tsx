@@ -391,7 +391,7 @@ export default function ExplorePage() {
                             </div>
                             <div className="explore-posts">
                                 {swarmPosts.map((post) => {
-                                    const transformedPost = mapSwarmPostToPost(post);
+                                    const transformedPost = mapSwarmPostToPost(post, { localDomain: config?.domain });
                                     return (
                                         <PostCard
                                             key={`${post.nodeDomain}:${post.id}`}

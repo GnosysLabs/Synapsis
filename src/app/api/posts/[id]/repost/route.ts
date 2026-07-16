@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, notifications, userSwarmReposts } from '@/db';
+import { db, posts, users, notifications, remoteReposts, userSwarmReposts } from '@/db';
 import { requireAuth } from '@/lib/auth';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
+import { normalizeSameNodePostId } from '@/lib/swarm/post-id';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -88,8 +89,9 @@ export async function POST(request: Request, context: RouteContext) {
         const user = await requireAuth();
         const { id: rawId } = await context.params;
         const decodedId = decodeURIComponent(rawId);
-        const postId = postIdSchema.parse(decodedId);
+        let postId = postIdSchema.parse(decodedId);
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        postId = normalizeSameNodePostId(postId, nodeDomain);
 
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -176,6 +178,13 @@ export async function POST(request: Request, context: RouteContext) {
         });
 
         if (existingRepost) {
+            return NextResponse.json({ error: 'Already reposted' }, { status: 400 });
+        }
+
+        const legacySameNodeRepost = await db.query.userSwarmReposts.findFirst({
+            where: { AND: [{ userId: user.id }, { nodeDomain }, { originalPostId: postId }] },
+        });
+        if (legacySameNodeRepost) {
             return NextResponse.json({ error: 'Already reposted' }, { status: 400 });
         }
 
@@ -269,8 +278,9 @@ export async function DELETE(request: Request, context: RouteContext) {
         const user = await requireAuth();
         const { id: rawId } = await context.params;
         const decodedId = decodeURIComponent(rawId);
-        const postId = postIdSchema.parse(decodedId);
+        let postId = postIdSchema.parse(decodedId);
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        postId = normalizeSameNodePostId(postId, nodeDomain);
 
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -336,7 +346,30 @@ export async function DELETE(request: Request, context: RouteContext) {
         });
 
         if (!repost) {
-            return NextResponse.json({ error: 'Not reposted' }, { status: 400 });
+            const legacySameNodeRepost = await db.query.userSwarmReposts.findFirst({
+                where: { AND: [{ userId: user.id }, { nodeDomain }, { originalPostId: postId }] },
+            });
+            if (!legacySameNodeRepost) {
+                return NextResponse.json({ error: 'Not reposted' }, { status: 400 });
+            }
+
+            await Promise.all([
+                db.delete(userSwarmReposts).where(eq(userSwarmReposts.id, legacySameNodeRepost.id)),
+                db.delete(remoteReposts).where(and(
+                    eq(remoteReposts.postId, postId),
+                    eq(remoteReposts.actorHandle, user.handle),
+                    eq(remoteReposts.actorNodeDomain, nodeDomain),
+                )),
+            ]);
+            await Promise.all([
+                db.update(posts)
+                    .set({ repostsCount: sql`max(0, ${posts.repostsCount} - 1)` })
+                    .where(eq(posts.id, postId)),
+                db.update(users)
+                    .set({ postsCount: sql`max(0, ${users.postsCount} - 1)` })
+                    .where(eq(users.id, user.id)),
+            ]);
+            return NextResponse.json({ success: true, reposted: false });
         }
 
         // Mark repost as removed

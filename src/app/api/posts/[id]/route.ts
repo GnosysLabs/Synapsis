@@ -3,6 +3,7 @@ import { db, posts, users, media, remotePosts } from '@/db';
 import { eq, desc, and, sql, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
+import { normalizeSameNodePostId } from '@/lib/swarm/post-id';
 
 // Schema for local post ID (UUID)
 const localPostIdSchema = z.string().uuid('Invalid post ID format');
@@ -84,9 +85,8 @@ export async function GET(
     try {
         const { id: rawId } = await params;
         // Decode URL-encoded characters (e.g., %3A -> :)
-        const id = decodeURIComponent(rawId);
-
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const id = normalizeSameNodePostId(decodeURIComponent(rawId), nodeDomain);
 
         let mainPost: any = null;
         let replyPosts: any[] = [];
@@ -281,9 +281,9 @@ export async function DELETE(
     try {
         const { requireAuth } = await import('@/lib/auth');
         const user = await requireAuth();
-        const { id } = await params;
-
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const { id: rawId } = await params;
+        const id = normalizeSameNodePostId(decodeURIComponent(rawId), nodeDomain);
 
         // Handle swarm post IDs (format: swarm:domain:uuid)
         if (id.startsWith('swarm:')) {

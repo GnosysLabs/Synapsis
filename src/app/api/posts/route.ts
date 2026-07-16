@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, media, follows, mutes, blocks, likes, remoteFollows, remotePosts, userSwarmReposts, notifications } from '@/db';
+import { db, posts, users, media, follows, mutes, blocks, likes, remoteFollows, remotePosts, userSwarmLikes, userSwarmReposts, notifications } from '@/db';
 import { getSession, requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, desc, and, inArray, isNull, isNotNull, or, lt, sql } from 'drizzle-orm';
@@ -684,7 +684,8 @@ export async function GET(request: Request) {
                 includeNsfw,
             });
 
-            const swarmPosts = swarmResult.posts.map(mapSwarmPostToPost);
+            const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+            const swarmPosts = swarmResult.posts.map((post) => mapSwarmPostToPost(post, { localDomain }));
 
             let mutedIds = new Set<string>();
             let blockedIds = new Set<string>();
@@ -882,10 +883,20 @@ export async function GET(request: Request) {
                 const repostedPostIds = new Set<string>();
 
                 if (localPostIds.length > 0) {
-                    const viewerLikes = await db.query.likes.findMany({
-                        where: { AND: [{ userId: viewer.id }, { postId: { in: localPostIds } }] },
-                    });
+                    const [viewerLikes, legacySameNodeLikes, legacySameNodeReposts] = await Promise.all([
+                        db.query.likes.findMany({
+                            where: { AND: [{ userId: viewer.id }, { postId: { in: localPostIds } }] },
+                        }),
+                        db.query.userSwarmLikes.findMany({
+                            where: { AND: [{ userId: viewer.id }, { nodeDomain }, { originalPostId: { in: localPostIds } }] },
+                        }),
+                        db.query.userSwarmReposts.findMany({
+                            where: { AND: [{ userId: viewer.id }, { nodeDomain }, { originalPostId: { in: localPostIds } }] },
+                        }),
+                    ]);
                     viewerLikes.forEach(l => likedPostIds.add(l.postId));
+                    legacySameNodeLikes.forEach(l => likedPostIds.add(l.originalPostId));
+                    legacySameNodeReposts.forEach(r => repostedPostIds.add(r.originalPostId));
 
                     const viewerReposts = await db.query.posts.findMany({
                         where: { AND: [{ userId: viewer.id }, { repostOfId: { in: localPostIds } }, { isRemoved: false }] },

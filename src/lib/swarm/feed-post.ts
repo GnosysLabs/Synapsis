@@ -1,13 +1,18 @@
 import type { SwarmPost } from '@/app/api/swarm/timeline/route';
 import type { Post } from '@/lib/types';
+import { isLocalSwarmDomain } from './post-id';
 
 export type InteractiveSwarmPost = SwarmPost & {
     isLiked?: boolean;
     isReposted?: boolean;
 };
 
-export function mapSwarmPostToPost(post: InteractiveSwarmPost): Post {
-    const normalizedId = `swarm:${post.nodeDomain}:${post.id}`;
+export function mapSwarmPostToPost(
+    post: InteractiveSwarmPost,
+    options: { localDomain?: string | null } = {}
+): Post {
+    const isLocalPost = isLocalSwarmDomain(post.nodeDomain, options.localDomain);
+    const normalizedId = isLocalPost ? post.id : `swarm:${post.nodeDomain}:${post.id}`;
     const qualifiedAuthorHandle = post.author.handle.includes('@')
         ? post.author.handle
         : `${post.author.handle}@${post.nodeDomain}`;
@@ -20,20 +25,20 @@ export function mapSwarmPostToPost(post: InteractiveSwarmPost): Post {
         likesCount: post.likeCount,
         repostsCount: post.repostCount,
         repliesCount: post.replyCount,
-        isSwarm: true,
+        isSwarm: !isLocalPost,
         nodeDomain: post.nodeDomain,
         repostOfId: post.repostOfId
-            ? `swarm:${post.nodeDomain}:${post.repostOfId}`
+            ? (isLocalPost ? post.repostOfId : `swarm:${post.nodeDomain}:${post.repostOfId}`)
             : null,
         repostOf: post.repostOf
-            ? mapSwarmPostToPost(post.repostOf as InteractiveSwarmPost)
+            ? mapSwarmPostToPost(post.repostOf as InteractiveSwarmPost, options)
             : null,
         author: {
             id: `swarm:${post.nodeDomain}:${post.author.handle}`,
             handle: qualifiedAuthorHandle,
             displayName: post.author.displayName,
             avatarUrl: post.author.avatarUrl,
-            isSwarm: true,
+            isSwarm: !isLocalPost,
             isNsfw: post.author.isNsfw,
             nodeIsNsfw: post.nodeIsNsfw,
             nodeDomain: post.nodeDomain,

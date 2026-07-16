@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
-import { db, posts, likes, notifications, userSwarmLikes } from '@/db';
+import { db, posts, likes, notifications, remoteLikes, userSwarmLikes } from '@/db';
 import { requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
+import { normalizeSameNodePostId } from '@/lib/swarm/post-id';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -118,8 +119,9 @@ export async function POST(request: Request, context: RouteContext) {
         }
 
         const decodedId = decodedParamId;
-        const postId = postIdSchema.parse(decodedId);
+        let postId = postIdSchema.parse(decodedId);
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        postId = normalizeSameNodePostId(postId, nodeDomain);
 
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -193,6 +195,13 @@ export async function POST(request: Request, context: RouteContext) {
         });
 
         if (existingLike) {
+            return NextResponse.json({ error: 'Already liked' }, { status: 400 });
+        }
+
+        const legacySameNodeLike = await db.query.userSwarmLikes.findFirst({
+            where: { AND: [{ userId: user.id }, { nodeDomain }, { originalPostId: postId }] },
+        });
+        if (legacySameNodeLike) {
             return NextResponse.json({ error: 'Already liked' }, { status: 400 });
         }
 
@@ -297,8 +306,9 @@ export async function DELETE(request: Request, context: RouteContext) {
         }
 
         const decodedId = decodedParamId;
-        const postId = postIdSchema.parse(decodedId);
+        let postId = postIdSchema.parse(decodedId);
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        postId = normalizeSameNodePostId(postId, nodeDomain);
 
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -359,7 +369,25 @@ export async function DELETE(request: Request, context: RouteContext) {
         });
 
         if (!existingLike) {
-            return NextResponse.json({ error: 'Not liked' }, { status: 400 });
+            const legacySameNodeLike = await db.query.userSwarmLikes.findFirst({
+                where: { AND: [{ userId: user.id }, { nodeDomain }, { originalPostId: postId }] },
+            });
+            if (!legacySameNodeLike) {
+                return NextResponse.json({ error: 'Not liked' }, { status: 400 });
+            }
+
+            await Promise.all([
+                db.delete(userSwarmLikes).where(eq(userSwarmLikes.id, legacySameNodeLike.id)),
+                db.delete(remoteLikes).where(and(
+                    eq(remoteLikes.postId, postId),
+                    eq(remoteLikes.actorHandle, user.handle),
+                    eq(remoteLikes.actorNodeDomain, nodeDomain),
+                )),
+            ]);
+            await db.update(posts)
+                .set({ likesCount: sql`max(0, ${posts.likesCount} - 1)` })
+                .where(eq(posts.id, postId));
+            return NextResponse.json({ success: true, liked: false });
         }
 
         // Remove like

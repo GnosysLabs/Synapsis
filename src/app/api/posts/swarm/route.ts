@@ -11,6 +11,9 @@ import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
 import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { isLocalNodeNsfw } from '@/lib/node/local-node';
+import { db, likes, posts, userSwarmLikes, userSwarmReposts } from '@/db';
+import { and, eq, inArray } from 'drizzle-orm';
+import { isLocalSwarmDomain } from '@/lib/swarm/post-id';
 
 type SwarmFeedPost = {
   id: string;
@@ -79,9 +82,15 @@ export async function GET(request: NextRequest) {
 
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
     const allTimelinePosts = collectNestedSwarmPosts(timeline.posts as SwarmFeedPost[]);
+    const localTimelinePosts = allTimelinePosts.filter(post =>
+      isLocalSwarmDomain(post.nodeDomain, nodeDomain)
+    );
+    const remoteTimelinePosts = allTimelinePosts.filter(post =>
+      !isLocalSwarmDomain(post.nodeDomain, nodeDomain)
+    );
     const likedPostIds = viewer
       ? await getViewerSwarmLikedPostIds(
-          allTimelinePosts.map(post => ({
+          remoteTimelinePosts.map(post => ({
             id: `swarm:${post.nodeDomain}:${post.id}`,
             nodeDomain: post.nodeDomain,
             originalPostId: post.id,
@@ -92,7 +101,7 @@ export async function GET(request: NextRequest) {
       : new Set<string>();
     const repostedPostIds = viewer
       ? await getViewerSwarmRepostedPostIds(
-          allTimelinePosts.map(post => ({
+          remoteTimelinePosts.map(post => ({
             id: `swarm:${post.nodeDomain}:${post.id}`,
             nodeDomain: post.nodeDomain,
             originalPostId: post.id,
@@ -100,6 +109,55 @@ export async function GET(request: NextRequest) {
           viewer.id
         )
       : new Set<string>();
+
+    if (viewer && localTimelinePosts.length > 0) {
+      const localPostIds = Array.from(new Set(localTimelinePosts.map(post => post.id)));
+      const [viewerLikes, viewerReposts, legacySameNodeLikes, legacySameNodeReposts] = await Promise.all([
+        db.select({ postId: likes.postId })
+          .from(likes)
+          .where(and(eq(likes.userId, viewer.id), inArray(likes.postId, localPostIds))),
+        db.select({ repostOfId: posts.repostOfId })
+          .from(posts)
+          .where(and(
+            eq(posts.userId, viewer.id),
+            inArray(posts.repostOfId, localPostIds),
+            eq(posts.isRemoved, false),
+          )),
+        db.select({ originalPostId: userSwarmLikes.originalPostId })
+          .from(userSwarmLikes)
+          .where(and(
+            eq(userSwarmLikes.userId, viewer.id),
+            eq(userSwarmLikes.nodeDomain, nodeDomain),
+            inArray(userSwarmLikes.originalPostId, localPostIds),
+          )),
+        db.select({ originalPostId: userSwarmReposts.originalPostId })
+          .from(userSwarmReposts)
+          .where(and(
+            eq(userSwarmReposts.userId, viewer.id),
+            eq(userSwarmReposts.nodeDomain, nodeDomain),
+            inArray(userSwarmReposts.originalPostId, localPostIds),
+          )),
+      ]);
+
+      const localDomainByPostId = new Map(localTimelinePosts.map(post => [post.id, post.nodeDomain]));
+      for (const row of viewerLikes) {
+        const domain = localDomainByPostId.get(row.postId);
+        if (domain) likedPostIds.add(`swarm:${domain}:${row.postId}`);
+      }
+      for (const row of viewerReposts) {
+        if (!row.repostOfId) continue;
+        const domain = localDomainByPostId.get(row.repostOfId);
+        if (domain) repostedPostIds.add(`swarm:${domain}:${row.repostOfId}`);
+      }
+      for (const row of legacySameNodeLikes) {
+        const domain = localDomainByPostId.get(row.originalPostId);
+        if (domain) likedPostIds.add(`swarm:${domain}:${row.originalPostId}`);
+      }
+      for (const row of legacySameNodeReposts) {
+        const domain = localDomainByPostId.get(row.originalPostId);
+        if (domain) repostedPostIds.add(`swarm:${domain}:${row.originalPostId}`);
+      }
+    }
 
     return NextResponse.json({
       posts: applyInteractionFlags(timeline.posts as SwarmFeedPost[], likedPostIds, repostedPostIds),
