@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useId, useRef } from 'react';
+import Image from 'next/image';
 import AutoTextarea from '@/components/AutoTextarea';
 import { Post, Attachment } from '@/lib/types';
 import { AlertTriangle, Music2, Paperclip } from 'lucide-react';
@@ -507,7 +508,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                                         <span>{item.filename || 'Audio track'}</span>
                                     </div>
                                 ) : (
-                                    <img src={item.previewUrl || item.url} alt={item.altText || 'Upload preview'} />
+                                    <Image unoptimized src={item.previewUrl || item.url} alt={item.altText || 'Upload preview'} width={800} height={600} />
                                 )}
                                 {item.uploadState === 'uploading' && (
                                     <div className="compose-media-upload-status" role="status" aria-label="Uploading attachment">
@@ -563,7 +564,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                                 <div className="link-preview-gallery compact">
                                     {previewMedia.slice(0, 3).map((item: { url: string }, index: number) => (
                                         <div className="link-preview-gallery-item" key={`${item.url}-${index}`}>
-                                            <img src={item.url} alt="" />
+                                            <Image unoptimized src={item.url} alt="" width={640} height={480} />
                                             {index === Math.min(previewMedia.length, 3) - 1 && previewMedia.length > 3 && (
                                                 <span className="link-preview-gallery-more">+{previewMedia.length - 3}</span>
                                             )}
@@ -572,7 +573,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                                 </div>
                             ) : previewImage && (
                                 <div className="link-preview-image">
-                                    <img src={previewImage} alt="" />
+                                    <Image unoptimized src={previewImage} alt="" width={640} height={360} />
                                 </div>
                             )}
                             <div className="link-preview-info">

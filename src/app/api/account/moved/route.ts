@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, users, follows } from '@/db';
+import { db, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import * as crypto from 'crypto';
 

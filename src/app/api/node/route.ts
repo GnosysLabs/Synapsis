@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/db';
-import { nodes, users } from '@/db';
-import { eq, inArray } from 'drizzle-orm';
+import { users } from '@/db';
+import { inArray } from 'drizzle-orm';
 import { getNodePublicKey } from '@/lib/swarm/node-keys';
 import { getVersionedNodeAssetUrl } from '@/lib/node/assets';
 

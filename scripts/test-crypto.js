@@ -1,5 +1,5 @@
 
-const sodium = require('libsodium-wrappers-sumo');
+import sodium from 'libsodium-wrappers-sumo';
 
 const BAD_KEY_B64 = "z+X63kLk1GoV0gJvPtqNisWuZ3XmlTbfMh9gW0xqcmg=";
 
@@ -25,7 +25,7 @@ async function main() {
 
             const buf = sodium.from_base64(keyStr, v.val);
             console.log(`SUCCESS! Length: ${buf.length}`);
-        } catch (e) {
+        } catch {
             console.log(`FAILED.`);
         }
     }

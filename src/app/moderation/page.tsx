@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { getProfilePath } from '@/lib/utils/handle';
 
@@ -81,7 +81,7 @@ export default function ModerationPage() {
             .catch(() => setIsAdmin(false));
     }, []);
 
-    const loadReports = async () => {
+    const loadReports = useCallback(async () => {
         setLoading(true);
         try {
             const res = await fetch(`/api/admin/reports?status=${reportStatus}`);
@@ -92,9 +92,9 @@ export default function ModerationPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [reportStatus]);
 
-    const loadPosts = async () => {
+    const loadPosts = useCallback(async () => {
         setLoading(true);
         try {
             const res = await fetch('/api/admin/posts?status=all');
@@ -105,9 +105,9 @@ export default function ModerationPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
-    const loadUsers = async () => {
+    const loadUsers = useCallback(async () => {
         setLoading(true);
         try {
             const res = await fetch('/api/admin/users');
@@ -118,9 +118,9 @@ export default function ModerationPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
-    const loadNodes = async () => {
+    const loadNodes = useCallback(async () => {
         setLoading(true);
         try {
             const res = await fetch('/api/admin/nodes');
@@ -131,7 +131,7 @@ export default function ModerationPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         if (!isAdmin) return;
@@ -139,7 +139,7 @@ export default function ModerationPage() {
         if (tab === 'posts') loadPosts();
         if (tab === 'users') loadUsers();
         if (tab === 'nodes') loadNodes();
-    }, [tab, isAdmin, reportStatus]);
+    }, [isAdmin, loadNodes, loadPosts, loadReports, loadUsers, tab]);
 
     const handleReportResolve = async (id: string, status: 'open' | 'resolved') => {
         const note = status === 'resolved' ? window.prompt('Resolution note (optional):') || '' : '';

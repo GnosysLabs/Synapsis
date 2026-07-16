@@ -8,7 +8,6 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 
 export default function PrivacySettingsPage() {
     const router = useRouter();
-    const [user, setUser] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [dmPrivacy, setDmPrivacy] = useState<'everyone' | 'following' | 'none'>('everyone');
@@ -21,7 +20,6 @@ export default function PrivacySettingsPage() {
             .then(res => res.json())
             .then(data => {
                 if (data.user) {
-                    setUser(data.user);
                     setDmPrivacy(data.user.dmPrivacy || 'everyone');
                 }
                 setLoading(false);
@@ -55,7 +53,7 @@ export default function PrivacySettingsPage() {
                 const data = await res.json();
                 setStatus({ type: 'error', message: data.error || 'Failed to save settings' });
             }
-        } catch (error) {
+        } catch {
             setStatus({ type: 'error', message: 'An error occurred' });
         } finally {
             setSaving(false);

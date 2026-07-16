@@ -370,6 +370,9 @@ export interface SwarmUserPost {
   originalPostId?: string;
   content: string;
   createdAt: string;
+  isReply?: boolean;
+  replyToId?: string | null;
+  swarmReplyToId?: string | null;
   isNsfw: boolean;
   likesCount: number;
   repostsCount: number;

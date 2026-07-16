@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, likes, userSwarmReposts } from '@/db';
-import { eq, desc, and, inArray, lt, sql, isNull } from 'drizzle-orm';
+import { db, users, userSwarmReposts } from '@/db';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
-import { getRemoteBaseUrl, mapRemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
+import { getRemoteBaseUrl, mapRemoteProfilePost, type RemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
@@ -101,7 +100,7 @@ function mapUserSwarmRepostToFeedPost(
             linkPreviewVideoUrl: row.linkPreviewVideoUrl,
             linkPreviewMedia: parseLinkPreviewMediaJson(row.linkPreviewMediaJson) || null,
         },
-    } as any;
+    } as unknown as FeedPostWithChildren;
 }
 
 function collectNestedPosts(posts: FeedPostWithChildren[]): FeedPostWithChildren[] {
@@ -161,7 +160,7 @@ async function getMixedProfileCursorDate(cursor: string | null) {
 }
 
 async function populateViewerLikeState(
-    remotePosts: any[]
+    remotePosts: FeedPostWithChildren[]
 ) {
     if (!remotePosts.length) {
         return remotePosts;
@@ -236,8 +235,8 @@ export async function GET(request: Request, context: RouteContext) {
                 return NextResponse.json({ posts: [], nextCursor: null });
             }
 
-            const data = await res.json();
-            const mappedPosts = (data.posts || []).map((post: any) => mapRemoteProfilePost(post, remote.domain));
+            const data = await res.json() as { posts?: RemoteProfilePost[] };
+            const mappedPosts = (data.posts || []).map((post) => mapRemoteProfilePost(post, remote.domain) as unknown as FeedPostWithChildren);
             return NextResponse.json({
                 posts: await populateViewerLikeState(mappedPosts),
                 nextCursor: null,
@@ -271,7 +270,7 @@ export async function GET(request: Request, context: RouteContext) {
                     avatarUrl: profile.avatarUrl,
                 };
 
-                const remotePosts = profileData.posts.map((post: any) => ({
+                const remotePosts = profileData.posts.map((post) => ({
                     id: post.id,
                     originalPostId: post.id,
                     content: post.content,
@@ -353,7 +352,7 @@ export async function GET(request: Request, context: RouteContext) {
             orderBy: (userSwarmReposts, { desc }) => [desc(userSwarmReposts.repostedAt)],
             limit: cursor ? limit : limit * 2,
         });
-        let userPosts: any[] = [
+        let userPosts: FeedPostWithChildren[] = [
             ...localPosts,
             ...swarmRepostRows.map((row) => mapUserSwarmRepostToFeedPost(row, user)),
         ]
@@ -424,7 +423,7 @@ export async function GET(request: Request, context: RouteContext) {
                     userPosts as FeedPostWithChildren[],
                     likedPostIds,
                     repostedPostIds
-                ) as any;
+                );
             }
         } catch (error) {
             console.error('Error populating interaction flags:', error);

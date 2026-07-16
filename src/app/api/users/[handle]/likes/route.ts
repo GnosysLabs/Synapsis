@@ -1,14 +1,23 @@
 import { NextResponse } from 'next/server';
-import { db, likes, posts, users, userSwarmLikes } from '@/db';
-import { eq, desc, and, inArray } from 'drizzle-orm';
+import { db } from '@/db';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { isSwarmNode } from '@/lib/swarm/interactions';
-import { getRemoteBaseUrl, mapRemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
+import { getRemoteBaseUrl, mapRemoteProfilePost, type RemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
 type RouteContext = { params: Promise<{ handle: string }> };
+type LikedPost = {
+    id: string;
+    createdAt: string | Date;
+    isSwarm?: boolean;
+    nodeDomain?: string | null;
+    originalPostId?: string;
+    isLiked?: boolean;
+    isReposted?: boolean;
+    [key: string]: unknown;
+};
 
 const embeddedPostRelations = {
     author: true,
@@ -64,23 +73,23 @@ export async function GET(request: Request, context: RouteContext) {
                 return NextResponse.json({ posts: [], nextCursor: null });
             }
 
-            const data = await res.json();
+            const data = await res.json() as { posts?: RemoteProfilePost[] };
             const { getSession } = await import('@/lib/auth');
             const session = await getSession();
             const viewer = session?.user;
-            const mappedPosts = (data.posts || []).map((post: any) => mapRemoteProfilePost(post, remote.domain));
+            const mappedPosts = (data.posts || []).map((post) => mapRemoteProfilePost(post, remote.domain));
             const repostedIds = viewer
                 ? await getViewerSwarmRepostedPostIds(
-                    mappedPosts.map((post: any) => ({
+                    mappedPosts.map((post) => ({
                         id: post.id,
                         nodeDomain: remote.domain,
-                        originalPostId: post.originalPostId || post.id.split(':').pop(),
+                        originalPostId: post.originalPostId || post.id.split(':').pop() || post.id,
                     })),
                     viewer.id
                 )
                 : new Set<string>();
             return NextResponse.json({
-                posts: mappedPosts.map((post: any) => ({
+                posts: mappedPosts.map((post) => ({
                     ...post,
                     isReposted: repostedIds.has(post.id),
                 })),
@@ -184,7 +193,7 @@ export async function GET(request: Request, context: RouteContext) {
             isLiked: false,
         }));
 
-        let likedPosts: any[] = [
+        let likedPosts: LikedPost[] = [
             ...localLikedPosts.map((post) => ({
                 ...post,
                 likedAt: userLikes.find((like) => like.post?.id === post.id)?.createdAt?.toISOString() || post.createdAt.toISOString(),
@@ -203,19 +212,19 @@ export async function GET(request: Request, context: RouteContext) {
                 const viewer = session.user;
                 const isOwnLikesView = viewer.id === user.id;
                 const localPostIds = likedPosts
-                    .filter((post: any) => !post.isSwarm)
-                    .map((post: any) => post.id)
+                    .filter((post) => !post.isSwarm)
+                    .map((post) => post.id)
                     .filter(Boolean);
                 const swarmTargets = likedPosts
-                    .filter((post: any) => post.isSwarm)
-                    .map((post: any) => ({
+                    .filter((post) => post.isSwarm)
+                    .map((post) => ({
                         id: post.id,
                         nodeDomain: post.nodeDomain,
                         originalPostId: post.originalPostId,
                     }))
-                    .filter((post: any) => post.nodeDomain && post.originalPostId);
+                    .filter((post): post is { id: string; nodeDomain: string; originalPostId: string } => Boolean(post.nodeDomain && post.originalPostId));
                 const swarmRepostedIds = swarmTargets.length > 0
-                    ? await getViewerSwarmRepostedPostIds(swarmTargets as any, viewer.id)
+                    ? await getViewerSwarmRepostedPostIds(swarmTargets, viewer.id)
                     : new Set<string>();
 
                 if (localPostIds.length > 0) {
@@ -233,13 +242,13 @@ export async function GET(request: Request, context: RouteContext) {
                         ...p!,
                         isLiked: p!.isSwarm ? isOwnLikesView : likedPostIds.has(p!.id),
                         isReposted: p!.isSwarm ? swarmRepostedIds.has(p!.id) : repostedPostIds.has(p!.id),
-                    })) as any;
+                    }));
                 } else {
                     likedPosts = likedPosts.map(p => ({
                         ...p!,
                         isLiked: p!.isSwarm ? isOwnLikesView : p!.isLiked,
                         isReposted: p!.isSwarm ? swarmRepostedIds.has(p!.id) : p!.isReposted,
-                    })) as any;
+                    }));
                 }
             }
         } catch (error) {

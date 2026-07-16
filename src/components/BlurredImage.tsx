@@ -6,19 +6,26 @@ interface BlurredImageProps {
 export default function BlurredImage({ src, alt }: BlurredImageProps) {
     return (
         <div className="blurred-image-container">
-            <img
+            <Image
+                unoptimized
                 src={src}
                 alt=""
+                width={1200}
+                height={800}
                 aria-hidden="true"
                 loading="lazy"
                 className="blurred-image-bg"
             />
-            <img
+            <Image
+                unoptimized
                 src={src}
                 alt={alt}
+                width={1200}
+                height={800}
                 loading="lazy"
                 className="blurred-image-main"
             />
         </div>
     );
 }
+import Image from 'next/image';

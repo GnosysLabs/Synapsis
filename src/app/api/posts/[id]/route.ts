@@ -1,21 +1,8 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, media, remotePosts } from '@/db';
-import { eq, desc, and, sql, inArray } from 'drizzle-orm';
-import { z } from 'zod';
+import { db, posts, users } from '@/db';
+import { eq, sql } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { normalizeSameNodePostId } from '@/lib/swarm/post-id';
-
-// Schema for local post ID (UUID)
-const localPostIdSchema = z.string().uuid('Invalid post ID format');
-
-// Schema for swarm post ID (swarm:domain:uuid)
-const swarmPostIdSchema = z.string().regex(
-  /^swarm:[^:]+:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-  'Invalid swarm post ID format'
-);
-
-// Combined schema that accepts either format
-const postIdSchema = z.union([localPostIdSchema, swarmPostIdSchema]);
 
 const embeddedPostRelations = {
     author: true,
@@ -35,7 +22,29 @@ const postDetailRelations = {
     },
 } as const;
 
-function mapSwarmDetailPost(post: any, fallbackDomain: string): any {
+type SwarmDetailPostInput = {
+    id: string;
+    originalPostId?: string;
+    nodeDomain?: string;
+    content: string;
+    createdAt: string;
+    likesCount?: number;
+    repostsCount?: number;
+    repliesCount?: number;
+    repostOfId?: string | null;
+    repostOf?: SwarmDetailPostInput | null;
+    author?: { handle: string; displayName?: string | null; avatarUrl?: string | null } | null;
+    media?: Array<{ id?: string; url: string; altText?: string | null }>;
+    linkPreviewUrl?: string | null;
+    linkPreviewTitle?: string | null;
+    linkPreviewDescription?: string | null;
+    linkPreviewImage?: string | null;
+    linkPreviewType?: 'card' | 'image' | 'gallery' | 'video' | null;
+    linkPreviewVideoUrl?: string | null;
+    linkPreviewMedia?: unknown;
+};
+
+function mapSwarmDetailPost(post: SwarmDetailPostInput, fallbackDomain: string): Record<string, unknown> {
     const effectiveDomain = post.nodeDomain || fallbackDomain;
     const rawId = post.originalPostId || post.id;
 
@@ -63,7 +72,7 @@ function mapSwarmDetailPost(post: any, fallbackDomain: string): any {
             isSwarm: true,
             nodeDomain: effectiveDomain,
         } : null,
-        media: post.media?.map((m: any, idx: number) => ({
+        media: post.media?.map((m, idx) => ({
             id: m.id || `swarm:${effectiveDomain}:${rawId}:media:${idx}`,
             url: m.url,
             altText: m.altText || null,
@@ -88,8 +97,8 @@ export async function GET(
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const id = normalizeSameNodePostId(decodeURIComponent(rawId), nodeDomain);
 
-        let mainPost: any = null;
-        let replyPosts: any[] = [];
+        let mainPost: Record<string, unknown> | null = null;
+        let replyPosts: Array<Record<string, unknown>> = [];
 
         // Handle swarm post IDs (format: swarm:domain:uuid)
         if (id.startsWith('swarm:')) {
@@ -107,7 +116,7 @@ export async function GET(
                     });
 
                     if (res.ok) {
-                        const data = await res.json();
+                        const data = await res.json() as { post: SwarmDetailPostInput; replies?: SwarmDetailPostInput[] };
 
                         mainPost = mapSwarmDetailPost({
                             ...data.post,
@@ -117,7 +126,7 @@ export async function GET(
                         }, originDomain);
 
                         // Transform replies from the origin node
-                        replyPosts = (data.replies || []).map((reply: any) => mapSwarmDetailPost({
+                        replyPosts = (data.replies || []).map((reply) => mapSwarmDetailPost({
                             ...reply,
                             nodeDomain: originDomain,
                         }, originDomain));
@@ -136,7 +145,7 @@ export async function GET(
                             );
 
                             if (likeCheckRes.ok) {
-                                const likeData = await likeCheckRes.json();
+                                const likeData = await likeCheckRes.json() as { isLiked?: boolean };
                                 mainPost.isLiked = likeData.isLiked;
                             }
 
@@ -171,8 +180,6 @@ export async function GET(
         });
 
         if (post) {
-            mainPost = post;
-
             const replies = await db.query.posts.findMany({
                 where: { AND: [{ replyToId: id }, { isRemoved: false }] },
                 with: postDetailRelations,
@@ -188,9 +195,6 @@ export async function GET(
 
             try {
                 const { requireAuth } = await import('@/lib/auth');
-                const { likes } = await import('@/db');
-                const { inArray } = await import('drizzle-orm');
-
                 const viewer = await requireAuth();
                 allPostIds = [post.id, ...replies.map(r => r.id)];
 
@@ -209,13 +213,13 @@ export async function GET(
                         ...mainPost,
                         isLiked: likedPostIds.has(post.id),
                         isReposted: repostedPostIds.has(post.id),
-                    } as any;
+                    };
 
                     replyPosts = replies.map(r => ({
                         ...r,
                         isLiked: likedPostIds.has(r.id),
                         isReposted: repostedPostIds.has(r.id),
-                    })) as any[];
+                    }));
                 }
             } catch {
             }

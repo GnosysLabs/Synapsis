@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, type ImgHTMLAttributes } from 'react';
+import Image from 'next/image';
+import { useState, type ComponentProps } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { shouldBlurProfileMedia } from '@/lib/nsfw/profile-media';
@@ -17,15 +18,18 @@ export function getDiceBearAvatarUrl(seed: string, nodeDomain?: string | null): 
     return `https://api.dicebear.com/9.x/bottts-neutral/svg?seed=${encodeURIComponent(getDiceBearAvatarSeed(seed, nodeDomain))}`;
 }
 
-interface AvatarImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, 'src'> {
+interface AvatarImageProps extends Omit<ComponentProps<typeof Image>, 'src' | 'alt' | 'width' | 'height'> {
     avatarUrl?: string | null;
     seed: string;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
+    alt?: string;
+    width?: number;
+    height?: number;
 }
 
-export function AvatarImage({ avatarUrl, seed, isNsfw = false, nodeIsNsfw, nodeDomain, alt = '', onError, style, ...props }: AvatarImageProps) {
+export function AvatarImage({ avatarUrl, seed, isNsfw = false, nodeIsNsfw, nodeDomain, alt = '', width = 96, height = 96, onError, style, ...props }: AvatarImageProps) {
     const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
     const { user } = useAuth();
     const { config } = useRuntimeConfig();
@@ -40,10 +44,13 @@ export function AvatarImage({ avatarUrl, seed, isNsfw = false, nodeIsNsfw, nodeD
     });
 
     return (
-        <img
+        <Image
+            unoptimized
             {...props}
             src={src}
             alt={alt}
+            width={width}
+            height={height}
             style={{
                 ...style,
                 filter: blurred ? 'blur(12px)' : style?.filter,

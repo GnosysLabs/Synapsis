@@ -12,7 +12,6 @@
  * - On logout, both are cleared
  */
 
-import { deserializeEncryptedKey, type EncryptedPrivateKey } from './private-key-client';
 
 const DB_NAME = 'synapsis-identity';
 const DB_VERSION = 1;
@@ -60,7 +59,7 @@ async function openDB(): Promise<IDBDatabase> {
   });
 }
 
-async function storeInDB(key: string, value: any): Promise<void> {
+async function storeInDB(key: string, value: unknown): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -135,14 +134,6 @@ export async function deriveSessionKey(password: string): Promise<CryptoKey> {
 /**
  * Generate a random session key (for when we already have the decrypted key)
  */
-async function generateSessionKey(): Promise<CryptoKey> {
-  return crypto.subtle.generateKey(
-    { name: 'AES-GCM', length: 256 },
-    true,
-    ['encrypt', 'decrypt']
-  );
-}
-
 async function exportSessionKey(key: CryptoKey): Promise<string> {
   const exported = await crypto.subtle.exportKey('raw', key);
   return arrayBufferToBase64(exported);

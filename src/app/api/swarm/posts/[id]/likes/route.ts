@@ -5,8 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, likes, users, remoteLikes } from '@/db';
-import { eq, and } from 'drizzle-orm';
+import { db } from '@/db';
 import { z } from 'zod';
 
 type RouteContext = { params: Promise<{ id: string }> };

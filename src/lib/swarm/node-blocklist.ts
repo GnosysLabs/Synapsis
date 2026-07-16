@@ -1,5 +1,5 @@
 import { db, swarmNodes } from '@/db';
-import { and, eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { normalizeNodeDomain } from './node-domain';
 
 export { normalizeNodeDomain } from './node-domain';

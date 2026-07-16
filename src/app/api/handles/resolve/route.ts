@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, handleRegistry } from '@/db';
-import { eq } from 'drizzle-orm';
+import { db } from '@/db';
 import { normalizeHandle, upsertHandleEntries } from '@/lib/federation/handles';
 import { z } from 'zod';
 

@@ -71,7 +71,7 @@ export async function getNodeKeypair(): Promise<{ privateKey: string; publicKey:
   const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
   // Try to get existing node
-  let node = await db.query.nodes.findFirst({
+  const node = await db.query.nodes.findFirst({
     where: { domain: domain },
   });
 
@@ -80,13 +80,13 @@ export async function getNodeKeypair(): Promise<{ privateKey: string; publicKey:
     const { publicKey, privateKey } = await generateKeyPair();
     const encryptedPrivateKey = encryptPrivateKey(privateKey);
 
-    const [newNode] = await db.insert(nodes).values({
+    await db.insert(nodes).values({
       domain,
       name: process.env.NEXT_PUBLIC_NODE_NAME || 'Synapsis Node',
       description: process.env.NEXT_PUBLIC_NODE_DESCRIPTION || 'A swarm social network node',
       publicKey,
       privateKeyEncrypted: encryptedPrivateKey,
-    }).returning();
+    });
 
     return { privateKey, publicKey };
   }

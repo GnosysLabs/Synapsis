@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { users, blocks, follows } from '@/db/schema';
+import { blocks, follows } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';

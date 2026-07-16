@@ -5,8 +5,7 @@
  * Nodes periodically exchange their known nodes/handles with random peers.
  */
 
-import { db, handleRegistry } from '@/db';
-import { desc, gt } from 'drizzle-orm';
+import { db } from '@/db';
 import type { SwarmGossipPayload, SwarmGossipResponse, SwarmSyncResult, SwarmNodeInfo } from './types';
 import { SWARM_CONFIG } from './types';
 import {
@@ -86,8 +85,6 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
 export async function processGossip(
   payload: SwarmGossipPayload
 ): Promise<SwarmGossipResponse> {
-  const startTime = Date.now();
-
   // Process incoming nodes
   const nodeResult = await upsertSwarmNodes(payload.nodes, payload.sender);
 

@@ -14,7 +14,7 @@ const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvw
 function base58Encode(buffer: Uint8Array): string {
   const alphabet = BASE58_ALPHABET;
   let carry: number;
-  let digits: number[] = [0];
+  const digits: number[] = [0];
   
   for (let i = 0; i < buffer.length; i++) {
     carry = buffer[i];

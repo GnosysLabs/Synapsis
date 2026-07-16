@@ -5,8 +5,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, users, media, nodes } from '@/db';
-import { eq, desc, and, isNull, lt, sql, inArray } from 'drizzle-orm';
+import { db, posts, users, media } from '@/db';
+import { eq, desc, and, isNull, lt, inArray } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
 export interface SwarmPost {

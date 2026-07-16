@@ -1,8 +1,6 @@
 
 import 'dotenv/config';
 import { db } from '@/db';
-import { handleRegistry } from '@/db/schema';
-import { eq } from 'drizzle-orm';
 
 const TARGET_DID = 'did:synapsis:75aea1b8630142f59e3cd893ec1d88e5'; // The one that failed
 

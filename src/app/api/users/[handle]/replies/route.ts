@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
-import { db, likes, posts, users } from '@/db';
-import { and, desc, eq, inArray, lt, not, or, isNotNull } from 'drizzle-orm';
+import { db } from '@/db';
 import { discoverNode } from '@/lib/swarm/discovery';
-import { getRemoteBaseUrl, mapRemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
+import { getRemoteBaseUrl, mapRemoteProfilePost, type RemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
 import { isSwarmNode } from '@/lib/swarm/interactions';
 import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
@@ -26,6 +25,13 @@ const replyRelations = {
 } as const;
 
 type RouteContext = { params: Promise<{ handle: string }> };
+type FeedPostWithChildren = {
+  id: string;
+  repostOf?: FeedPostWithChildren | null;
+  replyTo?: FeedPostWithChildren | null;
+  isLiked?: boolean;
+  isReposted?: boolean;
+};
 
 export async function GET(request: Request, context: RouteContext) {
   try {
@@ -52,23 +58,23 @@ export async function GET(request: Request, context: RouteContext) {
         return NextResponse.json({ posts: [], nextCursor: null });
       }
 
-      const data = await res.json();
+      const data = await res.json() as { posts?: RemoteProfilePost[] };
       const { getSession } = await import('@/lib/auth');
       const session = await getSession();
       const viewer = session?.user;
-      const mappedPosts = (data.posts || []).map((post: any) => mapRemoteProfilePost(post, remote.domain));
+      const mappedPosts = (data.posts || []).map((post) => mapRemoteProfilePost(post, remote.domain));
       const repostedIds = viewer
         ? await getViewerSwarmRepostedPostIds(
-            mappedPosts.map((post: any) => ({
+            mappedPosts.map((post) => ({
               id: post.id,
               nodeDomain: remote.domain,
-              originalPostId: post.originalPostId || post.id.split(':').pop(),
+              originalPostId: post.originalPostId || post.id.split(':').pop() || post.id,
             })),
             viewer.id
           )
         : new Set<string>();
       return NextResponse.json({
-        posts: mappedPosts.map((post: any) => ({
+        posts: mappedPosts.map((post) => ({
           ...post,
           isReposted: repostedIds.has(post.id),
         })),
@@ -132,7 +138,7 @@ export async function GET(request: Request, context: RouteContext) {
       }
     }
 
-    let replyPosts: any[] = await db.query.posts.findMany({
+    let replyPosts: FeedPostWithChildren[] = await db.query.posts.findMany({
       where: {
         userId: user.id,
         isRemoved: false,

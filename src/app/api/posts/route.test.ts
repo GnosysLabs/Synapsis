@@ -76,7 +76,7 @@ describe('POST /api/posts', () => {
       postsCount: 0,
     };
 
-    vi.mocked(requireSignedAction).mockResolvedValue(mockUser as any);
+    vi.mocked(requireSignedAction).mockResolvedValue(mockUser as Awaited<ReturnType<typeof requireSignedAction>>);
 
     // Create a signed action payload
     const signedAction = {
@@ -253,7 +253,7 @@ describe('POST /api/posts', () => {
       postsCount: 0,
     };
 
-    vi.mocked(requireSignedAction).mockResolvedValue(mockUser as any);
+    vi.mocked(requireSignedAction).mockResolvedValue(mockUser as Awaited<ReturnType<typeof requireSignedAction>>);
 
     const signedAction = {
       action: 'post',
@@ -294,7 +294,7 @@ describe('POST /api/posts', () => {
       postsCount: 0,
     };
 
-    vi.mocked(requireSignedAction).mockResolvedValue(mockUser as any);
+    vi.mocked(requireSignedAction).mockResolvedValue(mockUser as Awaited<ReturnType<typeof requireSignedAction>>);
 
     const signedAction = {
       action: 'post',

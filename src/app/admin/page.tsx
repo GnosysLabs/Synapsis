@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import AutoTextarea from '@/components/AutoTextarea';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
@@ -322,9 +323,12 @@ export default function AdminPage() {
                                 </div>
                                 {nodeSettings.logoUrl && (
                                     <div style={{ marginTop: '8px', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--background-secondary)' }}>
-                                        <img
+                                        <Image
+                                            unoptimized
                                             src={nodeSettings.logoUrl}
                                             alt="Custom logo"
+                                            width={200}
+                                            height={60}
                                             style={{ maxWidth: '200px', maxHeight: '60px', objectFit: 'contain' }}
                                         />
                                     </div>
@@ -365,9 +369,12 @@ export default function AdminPage() {
                                 </div>
                                 {nodeSettings.faviconUrl && (
                                     <div style={{ marginTop: '8px', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--background-secondary)', display: 'inline-block' }}>
-                                        <img
+                                        <Image
+                                            unoptimized
                                             src={nodeSettings.faviconUrl}
                                             alt="Custom favicon"
+                                            width={32}
+                                            height={32}
                                             style={{ width: '32px', height: '32px', objectFit: 'contain' }}
                                         />
                                     </div>
@@ -423,9 +430,12 @@ export default function AdminPage() {
                                 </div>
                                 {nodeSettings.bannerUrl && (
                                     <div style={{ marginTop: '12px' }}>
-                                        <img
+                                        <Image
+                                            unoptimized
                                             src={nodeSettings.bannerUrl}
                                             alt="Banner preview"
+                                            width={520}
+                                            height={220}
                                             style={{
                                                 width: '100%',
                                                 maxWidth: '520px',

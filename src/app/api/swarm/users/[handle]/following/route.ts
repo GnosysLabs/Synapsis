@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, follows, users, remoteFollows } from '@/db';
+import { db, follows, users } from '@/db';
 import { eq } from 'drizzle-orm';
 
 export interface SwarmFollowingUser {

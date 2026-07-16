@@ -39,7 +39,7 @@ interface AuthContextType {
     refreshAuth: () => Promise<void>;
     updateUserProfile: (updates: Partial<User>) => void;
     lockIdentity: () => Promise<void>;  // New: manual lock
-    signUserAction: (action: string, data: any) => Promise<any>;
+    signUserAction: (action: string, data: unknown) => Promise<unknown>;
     requiresUnlock: boolean;  // True if user has encrypted key but not unlocked
     showUnlockPrompt: boolean;
     setShowUnlockPrompt: (show: boolean) => void;
@@ -181,7 +181,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     /**
      * Manually set the user state (called after successful login)
      */
-    const login = useCallback(async (_userData?: User) => {
+    const login = useCallback(async (userData?: User) => {
+        void userData;
         await refreshAuth();
     }, [refreshAuth]);
 

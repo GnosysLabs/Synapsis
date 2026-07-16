@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
-import { db, follows, users, remoteFollowers } from '@/db';
+import { db, follows, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import { hydrateSwarmUsers } from '@/lib/swarm/user-hydration';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 
 type RouteContext = { params: Promise<{ handle: string }> };
+type RemoteUserSummary = { handle: string; displayName?: string; avatarUrl?: string; bio?: string; isRemote?: boolean };
 
 /**
  * Fetch followers list from a remote swarm node
@@ -18,7 +19,7 @@ const fetchSwarmFollowers = async (handle: string, domain: string, limit: number
             signal: AbortSignal.timeout(5000),
         });
         if (!res.ok) return null;
-        return await res.json();
+        return await res.json() as { followers?: RemoteUserSummary[] };
     } catch {
         return null;
     }
@@ -40,7 +41,7 @@ export async function GET(request: Request, context: RouteContext) {
             const swarmData = await fetchSwarmFollowers(remote.handle, remote.domain, limit);
             if (swarmData?.followers) {
                 // Transform to include full handles for local users on that node
-                const followers = swarmData.followers.map((f: any) => ({
+                const followers = swarmData.followers.map((f) => ({
                     id: f.isRemote ? f.handle : `${f.handle}@${remote.domain}`,
                     handle: f.isRemote ? f.handle : `${f.handle}@${remote.domain}`,
                     displayName: f.displayName,

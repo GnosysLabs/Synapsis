@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { HeartIcon, RepeatIcon, MessageIcon, FlagIcon, TrashIcon } from '@/components/Icons';
@@ -28,9 +29,12 @@ function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
 
     return (
         <div className="link-preview-image">
-            <img
+            <Image
+                unoptimized
                 src={src}
                 alt={alt}
+                width={640}
+                height={360}
                 onError={() => setHasError(true)}
             />
         </div>
@@ -86,7 +90,7 @@ function LinkPreviewGallery({
         <div className={`link-preview-gallery ${compact ? 'compact' : ''}`}>
             {visibleMedia.map((item, index) => (
                 <div className="link-preview-gallery-item" key={`${item.url}-${index}`}>
-                    <img src={item.url} alt={alt} loading="lazy" />
+                    <Image unoptimized src={item.url} alt={alt} width={640} height={480} loading="lazy" />
                     {index === visibleMedia.length - 1 && media.length > visibleMedia.length && (
                         <span className="link-preview-gallery-more">+{media.length - visibleMedia.length}</span>
                     )}
@@ -201,6 +205,7 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
         post.linkPreviewImage,
         post.linkPreviewVideoUrl,
         post.linkPreviewMedia,
+        post,
     ]);
 
     const formatTime = (dateStr: string | Date) => {

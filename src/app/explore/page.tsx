@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { SearchIcon, TrendingIcon, UsersIcon } from '@/components/Icons';
+import { SearchIcon, UsersIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
 import { Post } from '@/lib/types';
 import { useFormattedHandle } from '@/lib/utils/handle';
@@ -113,7 +113,7 @@ export default function ExplorePage() {
     }, [activeTab, swarmPosts.length]);
 
     // Load more node posts
-    const loadMoreNode = async () => {
+    const loadMoreNode = useCallback(async () => {
         if (!nodeCursor || loadingMore || !hasMoreNode) return;
         setLoadingMore(true);
         try {
@@ -131,10 +131,10 @@ export default function ExplorePage() {
         } finally {
             setLoadingMore(false);
         }
-    };
+    }, [hasMoreNode, loadingMore, nodeCursor]);
 
     // Load more swarm posts
-    const loadMoreSwarm = async () => {
+    const loadMoreSwarm = useCallback(async () => {
         if (!swarmCursor || loadingMore || !hasMoreSwarm) return;
         setLoadingMore(true);
         try {
@@ -155,7 +155,7 @@ export default function ExplorePage() {
         } finally {
             setLoadingMore(false);
         }
-    };
+    }, [hasMoreSwarm, loadingMore, swarmCursor]);
 
     // Intersection Observer for Infinite Scroll
     useEffect(() => {
@@ -178,7 +178,7 @@ export default function ExplorePage() {
         }
 
         return () => observer.disconnect();
-    }, [activeTab, nodeCursor, swarmCursor, loadingMore, hasMoreNode, hasMoreSwarm]);
+    }, [activeTab, loadMoreNode, loadMoreSwarm]);
 
     useEffect(() => {
         // Load users when tab changes to users

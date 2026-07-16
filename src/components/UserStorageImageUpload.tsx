@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import Image from 'next/image';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 
@@ -114,9 +115,12 @@ export function UserStorageImageUpload({
                                 background: 'var(--background-tertiary)',
                             }}
                         >
-                            <img
+                            <Image
+                                unoptimized
                                 src={value}
                                 alt={`${label} preview`}
+                                width={previewWidth}
+                                height={previewHeight}
                                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                             />
                         </div>

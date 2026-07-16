@@ -7,7 +7,6 @@
 
 import { db } from '@/db';
 import { remoteIdentityCache } from '@/db/schema';
-import { eq } from 'drizzle-orm';
 
 // Strict continuity flag: if true (default), reject any key change.
 const ALLOW_KEY_ROTATION = process.env.ALLOW_KEY_ROTATION === 'true';

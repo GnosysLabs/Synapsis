@@ -3,15 +3,16 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
+import { webcrypto } from 'node:crypto';
 import { decryptPrivateKey, isEncryptedPrivateKey } from './private-key-client';
 
 // Mock Web Crypto API for Node.js test environment
 beforeAll(() => {
   if (typeof window === 'undefined') {
-    // @ts-ignore
-    global.window = {
-      crypto: require('crypto').webcrypto
-    };
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { crypto: webcrypto },
+    });
   }
 });
 
@@ -36,15 +37,16 @@ describe('private-key-client', () => {
   describe('decryptPrivateKey', () => {
     it('should throw error when not in browser', async () => {
       const originalWindow = global.window;
-      // @ts-ignore
-      delete global.window;
+      Reflect.deleteProperty(globalThis, 'window');
 
       await expect(
         decryptPrivateKey({ encrypted: 'test', salt: 'test', iv: 'test' }, 'password')
       ).rejects.toThrow('Decryption can only be performed in the browser');
 
-      // @ts-ignore
-      global.window = originalWindow;
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: originalWindow,
+      });
     });
 
     // Note: Full decryption test would require a valid encrypted key

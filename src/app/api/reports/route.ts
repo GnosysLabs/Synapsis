@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
-import { db, reports, posts, users } from '@/db';
-import { requireAuth } from '@/lib/auth';
+import { db, reports } from '@/db';
 import { requireSignedAction } from '@/lib/auth/verify-signature';
-import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 const reportSchema = z.object({

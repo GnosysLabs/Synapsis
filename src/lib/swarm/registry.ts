@@ -5,8 +5,8 @@
  */
 
 import { db, media, posts, swarmNodes, swarmSeeds, swarmSyncLog, users } from '@/db';
-import { eq, desc, and, gt, isNotNull, lt, sql } from 'drizzle-orm';
-import type { SwarmNodeInfo, SwarmCapability, SwarmSyncResult } from './types';
+import { eq, isNotNull, sql } from 'drizzle-orm';
+import type { SwarmNodeInfo, SwarmSyncResult } from './types';
 import { SWARM_CONFIG, DEFAULT_SEED_NODES } from './types';
 import {
   getCanonicalSwarmSeedDomain,

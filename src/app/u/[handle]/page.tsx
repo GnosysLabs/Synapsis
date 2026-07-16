@@ -60,7 +60,7 @@ export default function ProfilePage() {
     const { did, handle: currentHandle, isIdentityUnlocked, signUserAction, updateUserProfile } = useAuth();
 
     const [user, setUser] = useState<User | null>(null);
-    const userFullHandle = user ? useFormattedHandle(user.handle) : '';
+    const userFullHandle = useFormattedHandle(user?.handle || '');
     const [posts, setPosts] = useState<Post[]>([]);
     const [likedPosts, setLikedPosts] = useState<Post[]>([]);
     const [currentUser, setCurrentUser] = useState<{ id: string; handle: string } | null>(null);
@@ -169,7 +169,7 @@ export default function ProfilePage() {
         } finally {
             setRepliesLoadingMore(false);
         }
-    }, [user, repliesCursor, repliesLoadingMore]);
+    }, [handle, user, repliesCursor, repliesLoadingMore]);
 
     // Infinite scroll observer
     useEffect(() => {
@@ -558,7 +558,7 @@ export default function ProfilePage() {
                                         </button>
                                     )}
                                     {/* Message Button (V2 Chat) - Respect privacy settings */}
-                                    {user.did && (user as any).canReceiveDms !== false && (
+                                    {user.did && user.canReceiveDms !== false && (
                                         <Link href={`/chat?compose=${user.handle}`} className="btn btn-ghost" style={{ padding: '8px' }}>
                                             <Mail size={20} />
                                         </Link>

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, users, posts, sessions, likes, follows, notifications, chatMessages, chatConversations } from '@/db';
-import { eq, or, and } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { verifyPassword } from '@/lib/auth';
 import { cookies } from 'next/headers';

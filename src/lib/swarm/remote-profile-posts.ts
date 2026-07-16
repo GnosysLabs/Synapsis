@@ -9,8 +9,9 @@ export const getRemoteBaseUrl = (domain: string) =>
       ? `http://${domain}`
       : `https://${domain}`;
 
-type RemoteProfilePost = {
+export type RemoteProfilePost = {
   id: string;
+  createdAt: string;
   originalPostId?: string;
   author?: {
     id?: string;

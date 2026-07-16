@@ -14,8 +14,7 @@ export async function getViewerSwarmRepostedPostIds(
     return repostedIds;
   }
 
-  const { db, userSwarmReposts } = await import('@/db');
-  const { and, eq, inArray } = await import('drizzle-orm');
+  const { db } = await import('@/db');
 
   const domains = Array.from(new Set(targets.map((target) => target.nodeDomain)));
   const originalPostIds = Array.from(new Set(targets.map((target) => target.originalPostId)));

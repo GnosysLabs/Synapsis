@@ -6,7 +6,6 @@
  */
 
 import { db, remoteIdentityCache } from '@/db';
-import { eq } from 'drizzle-orm';
 
 interface IdentityCacheEntry {
   did: string;
@@ -37,6 +36,8 @@ export async function cacheIdentity(
   _displayName: string | null = null,
   _avatarUrl: string | null = null
 ): Promise<void> {
+  void _displayName;
+  void _avatarUrl;
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
   
@@ -96,6 +97,8 @@ export function logKeyChange(
   oldKey: string,
   newKey: string
 ): void {
+  void oldKey;
+  void newKey;
   // Log a prominent security warning
   console.error('╔══════════════════════════════════════════════════════════════════════════════╗');
   console.error('║ 🚨 SECURITY WARNING: REMOTE PUBLIC KEY CHANGED 🚨                            ║');
@@ -176,6 +179,10 @@ export function shouldAcceptKeyChange(
   oldKey: string,
   newKey: string
 ): boolean {
+  void handle;
+  void nodeDomain;
+  void oldKey;
+  void newKey;
   const policy = process.env.KEY_CHANGE_POLICY || 'warn';
   
   switch (policy) {

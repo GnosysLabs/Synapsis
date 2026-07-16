@@ -5,8 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, users, userSwarmReposts } from '@/db';
-import { eq, desc, and, isNull } from 'drizzle-orm';
+import { db, media, posts, users, userSwarmReposts } from '@/db';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
 export interface SwarmUserProfile {
@@ -82,7 +81,13 @@ function parseMediaJson(mediaJson: string | null) {
   }
 }
 
-function mapLocalPostToSwarmPost(post: any, nodeDomain: string, nodeIsNsfw: boolean): SwarmUserPost {
+type LocalPostWithRelations = typeof posts.$inferSelect & {
+  author: typeof users.$inferSelect | null;
+  media: Array<typeof media.$inferSelect>;
+  repostOf?: LocalPostWithRelations | null;
+};
+
+function mapLocalPostToSwarmPost(post: LocalPostWithRelations, nodeDomain: string, nodeIsNsfw: boolean): SwarmUserPost {
   return {
     id: post.id,
     originalPostId: post.id,
@@ -101,7 +106,7 @@ function mapLocalPostToSwarmPost(post: any, nodeDomain: string, nodeIsNsfw: bool
       nodeIsNsfw,
       nodeDomain,
     } : undefined,
-    media: (post.media || []).map((item: any) => ({
+    media: post.media.map((item) => ({
       url: item.url,
       mimeType: item.mimeType || undefined,
       altText: item.altText || undefined,
@@ -110,7 +115,9 @@ function mapLocalPostToSwarmPost(post: any, nodeDomain: string, nodeIsNsfw: bool
     linkPreviewTitle: post.linkPreviewTitle || undefined,
     linkPreviewDescription: post.linkPreviewDescription || undefined,
     linkPreviewImage: post.linkPreviewImage || undefined,
-    linkPreviewType: post.linkPreviewType || undefined,
+    linkPreviewType: post.linkPreviewType === 'card' || post.linkPreviewType === 'image' || post.linkPreviewType === 'gallery' || post.linkPreviewType === 'video'
+      ? post.linkPreviewType
+      : undefined,
     linkPreviewVideoUrl: post.linkPreviewVideoUrl || undefined,
     linkPreviewMedia: parseLinkPreviewMediaJson(post.linkPreviewMediaJson),
     repostOfId: post.repostOfId || undefined,

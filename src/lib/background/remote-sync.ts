@@ -5,7 +5,7 @@
  * Swarm-only implementation.
  */
 
-import { db, remoteFollows } from '@/db';
+import { db } from '@/db';
 import { cacheSwarmUserPosts, isSwarmNode } from '@/lib/swarm/interactions';
 
 // Track last sync time per remote handle to avoid over-fetching
@@ -24,6 +24,7 @@ interface SyncResult {
  * Now only syncs from swarm nodes
  */
 export async function syncRemoteFollowsPosts(origin: string): Promise<SyncResult> {
+  void origin;
   const result: SyncResult = { synced: 0, skipped: 0, errors: 0, details: [] };
 
   try {
@@ -40,7 +41,7 @@ export async function syncRemoteFollowsPosts(origin: string): Promise<SyncResult
 
     const now = Date.now();
 
-    for (const [targetHandle, follow] of uniqueHandles) {
+    for (const targetHandle of uniqueHandles.keys()) {
       try {
         // Check if we've synced this user recently
         const lastSync = lastSyncTimes.get(targetHandle);

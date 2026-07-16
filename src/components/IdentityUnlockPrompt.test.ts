@@ -33,8 +33,8 @@ describe('IdentityUnlockPrompt Component', () => {
 
   it('should export the component', async () => {
     // Verify the component can be imported
-    const module = await import('./IdentityUnlockPrompt');
-    expect(module.IdentityUnlockPrompt).toBeDefined();
-    expect(typeof module.IdentityUnlockPrompt).toBe('function');
+    const importedModule = await import('./IdentityUnlockPrompt');
+    expect(importedModule.IdentityUnlockPrompt).toBeDefined();
+    expect(typeof importedModule.IdentityUnlockPrompt).toBe('function');
   });
 });

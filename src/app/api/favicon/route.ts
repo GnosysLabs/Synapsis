@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, nodes } from '@/db';
-import { eq } from 'drizzle-orm';
+import { db } from '@/db';
 
 function getRequestBaseUrl(req: NextRequest, fallbackDomain: string): string {
     const forwardedHost = req.headers.get('x-forwarded-host');

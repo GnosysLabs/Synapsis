@@ -41,7 +41,7 @@ export async function POST(request: Request) {
                     added: merged.added,
                     updated: merged.updated,
                 });
-            } catch (error) {
+            } catch {
                 results.push({ node, success: false, error: 'Fetch failed' });
             }
         }

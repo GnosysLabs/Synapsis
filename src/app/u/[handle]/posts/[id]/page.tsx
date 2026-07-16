@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
@@ -9,6 +8,7 @@ import { Compose } from '@/components/Compose';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { Post } from '@/lib/types';
 import { signedAPI } from '@/lib/api/signed-fetch';
+import type { LinkPreviewData } from '@/lib/media/linkPreview';
 
 export default function PostDetailPage() {
     const params = useParams();
@@ -23,7 +23,7 @@ export default function PostDetailPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const fetchPostDetail = async () => {
+    const fetchPostDetail = useCallback(async () => {
         try {
             const res = await fetch(`/api/posts/${id}`);
             if (!res.ok) {
@@ -38,15 +38,15 @@ export default function PostDetailPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [id]);
 
     useEffect(() => {
         fetchPostDetail();
-    }, [id]);
+    }, [fetchPostDetail]);
 
-    const handlePost = async (content: string, mediaIds: string[], linkPreview?: any, replyToId?: string, isNsfw?: boolean) => {
+    const handlePost = async (content: string, mediaIds: string[], linkPreview?: LinkPreviewData, replyToId?: string, isNsfw?: boolean) => {
         // Check if we're replying to a swarm post
-        let swarmReplyTo: { postId: string; nodeDomain: string; content?: string; author?: any } | undefined;
+        let swarmReplyTo: { postId: string; nodeDomain: string; content?: string; author?: Post['author'] } | undefined;
         let localReplyToId: string | undefined = replyToId;
 
         if (replyingTo?.isSwarm && replyingTo.nodeDomain && replyingTo.originalPostId) {

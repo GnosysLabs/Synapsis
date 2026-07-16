@@ -5,8 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, userSwarmReposts, users } from '@/db';
-import { eq, desc, and } from 'drizzle-orm';
+import { db } from '@/db';
 import { z } from 'zod';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
@@ -113,7 +112,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       limit: 50,
     });
 
-    const author = post.author as any;
+    const author = post.author;
 
     return NextResponse.json({
       post: {
@@ -129,7 +128,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
           displayName: author.displayName,
           avatarUrl: author.avatarUrl,
         },
-        media: (post.media as any[])?.map(m => ({
+        media: post.media?.map(m => ({
           url: m.url,
           altText: m.altText,
         })) || [],
@@ -142,7 +141,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         linkPreviewMedia: parseLinkPreviewMediaJson(post.linkPreviewMediaJson) || [],
       },
       replies: replies.map(r => {
-        const replyAuthor = r.author as any;
+        const replyAuthor = r.author;
         return {
           id: r.id,
           content: r.content,
@@ -155,7 +154,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
             displayName: replyAuthor.displayName,
             avatarUrl: replyAuthor.avatarUrl,
           },
-          media: (r.media as any[])?.map(m => ({
+          media: r.media?.map(m => ({
             url: m.url,
             altText: m.altText,
           })) || [],

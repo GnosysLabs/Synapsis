@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, swarmNodes } from '@/db';
-import { desc } from 'drizzle-orm';
+import { db } from '@/db';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth/admin';
 import { normalizeNodeDomain, unblockNode, upsertBlockedNode } from '@/lib/swarm/node-blocklist';

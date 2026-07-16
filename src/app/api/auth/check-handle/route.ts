@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, users, isDbAvailable } from '@/db';
-import { eq } from 'drizzle-orm';
+import { db, isDbAvailable } from '@/db';
 
 export async function GET(req: NextRequest) {
     try {
@@ -27,9 +26,12 @@ export async function GET(req: NextRequest) {
             existingUser = await db.query.users.findFirst({
                 where: { handle: handle },
             });
-        } catch (err: any) {
+        } catch (err: unknown) {
             // Handle fresh installs where the users table isn't created yet.
-            if (err?.code === '42P01' || /relation .*users.* does not exist/i.test(err?.message || '')) {
+            const databaseError = err instanceof Error
+                ? Object.assign(err, { code: (err as Error & { code?: string }).code })
+                : null;
+            if (databaseError?.code === '42P01' || /relation .*users.* does not exist/i.test(databaseError?.message || '')) {
                 return NextResponse.json(
                     { available: true, handle, warning: 'Database not initialized' },
                     { status: 503 }

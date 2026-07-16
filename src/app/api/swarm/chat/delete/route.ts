@@ -8,8 +8,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, users, chatConversations } from '@/db';
-import { eq, and } from 'drizzle-orm';
+import { db, chatConversations } from '@/db';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifyUserInteraction } from '@/lib/swarm/signature';
 import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';

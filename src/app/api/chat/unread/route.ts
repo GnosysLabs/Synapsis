@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, chatConversations, chatMessages } from '@/db';
-import { eq, and, isNull, inArray } from 'drizzle-orm';
+import { db } from '@/db';
 import { getSession } from '@/lib/auth';
 
 export async function GET() {

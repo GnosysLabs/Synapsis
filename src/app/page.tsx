@@ -1,25 +1,14 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import Link from 'next/link';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { PostCard } from '@/components/PostCard';
 import { Compose } from '@/components/Compose';
 import { Post } from '@/lib/types';
-import { EyeOff } from 'lucide-react';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { DEFAULT_HOME_FEED, HOME_FEED_LABELS, type HomeFeedType } from '@/lib/posts/home-feed';
-
-interface FeedMeta {
-  score: number;
-  reasons: string[];
-  engagement: {
-    likes: number;
-    reposts: number;
-    replies: number;
-  };
-}
+import type { LinkPreviewData } from '@/lib/media/linkPreview';
 
 export default function Home() {
   const router = useRouter();
@@ -138,7 +127,7 @@ export default function Home() {
     return () => observer.disconnect();
   }, [nextCursor, loadingMore, feedType]);
 
-  const handlePost = async (content: string, mediaIds: string[], linkPreview?: any, replyToId?: string, isNsfw?: boolean) => {
+  const handlePost = async (content: string, mediaIds: string[], linkPreview?: LinkPreviewData, replyToId?: string, isNsfw?: boolean) => {
     // Check if we're replying to a swarm post
     let swarmReplyTo: { postId: string; nodeDomain: string } | undefined;
     let localReplyToId: string | undefined = replyToId;

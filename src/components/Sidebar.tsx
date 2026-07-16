@@ -217,7 +217,7 @@ export function Sidebar() {
         <aside className="sidebar">
             <Link href={user ? "/" : "/explore"} className="logo" style={{ minHeight: '42px' }}>
                 {customLogoUrl === undefined ? null : customLogoUrl ? (
-                    <img src={customLogoUrl} alt="Logo" style={{ maxWidth: '200px', maxHeight: '50px', objectFit: 'contain' }} />
+                    <Image unoptimized src={customLogoUrl} alt="Logo" width={200} height={50} style={{ maxWidth: '200px', maxHeight: '50px', objectFit: 'contain' }} />
                 ) : (
                     <Image src="/logotext.svg" alt="Synapsis" width={185} height={42} priority />
                 )}

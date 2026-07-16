@@ -165,7 +165,7 @@ export default function ModerationSettingsPage() {
                             textAlign: 'center',
                             color: 'var(--foreground-tertiary)',
                         }}>
-                            You haven't blocked anyone
+                            You haven&apos;t blocked anyone
                         </div>
                     ) : (
                         <div className="card" style={{ overflow: 'hidden' }}>
@@ -240,7 +240,7 @@ export default function ModerationSettingsPage() {
                         color: 'var(--foreground-secondary)',
                         marginBottom: '12px',
                     }}>
-                        Posts from muted nodes won't appear in your feeds or search results.
+                        Posts from muted nodes won&apos;t appear in your feeds or search results.
                     </p>
 
                     <form onSubmit={handleMuteNode} style={{ marginBottom: '12px' }}>

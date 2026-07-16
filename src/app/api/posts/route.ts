@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, media, follows, mutes, blocks, likes, remoteFollows, remotePosts, userSwarmLikes, userSwarmReposts, notifications } from '@/db';
+import { db, posts, users, media, follows, mutes, blocks, remotePosts, userSwarmReposts, notifications } from '@/db';
 import { getSession, requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
-import { eq, desc, and, inArray, isNull, isNotNull, or, lt, sql } from 'drizzle-orm';
+import { eq, and, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
@@ -23,6 +23,7 @@ const CURATION_SEED_CAP = 200;
 
 type FeedPostWithChildren = {
     id: string;
+    createdAt: string | Date;
     repostOf?: FeedPostWithChildren | null;
     replyTo?: FeedPostWithChildren | null;
     isLiked?: boolean;
@@ -81,7 +82,7 @@ function mapUserSwarmRepostToFeedPost(
             linkPreviewVideoUrl: row.linkPreviewVideoUrl,
             linkPreviewMedia: parseLinkPreviewMediaJson(row.linkPreviewMediaJson) || null,
         },
-    } as any;
+    } as unknown as FeedPostWithChildren;
 }
 
 async function getMixedFeedCursorDate(cursor: string | null) {
@@ -612,7 +613,7 @@ export async function GET(request: Request) {
             // Merge and sort by date
             feedPosts = [...localPosts, ...transformedRemote]
                 .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                .slice(0, limit) as any;
+                .slice(0, limit);
         } else if (type === 'user' && userId) {
             // User's posts (excluding replies)
             let whereCondition = {
@@ -772,7 +773,7 @@ export async function GET(request: Request) {
                         }
                         return mapUserSwarmRepostToFeedPost(row, author);
                     })
-                    .filter(Boolean);
+                    .filter((post): post is FeedPostWithChildren => post !== null);
 
                 // Get handles of remote users we follow
                 const followedRemoteUsers = await db.query.remoteFollows.findMany({
@@ -780,7 +781,7 @@ export async function GET(request: Request) {
                 });
 
                 // Fetch posts LIVE from followed remote users (in parallel, with timeout)
-                let liveRemotePosts: any[] = [];
+                let liveRemotePosts: import('@/lib/swarm/remote-profile-posts').RemoteProfilePost[] = [];
                 if (followedRemoteUsers.length > 0) {
                     const { fetchSwarmUserProfile, isSwarmNode } = await import('@/lib/swarm/interactions');
                     const { mapRemoteProfilePost } = await import('@/lib/swarm/remote-profile-posts');
@@ -812,16 +813,16 @@ export async function GET(request: Request) {
                             if (!profileData?.posts) return [];
 
                             return profileData.posts
-                                .filter((post: any) => !post.replyToId && !post.swarmReplyToId && !post.isReply)
-                                .filter((post: any) => !cursorDate || new Date(post.createdAt) < cursorDate)
-                                .map((post: any) => mapRemoteProfilePost({
+                                .filter((post) => !post.replyToId && !post.swarmReplyToId && !post.isReply)
+                                .filter((post) => !cursorDate || new Date(post.createdAt) < cursorDate)
+                                .map((post) => mapRemoteProfilePost({
                                     ...post,
                                     author: post.author || {
                                         handle,
                                         displayName: follow.displayName || profileData.profile?.displayName || handle,
                                         avatarUrl: follow.avatarUrl || profileData.profile?.avatarUrl,
                                     },
-                                }, domain));
+                                } as unknown as import('@/lib/swarm/remote-profile-posts').RemoteProfilePost, domain));
                         } catch (error) {
                             console.error(`[Home] Error fetching posts from ${follow.targetHandle}:`, error);
                             return [];
@@ -837,7 +838,7 @@ export async function GET(request: Request) {
                     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
                     .slice(0, limit);
 
-                feedPosts = allPosts as any;
+                feedPosts = allPosts;
             } catch {
                 // Not authenticated, return public timeline
                 feedPosts = await db.query.posts.findMany({
@@ -924,7 +925,7 @@ export async function GET(request: Request) {
                                     likedPostIds.add(sp.id);
                                 }
                             }
-                        } catch (err) {
+                        } catch {
                             // Timeout or error - just skip
                         }
                     });
@@ -946,7 +947,7 @@ export async function GET(request: Request) {
                     feedPosts as FeedPostWithChildren[],
                     likedPostIds,
                     repostedPostIds
-                ) as any;
+                );
             }
         } catch (error) {
             console.error('Error populating interaction flags:', error);

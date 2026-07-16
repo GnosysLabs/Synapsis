@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { db, users, posts, likes } from '@/db';
-import { like, or, desc, and, eq, inArray } from 'drizzle-orm';
+import { db, users, posts } from '@/db';
+import { like, or, and, eq } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 
@@ -53,7 +53,7 @@ const parseRemoteHandleQuery = (query: string): { handle: string; domain: string
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
-        let query = searchParams.get('q') || '';
+        const query = searchParams.get('q') || '';
         const type = searchParams.get('type') || 'all'; // all, users, posts
         const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
 
@@ -223,7 +223,7 @@ export async function GET(request: Request) {
                             ...p,
                             isLiked: likedPostIds.has(p.id),
                             isReposted: repostedPostIds.has(p.id),
-                        })) as any;
+                        }));
                     }
                 }
             } catch (error) {
