@@ -759,9 +759,9 @@ export const e2eeKeyBundles = sqliteTable('e2ee_key_bundles', {
 ]);
 
 /**
- * PIN recovery vault. The PIN verifier is HMACed with a node secret and the
+ * Password recovery vault. The verifier is HMACed with a node secret and the
  * server share is separately encrypted, so a database-only leak is not an
- * offline PIN oracle. This is not a substitute for threshold/HSM recovery.
+ * offline password oracle. Legacy PIN vaults are marked for one-time migration.
  */
 export const e2eeKeyVaults = sqliteTable('e2ee_key_vaults', {
   userId: text('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
@@ -775,6 +775,7 @@ export const e2eeKeyVaults = sqliteTable('e2ee_key_vaults', {
   kdfAlgorithm: text('kdf_algorithm').notNull(),
   kdfOpsLimit: integer('kdf_ops_limit').notNull(),
   kdfMemLimit: integer('kdf_mem_limit').notNull(),
+  recoveryMethod: text('recovery_method').default('legacy_pin').notNull(),
   pinVerifierMac: text('pin_verifier_mac').notNull(),
   serverShareEncrypted: text('server_share_encrypted').notNull(),
   failedAttempts: integer('failed_attempts').default(0).notNull(),

@@ -109,25 +109,32 @@ describe('E2EE message crypto', () => {
   });
 });
 
-describe('E2EE PIN vault', () => {
-  it('round-trips only with the correct PIN and server share', async () => {
+describe('E2EE password vault', () => {
+  it('round-trips only with the correct password and server share', async () => {
     const material = await generateE2EEKeyMaterial();
-    const setup = await createE2EEVault('739184', material, aliceDid, 1);
-    const prepared = await prepareE2EEVaultUnlock('739184', setup.vault);
+    const setup = await createE2EEVault('correct horse battery staple', material, aliceDid, 1);
+    const prepared = await prepareE2EEVaultUnlock('correct horse battery staple', setup.vault);
 
     await expect(openE2EEVault(prepared, setup.vault, setup.serverShare)).resolves.toEqual(material);
 
-    const wrong = await prepareE2EEVaultUnlock('739185', setup.vault);
+    const wrong = await prepareE2EEVaultUnlock('wrong horse battery staple', setup.vault);
     await expect(openE2EEVault(wrong, setup.vault, setup.serverShare)).rejects.toThrow();
   });
 
   it('binds a vault to its owner and key metadata', async () => {
     const material = await generateE2EEKeyMaterial();
-    const setup = await createE2EEVault('739184', material, aliceDid, 1);
-    const prepared = await prepareE2EEVaultUnlock('739184', setup.vault);
+    const setup = await createE2EEVault('correct horse battery staple', material, aliceDid, 1);
+    const prepared = await prepareE2EEVaultUnlock('correct horse battery staple', setup.vault);
     const transplanted = { ...setup.vault, ownerDid: bobDid };
 
     await expect(openE2EEVault(prepared, transplanted, setup.serverShare)).rejects.toThrow();
+  });
+
+  it('can still derive an existing numeric PIN vault for one-time migration', async () => {
+    const material = await generateE2EEKeyMaterial();
+    const setup = await createE2EEVault('73918420', material, aliceDid, 1);
+    const prepared = await prepareE2EEVaultUnlock('73918420', setup.vault, 'legacy_pin');
+    await expect(openE2EEVault(prepared, setup.vault, setup.serverShare)).resolves.toEqual(material);
   });
 });
 

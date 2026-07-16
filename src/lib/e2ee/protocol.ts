@@ -7,8 +7,9 @@ export const E2EE_PROTOCOL_VERSION = 1;
 export const E2EE_CIPHER_SUITE = 'x25519+xchacha20poly1305+blake2b-v1' as const;
 export const E2EE_KEY_BUNDLE_ACTION = 'e2ee_key_bundle' as const;
 export const E2EE_CHAT_ACTION = 'chat_e2ee' as const;
-export const E2EE_PIN_MIN_LENGTH = 6;
-export const E2EE_PIN_MAX_LENGTH = 12;
+export const E2EE_VAULT_REWRAP_ACTION = 'e2ee_vault_rewrap' as const;
+export const E2EE_RECOVERY_PASSWORD_MIN_LENGTH = 8;
+export const E2EE_RECOVERY_PASSWORD_MAX_LENGTH = 256;
 export const E2EE_MAX_UNLOCK_ATTEMPTS = 10;
 export const E2EE_LOCKOUT_MS = 60 * 60 * 1000;
 
@@ -145,6 +146,7 @@ export const e2eeVaultStatusSchema = z.discriminatedUnion('configured', [
     kdfAlgorithm: z.literal(E2EE_KDF.algorithm),
     kdfOpsLimit: z.number().int().min(1).max(10),
     kdfMemLimit: z.number().int().min(8 * 1024 * 1024).max(256 * 1024 * 1024),
+    recoveryMethod: z.enum(['password', 'legacy_pin']),
     failedAttempts: z.number().int().min(0).max(E2EE_MAX_UNLOCK_ATTEMPTS),
     attemptsRemaining: z.number().int().min(0).max(E2EE_MAX_UNLOCK_ATTEMPTS),
     lockedUntil: z.string().datetime().nullable(),
@@ -241,9 +243,15 @@ export function validateMessageBindings(
   }
 }
 
-export function validatePin(pin: string): void {
-  const pinPattern = new RegExp(`^\\d{${E2EE_PIN_MIN_LENGTH},${E2EE_PIN_MAX_LENGTH}}$`);
-  if (!pinPattern.test(pin)) {
-    throw new Error(`PIN must contain ${E2EE_PIN_MIN_LENGTH}-${E2EE_PIN_MAX_LENGTH} digits`);
+export function validateRecoveryPassword(password: string): void {
+  if (password.length < E2EE_RECOVERY_PASSWORD_MIN_LENGTH
+    || password.length > E2EE_RECOVERY_PASSWORD_MAX_LENGTH) {
+    throw new Error(`Password must contain ${E2EE_RECOVERY_PASSWORD_MIN_LENGTH}-${E2EE_RECOVERY_PASSWORD_MAX_LENGTH} characters`);
+  }
+}
+
+export function validateLegacyPin(pin: string): void {
+  if (!/^\d{6,12}$/.test(pin)) {
+    throw new Error('PIN must contain 6-12 digits');
   }
 }

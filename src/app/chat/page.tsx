@@ -884,6 +884,7 @@ export default function ChatPage() {
                 identityUnlocked={isIdentityUnlocked}
                 onSetup={e2eeIdentity.setup}
                 onUnlock={e2eeIdentity.unlock}
+                onMigrate={e2eeIdentity.migrate}
                 onReset={e2eeIdentity.reset}
                 onRetry={e2eeIdentity.retry}
                 onCancel={() => router.push('/')}

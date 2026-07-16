@@ -10,9 +10,10 @@ interface E2EEChatGateProps {
   busy: boolean;
   error: string | null;
   identityUnlocked: boolean;
-  onSetup: (pin: string) => Promise<void>;
-  onUnlock: (pin: string) => Promise<void>;
-  onReset: (pin: string, currentPassword: string) => Promise<void>;
+  onSetup: (password: string) => Promise<void>;
+  onUnlock: (password: string) => Promise<void>;
+  onMigrate: (password: string, legacyPin?: string) => Promise<void>;
+  onReset: (currentPassword: string) => Promise<void>;
   onRetry: () => Promise<void>;
   onCancel: () => void;
 }
@@ -25,28 +26,26 @@ function formatCountdown(totalSeconds: number): string {
 
 export function E2EEChatGate(props: E2EEChatGateProps) {
   const { busy, onCancel } = props;
-  const [pin, setPin] = useState('');
-  const [confirmation, setConfirmation] = useState('');
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [showPin, setShowPin] = useState(false);
+  const [password, setPassword] = useState('');
+  const [legacyPin, setLegacyPin] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [resetMode, setResetMode] = useState(false);
   const [understandsReset, setUnderstandsReset] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const pinRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
-  const lockedVault = props.state.status === 'locked' && props.state.vault.configured
+  const vault = props.state.status === 'locked' || props.state.status === 'migration_required'
     ? props.state.vault
     : null;
-  const lockedUntilMs = lockedVault?.lockedUntil
-    ? new Date(lockedVault.lockedUntil).getTime()
-    : null;
+  const isSetup = props.state.status === 'setup_required';
+  const isLegacy = vault?.recoveryMethod === 'legacy_pin';
+  const hasRememberedLegacyKey = props.state.status === 'migration_required';
+  const lockedUntilMs = vault?.lockedUntil ? new Date(vault.lockedUntil).getTime() : null;
 
   useEffect(() => {
-    if (props.state.status === 'setup_required' || props.state.status === 'locked') {
-      pinRef.current?.focus();
-    }
-  }, [props.state.status, resetMode]);
+    if (isSetup || vault) passwordRef.current?.focus();
+  }, [isSetup, vault, resetMode]);
 
   useEffect(() => {
     if (!lockedUntilMs || lockedUntilMs <= Date.now()) return;
@@ -64,9 +63,7 @@ export function E2EEChatGate(props: E2EEChatGateProps) {
       if (resetMode) {
         setResetMode(false);
         setLocalError(null);
-      } else {
-        onCancel();
-      }
+      } else onCancel();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -97,195 +94,109 @@ export function E2EEChatGate(props: E2EEChatGateProps) {
 
   if (props.state.status === 'ready') return null;
 
-  const isSetup = props.state.status === 'setup_required';
-  const isMigrationSetup = props.state.status === 'setup_required' && !!props.state.previousKey;
-  const lockedUntil = lockedVault?.lockedUntil
-    ? new Date(lockedVault.lockedUntil)
-    : null;
+  const lockedUntil = vault?.lockedUntil ? new Date(vault.lockedUntil) : null;
   const remainingLockSeconds = lockedUntilMs ? Math.max(0, Math.ceil((lockedUntilMs - now) / 1_000)) : 0;
-  // A recovery lock blocks further PIN guesses, but password-authorized key
-  // reset remains available to someone who genuinely forgot the PIN.
-  const isRateLimited = !resetMode && remainingLockSeconds > 0;
-  const attemptsRemaining = lockedVault?.attemptsRemaining;
+  const isRateLimited = !resetMode && !hasRememberedLegacyKey && remainingLockSeconds > 0;
   const title = resetMode
-    ? 'Reset encrypted messages?'
-    : isSetup
-      ? 'Set up encrypted messages'
-      : 'Unlock encrypted messages';
+    ? 'Start encrypted messages fresh?'
+    : isLegacy ? 'Finish removing your chat PIN'
+      : isSetup ? 'Set up encrypted messages' : 'Unlock encrypted messages';
   const description = resetMode
-    ? 'Resetting starts a new encryption key. Messages encrypted with your old key will no longer open. This cannot be undone.'
-    : isSetup
-      ? isMigrationSetup
-        ? 'Create a PIN for this node. A new encryption key will safely replace your previous node’s key; old encrypted history will remain unavailable here.'
-        : 'Create a PIN to protect and restore your encrypted message history. You’ll enter it only on a new or cleared device. This PIN is separate from your login password.'
-      : 'Enter your encrypted messages PIN to restore your history on this device. This is not your login password.';
+    ? 'This creates a new encryption key. Messages encrypted with the old key will no longer open, and this cannot be undone.'
+    : isLegacy
+      ? hasRememberedLegacyKey
+        ? 'Enter your account password once. Your remembered chat key will be switched to password recovery without losing history.'
+        : 'Enter your old chat PIN one last time plus your account password. After this, there is no separate chat PIN.'
+      : isSetup
+        ? 'Encrypted messages will use your account password for recovery on a new device. This device will stay unlocked.'
+        : 'Enter the same password you use to sign in. Recognized devices open encrypted messages automatically.';
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setLocalError(null);
-    if (!/^\d{6,12}$/.test(pin)) {
-      setLocalError('PIN must contain 6–12 digits.');
+    if (password.length < 8) {
+      setLocalError('Enter your account password.');
       return;
     }
-    if ((isSetup || resetMode) && pin !== confirmation) {
-      setLocalError('PINs don’t match. Try again.');
+    if (isLegacy && !hasRememberedLegacyKey && !resetMode && !/^\d{6,12}$/.test(legacyPin)) {
+      setLocalError('Enter your previous 6–12 digit chat PIN.');
       return;
     }
     if (!props.identityUnlocked) {
-      setLocalError('Your identity is locked. Sign in again before setting up encrypted messages.');
+      setLocalError('Your identity is locked. Sign in again before opening encrypted messages.');
       return;
     }
     if (resetMode) {
-      if (!understandsReset || !currentPassword) {
-        setLocalError('Confirm the warning and enter your current login password.');
+      if (!understandsReset) {
+        setLocalError('Confirm that you understand the old history will be unavailable.');
         return;
       }
-      await props.onReset(pin, currentPassword).catch(() => undefined);
-    } else if (isSetup) {
-      await props.onSetup(pin).catch(() => undefined);
-    } else {
-      await props.onUnlock(pin).catch(() => undefined);
-    }
+      await props.onReset(password).catch(() => undefined);
+    } else if (isLegacy) {
+      await props.onMigrate(password, hasRememberedLegacyKey ? undefined : legacyPin).catch(() => undefined);
+    } else if (isSetup) await props.onSetup(password).catch(() => undefined);
+    else await props.onUnlock(password).catch(() => undefined);
   };
 
   return (
     <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="e2ee-gate-title"
-        aria-describedby="e2ee-gate-description"
-        style={{
-          width: '100%',
-          maxWidth: 440,
-          border: '1px solid var(--border)',
-          borderRadius: 20,
-          background: 'var(--background)',
-          padding: 24,
-          boxShadow: '0 18px 60px rgba(0,0,0,.28)',
-        }}
-      >
+      <section role="dialog" aria-modal="true" aria-labelledby="e2ee-gate-title" aria-describedby="e2ee-gate-description" style={{
+        width: '100%', maxWidth: 440, border: '1px solid var(--border)', borderRadius: 20,
+        background: 'var(--background)', padding: 24, boxShadow: '0 18px 60px rgba(0,0,0,.28)',
+      }}>
         <LockKeyhole size={30} aria-hidden="true" style={{ color: 'var(--accent)', marginBottom: 16 }} />
         <h1 id="e2ee-gate-title" style={{ fontSize: 22, margin: '0 0 10px' }}>{title}</h1>
-        <p id="e2ee-gate-description" style={{ color: 'var(--foreground-secondary)', lineHeight: 1.5 }}>
-          {description}
-        </p>
+        <p id="e2ee-gate-description" style={{ color: 'var(--foreground-secondary)', lineHeight: 1.5 }}>{description}</p>
 
         <form onSubmit={submit} aria-busy={props.busy} style={{ display: 'grid', gap: 14, marginTop: 20 }}>
           {resetMode && (
             <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 14 }}>
-              <input
-                type="checkbox"
-                checked={understandsReset}
-                onChange={(event) => setUnderstandsReset(event.target.checked)}
-                style={{ marginTop: 3 }}
-              />
+              <input type="checkbox" checked={understandsReset} onChange={(event) => setUnderstandsReset(event.target.checked)} style={{ marginTop: 3 }} />
               <span>I understand that my old encrypted message history will be unavailable.</span>
             </label>
           )}
 
+          {isLegacy && !hasRememberedLegacyKey && !resetMode && (
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>Previous chat PIN</span>
+              <input className="input" type="password" inputMode="numeric" autoComplete="off" minLength={6} maxLength={12}
+                value={legacyPin} onChange={(event) => setLegacyPin(event.target.value.replace(/\D/g, '').slice(0, 12))}
+                disabled={props.busy || isRateLimited} style={{ fontSize: 16 }} />
+            </label>
+          )}
+
           <label style={{ display: 'grid', gap: 6 }}>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>{resetMode ? 'New encrypted messages PIN' : 'Encrypted messages PIN'}</span>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Account password</span>
             <div style={{ position: 'relative' }}>
-              <input
-                ref={pinRef}
-                className="input"
-                type={showPin ? 'text' : 'password'}
-                inputMode="numeric"
-                autoComplete={isSetup || resetMode ? 'new-password' : 'off'}
-                minLength={6}
-                maxLength={12}
-                value={pin}
-                onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 12))}
-                aria-invalid={!!(localError || props.error)}
-                aria-describedby="e2ee-pin-hint e2ee-gate-error"
-                disabled={props.busy || isRateLimited}
-                style={{ width: '100%', paddingRight: 48, fontSize: 16 }}
-              />
-              <button
-                type="button"
-                aria-label={showPin ? 'Hide PIN' : 'Show PIN'}
-                onClick={() => setShowPin((value) => !value)}
-                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 0, color: 'var(--foreground-secondary)', minWidth: 36, minHeight: 36 }}
-              >
-                {showPin ? <EyeOff size={18} /> : <Eye size={18} />}
+              <input ref={passwordRef} className="input" type={showPassword ? 'text' : 'password'} autoComplete="current-password"
+                minLength={8} maxLength={256} value={password} onChange={(event) => setPassword(event.target.value)}
+                aria-invalid={!!(localError || props.error)} aria-describedby="e2ee-gate-error"
+                disabled={props.busy || isRateLimited} style={{ width: '100%', paddingRight: 48, fontSize: 16 }} />
+              <button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword((value) => !value)}
+                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 0, color: 'var(--foreground-secondary)', minWidth: 36, minHeight: 36 }}>
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
-            <span id="e2ee-pin-hint" style={{ fontSize: 12, color: 'var(--foreground-tertiary)' }}>6–12 digits; avoid birthdays and repeated or sequential numbers.</span>
           </label>
 
-          {(isSetup || resetMode) && (
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: 14, fontWeight: 600 }}>Confirm PIN</span>
-              <input
-                className="input"
-                type="password"
-                inputMode="numeric"
-                autoComplete="new-password"
-                minLength={6}
-                maxLength={12}
-                value={confirmation}
-                onChange={(event) => setConfirmation(event.target.value.replace(/\D/g, '').slice(0, 12))}
-                disabled={props.busy}
-                style={{ fontSize: 16 }}
-              />
-            </label>
-          )}
-
-          {resetMode && (
-            <label style={{ display: 'grid', gap: 6 }}>
-              <span style={{ fontSize: 14, fontWeight: 600 }}>Current login password</span>
-              <input
-                className="input"
-                type="password"
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
-                disabled={props.busy}
-                style={{ fontSize: 16 }}
-              />
-            </label>
-          )}
-
-          {isRateLimited && (
-            <p role="status" aria-live="polite" style={{ color: 'var(--destructive)', fontSize: 14, margin: 0 }}>
-              Too many attempts. Try again in {formatCountdown(remainingLockSeconds)}
-              {lockedUntil ? ` (${lockedUntil.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : ''}.
-            </p>
-          )}
-          {!isSetup && !resetMode && !isRateLimited && typeof attemptsRemaining === 'number' && attemptsRemaining > 0 && (
+          {isRateLimited && <p role="status" aria-live="polite" style={{ color: 'var(--destructive)', fontSize: 14, margin: 0 }}>
+            Too many attempts. Try again in {formatCountdown(remainingLockSeconds)}
+            {lockedUntil ? ` (${lockedUntil.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : ''}.
+          </p>}
+          {!isSetup && !resetMode && !isRateLimited && !hasRememberedLegacyKey && typeof vault?.attemptsRemaining === 'number' && vault.attemptsRemaining > 0 && (
             <p role="status" aria-live="polite" style={{ color: 'var(--foreground-secondary)', fontSize: 13, margin: 0 }}>
-              {attemptsRemaining} {attemptsRemaining === 1 ? 'attempt' : 'attempts'} remaining before a temporary lock.
+              {vault.attemptsRemaining} {vault.attemptsRemaining === 1 ? 'attempt' : 'attempts'} remaining before a temporary lock.
             </p>
           )}
-          {(localError || props.error) && (
-            <p id="e2ee-gate-error" role="alert" style={{ color: 'var(--destructive)', fontSize: 14, margin: 0 }}>
-              {localError || props.error}
-            </p>
-          )}
+          {(localError || props.error) && <p id="e2ee-gate-error" role="alert" style={{ color: 'var(--destructive)', fontSize: 14, margin: 0 }}>{localError || props.error}</p>}
 
-          <button
-            type="submit"
-            className={resetMode ? 'btn btn-danger' : 'btn btn-primary'}
-            disabled={props.busy || isRateLimited}
-            style={{ justifyContent: 'center', minHeight: 44 }}
-          >
+          <button type="submit" className={resetMode ? 'btn btn-danger' : 'btn btn-primary'} disabled={props.busy || isRateLimited} style={{ justifyContent: 'center', minHeight: 44 }}>
             {props.busy ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : null}
-            {props.busy
-              ? resetMode ? 'Resetting…' : isSetup ? 'Setting up…' : 'Unlocking…'
-              : resetMode ? 'Reset encrypted messages' : isSetup ? 'Set up encrypted messages' : 'Unlock'}
+            {props.busy ? 'Working…' : resetMode ? 'Start fresh' : isLegacy ? 'Remove chat PIN' : isSetup ? 'Set up encrypted messages' : 'Unlock'}
           </button>
 
-          {!isSetup && !resetMode && (
-            <button type="button" className="btn btn-ghost" onClick={() => setResetMode(true)}>
-              Forgot PIN?
-            </button>
-          )}
-          {resetMode && (
-            <button type="button" className="btn btn-ghost" onClick={() => setResetMode(false)}>
-              Back to PIN
-            </button>
-          )}
+          {isLegacy && !resetMode && <button type="button" className="btn btn-ghost" onClick={() => setResetMode(true)}>I no longer have the old PIN</button>}
+          {resetMode && <button type="button" className="btn btn-ghost" onClick={() => setResetMode(false)}>Keep my message history</button>}
           <button type="button" className="btn btn-ghost" onClick={props.onCancel}>Not now</button>
         </form>
       </section>

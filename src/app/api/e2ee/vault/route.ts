@@ -9,6 +9,7 @@ import { requireSignedAction, SignedActionError, type SignedAction } from '@/lib
 import {
   E2EE_KEY_BUNDLE_ACTION,
   E2EE_MAX_UNLOCK_ATTEMPTS,
+  E2EE_VAULT_REWRAP_ACTION,
   e2eeKeyBundleSchema,
   e2eeVaultSetupSchema,
   signedUserActionSchema,
@@ -23,6 +24,18 @@ const setupRequestSchema = z.strictObject({
   currentPassword: z.string().min(8).max(256).optional(),
 });
 
+const rewrapProofDataSchema = z.strictObject({
+  keyId: z.string().min(12).max(96),
+  keyVersion: z.number().int().positive(),
+  recoveryCommitment: z.string().min(40).max(64),
+});
+
+const rewrapRequestSchema = z.strictObject({
+  proof: signedUserActionSchema,
+  recovery: e2eeVaultSetupSchema,
+  currentPassword: z.string().min(8).max(256),
+});
+
 class E2EEKeyConflictError extends Error {}
 
 function byteLength(value: string): number {
@@ -32,8 +45,8 @@ function byteLength(value: string): number {
 function validateEncodedLengths(recovery: z.infer<typeof e2eeVaultSetupSchema>): void {
   if (byteLength(recovery.vault.publicKey) !== 32) throw new Error('Invalid encryption public key');
   if (byteLength(recovery.serverShare) !== 32) throw new Error('Invalid recovery share');
-  if (byteLength(recovery.pinVerifier) !== 32) throw new Error('Invalid PIN verifier');
-  if (byteLength(recovery.vault.salt) !== 16) throw new Error('Invalid PIN salt');
+  if (byteLength(recovery.pinVerifier) !== 32) throw new Error('Invalid recovery verifier');
+  if (byteLength(recovery.vault.salt) !== 16) throw new Error('Invalid recovery salt');
   if (byteLength(recovery.vault.nonce) !== 24) throw new Error('Invalid vault nonce');
   const ciphertextLength = byteLength(recovery.vault.ciphertext);
   if (ciphertextLength < 64 || ciphertextLength > 3_072) throw new Error('Invalid encrypted vault');
@@ -83,6 +96,7 @@ export async function GET() {
     kdfAlgorithm: vault.kdfAlgorithm,
     kdfOpsLimit: vault.kdfOpsLimit,
     kdfMemLimit: vault.kdfMemLimit,
+    recoveryMethod: vault.recoveryMethod === 'password' ? 'password' : 'legacy_pin',
     failedAttempts: vault.failedAttempts,
     attemptsRemaining: vault.lockedUntil && vault.lockedUntil > new Date()
       ? 0
@@ -153,11 +167,9 @@ export async function POST(request: NextRequest) {
       || (existing && bundle.version !== existing.keyVersion + 1)) {
       return NextResponse.json({ error: 'Encryption key version is invalid' }, { status: 409 });
     }
-    if (existingVault) {
-      if (!body.currentPassword || !user.passwordHash
-        || !await verifyPassword(body.currentPassword, user.passwordHash)) {
-        return NextResponse.json({ error: 'Current password is required to reset encrypted messages' }, { status: 403 });
-      }
+    if (!body.currentPassword || !user.passwordHash
+      || !await verifyPassword(body.currentPassword, user.passwordHash)) {
+      return NextResponse.json({ error: 'Current password is required for encrypted messages' }, { status: 403 });
     }
 
     const now = new Date();
@@ -174,6 +186,7 @@ export async function POST(request: NextRequest) {
       kdfAlgorithm: recovery.vault.kdfAlgorithm,
       kdfOpsLimit: recovery.vault.kdfOpsLimit,
       kdfMemLimit: recovery.vault.kdfMemLimit,
+      recoveryMethod: 'password',
       pinVerifierMac: verifierMac,
       serverShareEncrypted: sealedShare,
       failedAttempts: 0,
@@ -244,5 +257,69 @@ export async function POST(request: NextRequest) {
     }
     console.error('[E2EE Vault] Setup failed:', error);
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Setup failed' }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const session = await getSession();
+    if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const body = rewrapRequestSchema.parse(await request.json());
+    if (body.proof.action !== E2EE_VAULT_REWRAP_ACTION
+      || body.proof.did !== session.user.did
+      || body.proof.handle !== session.user.handle) {
+      return NextResponse.json({ error: 'Invalid recovery update proof' }, { status: 403 });
+    }
+    const user = await requireSignedAction(body.proof as SignedAction);
+    if (user.id !== session.user.id || !user.passwordHash
+      || !await verifyPassword(body.currentPassword, user.passwordHash)) {
+      return NextResponse.json({ error: 'Incorrect current password' }, { status: 403 });
+    }
+    const proofData = rewrapProofDataSchema.parse(body.proof.data);
+    const vault = await db.query.e2eeKeyVaults.findFirst({ where: { userId: user.id } });
+    if (!vault) return NextResponse.json({ error: 'Encrypted messages are not configured' }, { status: 404 });
+    const recovery = body.recovery;
+    validateEncodedLengths(recovery);
+    const commitment = crypto.createHash('sha256').update(canonicalize(recovery)).digest('base64url');
+    if (proofData.recoveryCommitment !== commitment
+      || proofData.keyId !== vault.keyId
+      || proofData.keyVersion !== vault.keyVersion
+      || recovery.vault.ownerDid !== user.did
+      || recovery.vault.keyId !== vault.keyId
+      || recovery.vault.keyVersion !== vault.keyVersion
+      || recovery.vault.publicKey !== vault.publicKey) {
+      return NextResponse.json({ error: 'Recovery update does not match the active encryption key' }, { status: 409 });
+    }
+    const [updated] = await db.update(e2eeKeyVaults).set({
+      ciphertext: recovery.vault.ciphertext,
+      nonce: recovery.vault.nonce,
+      salt: recovery.vault.salt,
+      kdfAlgorithm: recovery.vault.kdfAlgorithm,
+      kdfOpsLimit: recovery.vault.kdfOpsLimit,
+      kdfMemLimit: recovery.vault.kdfMemLimit,
+      recoveryMethod: 'password',
+      pinVerifierMac: createPinVerifierMac(recovery.pinVerifier, user.id, vault.keyId),
+      serverShareEncrypted: sealServerShare(recovery.serverShare, user.id, vault.keyId),
+      failedAttempts: 0,
+      lockedUntil: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(e2eeKeyVaults.userId, user.id),
+      eq(e2eeKeyVaults.keyId, vault.keyId),
+      eq(e2eeKeyVaults.keyVersion, vault.keyVersion),
+    )).returning({ userId: e2eeKeyVaults.userId });
+    if (!updated) {
+      return NextResponse.json({ error: 'Encryption key changed during recovery update' }, { status: 409 });
+    }
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: 'Invalid recovery update' }, { status: 400 });
+    }
+    if (error instanceof SignedActionError) {
+      return NextResponse.json({ error: 'Recovery update proof was rejected' }, { status: 403 });
+    }
+    console.error('[E2EE Vault] Recovery update failed:', error);
+    return NextResponse.json({ error: 'Encrypted message recovery could not be updated' }, { status: 500 });
   }
 }

@@ -6,11 +6,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, verifyPassword, hashPassword } from '@/lib/auth';
-import { db, users } from '@/db';
-import { eq } from 'drizzle-orm';
+import { verifyPassword, hashPassword } from '@/lib/auth';
+import { db, e2eeKeyVaults, users } from '@/db';
+import { and, eq } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
+import { e2eeVaultSetupSchema } from '@/lib/e2ee/protocol';
+import { createPinVerifierMac, sealServerShare } from '@/lib/e2ee/server-secrets';
 
 /**
  * Decrypt the private key using the OLD password
@@ -186,14 +188,57 @@ export async function POST(req: NextRequest) {
         // Hash new password
         const newPasswordHash = await hashPassword(newPassword);
 
-        // Update user
-        await db.update(users)
-            .set({
+        const vault = await db.query.e2eeKeyVaults.findFirst({ where: { userId: user.id } });
+        const recoveryResult = e2eeVaultSetupSchema.safeParse(signedAction.data.e2eeRecovery);
+        if (vault?.recoveryMethod === 'password' && !recoveryResult.success) {
+            return NextResponse.json({
+                error: 'Open Chat on this device before changing your password so encrypted messages can be updated safely',
+            }, { status: 409 });
+        }
+        const recovery = recoveryResult.success ? recoveryResult.data : null;
+        if (vault?.recoveryMethod === 'password' && recovery
+            && (recovery.vault.ownerDid !== user.did
+                || recovery.vault.keyId !== vault.keyId
+                || recovery.vault.keyVersion !== vault.keyVersion
+                || recovery.vault.publicKey !== vault.publicKey
+                || Buffer.from(recovery.serverShare, 'base64url').length !== 32
+                || Buffer.from(recovery.pinVerifier, 'base64url').length !== 32
+                || Buffer.from(recovery.vault.salt, 'base64url').length !== 16
+                || Buffer.from(recovery.vault.nonce, 'base64url').length !== 24
+                || Buffer.from(recovery.vault.ciphertext, 'base64url').length < 64
+                || Buffer.from(recovery.vault.ciphertext, 'base64url').length > 3_072)) {
+            return NextResponse.json({ error: 'Encrypted message recovery does not match this account' }, { status: 409 });
+        }
+
+        // Account credentials and the E2EE recovery vault must change atomically.
+        await db.transaction(async (tx) => {
+            await tx.update(users).set({
                 passwordHash: newPasswordHash,
                 privateKeyEncrypted: newStoredKey,
                 updatedAt: new Date()
-            })
-            .where(eq(users.id, user.id));
+            }).where(eq(users.id, user.id));
+
+            if (vault?.recoveryMethod === 'password' && recovery) {
+                const [updatedVault] = await tx.update(e2eeKeyVaults).set({
+                    ciphertext: recovery.vault.ciphertext,
+                    nonce: recovery.vault.nonce,
+                    salt: recovery.vault.salt,
+                    kdfAlgorithm: recovery.vault.kdfAlgorithm,
+                    kdfOpsLimit: recovery.vault.kdfOpsLimit,
+                    kdfMemLimit: recovery.vault.kdfMemLimit,
+                    pinVerifierMac: createPinVerifierMac(recovery.pinVerifier, user.id, vault.keyId),
+                    serverShareEncrypted: sealServerShare(recovery.serverShare, user.id, vault.keyId),
+                    failedAttempts: 0,
+                    lockedUntil: null,
+                    updatedAt: new Date(),
+                }).where(and(
+                    eq(e2eeKeyVaults.userId, user.id),
+                    eq(e2eeKeyVaults.keyId, vault.keyId),
+                    eq(e2eeKeyVaults.keyVersion, vault.keyVersion),
+                )).returning({ userId: e2eeKeyVaults.userId });
+                if (!updatedVault) throw new Error('Encrypted message key changed during password update');
+            }
+        });
 
         return NextResponse.json({ success: true, message: 'Password updated successfully' });
 

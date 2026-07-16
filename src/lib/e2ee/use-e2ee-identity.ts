@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   fetchE2EEVaultStatus,
+  migrateLegacyE2EEAccount,
   provisionE2EEAccount,
   unlockE2EEAccount,
   type E2EEClientError,
@@ -24,6 +25,7 @@ export type E2EEIdentityState =
   | { status: 'loading' }
   | { status: 'setup_required'; previousKey?: { keyId: string; keyVersion: number } }
   | { status: 'locked'; vault: ConfiguredVaultStatus }
+  | { status: 'migration_required'; material: E2EEKeyMaterial; vault: ConfiguredVaultStatus }
   | { status: 'ready'; material: E2EEKeyMaterial; vault: ConfiguredVaultStatus }
   | { status: 'error'; message: string };
 
@@ -63,7 +65,9 @@ export function useE2EEIdentity(did?: string | null, handle?: string | null) {
       if (generation !== generationRef.current) return;
       if (local && local.keyId === vault.keyId && local.publicKey === vault.publicKey) {
         setStateOwnerDid(did);
-        setState({ status: 'ready', material: local, vault });
+        setState(vault.recoveryMethod === 'legacy_pin'
+          ? { status: 'migration_required', material: local, vault }
+          : { status: 'ready', material: local, vault });
         return;
       }
       setStateOwnerDid(did);
@@ -99,7 +103,7 @@ export function useE2EEIdentity(did?: string | null, handle?: string | null) {
     channel.close();
   }, [did]);
 
-  const setup = useCallback(async (pin: string) => {
+  const setup = useCallback(async (password: string) => {
     if (!did || !handle) return;
     const generation = ++generationRef.current;
     setBusy(true);
@@ -108,7 +112,8 @@ export function useE2EEIdentity(did?: string | null, handle?: string | null) {
       const material = await provisionE2EEAccount({
         did,
         handle,
-        pin,
+        password,
+        currentPassword: password,
         ...(state.status === 'setup_required' && state.previousKey
           ? { replacesKeyId: state.previousKey.keyId }
           : {}),
@@ -127,13 +132,13 @@ export function useE2EEIdentity(did?: string | null, handle?: string | null) {
     }
   }, [did, handle, state, broadcastUpdate]);
 
-  const unlock = useCallback(async (pin: string) => {
+  const unlock = useCallback(async (password: string) => {
     if (!did || state.status !== 'locked') return;
     const generation = ++generationRef.current;
     setBusy(true);
     setActionError(null);
     try {
-      const material = await unlockE2EEAccount(did, pin, state.vault);
+      const material = await unlockE2EEAccount(did, password, state.vault);
       const vault = requireConfiguredVault(await fetchE2EEVaultStatus(did));
       broadcastUpdate();
       if (generation !== generationRef.current) return;
@@ -163,8 +168,37 @@ export function useE2EEIdentity(did?: string | null, handle?: string | null) {
     }
   }, [did, state, broadcastUpdate]);
 
-  const reset = useCallback(async (pin: string, currentPassword: string) => {
-    if (!did || !handle || state.status !== 'locked' || !state.vault.keyId) return;
+  const migrate = useCallback(async (password: string, legacyPin?: string) => {
+    if (!did || !handle || (state.status !== 'locked' && state.status !== 'migration_required')) return;
+    if (state.vault.recoveryMethod !== 'legacy_pin') return;
+    const generation = ++generationRef.current;
+    setBusy(true);
+    setActionError(null);
+    try {
+      const material = await migrateLegacyE2EEAccount({
+        did,
+        handle,
+        status: state.vault,
+        password,
+        legacyPin,
+        ...(state.status === 'migration_required' ? { material: state.material } : {}),
+      });
+      const vault = requireConfiguredVault(await fetchE2EEVaultStatus(did));
+      broadcastUpdate();
+      if (generation !== generationRef.current) return;
+      setStateOwnerDid(did);
+      setState({ status: 'ready', material, vault });
+    } catch (error) {
+      if (generation !== generationRef.current) return;
+      setActionError(error instanceof Error ? error.message : 'Encrypted message recovery could not be updated');
+      throw error;
+    } finally {
+      if (generation === generationRef.current) setBusy(false);
+    }
+  }, [did, handle, state, broadcastUpdate]);
+
+  const reset = useCallback(async (currentPassword: string) => {
+    if (!did || !handle || (state.status !== 'locked' && state.status !== 'migration_required')) return;
     const generation = ++generationRef.current;
     setBusy(true);
     setActionError(null);
@@ -172,7 +206,7 @@ export function useE2EEIdentity(did?: string | null, handle?: string | null) {
       const material = await provisionE2EEAccount({
         did,
         handle,
-        pin,
+        password: currentPassword,
         replacesKeyId: state.vault.keyId,
         currentPassword,
       });
@@ -194,5 +228,5 @@ export function useE2EEIdentity(did?: string | null, handle?: string | null) {
     ? state
     : LOADING_IDENTITY_STATE;
 
-  return { state: visibleState, busy, actionError, setup, unlock, reset, retry: bootstrap };
+  return { state: visibleState, busy, actionError, setup, unlock, migrate, reset, retry: bootstrap };
 }

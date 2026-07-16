@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { Shield, Lock, Check, AlertCircle, Mail, Trash2 } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { prepareE2EEPasswordChange } from '@/lib/e2ee/client';
 
 export default function SecuritySettingsPage() {
     const [currentPassword, setCurrentPassword] = useState('');
@@ -59,9 +60,20 @@ export default function SecuritySettingsPage() {
         setIsSubmitting(true);
 
         try {
+            const e2eeRecovery = user?.did
+                ? await prepareE2EEPasswordChange({
+                    did: user.did,
+                    currentPassword,
+                    newPassword,
+                })
+                : undefined;
             // Sign the password change action
             // This proves we have the key unlocked (which required knowing the password)
-            const signedPayload = await signUserAction('change_password', { currentPassword, newPassword });
+            const signedPayload = await signUserAction('change_password', {
+                currentPassword,
+                newPassword,
+                ...(e2eeRecovery ? { e2eeRecovery } : {}),
+            });
 
             const res = await fetch('/api/account/password', {
                 method: 'POST',

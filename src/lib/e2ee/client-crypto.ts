@@ -11,7 +11,8 @@ import {
   type E2EEVaultRecord,
   type E2EEVaultSetup,
   messageAuthenticatedData,
-  validatePin,
+  validateLegacyPin,
+  validateRecoveryPassword,
   vaultAuthenticatedData,
 } from './protocol';
 
@@ -50,17 +51,19 @@ function concatBytes(...parts: Uint8Array[]): Uint8Array {
   return result;
 }
 
-async function derivePinKey(
-  pin: string,
+async function deriveRecoveryKey(
+  credential: string,
   salt: Uint8Array,
   opsLimit: number,
   memLimit: number,
+  method: 'password' | 'legacy_pin',
 ): Promise<Uint8Array> {
-  validatePin(pin);
+  if (method === 'legacy_pin') validateLegacyPin(credential);
+  else validateRecoveryPassword(credential);
   const crypto = await ready();
   return crypto.crypto_pwhash(
     32,
-    pin,
+    credential,
     salt,
     opsLimit,
     memLimit,
@@ -112,12 +115,12 @@ async function assertKeyMaterialMatchesPublicKey(material: E2EEKeyMaterial): Pro
 }
 
 export async function createE2EEVault(
-  pin: string,
+  password: string,
   material: E2EEKeyMaterial,
   ownerDid: string,
   keyVersion: number,
 ): Promise<E2EEVaultSetup> {
-  validatePin(pin);
+  validateRecoveryPassword(password);
   const crypto = await ready();
   await assertKeyMaterialMatchesPublicKey(material);
   const salt = crypto.randombytes_buf(crypto.crypto_pwhash_SALTBYTES);
@@ -128,7 +131,7 @@ export async function createE2EEVault(
   let plaintext: Uint8Array | null = null;
 
   try {
-    pinKey = await derivePinKey(pin, salt, E2EE_KDF.opsLimit, E2EE_KDF.memLimit);
+    pinKey = await deriveRecoveryKey(password, salt, E2EE_KDF.opsLimit, E2EE_KDF.memLimit, 'password');
     vaultKey = deriveVaultKey(crypto, pinKey, serverShare);
     const vaultWithoutCiphertext = {
       protocol: E2EE_PROTOCOL,
@@ -173,11 +176,18 @@ export interface PreparedVaultUnlock {
 }
 
 export async function prepareE2EEVaultUnlock(
-  pin: string,
+  credential: string,
   vault: Pick<E2EEVaultRecord, 'salt' | 'kdfOpsLimit' | 'kdfMemLimit'>,
+  method: 'password' | 'legacy_pin' = 'password',
 ): Promise<PreparedVaultUnlock> {
   const crypto = await ready();
-  const pinKey = await derivePinKey(pin, fromBase64Url(vault.salt), vault.kdfOpsLimit, vault.kdfMemLimit);
+  const pinKey = await deriveRecoveryKey(
+    credential,
+    fromBase64Url(vault.salt),
+    vault.kdfOpsLimit,
+    vault.kdfMemLimit,
+    method,
+  );
   return {
     pinKey,
     pinVerifier: toBase64Url(deriveVerifier(crypto, pinKey)),

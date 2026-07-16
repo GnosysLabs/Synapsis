@@ -1,0 +1,1 @@
+ALTER TABLE `e2ee_key_vaults` ADD `recovery_method` text DEFAULT 'legacy_pin' NOT NULL;

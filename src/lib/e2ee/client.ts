@@ -10,10 +10,11 @@ import {
   prepareE2EEVaultUnlock,
   toBase64Url,
 } from './client-crypto';
-import { persistE2EEKeyMaterial } from './local-key-store';
+import { persistE2EEKeyMaterial, restoreE2EEKeyMaterial } from './local-key-store';
 import {
   E2EE_KEY_BUNDLE_ACTION,
   E2EE_PROTOCOL,
+  E2EE_VAULT_REWRAP_ACTION,
   e2eeMessageEnvelopeSchema,
   e2eePublicBundleResponseSchema,
   e2eeVaultRecordSchema,
@@ -54,7 +55,7 @@ export async function fetchE2EEVaultStatus(expectedDid: string): Promise<E2EEVau
 export async function provisionE2EEAccount(input: {
   did: string;
   handle: string;
-  pin: string;
+  password: string;
   replacesKeyId?: string;
   currentPassword?: string;
 }): Promise<E2EEKeyMaterial> {
@@ -70,7 +71,7 @@ export async function provisionE2EEAccount(input: {
     }
     version = previousKey.keyVersion + 1;
   }
-  const recovery = await createE2EEVault(input.pin, material, input.did, version);
+  const recovery = await createE2EEVault(input.password, material, input.did, version);
   const recoveryCommitment = toBase64Url(new Uint8Array(await crypto.subtle.digest(
     'SHA-256',
     new TextEncoder().encode(canonicalize(recovery)),
@@ -106,7 +107,7 @@ export async function provisionE2EEAccount(input: {
     await persistE2EEKeyMaterial(input.did, material);
   } catch (error) {
     // IndexedDB can be unavailable in private/restricted browser contexts. The
-    // key remains usable in memory; this device will simply ask for the PIN again.
+    // key remains usable in memory; this device will simply ask for the account password again.
     console.warn('[E2EE] Could not remember this device:', error);
   }
   return material;
@@ -114,7 +115,7 @@ export async function provisionE2EEAccount(input: {
 
 export async function unlockE2EEAccount(
   did: string,
-  pin: string,
+  credential: string,
   status: E2EEVaultStatus,
 ): Promise<E2EEKeyMaterial> {
   if (!status.configured || !status.keyId || !status.keyVersion || !status.publicKey || !status.salt
@@ -122,11 +123,11 @@ export async function unlockE2EEAccount(
     throw new E2EEClientError('Encrypted message recovery is incomplete', 'E2EE_VAULT_INVALID');
   }
 
-  const prepared = await prepareE2EEVaultUnlock(pin, {
+  const prepared = await prepareE2EEVaultUnlock(credential, {
     salt: status.salt,
     kdfOpsLimit: status.kdfOpsLimit,
     kdfMemLimit: status.kdfMemLimit,
-  });
+  }, status.recoveryMethod);
   try {
     const response = await fetch('/api/e2ee/vault/unlock', {
       method: 'POST',
@@ -157,6 +158,78 @@ export async function unlockE2EEAccount(
   } finally {
     prepared.pinKey.fill(0);
   }
+}
+
+async function recoveryCommitment(recovery: Awaited<ReturnType<typeof createE2EEVault>>): Promise<string> {
+  return toBase64Url(new Uint8Array(await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(canonicalize(recovery)),
+  )));
+}
+
+export async function rewrapE2EEAccount(input: {
+  did: string;
+  handle: string;
+  material: E2EEKeyMaterial;
+  keyVersion: number;
+  password: string;
+  currentPassword: string;
+}): Promise<void> {
+  const recovery = await createE2EEVault(
+    input.password,
+    input.material,
+    input.did,
+    input.keyVersion,
+  );
+  const proof = await createSignedAction(E2EE_VAULT_REWRAP_ACTION, {
+    keyId: input.material.keyId,
+    keyVersion: input.keyVersion,
+    recoveryCommitment: await recoveryCommitment(recovery),
+  }, input.did, input.handle);
+  const response = await fetch('/api/e2ee/vault', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ proof, recovery, currentPassword: input.currentPassword }),
+  });
+  if (!response.ok) throw await responseError(response, 'Encrypted message recovery could not be updated');
+}
+
+export async function migrateLegacyE2EEAccount(input: {
+  did: string;
+  handle: string;
+  status: Extract<E2EEVaultStatus, { configured: true }>;
+  password: string;
+  legacyPin?: string;
+  material?: E2EEKeyMaterial;
+}): Promise<E2EEKeyMaterial> {
+  const material = input.material ?? await unlockE2EEAccount(
+    input.did,
+    input.legacyPin || '',
+    input.status,
+  );
+  await rewrapE2EEAccount({
+    did: input.did,
+    handle: input.handle,
+    material,
+    keyVersion: input.status.keyVersion,
+    password: input.password,
+    currentPassword: input.password,
+  });
+  return material;
+}
+
+export async function prepareE2EEPasswordChange(input: {
+  did: string;
+  currentPassword: string;
+  newPassword: string;
+}): Promise<Awaited<ReturnType<typeof createE2EEVault>> | undefined> {
+  const status = await fetchE2EEVaultStatus(input.did);
+  if (!status.configured || status.recoveryMethod !== 'password') return undefined;
+  const local = await restoreE2EEKeyMaterial(input.did);
+  const material = local?.keyId === status.keyId && local.publicKey === status.publicKey
+    ? local
+    : await unlockE2EEAccount(input.did, input.currentPassword, status);
+  return createE2EEVault(input.newPassword, material, input.did, status.keyVersion);
 }
 
 export async function resolveE2EEPublicBundle(

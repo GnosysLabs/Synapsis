@@ -51,8 +51,8 @@ export async function POST(request: NextRequest) {
       const now = new Date();
       if (vault.lockedUntil && vault.lockedUntil > now) {
         return NextResponse.json({
-          error: 'Too many PIN attempts',
-          code: 'E2EE_PIN_LOCKED',
+          error: 'Too many recovery attempts',
+          code: 'E2EE_RECOVERY_LOCKED',
           lockedUntil: vault.lockedUntil.toISOString(),
         }, { status: 429 });
       }
@@ -82,8 +82,10 @@ export async function POST(request: NextRequest) {
         if (!updated) continue;
 
         return NextResponse.json({
-          error: shouldLock ? 'Too many PIN attempts' : 'Incorrect PIN',
-          code: shouldLock ? 'E2EE_PIN_LOCKED' : 'E2EE_PIN_INCORRECT',
+          error: shouldLock
+            ? 'Too many recovery attempts'
+            : vault.recoveryMethod === 'password' ? 'Incorrect password' : 'Incorrect previous PIN',
+          code: shouldLock ? 'E2EE_RECOVERY_LOCKED' : 'E2EE_RECOVERY_INCORRECT',
           attemptsRemaining: shouldLock ? 0 : E2EE_MAX_UNLOCK_ATTEMPTS - failedAttempts,
           lockedUntil: lockedUntil?.toISOString() ?? null,
         }, { status: shouldLock ? 429 : 403 });
