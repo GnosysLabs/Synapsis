@@ -300,6 +300,16 @@ export function Sidebar() {
                 )}
             </nav>
             {user && (
+                <button
+                    type="button"
+                    className="sidebar-compose-button"
+                    onClick={() => window.dispatchEvent(new Event('synapsis:open-post-composer'))}
+                    aria-label="Create a post"
+                >
+                    Post
+                </button>
+            )}
+            {user && (
                 <div
                     ref={accountMenuRef}
                     style={{ marginTop: 'auto', paddingTop: '16px', position: 'relative' }}

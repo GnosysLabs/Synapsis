@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Compose } from '@/components/Compose';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -12,6 +12,14 @@ export function GlobalPostComposer() {
     const { showToast } = useToast();
     const [openForUserId, setOpenForUserId] = useState<string | null>(null);
     const open = Boolean(user && openForUserId === user.id);
+
+    useEffect(() => {
+        if (!user) return;
+
+        const openComposer = () => setOpenForUserId(user.id);
+        window.addEventListener('synapsis:open-post-composer', openComposer);
+        return () => window.removeEventListener('synapsis:open-post-composer', openComposer);
+    }, [user]);
 
     useEffect(() => {
         if (!open) return;
@@ -71,18 +79,6 @@ export function GlobalPostComposer() {
 
     return (
         <>
-            {!open && (
-                <button
-                    type="button"
-                    className="global-compose-fab"
-                    onClick={() => setOpenForUserId(user.id)}
-                    aria-label="Create a post"
-                    title="Create a post"
-                >
-                    <Plus size={28} strokeWidth={2.4} />
-                </button>
-            )}
-
             {open && (
                 <div
                     className="global-compose-overlay"
