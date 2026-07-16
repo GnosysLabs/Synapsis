@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useUserIdentity } from '@/lib/hooks/useUserIdentity';
+import { unlockE2EEFromSignIn } from '@/lib/e2ee/sign-in-unlock';
 
 export interface User {
     id: string;
@@ -150,6 +151,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             targetUser.handle,
             targetUser.publicKey
         );
+
+        if (targetUser.did && targetUser.handle) {
+            try {
+                // Consume the credential while sign-in already has it. Only
+                // the encrypted chat key is persisted; the password is not.
+                await unlockE2EEFromSignIn({
+                    did: targetUser.did,
+                    handle: targetUser.handle,
+                    password,
+                });
+            } catch (error) {
+                // Authentication succeeded independently. Leave Chat's
+                // recovery screen available if its vault is damaged or stale.
+                console.warn('[Auth] Could not prepare encrypted messages after sign-in:', error);
+            }
+        }
 
         setShowUnlockPrompt(false); // Close prompt on success
     }, [user, unlockIdentityHook]);
