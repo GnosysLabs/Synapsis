@@ -7,6 +7,7 @@ import {
   generateKeyPair,
   keyStore,
 } from '@/lib/crypto/user-signing';
+import { generateDID } from '@/lib/crypto/did-key';
 import { decryptStoredChatMessage } from './client';
 import { verifyE2EEPublicBundle } from './bundle-proof';
 import { encryptE2EEMessage, generateE2EEKeyMaterial } from './client-crypto';
@@ -31,6 +32,41 @@ function bundle(
 afterEach(() => clearUserPrivateKey());
 
 describe('stored encrypted messages', () => {
+  it('verifies messages from canonical did:key identities without a cached sender key', async () => {
+    const signingKeys = await generateKeyPair();
+    const signingPublicKey = await exportPublicKey(signingKeys.publicKey);
+    const canonicalSenderDid = generateDID(signingPublicKey);
+    keyStore.setPrivateKey(signingKeys.privateKey);
+
+    const sender = await generateE2EEKeyMaterial();
+    const recipient = await generateE2EEKeyMaterial();
+    const envelope = await encryptE2EEMessage({
+      plaintext: 'sent from another node',
+      senderDid: canonicalSenderDid,
+      senderHandle: 'alice',
+      senderBundle: bundle(sender),
+      recipientDid,
+      recipientHandle: 'bob',
+      recipientBundle: bundle(recipient),
+    });
+    const signedAction = await createSignedAction(
+      'chat_e2ee',
+      envelope,
+      canonicalSenderDid,
+      'alice',
+    );
+
+    await expect(decryptStoredChatMessage({
+      protocolVersion: 1,
+      encryptedEnvelope: envelope,
+      signedAction,
+      senderPublicKey: null,
+    }, recipientDid, recipient)).resolves.toEqual({
+      content: 'sent from another node',
+      legacy: false,
+    });
+  });
+
   it('verifies the outer account signature before decrypting', async () => {
     const signingKeys = await generateKeyPair();
     const signingPublicKey = await exportPublicKey(signingKeys.publicKey);

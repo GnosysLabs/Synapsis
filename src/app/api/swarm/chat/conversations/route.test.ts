@@ -54,19 +54,18 @@ describe('GET /api/swarm/chat/conversations', () => {
         id: 'remote-conversation',
         participant1Id: 'owner-id',
         participant2Handle: 'alice@offline.example',
-        messages: [],
       },
       {
         id: 'local-conversation',
         participant1Id: 'owner-id',
         participant2Handle: 'bob@local.example',
-        messages: [],
       },
     ]);
     mocks.select
       .mockReturnValueOnce(selectResult([
         { conversationId: 'remote-conversation', count: 2 },
       ], true))
+      .mockReturnValueOnce(selectResult([]))
       .mockReturnValueOnce(selectResult([
         {
           handle: 'alice@offline.example',
@@ -88,7 +87,10 @@ describe('GET /api/swarm/chat/conversations', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(mocks.select).toHaveBeenCalledTimes(2);
+    expect(mocks.findConversations).toHaveBeenCalledWith(expect.not.objectContaining({
+      with: expect.anything(),
+    }));
+    expect(mocks.select).toHaveBeenCalledTimes(3);
     expect(fetch).not.toHaveBeenCalled();
     expect(body.conversations).toMatchObject([
       {
@@ -145,8 +147,12 @@ describe('GET /api/swarm/chat/conversations', () => {
       id: 'remote-conversation',
       participant1Id: 'owner-id',
       participant2Handle: 'alice@remote.example',
-      messages: [{
+    }]);
+    mocks.select
+      .mockReturnValueOnce(selectResult([], true))
+      .mockReturnValueOnce(selectResult([{
         id: 'latest-message',
+        conversationId: 'remote-conversation',
         protocolVersion: 1,
         content: null,
         encryptedEnvelope: JSON.stringify(encryptedEnvelope),
@@ -154,10 +160,7 @@ describe('GET /api/swarm/chat/conversations', () => {
         e2eeSignature: 'signature',
         e2eeActionNonce: 'action_nonce',
         e2eeActionTs: encryptedEnvelope.createdAt,
-      }],
-    }]);
-    mocks.select
-      .mockReturnValueOnce(selectResult([], true))
+      }]))
       .mockReturnValueOnce(selectResult([{
         // Deliberately does not match participant2Handle. The message DID is
         // the stable identity used for signature verification.
@@ -178,5 +181,54 @@ describe('GET /api/swarm/chat/conversations', () => {
       signedAction: { did: senderDid },
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns a latest message for every conversation instead of applying one nested limit globally', async () => {
+    mocks.findConversations.mockResolvedValue([
+      {
+        id: 'first-conversation',
+        participant1Id: 'owner-id',
+        participant2Handle: 'alice@first.example',
+      },
+      {
+        id: 'second-conversation',
+        participant1Id: 'owner-id',
+        participant2Handle: 'bob@second.example',
+      },
+    ]);
+    mocks.select
+      .mockReturnValueOnce(selectResult([], true))
+      .mockReturnValueOnce(selectResult([
+        {
+          id: 'first-message',
+          conversationId: 'first-conversation',
+          protocolVersion: 0,
+          content: 'first preview',
+          senderDid: null,
+        },
+        {
+          id: 'second-message',
+          conversationId: 'second-conversation',
+          protocolVersion: 0,
+          content: 'second preview',
+          senderDid: null,
+        },
+      ]))
+      .mockReturnValueOnce(selectResult([]));
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.conversations).toMatchObject([
+      {
+        id: 'first-conversation',
+        lastMessage: { protocolVersion: 0, content: 'first preview' },
+      },
+      {
+        id: 'second-conversation',
+        lastMessage: { protocolVersion: 0, content: 'second preview' },
+      },
+    ]);
   });
 });

@@ -25,12 +25,6 @@ export async function GET() {
     const conversations = await db.query.chatConversations.findMany({
       where: { participant1Id: session.user.id },
       orderBy: (chatConversations, { desc }) => [desc(chatConversations.lastMessageAt)],
-      with: {
-        messages: {
-          orderBy: (chatMessages, { desc }) => [desc(chatMessages.createdAt)],
-          limit: 1,
-        },
-      },
     });
 
     const conversationIds = conversations.map((conversation) => conversation.id);
@@ -40,8 +34,6 @@ export async function GET() {
     for (const conversation of conversations) {
       const participantHandle = conversation.participant2Handle;
       participantLookupHandles.add(participantHandle);
-      const latestSenderDid = conversation.messages[0]?.senderDid;
-      if (latestSenderDid) latestSenderDids.add(latestSenderDid);
       const separator = participantHandle.lastIndexOf('@');
       if (separator > 0 && participantHandle.slice(separator + 1) === localNodeDomain) {
         participantLookupHandles.add(participantHandle.slice(0, separator));
@@ -53,7 +45,7 @@ export async function GET() {
     // for every row. A single unavailable peer could therefore block the entire
     // response. Batch local metadata here; independent federation paths refresh
     // the remote-user cache without being on the inbox critical path.
-    const [unreadRows, cachedUsers] = await Promise.all([
+    const [unreadRows, latestMessages] = await Promise.all([
       conversationIds.length > 0
         ? db
           .select({
@@ -68,24 +60,47 @@ export async function GET() {
           ))
           .groupBy(chatMessages.conversationId)
         : Promise.resolve([]),
-      participantLookupHandles.size > 0
+      conversationIds.length > 0
         ? db
-          .select({
-            handle: users.handle,
-            displayName: users.displayName,
-            avatarUrl: users.avatarUrl,
-            did: users.did,
-            publicKey: users.publicKey,
-          })
-          .from(users)
-          .where(latestSenderDids.size > 0
-            ? or(
-                inArray(users.handle, [...participantLookupHandles]),
-                inArray(users.did, [...latestSenderDids]),
-              )
-            : inArray(users.handle, [...participantLookupHandles]))
+          .select()
+          .from(chatMessages)
+          .where(and(
+            inArray(chatMessages.conversationId, conversationIds),
+            sql`${chatMessages.id} = (
+              SELECT latest.id
+              FROM chat_messages AS latest
+              WHERE latest.conversation_id = ${chatMessages.conversationId}
+              ORDER BY latest.created_at DESC, latest.rowid DESC
+              LIMIT 1
+            )`,
+          ))
         : Promise.resolve([]),
     ]);
+
+    const latestByConversation = new Map(
+      latestMessages.map((message) => [message.conversationId, message]),
+    );
+    for (const message of latestMessages) {
+      if (message.senderDid) latestSenderDids.add(message.senderDid);
+    }
+
+    const cachedUsers = participantLookupHandles.size > 0
+      ? await db
+        .select({
+          handle: users.handle,
+          displayName: users.displayName,
+          avatarUrl: users.avatarUrl,
+          did: users.did,
+          publicKey: users.publicKey,
+        })
+        .from(users)
+        .where(latestSenderDids.size > 0
+          ? or(
+              inArray(users.handle, [...participantLookupHandles]),
+              inArray(users.did, [...latestSenderDids]),
+            )
+          : inArray(users.handle, [...participantLookupHandles]))
+      : [];
 
     const unreadByConversation = new Map(
       unreadRows.map((row) => [row.conversationId, Number(row.count || 0)]),
@@ -116,7 +131,7 @@ export async function GET() {
               did: '',
             };
 
-        const latest = conv.messages[0] || null;
+        const latest = latestByConversation.get(conv.id) || null;
         let lastMessage: {
           protocolVersion: number;
           content: string | null;
@@ -163,10 +178,8 @@ export async function GET() {
           }
         }
 
-        const { messages: _rawMessages, ...conversation } = conv;
-        void _rawMessages;
         return {
-          ...conversation,
+          ...conv,
           participant2: participant2Info,
           lastMessage,
           unreadCount: unreadByConversation.get(conv.id) || 0,
