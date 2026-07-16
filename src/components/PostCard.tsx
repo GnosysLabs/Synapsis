@@ -22,6 +22,8 @@ import { getMediaKind } from '@/lib/media/upload-policy';
 import { tokenizePostContent } from '@/lib/mentions/parser';
 import { setReposterInSummary } from '@/lib/posts/node-feed';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
+import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
+import { buildChatShareHref, type ChatRecipient } from '@/lib/chat/recipients';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -148,6 +150,7 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
     const [deleting, setDeleting] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
     const [showShareMenu, setShowShareMenu] = useState(false);
+    const [showRecipientPicker, setShowRecipientPicker] = useState(false);
     const [downloading, setDownloading] = useState(false);
     const [hydratedPreview, setHydratedPreview] = useState<LinkPreviewData | null>(null);
     const domain = useDomain();
@@ -506,7 +509,12 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
             return;
         }
 
-        router.push(`/chat?share=${encodeURIComponent(getAbsolutePostUrl())}`);
+        setShowRecipientPicker(true);
+    };
+
+    const handleRecipientSelected = (recipient: ChatRecipient) => {
+        setShowRecipientPicker(false);
+        router.push(buildChatShareHref(recipient.handle, getAbsolutePostUrl()));
     };
 
     const handleCopyLink = async (e: React.MouseEvent) => {
@@ -1166,7 +1174,7 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
                                     <div className="post-share-menu" role="menu" onClick={(e) => e.stopPropagation()}>
                                         <button type="button" role="menuitem" onClick={handleSendViaChat}>
                                             <MessageCircle size={22} />
-                                            Send via Chat
+                                            Send in Chat
                                         </button>
                                         <button type="button" role="menuitem" onClick={handleCopyLink}>
                                             <Link2 size={22} />
@@ -1183,6 +1191,13 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
                     </div>
                 </div>
             </article>
+            {showRecipientPicker && (
+                <ChatRecipientPicker
+                    currentUserHandle={currentUserHandle}
+                    onClose={() => setShowRecipientPicker(false)}
+                    onSelect={handleRecipientSelected}
+                />
+            )}
         </>
     );
 }

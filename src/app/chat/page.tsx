@@ -19,6 +19,11 @@ import {
 import { encryptE2EEMessage } from '@/lib/e2ee/client-crypto';
 import type { E2EEKeyBundle, E2EEKeyMaterial, E2EEMessageEnvelope } from '@/lib/e2ee/protocol';
 import { useE2EEIdentity } from '@/lib/e2ee/use-e2ee-identity';
+import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
+import {
+    buildChatShareContinuationHref,
+    buildChatShareHref,
+} from '@/lib/chat/recipients';
 
 interface Conversation {
     id: string;
@@ -678,8 +683,8 @@ export default function ChatPage() {
         if (existing) {
             setComposeIntentError(null);
             selectConversation(existing);
-            // Clear the query param so refresh doesn't keep resetting state.
-            router.replace('/chat', { scroll: false });
+            // Keep the share intent alive until the selected draft receives it.
+            router.replace(buildChatShareContinuationHref(sharedPostUrl), { scroll: false });
             return;
         }
 
@@ -727,7 +732,7 @@ export default function ChatPage() {
                         unreadCount: 0
                     };
                     selectConversation(draftConv);
-                    router.replace('/chat', { scroll: false });
+                    router.replace(buildChatShareContinuationHref(sharedPostUrl), { scroll: false });
                 } else {
                     setComposeIntentError({
                         handle: composeHandle,
@@ -755,7 +760,7 @@ export default function ChatPage() {
             controller.abort();
             window.clearTimeout(timeout);
         };
-    }, [composeHandle, selectedConversation, conversations, loading, router, selectConversation, composeIntentError, dismissedComposeHandle, composeRetryVersion]);
+    }, [composeHandle, selectedConversation, conversations, loading, router, selectConversation, composeIntentError, dismissedComposeHandle, composeRetryVersion, sharedPostUrl]);
 
     // Redirect if not logged in
     useEffect(() => {
@@ -1267,12 +1272,6 @@ export default function ChatPage() {
                     </div>
                 </header>
 
-                {sharedPostUrl && (
-                    <div className="chat-share-intent">
-                        Choose a conversation to share this post.
-                    </div>
-                )}
-
                 <div style={{
                     padding: '16px', // Reverted from 20px to 16px as requested
                     borderBottom: '1px solid var(--border)',
@@ -1339,6 +1338,15 @@ export default function ChatPage() {
                     ))
                 )}
             </div>
+            {sharedPostUrl && !composeHandle && (
+                <ChatRecipientPicker
+                    currentUserHandle={user.handle}
+                    onClose={() => router.replace('/chat', { scroll: false })}
+                    onSelect={(recipient) => {
+                        router.replace(buildChatShareHref(recipient.handle, sharedPostUrl), { scroll: false });
+                    }}
+                />
+            )}
         </div>
     );
 }
