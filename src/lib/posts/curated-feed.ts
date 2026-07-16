@@ -107,7 +107,7 @@ export function rankCuratedFeed(posts: Post[], options: RankOptions = {}): Curat
   const windowHours = options.windowHours ?? CURATED_FEED_WINDOW_HOURS;
 
   const remaining: Candidate[] = posts.map((post) => {
-    const createdAt = new Date(post.createdAt).getTime();
+    const createdAt = new Date(post.feedActivityAt || post.createdAt).getTime();
     const ageHours = Number.isFinite(createdAt)
       ? Math.max(0, (now - createdAt) / 3_600_000)
       : windowHours;

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db, posts, users, media, follows, mutes, blocks, remotePosts, userSwarmReposts, notifications } from '@/db';
 import { getSession, requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
-import { eq, and, inArray, isNull, sql } from 'drizzle-orm';
+import { eq, and, desc, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
@@ -16,6 +16,8 @@ import {
     rankCuratedFeed,
 } from '@/lib/posts/curated-feed';
 import { registerPostMentions } from '@/lib/mentions/delivery';
+import { assembleNodeFeedStories, collapseSharedFeedPosts } from '@/lib/posts/node-feed';
+import type { Post } from '@/lib/types';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_SEED_MULTIPLIER = 5;
@@ -30,6 +32,15 @@ type FeedPostWithChildren = {
     isReposted?: boolean;
     nodeDomain?: string | null;
     originalPostId?: string | null;
+    feedActivityAt?: string;
+    repostedBy?: Array<{
+        id: string;
+        handle: string;
+        displayName: string | null;
+        avatarUrl: string | null;
+        isNsfw: boolean;
+    }>;
+    repostedByCount?: number;
 };
 
 function mapUserSwarmRepostToFeedPost(
@@ -155,6 +166,95 @@ const feedPostRelations = {
         with: embeddedPostRelations,
     },
 } as const;
+
+async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<FeedPostWithChildren[]> {
+    const storyId = sql<string>`coalesce(${posts.repostOfId}, ${posts.id})`;
+    const latestActivityAt = sql<Date>`max(${posts.createdAt})`.mapWith(posts.createdAt);
+    const cursorDate = decodeFeedCursor(cursor);
+
+    const activityQuery = db.select({
+        storyId,
+        latestActivityAt,
+    })
+        .from(posts)
+        .where(and(
+            eq(posts.isRemoved, false),
+            isNull(posts.replyToId),
+            isNull(posts.swarmReplyToId),
+        ))
+        .groupBy(storyId)
+        .orderBy(desc(latestActivityAt))
+        .limit(limit);
+
+    const activityRows = cursorDate
+        ? await activityQuery.having(lt(latestActivityAt, cursorDate))
+        : await activityQuery;
+    const storyIds = activityRows.map((row) => row.storyId);
+
+    if (storyIds.length === 0) {
+        return [];
+    }
+
+    const [originalPosts, repostRows] = await Promise.all([
+        db.query.posts.findMany({
+            where: { AND: [{ id: { in: storyIds } }, { isRemoved: false }] },
+            with: feedPostRelations,
+        }),
+        db.query.posts.findMany({
+            where: { AND: [{ repostOfId: { in: storyIds } }, { isRemoved: false }] },
+            with: { author: true },
+            orderBy: (posts, { desc }) => [desc(posts.createdAt)],
+        }),
+    ]);
+
+    return assembleNodeFeedStories(activityRows, originalPosts, repostRows) as FeedPostWithChildren[];
+}
+
+async function getLocallyRepostedRemoteStories(
+    cursor: string | null,
+    limit: number,
+): Promise<FeedPostWithChildren[]> {
+    const latestActivityAt = sql<Date>`max(${userSwarmReposts.repostedAt})`.mapWith(userSwarmReposts.repostedAt);
+    const cursorDate = decodeFeedCursor(cursor);
+    const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+    const activityQuery = db.select({
+        nodeDomain: userSwarmReposts.nodeDomain,
+        originalPostId: userSwarmReposts.originalPostId,
+        latestActivityAt,
+    })
+        .from(userSwarmReposts)
+        .where(ne(userSwarmReposts.nodeDomain, localDomain))
+        .groupBy(userSwarmReposts.nodeDomain, userSwarmReposts.originalPostId)
+        .orderBy(desc(latestActivityAt))
+        .limit(limit);
+    const activityRows = cursorDate
+        ? await activityQuery.having(lt(latestActivityAt, cursorDate))
+        : await activityQuery;
+
+    if (activityRows.length === 0) return [];
+
+    const selectedKeys = new Set(activityRows.map((row) => `${row.nodeDomain}:${row.originalPostId}`));
+    const snapshotRows = (await db.query.userSwarmReposts.findMany({
+        where: {
+            AND: [
+                { nodeDomain: { in: Array.from(new Set(activityRows.map((row) => row.nodeDomain))) } },
+                { originalPostId: { in: Array.from(new Set(activityRows.map((row) => row.originalPostId))) } },
+            ],
+        },
+        orderBy: (userSwarmReposts, { desc }) => [desc(userSwarmReposts.repostedAt)],
+    })).filter((row) => selectedKeys.has(`${row.nodeDomain}:${row.originalPostId}`));
+    const reposterIds = Array.from(new Set(snapshotRows.map((row) => row.userId)));
+    const reposters = reposterIds.length > 0
+        ? await db.query.users.findMany({ where: { id: { in: reposterIds } } })
+        : [];
+    const repostersById = new Map(reposters.map((user) => [user.id, user]));
+    const wrappers = snapshotRows.flatMap((row) => {
+        const reposter = repostersById.get(row.userId);
+        return reposter ? [mapUserSwarmRepostToFeedPost(row, reposter)] : [];
+    });
+
+    return collapseSharedFeedPosts(wrappers as unknown as Post[]) as FeedPostWithChildren[];
+}
 
 const createPostSchema = z.object({
     content: z.string().max(POST_MAX_LENGTH),
@@ -571,28 +671,15 @@ export async function GET(request: Request) {
         };
 
         if (type === 'local') {
-            // Local node posts only
-            let whereCondition = {
-                ...baseFilter,
-                createdAt: undefined as { lt: Date } | undefined,
-            };
-
-            // Apply cursor-based pagination
-            if (cursor) {
-                const cursorPost = await db.query.posts.findFirst({
-                    where: { id: cursor },
-                });
-                if (cursorPost) {
-                    whereCondition = { ...baseFilter, createdAt: { lt: cursorPost.createdAt } };
-                }
-            }
-
-            feedPosts = await db.query.posts.findMany({
-                where: whereCondition,
-                with: feedPostRelations,
-                orderBy: (posts, { desc }) => [desc(posts.createdAt)],
-                limit,
-            });
+            // One card per original local post, resurfaced by its latest repost.
+            const [localStories, remoteStories] = await Promise.all([
+                getLocalNodeFeed(cursor, limit),
+                getLocallyRepostedRemoteStories(cursor, limit),
+            ]);
+            feedPosts = collapseSharedFeedPosts([
+                ...localStories,
+                ...remoteStories,
+            ] as unknown as Post[]).slice(0, limit) as FeedPostWithChildren[];
         } else if (type === 'public') {
             // Public timeline - all local posts + all cached remote posts
             const localPosts = await db.query.posts.findMany({
@@ -687,6 +774,7 @@ export async function GET(request: Request) {
 
             const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
             const swarmPosts = swarmResult.posts.map((post) => mapSwarmPostToPost(post, { localDomain }));
+            const locallyRepostedRemoteStories = await getLocallyRepostedRemoteStories(cursor, limit);
 
             let mutedIds = new Set<string>();
             let blockedIds = new Set<string>();
@@ -703,7 +791,10 @@ export async function GET(request: Request) {
                 blockedIds = new Set(blockRows.map(row => row.blockedUserId));
             }
 
-            const eligiblePosts = swarmPosts
+            const eligiblePosts = collapseSharedFeedPosts([
+                ...swarmPosts,
+                ...locallyRepostedRemoteStories as unknown as Post[],
+            ])
                 .filter((post) => !mutedIds.has(post.author.id) && !blockedIds.has(post.author.id));
             const rankedPosts = rankCuratedFeed(eligiblePosts, { limit });
 
@@ -834,8 +925,11 @@ export async function GET(request: Request) {
                 }
 
                 // Merge and sort by date
-                const allPosts = [...localPosts, ...localRepostEvents, ...liveRemotePosts]
-                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                const allPosts = collapseSharedFeedPosts([
+                    ...localPosts,
+                    ...localRepostEvents,
+                    ...liveRemotePosts,
+                ] as unknown as Post[])
                     .slice(0, limit);
 
                 feedPosts = allPosts;
@@ -953,6 +1047,10 @@ export async function GET(request: Request) {
             console.error('Error populating interaction flags:', error);
         }
 
+        const lastFeedPost = feedPosts?.length
+            ? feedPosts[feedPosts.length - 1] as FeedPostWithChildren
+            : undefined;
+
         return NextResponse.json({
             posts: feedPosts || [],
             meta: type === 'curated' ? {
@@ -964,9 +1062,9 @@ export async function GET(request: Request) {
                 },
             } : undefined,
             nextCursor: (feedPosts?.length === limit)
-                ? (type === 'home' || type === 'curated'
-                    ? encodeFeedCursor(feedPosts[feedPosts.length - 1]?.createdAt)
-                    : feedPosts[feedPosts.length - 1]?.id)
+                ? (type === 'home' || type === 'curated' || type === 'local'
+                    ? encodeFeedCursor(lastFeedPost?.feedActivityAt || lastFeedPost?.createdAt)
+                    : lastFeedPost?.id)
                 : null,
         });
     } catch (error) {

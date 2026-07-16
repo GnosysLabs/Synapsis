@@ -86,4 +86,13 @@ describe('rankCuratedFeed', () => {
       rankCuratedFeed(candidates, { now: NOW }).map((item) => item.id),
     );
   });
+
+  it('uses repost activity time to give a resurfaced story fresh visibility', () => {
+    const resurfaced = post('resurfaced', 'alice', 'one.social', 48, {
+      feedActivityAt: new Date(NOW - 30 * 60_000).toISOString(),
+    });
+    const recent = post('recent', 'bob', 'two.social', 8);
+
+    expect(rankCuratedFeed([recent, resurfaced], { now: NOW })[0].id).toBe('resurfaced');
+  });
 });

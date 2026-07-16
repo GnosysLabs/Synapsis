@@ -76,4 +76,7 @@ export interface Post {
     nodeDomain?: string | null; // Domain of the node this post came from (for swarm posts)
     isSwarm?: boolean; // Whether this is a swarm post from another node
     originalPostId?: string; // Original post ID on the source node (for swarm posts)
+    repostedBy?: User[];
+    repostedByCount?: number;
+    feedActivityAt?: string;
 }

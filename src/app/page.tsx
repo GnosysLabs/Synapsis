@@ -50,13 +50,14 @@ export default function Home() {
     feedTypeRef.current = feedType;
   }, [feedType]);
 
-  const loadFeed = async (type: HomeFeedType, cursor?: string | null) => {
+  const loadFeed = async (type: HomeFeedType, cursor?: string | null, options: { silent?: boolean } = {}) => {
+    const { silent = false } = options;
     if (cursor && loadingCursorRef.current === cursor) return;
     if (cursor) loadingCursorRef.current = cursor;
 
     if (cursor) {
       setLoadingMore(true);
-    } else {
+    } else if (!silent) {
       setLoading(true);
     }
     try {
@@ -94,7 +95,7 @@ export default function Home() {
       setNextCursor(null);
     } finally {
       if (type === feedTypeRef.current) {
-        setLoading(false);
+        if (!silent) setLoading(false);
         setLoadingMore(false);
       }
       if (cursor && loadingCursorRef.current === cursor) {
@@ -191,6 +192,8 @@ export default function Home() {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || 'Failed to update repost');
     }
+
+    await loadFeed(feedType, null, { silent: true });
   };
 
   const handleDelete = (postId: string) => {

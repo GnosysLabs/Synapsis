@@ -680,6 +680,8 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
     const repostHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
     const hasOwnContent = decodeHtmlEntities(post.content).trim().length > 0;
     const isRepostEvent = Boolean(post.repostOf);
+    const visibleReposters = (post.repostedBy || []).slice(0, 3);
+    const hiddenReposters = Math.max(0, (post.repostedByCount || visibleReposters.length) - visibleReposters.length);
     const effectivePreview = {
         url: hydratedPreview?.url || post.linkPreviewUrl || null,
         title: hydratedPreview?.title || post.linkPreviewTitle || null,
@@ -841,6 +843,36 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
             )}
             <article className={`post ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''}`}>
                 {!isDetail && <Link href={postUrl} className="post-link-overlay" aria-label="View post" />}
+
+                {visibleReposters.length > 0 && (
+                    <div className="repost-summary">
+                        <span className="repost-summary-icon" aria-hidden="true"><RepeatIcon /></span>
+                        <span>Reposted by</span>
+                        <span className="repost-summary-avatars">
+                            {visibleReposters.map((reposter) => (
+                                <Link
+                                    href={getProfilePath(reposter.handle)}
+                                    className="repost-summary-avatar"
+                                    title={reposter.displayName || reposter.handle}
+                                    aria-label={reposter.displayName || reposter.handle}
+                                    key={reposter.id}
+                                    onClick={(event) => event.stopPropagation()}
+                                >
+                                    <AvatarImage
+                                        avatarUrl={reposter.avatarUrl}
+                                        seed={reposter.handle}
+                                        nodeDomain={reposter.nodeDomain}
+                                        isNsfw={reposter.isNsfw}
+                                        alt=""
+                                        width={22}
+                                        height={22}
+                                    />
+                                </Link>
+                            ))}
+                        </span>
+                        {hiddenReposters > 0 && <span>+{hiddenReposters} others</span>}
+                    </div>
+                )}
 
                 <div className="post-header">
                     <Link href={`/u/${profileHandle}`} className="avatar-link" onClick={(e) => e.stopPropagation()}>
