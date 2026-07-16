@@ -45,14 +45,14 @@ export function selectFeedWindow<T extends FeedTimestamped>(posts: T[], limit: n
  * that returned a full page. Older exhausted sources may safely repeat, while
  * advancing past this boundary would skip unseen posts from a busy source.
  */
-export function getSourceContinuationDate<T extends { createdAt: string | number | Date }>(
+export function getSourceContinuationDate<T extends FeedTimestamped>(
   sources: Array<{ posts: T[] }>,
   pageSize: number,
 ): Date | null {
   const boundaries = sources
     .filter((source) => source.posts.length >= pageSize)
     .map((source) => source.posts.reduce<Date | null>((oldest, post) => {
-      const date = new Date(post.createdAt);
+      const date = feedActivityDate(post);
       return !oldest || date < oldest ? date : oldest;
     }, null))
     .filter((date): date is Date => date !== null && Number.isFinite(date.getTime()));

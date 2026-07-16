@@ -3240,6 +3240,15 @@ a.btn-primary:visited {
   position: relative;
 }
 
+/* Keep an open post menu above both this post's media and adjacent cards. */
+.post.menu-open {
+  z-index: 10;
+}
+
+.post.menu-open .post-header {
+  z-index: 3;
+}
+
 .post-link-overlay {
   position: absolute;
   inset: 0;

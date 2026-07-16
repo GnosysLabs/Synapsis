@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, media, posts, users, userSwarmReposts } from '@/db';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
+import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 
 export interface SwarmUserProfile {
   handle: string;
@@ -54,6 +55,15 @@ export interface SwarmUserPost {
   linkPreviewMedia?: Array<{ url: string; width?: number | null; height?: number | null; mimeType?: string | null }>;
   repostOfId?: string;
   repostOf?: SwarmUserPost | null;
+  repostedBy?: Array<{
+    id: string;
+    handle: string;
+    displayName: string;
+    avatarUrl?: string | null;
+    isNsfw?: boolean;
+    nodeDomain?: string | null;
+  }>;
+  repostedByCount?: number;
 }
 
 type RouteContext = { params: Promise<{ handle: string }> };
@@ -253,6 +263,16 @@ export async function GET(request: NextRequest, context: RouteContext) {
       orderBy: (posts, { desc }) => [desc(posts.createdAt)],
       limit: limit * 2,
     });
+    const remoteRepostSummaries = localPosts.length > 0
+      ? await db.query.remoteReposts.findMany({
+          where: { postId: { in: localPosts.map((post) => post.id) } },
+          orderBy: (remoteReposts, { desc }) => [desc(remoteReposts.createdAt)],
+        })
+      : [];
+    const summarizedLocalPosts = attachRemoteRepostSummaries(
+      localPosts.map((post) => mapLocalPostToSwarmPost(post, nodeDomain, nodeIsNsfw)),
+      remoteRepostSummaries,
+    );
 
     const remoteRepostRows = await db.query.userSwarmReposts.findMany({
       where: {
@@ -264,7 +284,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
 
     const swarmPosts: SwarmUserPost[] = [
-      ...localPosts.map((post) => mapLocalPostToSwarmPost(post, nodeDomain, nodeIsNsfw)),
+      ...summarizedLocalPosts,
       ...remoteRepostRows.map((row) => mapUserSwarmRepostToSwarmPost(row, user, nodeDomain, nodeIsNsfw)),
     ]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())

@@ -50,6 +50,18 @@ describe('feed pagination cursors', () => {
     expect(continuation?.toISOString()).toBe('2026-07-15T14:00:00.000Z');
   });
 
+  it('continues from repost activity rather than the original publication time', () => {
+    const continuation = getSourceContinuationDate([{ posts: [
+      {
+        createdAt: '2026-07-10T00:00:00Z',
+        feedActivityAt: '2026-07-16T15:00:00Z',
+      },
+      { createdAt: '2026-07-16T14:00:00Z' },
+    ] }], 2);
+
+    expect(continuation?.toISOString()).toBe('2026-07-16T14:00:00.000Z');
+  });
+
   it('combines continuation boundaries using the newest safe cutoff', () => {
     expect(newestDate([
       new Date('2026-07-15T10:00:00Z'),

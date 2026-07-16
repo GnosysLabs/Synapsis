@@ -239,6 +239,7 @@ export async function POST(request: Request, context: RouteContext) {
                                 actorHandle: user.handle,
                                 actorDisplayName: user.displayName || user.handle,
                                 actorAvatarUrl: user.avatarUrl || undefined,
+                                actorIsNsfw: user.isNsfw,
                                 actorNodeDomain: nodeDomain,
                                 repostId: repost.id,
                                 interactionId: crypto.randomUUID(),

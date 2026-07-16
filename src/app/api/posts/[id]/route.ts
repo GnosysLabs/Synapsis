@@ -3,6 +3,7 @@ import { db, posts, users } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { normalizeSameNodePostId } from '@/lib/swarm/post-id';
+import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 
 const embeddedPostRelations = {
     author: true,
@@ -33,6 +34,15 @@ type SwarmDetailPostInput = {
     repliesCount?: number;
     repostOfId?: string | null;
     repostOf?: SwarmDetailPostInput | null;
+    repostedBy?: Array<{
+        id?: string;
+        handle: string;
+        displayName?: string | null;
+        avatarUrl?: string | null;
+        isNsfw?: boolean;
+        nodeDomain?: string | null;
+    }>;
+    repostedByCount?: number;
     author?: { handle: string; displayName?: string | null; avatarUrl?: string | null } | null;
     media?: Array<{ id?: string; url: string; altText?: string | null }>;
     linkPreviewUrl?: string | null;
@@ -64,6 +74,25 @@ function mapSwarmDetailPost(post: SwarmDetailPostInput, fallbackDomain: string):
                 : `swarm:${post.repostOf.nodeDomain || effectiveDomain}:${post.repostOf.originalPostId || post.repostOf.id}`)
             : (post.repostOfId ? `swarm:${effectiveDomain}:${post.repostOfId}` : null),
         repostOf: post.repostOf ? mapSwarmDetailPost(post.repostOf, post.repostOf.nodeDomain || effectiveDomain) : null,
+        repostedBy: post.repostedBy?.map((reposter) => {
+            const reposterDomain = reposter.nodeDomain || effectiveDomain;
+            const bareHandle = reposter.handle.includes('@')
+                ? reposter.handle.slice(0, reposter.handle.lastIndexOf('@'))
+                : reposter.handle;
+            return {
+                ...reposter,
+                id: reposter.id?.startsWith('swarm:')
+                    ? reposter.id
+                    : `swarm:${reposterDomain}:${bareHandle}`,
+                handle: reposter.handle.includes('@')
+                    ? reposter.handle
+                    : `${reposter.handle}@${reposterDomain}`,
+                nodeDomain: reposterDomain,
+                isSwarm: true,
+                isRemote: true,
+            };
+        }),
+        repostedByCount: post.repostedByCount,
         author: post.author ? {
             id: `swarm:${effectiveDomain}:${post.author.handle}`,
             handle: post.author.handle.includes('@') ? post.author.handle : `${post.author.handle}@${effectiveDomain}`,
@@ -185,9 +214,17 @@ export async function GET(
                 with: postDetailRelations,
                 orderBy: (posts, { desc }) => [desc(posts.createdAt)],
             });
+            const remoteRepostRows = await db.query.remoteReposts.findMany({
+                where: { postId: { in: [post.id, ...replies.map((reply) => reply.id)] } },
+                orderBy: (remoteReposts, { desc }) => [desc(remoteReposts.createdAt)],
+            });
+            const [summarizedPost, ...summarizedReplies] = attachRemoteRepostSummaries(
+                [post, ...replies],
+                remoteRepostRows,
+            );
 
             mainPost = {
-                ...post,
+                ...summarizedPost,
                 repliesCount: replies.length,
             };
 
@@ -215,7 +252,7 @@ export async function GET(
                         isReposted: repostedPostIds.has(post.id),
                     };
 
-                    replyPosts = replies.map(r => ({
+                    replyPosts = summarizedReplies.map(r => ({
                         ...r,
                         isLiked: likedPostIds.has(r.id),
                         isReposted: repostedPostIds.has(r.id),

@@ -19,6 +19,7 @@ const swarmRepostSchema = z.object({
     actorHandle: localHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
     actorAvatarUrl: z.string().url().optional(),
+    actorIsNsfw: z.boolean().optional().default(false),
     actorNodeDomain: nodeDomainSchema,
     repostId: z.string().uuid(),
     interactionId: z.string().uuid(),
@@ -69,6 +70,13 @@ export async function POST(request: NextRequest) {
     });
 
     if (existingRepost) {
+      await db.update(remoteReposts)
+        .set({
+          actorDisplayName: data.repost.actorDisplayName,
+          actorAvatarUrl: data.repost.actorAvatarUrl || null,
+          actorIsNsfw: data.repost.actorIsNsfw,
+        })
+        .where(eq(remoteReposts.id, existingRepost.id));
       return NextResponse.json({
         success: true,
         message: 'Repost already recorded',
@@ -83,6 +91,9 @@ export async function POST(request: NextRequest) {
     await db.insert(remoteReposts).values({
       postId: data.postId,
       actorHandle: data.repost.actorHandle,
+      actorDisplayName: data.repost.actorDisplayName,
+      actorAvatarUrl: data.repost.actorAvatarUrl || null,
+      actorIsNsfw: data.repost.actorIsNsfw,
       actorNodeDomain: data.repost.actorNodeDomain,
     });
 

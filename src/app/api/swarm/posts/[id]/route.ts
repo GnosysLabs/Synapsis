@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { z } from 'zod';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
+import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -111,6 +112,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
       orderBy: (posts, { desc }) => [desc(posts.createdAt)],
       limit: 50,
     });
+    const remoteRepostRows = await db.query.remoteReposts.findMany({
+      where: { postId: { in: [post.id, ...replies.map((reply) => reply.id)] } },
+      orderBy: (remoteReposts, { desc }) => [desc(remoteReposts.createdAt)],
+    });
+    const [postSummary, ...replySummaries] = attachRemoteRepostSummaries(
+      [post, ...replies],
+      remoteRepostRows,
+    );
+    const replySummariesById = new Map(replySummaries.map((reply) => [reply.id, reply]));
 
     const author = post.author;
 
@@ -122,6 +132,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
         createdAt: post.createdAt.toISOString(),
         likesCount: post.likesCount,
         repostsCount: post.repostsCount,
+        repostedBy: postSummary.repostedBy,
+        repostedByCount: postSummary.repostedByCount,
         repliesCount: replies.length,
         author: {
           handle: author.handle,
@@ -142,12 +154,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
       },
       replies: replies.map(r => {
         const replyAuthor = r.author;
+        const replySummary = replySummariesById.get(r.id);
         return {
           id: r.id,
           content: r.content,
           createdAt: r.createdAt.toISOString(),
           likesCount: r.likesCount,
           repostsCount: r.repostsCount,
+          repostedBy: replySummary?.repostedBy,
+          repostedByCount: replySummary?.repostedByCount,
           repliesCount: r.repliesCount,
           author: {
             handle: replyAuthor.handle,

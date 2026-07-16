@@ -368,6 +368,9 @@ export const remoteReposts = sqliteTable('remote_reposts', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   postId: text('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
   actorHandle: text('actor_handle').notNull(),
+  actorDisplayName: text('actor_display_name'),
+  actorAvatarUrl: text('actor_avatar_url'),
+  actorIsNsfw: integer('actor_is_nsfw', { mode: 'boolean' }).default(false).notNull(),
   actorNodeDomain: text('actor_node_domain').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [

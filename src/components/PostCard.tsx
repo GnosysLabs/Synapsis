@@ -877,7 +877,7 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
                     />
                 </div>
             )}
-            <article className={`post ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''}`}>
+            <article className={`post ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''} ${showMenu ? 'menu-open' : ''}`}>
                 {!isDetail && <Link href={postUrl} className="post-link-overlay" aria-label="View post" />}
 
                 {visibleReposters.length > 0 && (

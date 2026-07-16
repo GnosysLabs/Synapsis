@@ -8,7 +8,7 @@ import { getActiveSwarmNodes } from './registry';
 import type { SwarmPost } from '@/app/api/swarm/timeline/route';
 import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
-import { getSourceContinuationDate } from '@/lib/posts/feed-pagination';
+import { feedActivityDate, getSourceContinuationDate } from '@/lib/posts/feed-pagination';
 
 interface TimelineResult {
   posts: SwarmPost[];
@@ -233,7 +233,7 @@ export async function fetchSwarmTimeline(
   // Sort by createdAt descending and dedupe by id
   const seen = new Set<string>();
   const uniquePosts = allPosts
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .sort((a, b) => feedActivityDate(b).getTime() - feedActivityDate(a).getTime())
     .filter(post => {
       const key = `${post.nodeDomain}:${post.id}`;
       if (seen.has(key)) return false;

@@ -9,7 +9,7 @@ export interface NodeFeedReposter {
     nodeDomain?: string | null;
 }
 
-interface NodeFeedActivity {
+export interface NodeFeedActivity {
     storyId: string;
     latestActivityAt: Date;
 }
@@ -48,6 +48,29 @@ export function setReposterInSummary<TReposter extends { id: string }>(
         repostedBy: nextReposters,
         repostedByCount: Math.max(repostedByCount || 0, nextReposters.length),
     };
+}
+
+export function mergeNodeFeedActivities(
+    sources: NodeFeedActivity[][],
+    limit: number,
+): NodeFeedActivity[] {
+    const latestByStoryId = new Map<string, Date>();
+
+    for (const source of sources) {
+        for (const activity of source) {
+            const current = latestByStoryId.get(activity.storyId);
+            if (!current || activity.latestActivityAt > current) {
+                latestByStoryId.set(activity.storyId, activity.latestActivityAt);
+            }
+        }
+    }
+
+    return Array.from(latestByStoryId, ([storyId, latestActivityAt]) => ({
+        storyId,
+        latestActivityAt,
+    }))
+        .sort((a, b) => b.latestActivityAt.getTime() - a.latestActivityAt.getTime())
+        .slice(0, limit);
 }
 
 /**
@@ -101,11 +124,14 @@ export function collapseSharedFeedPosts(posts: Post[]): Post[] {
         const original = event.repostOf || event;
         const storyId = original.id;
         const existing = stories.get(storyId);
-        const existingReposters = existing?.repostedBy || [];
         const eventReposter = event.repostOf ? event.author : null;
-        const repostedBy = eventReposter && !existingReposters.some((actor) => actor.id === eventReposter.id)
-            ? [...existingReposters, eventReposter]
-            : existingReposters;
+        const repostedBy = [
+            ...(existing?.repostedBy || []),
+            ...(original.repostedBy || []),
+            ...(event.repostedBy || []),
+            ...(eventReposter ? [eventReposter] : []),
+        ].filter((actor, index, actors) =>
+            actors.findIndex((candidate) => candidate.id === actor.id) === index);
         const feedActivityAt = new Date(Math.max(
             existing ? activityTimestamp(existing) : 0,
             activityTimestamp(event),

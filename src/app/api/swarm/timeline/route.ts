@@ -5,9 +5,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, users, media } from '@/db';
-import { eq, desc, and, isNull, lt, inArray } from 'drizzle-orm';
+import { db, posts, users, media, remoteReposts } from '@/db';
+import { eq, desc, and, isNull, lt, inArray, sql } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
+import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
+import type { User } from '@/lib/types';
 
 export interface SwarmPost {
   id: string;
@@ -18,6 +20,9 @@ export interface SwarmPost {
   swarmReplyToId?: string | null;
   repostOfId?: string | null;
   repostOf?: SwarmPost | null;
+  repostedBy?: User[];
+  repostedByCount?: number;
+  feedActivityAt?: string;
   author: {
     handle: string;
     displayName: string;
@@ -63,6 +68,60 @@ interface TimelinePostRow {
   authorDisplayName: string | null;
   authorAvatarUrl: string | null;
   authorIsNsfw: boolean;
+  feedActivityAt?: Date;
+}
+
+interface LocalRepostRow {
+  repostOfId: string | null;
+  author: {
+    id: string;
+    handle: string;
+    displayName: string | null;
+    avatarUrl: string | null;
+    isNsfw: boolean;
+  };
+}
+
+function attachLocalRepostSummaries(
+  swarmPosts: SwarmPost[],
+  repostRows: LocalRepostRow[],
+  nodeDomain: string,
+): SwarmPost[] {
+  const actorsByPostId = new Map<string, User[]>();
+
+  for (const row of repostRows) {
+    if (!row.repostOfId) continue;
+    const actors = actorsByPostId.get(row.repostOfId) || [];
+    const actor: User = {
+      id: `swarm:${nodeDomain}:${row.author.handle}`,
+      handle: row.author.handle,
+      displayName: row.author.displayName || row.author.handle,
+      avatarUrl: row.author.avatarUrl,
+      isNsfw: row.author.isNsfw,
+      nodeDomain,
+    };
+    if (!actors.some((candidate) => candidate.id === actor.id)) {
+      actors.push(actor);
+    }
+    actorsByPostId.set(row.repostOfId, actors);
+  }
+
+  return swarmPosts.map((post) => {
+    const localActors = actorsByPostId.get(post.id) || [];
+    if (localActors.length === 0) return post;
+    const existingActors = post.repostedBy || [];
+    const existingIds = new Set(existingActors.map((actor) => actor.id));
+    const repostedBy = [
+      ...existingActors,
+      ...localActors.filter((actor) => !existingIds.has(actor.id)),
+    ];
+
+    return {
+      ...post,
+      repostedBy,
+      repostedByCount: Math.max(post.repostedByCount || 0, post.repostCount, repostedBy.length),
+    };
+  });
 }
 
 function buildSwarmPost(
@@ -76,6 +135,7 @@ function buildSwarmPost(
     id: post.id,
     content: post.content,
     createdAt: post.createdAt.toISOString(),
+    feedActivityAt: (post.feedActivityAt || post.createdAt).toISOString(),
     isReply: Boolean(post.replyToId || post.swarmReplyToId),
     replyToId: post.replyToId,
     swarmReplyToId: post.swarmReplyToId,
@@ -136,17 +196,23 @@ export async function GET(request: NextRequest) {
       isNull(posts.replyToId), // Not a reply
       isNull(posts.swarmReplyToId), // Not a swarm reply
       eq(posts.isRemoved, false), // Not removed
-      isNull(users.nodeId) // Local user (not from another swarm node)
+      isNull(users.nodeId), // Local user (not from another swarm node)
+      sql`not exists (
+        select 1 from ${remoteReposts}
+        where ${remoteReposts.postId} = coalesce(${posts.repostOfId}, ${posts.id})
+      )`,
     );
 
-    if (cursor) {
+    const parsedCursorDate = cursor ? new Date(cursor) : null;
+    const cursorDate = parsedCursorDate && !isNaN(parsedCursorDate.getTime())
+      ? parsedCursorDate
+      : null;
+
+    if (cursorDate) {
       // Find the cursor post or use timestamp directly if passed as ISO string
       // Actually, for swarm, passing ISO timestamp is safer than ID because IDs are local UUIDs
       // Let's assume cursor is an ISO date string for swarm timeline
-      const cursorDate = new Date(cursor);
-      if (!isNaN(cursorDate.getTime())) {
-        whereCondition = and(whereCondition, lt(posts.createdAt, cursorDate));
-      }
+      whereCondition = and(whereCondition, lt(posts.createdAt, cursorDate));
     }
 
     // Get recent public posts (not replies, local users only, not removed)
@@ -181,10 +247,91 @@ export async function GET(request: NextRequest) {
       .orderBy(desc(posts.createdAt))
       .limit(limit);
 
-    console.log(`[Swarm Timeline API] Found ${recentPosts.length} posts for ${nodeDomain}`);
+    const latestRemoteActivityAt = sql<Date>`max(
+      max(${remoteReposts.createdAt}),
+      coalesce((
+        select max("activity_posts"."created_at")
+        from "posts" "activity_posts"
+        where coalesce("activity_posts"."repost_of_id", "activity_posts"."id") = ${remoteReposts.postId}
+          and "activity_posts"."is_removed" = 0
+          and "activity_posts"."reply_to_id" is null
+          and "activity_posts"."swarm_reply_to_id" is null
+      ), 0)
+    )`.mapWith(posts.createdAt);
+    const remoteActivityQuery = db.select({
+      postId: remoteReposts.postId,
+      latestActivityAt: latestRemoteActivityAt,
+    })
+      .from(remoteReposts)
+      .innerJoin(posts, eq(remoteReposts.postId, posts.id))
+      .innerJoin(users, eq(posts.userId, users.id))
+      .where(and(
+        isNull(posts.replyToId),
+        isNull(posts.swarmReplyToId),
+        eq(posts.isRemoved, false),
+        isNull(users.nodeId),
+      ))
+      .groupBy(remoteReposts.postId)
+      .orderBy(desc(latestRemoteActivityAt))
+      .limit(limit);
+    const remoteActivityRows = cursorDate
+      ? await remoteActivityQuery.having(lt(latestRemoteActivityAt, cursorDate))
+      : await remoteActivityQuery;
+    const remoteActivityByPostId = new Map(
+      remoteActivityRows.map((row) => [row.postId, row.latestActivityAt]),
+    );
+    const remoteStoryIds = remoteActivityRows.map((row) => row.postId);
+    const remoteStoryPosts = remoteStoryIds.length > 0
+      ? await db
+          .select({
+            id: posts.id,
+            content: posts.content,
+            createdAt: posts.createdAt,
+            replyToId: posts.replyToId,
+            swarmReplyToId: posts.swarmReplyToId,
+            repostOfId: posts.repostOfId,
+            isNsfw: posts.isNsfw,
+            likesCount: posts.likesCount,
+            repostsCount: posts.repostsCount,
+            repliesCount: posts.repliesCount,
+            linkPreviewUrl: posts.linkPreviewUrl,
+            linkPreviewTitle: posts.linkPreviewTitle,
+            linkPreviewDescription: posts.linkPreviewDescription,
+            linkPreviewImage: posts.linkPreviewImage,
+            linkPreviewType: posts.linkPreviewType,
+            linkPreviewVideoUrl: posts.linkPreviewVideoUrl,
+            linkPreviewMediaJson: posts.linkPreviewMediaJson,
+            authorHandle: users.handle,
+            authorDisplayName: users.displayName,
+            authorAvatarUrl: users.avatarUrl,
+            authorIsNsfw: users.isNsfw,
+          })
+          .from(posts)
+          .innerJoin(users, eq(posts.userId, users.id))
+          .where(inArray(posts.id, remoteStoryIds))
+      : [];
+    const selectedById = new Map<string, TimelinePostRow>();
+    for (const post of [
+      ...recentPosts.map((item) => ({ ...item, feedActivityAt: item.createdAt })),
+      ...remoteStoryPosts.map((item) => ({
+        ...item,
+        feedActivityAt: remoteActivityByPostId.get(item.id) || item.createdAt,
+      })),
+    ]) {
+      const existing = selectedById.get(post.id);
+      if (!existing || (post.feedActivityAt || post.createdAt) > (existing.feedActivityAt || existing.createdAt)) {
+        selectedById.set(post.id, post);
+      }
+    }
+    const selectedPosts = Array.from(selectedById.values())
+      .sort((a, b) =>
+        (b.feedActivityAt || b.createdAt).getTime() - (a.feedActivityAt || a.createdAt).getTime())
+      .slice(0, limit);
+
+    console.log(`[Swarm Timeline API] Found ${selectedPosts.length} posts for ${nodeDomain}`);
 
     const repostIds = Array.from(new Set(
-      recentPosts
+      selectedPosts
         .map(post => post.repostOfId)
         .filter((id): id is string => Boolean(id))
     ));
@@ -224,6 +371,7 @@ export async function GET(request: NextRequest) {
 
     const mediaPostIds = Array.from(new Set([
       ...recentPosts.map(post => post.id),
+      ...remoteStoryPosts.map(post => post.id),
       ...repostTargets.map(post => post.id),
     ]));
 
@@ -252,12 +400,45 @@ export async function GET(request: NextRequest) {
     }
 
     const repostById = new Map<string, SwarmPost>();
-    for (const post of repostTargets) {
-      repostById.set(post.id, buildSwarmPost(post, mediaByPostId, repostById, nodeDomain, nodeIsNsfw));
+    const summaryPostIds = Array.from(new Set([
+      ...selectedPosts.map((post) => post.id),
+      ...repostTargets.map((post) => post.id),
+    ]));
+    const remoteRepostRows = summaryPostIds.length > 0
+      ? await db.query.remoteReposts.findMany({
+          where: { postId: { in: summaryPostIds } },
+          orderBy: (remoteReposts, { desc }) => [desc(remoteReposts.createdAt)],
+        })
+      : [];
+    const localRepostRows = summaryPostIds.length > 0
+      ? await db.query.posts.findMany({
+          where: { AND: [{ repostOfId: { in: summaryPostIds } }, { isRemoved: false }] },
+          with: { author: true },
+          orderBy: (posts, { desc }) => [desc(posts.createdAt)],
+        })
+      : [];
+    const summarizedRepostTargets = attachLocalRepostSummaries(
+      attachRemoteRepostSummaries(
+        repostTargets.map((post) =>
+          buildSwarmPost(post, mediaByPostId, repostById, nodeDomain, nodeIsNsfw)),
+        remoteRepostRows,
+      ),
+      localRepostRows,
+      nodeDomain,
+    );
+    for (const post of summarizedRepostTargets) {
+      repostById.set(post.id, post);
     }
 
-    const swarmPosts = recentPosts.map(post =>
-      buildSwarmPost(post, mediaByPostId, repostById, nodeDomain, nodeIsNsfw)
+    const swarmPosts = attachLocalRepostSummaries(
+      attachRemoteRepostSummaries(
+        selectedPosts.map(post =>
+          buildSwarmPost(post, mediaByPostId, repostById, nodeDomain, nodeIsNsfw)
+        ),
+        remoteRepostRows,
+      ),
+      localRepostRows,
+      nodeDomain,
     );
 
     return NextResponse.json({

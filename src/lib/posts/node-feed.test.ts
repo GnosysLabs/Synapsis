@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     assembleNodeFeedStories,
     collapseSharedFeedPosts,
+    mergeNodeFeedActivities,
     setReposterInSummary,
     type NodeFeedReposter,
 } from './node-feed';
@@ -50,6 +51,37 @@ describe('collapseSharedFeedPosts', () => {
         const newer = post('newer', user('author'), '2026-07-16T13:00:00Z');
 
         expect(collapseSharedFeedPosts([older, newer]).map((item) => item.id)).toEqual(['newer', 'older']);
+    });
+
+    it('preserves preassembled federated reposters on an original story', () => {
+        const original = post('original', user('author'), '2026-07-16T12:00:00Z', {
+            repostsCount: 1,
+            repostedBy: [user('remote-reposter')],
+            repostedByCount: 1,
+            feedActivityAt: '2026-07-16T15:00:00Z',
+        });
+
+        const [result] = collapseSharedFeedPosts([original]);
+
+        expect(result.repostedBy?.map((reposter) => reposter.id)).toEqual(['remote-reposter']);
+        expect(result.feedActivityAt).toBe('2026-07-16T15:00:00.000Z');
+    });
+});
+
+describe('mergeNodeFeedActivities', () => {
+    it('uses a remote repost as the latest story activity without duplicating the post', () => {
+        const result = mergeNodeFeedActivities([
+            [
+                { storyId: 'post-1', latestActivityAt: new Date('2026-07-16T12:00:00Z') },
+                { storyId: 'post-2', latestActivityAt: new Date('2026-07-16T14:00:00Z') },
+            ],
+            [{ storyId: 'post-1', latestActivityAt: new Date('2026-07-16T15:00:00Z') }],
+        ], 2);
+
+        expect(result).toEqual([
+            { storyId: 'post-1', latestActivityAt: new Date('2026-07-16T15:00:00Z') },
+            { storyId: 'post-2', latestActivityAt: new Date('2026-07-16T14:00:00Z') },
+        ]);
     });
 });
 

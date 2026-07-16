@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, media, follows, mutes, blocks, remotePosts, userSwarmReposts, notifications } from '@/db';
+import { db, posts, users, media, follows, mutes, blocks, remotePosts, remoteReposts, userSwarmReposts, notifications } from '@/db';
 import { getSession, requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, and, desc, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
@@ -19,9 +19,11 @@ import { registerPostMentions } from '@/lib/mentions/delivery';
 import {
     assembleNodeFeedStories,
     collapseSharedFeedPosts,
+    mergeNodeFeedActivities,
     setReposterInSummary,
     type NodeFeedReposter,
 } from '@/lib/posts/node-feed';
+import { mapRemoteReposter } from '@/lib/posts/remote-reposts';
 import type { Post } from '@/lib/types';
 
 const POST_MAX_LENGTH = 600;
@@ -195,6 +197,17 @@ const feedPostRelations = {
 async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<FeedPostWithChildren[]> {
     const storyId = sql<string>`coalesce(${posts.repostOfId}, ${posts.id})`;
     const latestActivityAt = sql<Date>`max(${posts.createdAt})`.mapWith(posts.createdAt);
+    const latestRemoteActivityAt = sql<Date>`max(
+        max(${remoteReposts.createdAt}),
+        coalesce((
+            select max("activity_posts"."created_at")
+            from "posts" "activity_posts"
+            where coalesce("activity_posts"."repost_of_id", "activity_posts"."id") = ${remoteReposts.postId}
+              and "activity_posts"."is_removed" = 0
+              and "activity_posts"."reply_to_id" is null
+              and "activity_posts"."swarm_reply_to_id" is null
+        ), 0)
+    )`.mapWith(posts.createdAt);
     const cursorDate = decodeFeedCursor(cursor);
 
     const activityQuery = db.select({
@@ -206,21 +219,46 @@ async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<F
             eq(posts.isRemoved, false),
             isNull(posts.replyToId),
             isNull(posts.swarmReplyToId),
+            sql`not exists (
+                select 1 from ${remoteReposts}
+                where ${remoteReposts.postId} = ${storyId}
+            )`,
         ))
         .groupBy(storyId)
         .orderBy(desc(latestActivityAt))
         .limit(limit);
 
-    const activityRows = cursorDate
+    const localActivityRows = cursorDate
         ? await activityQuery.having(lt(latestActivityAt, cursorDate))
         : await activityQuery;
+    const remoteActivityQuery = db.select({
+        storyId: remoteReposts.postId,
+        latestActivityAt: latestRemoteActivityAt,
+    })
+        .from(remoteReposts)
+        .innerJoin(posts, eq(remoteReposts.postId, posts.id))
+        .where(and(
+            eq(posts.isRemoved, false),
+            isNull(posts.replyToId),
+            isNull(posts.swarmReplyToId),
+        ))
+        .groupBy(remoteReposts.postId)
+        .orderBy(desc(latestRemoteActivityAt))
+        .limit(limit);
+    const remoteActivityRows = cursorDate
+        ? await remoteActivityQuery.having(lt(latestRemoteActivityAt, cursorDate))
+        : await remoteActivityQuery;
+    const activityRows = mergeNodeFeedActivities(
+        [localActivityRows, remoteActivityRows],
+        limit,
+    );
     const storyIds = activityRows.map((row) => row.storyId);
 
     if (storyIds.length === 0) {
         return [];
     }
 
-    const [originalPosts, repostRows] = await Promise.all([
+    const [originalPosts, repostRows, remoteRepostRows] = await Promise.all([
         db.query.posts.findMany({
             where: { AND: [{ id: { in: storyIds } }, { isRemoved: false }] },
             with: feedPostRelations,
@@ -230,9 +268,32 @@ async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<F
             with: { author: true },
             orderBy: (posts, { desc }) => [desc(posts.createdAt)],
         }),
+        db.query.remoteReposts.findMany({
+            where: { postId: { in: storyIds } },
+            orderBy: (remoteReposts, { desc }) => [desc(remoteReposts.createdAt)],
+        }),
     ]);
 
-    return assembleNodeFeedStories(activityRows, originalPosts, repostRows) as FeedPostWithChildren[];
+    const federatedRepostRows = remoteRepostRows.map((row) => {
+        const reposter = mapRemoteReposter(row);
+        return {
+            repostOfId: row.postId,
+            author: {
+                id: reposter.id,
+                handle: reposter.handle,
+                displayName: reposter.displayName,
+                avatarUrl: reposter.avatarUrl || null,
+                isNsfw: reposter.isNsfw || false,
+                nodeDomain: reposter.nodeDomain,
+            },
+        };
+    });
+
+    return assembleNodeFeedStories(
+        activityRows,
+        originalPosts,
+        [...repostRows, ...federatedRepostRows],
+    ) as FeedPostWithChildren[];
 }
 
 async function getLocallyRepostedRemoteStories(

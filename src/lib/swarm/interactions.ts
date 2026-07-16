@@ -86,6 +86,7 @@ export interface SwarmRepostPayload {
     actorHandle: string;
     actorDisplayName: string;
     actorAvatarUrl?: string;
+    actorIsNsfw?: boolean;
     actorNodeDomain: string;
     repostId: string; // The ID of the repost on the actor's node
     interactionId: string;
@@ -396,6 +397,15 @@ export interface SwarmUserPost {
   linkPreviewMedia?: Array<{ url: string; width?: number | null; height?: number | null; mimeType?: string | null }>;
   repostOfId?: string;
   repostOf?: SwarmUserPost | null;
+  repostedBy?: Array<{
+    id?: string;
+    handle: string;
+    displayName?: string | null;
+    avatarUrl?: string | null;
+    isNsfw?: boolean;
+    nodeDomain?: string | null;
+  }>;
+  repostedByCount?: number;
 }
 
 export interface SwarmProfileResponse {

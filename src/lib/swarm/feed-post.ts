@@ -22,6 +22,7 @@ export function mapSwarmPostToPost(
         originalPostId: post.id,
         content: post.content,
         createdAt: post.createdAt,
+        feedActivityAt: post.feedActivityAt,
         likesCount: post.likeCount,
         repostsCount: post.repostCount,
         repliesCount: post.replyCount,
@@ -33,6 +34,26 @@ export function mapSwarmPostToPost(
         repostOf: post.repostOf
             ? mapSwarmPostToPost(post.repostOf as InteractiveSwarmPost, options)
             : null,
+        repostedBy: post.repostedBy?.map((reposter) => {
+            const reposterDomain = reposter.nodeDomain || post.nodeDomain;
+            const bareHandle = reposter.handle.includes('@')
+                ? reposter.handle.slice(0, reposter.handle.lastIndexOf('@'))
+                : reposter.handle;
+            const qualifiedHandle = reposter.handle.includes('@')
+                ? reposter.handle
+                : `${reposter.handle}@${reposterDomain}`;
+            return {
+                ...reposter,
+                id: reposter.id?.startsWith('swarm:')
+                    ? reposter.id
+                    : `swarm:${reposterDomain}:${bareHandle}`,
+                handle: qualifiedHandle,
+                nodeDomain: reposterDomain,
+                isSwarm: true,
+                isRemote: true,
+            };
+        }),
+        repostedByCount: post.repostedByCount,
         author: {
             id: `swarm:${post.nodeDomain}:${post.author.handle}`,
             handle: qualifiedAuthorHandle,

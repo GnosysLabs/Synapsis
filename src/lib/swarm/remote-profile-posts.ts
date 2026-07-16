@@ -23,6 +23,15 @@ export type RemoteProfilePost = {
   isSwarm?: boolean;
   repostOf?: RemoteProfilePost | null;
   replyTo?: RemoteProfilePost | null;
+  repostedBy?: Array<{
+    id?: string;
+    handle: string;
+    displayName?: string | null;
+    avatarUrl?: string | null;
+    isNsfw?: boolean;
+    nodeDomain?: string | null;
+  }>;
+  repostedByCount?: number;
   media?: Array<{ id?: string; url: string; altText?: string | null; mimeType?: string | null }>;
   [key: string]: unknown;
 };
@@ -51,6 +60,22 @@ export function mapRemoteProfilePost(post: RemoteProfilePost, remoteDomain: stri
       ...item,
       id: item.id || `swarm:${effectiveDomain}:${rawOriginalId}:media:${index}`,
     })),
+    repostedBy: post.repostedBy?.map((reposter) => {
+      const reposterDomain = reposter.nodeDomain || effectiveDomain;
+      const bareHandle = reposter.handle.includes('@')
+        ? reposter.handle.slice(0, reposter.handle.lastIndexOf('@'))
+        : reposter.handle;
+      return {
+        ...reposter,
+        id: reposter.id?.startsWith('swarm:')
+          ? reposter.id
+          : `swarm:${reposterDomain}:${bareHandle}`,
+        handle: reposter.handle.includes('@')
+          ? reposter.handle
+          : `${reposter.handle}@${reposterDomain}`,
+        nodeDomain: reposterDomain,
+      };
+    }),
     repostOf: post.repostOf ? mapRemoteProfilePost(post.repostOf, remoteDomain) : post.repostOf,
     replyTo: post.replyTo ? mapRemoteProfilePost(post.replyTo, remoteDomain) : post.replyTo,
   };

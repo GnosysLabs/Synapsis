@@ -6,6 +6,7 @@ import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
 import { getRemoteBaseUrl, mapRemoteProfilePost, type RemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
+import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 
 const embeddedPostRelations = {
     author: true,
@@ -36,6 +37,15 @@ type FeedPostWithChildren = {
     isReposted?: boolean;
     nodeDomain?: string | null;
     originalPostId?: string | null;
+    repostedBy?: Array<{
+        id: string;
+        handle: string;
+        displayName: string;
+        avatarUrl?: string | null;
+        nodeDomain?: string | null;
+        isNsfw?: boolean;
+    }>;
+    repostedByCount?: number;
 };
 
 function parseMediaJson(mediaJson: string | null) {
@@ -342,6 +352,13 @@ export async function GET(request: Request, context: RouteContext) {
             orderBy: (posts, { desc }) => [desc(posts.createdAt)],
             limit: cursor ? limit : limit * 2,
         });
+        const remoteRepostRows = localPosts.length > 0
+            ? await db.query.remoteReposts.findMany({
+                where: { postId: { in: localPosts.map((post) => post.id) } },
+                orderBy: (remoteReposts, { desc }) => [desc(remoteReposts.createdAt)],
+            })
+            : [];
+        const summarizedLocalPosts = attachRemoteRepostSummaries(localPosts, remoteRepostRows);
 
         const swarmRepostWhere = {
             userId: user.id,
@@ -353,7 +370,7 @@ export async function GET(request: Request, context: RouteContext) {
             limit: cursor ? limit : limit * 2,
         });
         let userPosts: FeedPostWithChildren[] = [
-            ...localPosts,
+            ...summarizedLocalPosts,
             ...swarmRepostRows.map((row) => mapUserSwarmRepostToFeedPost(row, user)),
         ]
             .sort((a, b) => getPostTimestamp(b) - getPostTimestamp(a))

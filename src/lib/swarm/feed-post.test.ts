@@ -86,6 +86,31 @@ describe('mapSwarmPostToPost', () => {
         });
     });
 
+    it('preserves federated repost activity and qualifies reposter identities', () => {
+        const mapped = mapSwarmPostToPost({
+            ...original,
+            feedActivityAt: '2026-07-16T20:00:00.000Z',
+            repostedBy: [{
+                id: 'swarm:another.example:alice',
+                handle: 'alice',
+                displayName: 'Alice',
+                avatarUrl: 'https://another.example/alice.png',
+                nodeDomain: 'another.example',
+            }],
+            repostedByCount: 3,
+        });
+
+        expect(mapped).toMatchObject({
+            feedActivityAt: '2026-07-16T20:00:00.000Z',
+            repostedByCount: 3,
+            repostedBy: [{
+                id: 'swarm:another.example:alice',
+                handle: 'alice@another.example',
+                nodeDomain: 'another.example',
+            }],
+        });
+    });
+
     it('maps posts from the current node back to local post IDs', () => {
         const mapped = mapSwarmPostToPost({
             ...original,
