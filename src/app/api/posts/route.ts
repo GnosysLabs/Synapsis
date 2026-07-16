@@ -8,7 +8,7 @@ import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/medi
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { isLocalNodeNsfw } from '@/lib/node/local-node';
 import { hasPublishablePostContent } from '@/lib/posts/content-policy';
-import { decodeFeedCursor, encodeFeedCursor } from '@/lib/posts/feed-pagination';
+import { decodeFeedCursor, encodeFeedCursor, newestDate, selectFeedWindow } from '@/lib/posts/feed-pagination';
 import { mapSwarmPostToPost } from '@/lib/swarm/feed-post';
 import {
     CURATED_FEED_WEIGHTS,
@@ -655,6 +655,7 @@ export async function GET(request: Request) {
         const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
 
         let feedPosts;
+        let explicitNextCursor: string | null | undefined;
         // Base filter excludes removed posts and replies (replies only show on detail/profile)
         const baseFilter = {
             isRemoved: false,
@@ -761,7 +762,7 @@ export async function GET(request: Request) {
             // Fetch swarm posts with user's NSFW preference
             const { fetchSwarmTimeline } = await import('@/lib/swarm/timeline');
             const cursorDate = await getMixedFeedCursorDate(cursor);
-            const swarmResult = await fetchSwarmTimeline(10, 30, {
+            const swarmResult = await fetchSwarmTimeline(undefined, 30, {
                 includeNsfw,
                 cursor: cursorDate?.toISOString(),
             });
@@ -796,7 +797,18 @@ export async function GET(request: Request) {
                 ...locallyRepostedRemoteStories as unknown as Post[],
             ])
                 .filter((post) => !mutedIds.has(post.author.id) && !blockedIds.has(post.author.id));
-            const rankedPosts = rankCuratedFeed(eligiblePosts, { limit });
+            const pageWindow = selectFeedWindow(eligiblePosts, limit);
+            const rankedPosts = rankCuratedFeed(pageWindow.posts, { limit });
+            const localRepostContinuation = locallyRepostedRemoteStories.length >= limit
+                ? new Date(locallyRepostedRemoteStories[locallyRepostedRemoteStories.length - 1].feedActivityAt || locallyRepostedRemoteStories[locallyRepostedRemoteStories.length - 1].createdAt)
+                : null;
+            const sourceContinuation = newestDate([
+                swarmResult.continuationDate ? new Date(swarmResult.continuationDate) : null,
+                localRepostContinuation,
+            ]);
+            explicitNextCursor = encodeFeedCursor(
+                pageWindow.hasOverflow ? pageWindow.oldestActivityAt : sourceContinuation,
+            );
 
             console.log('[Curated Feed] After ranking:', {
                 swarmPostsCount: swarmPosts.length,
@@ -1061,7 +1073,9 @@ export async function GET(request: Request) {
                     ...CURATED_FEED_WEIGHTS,
                 },
             } : undefined,
-            nextCursor: (feedPosts?.length === limit)
+            nextCursor: explicitNextCursor !== undefined
+                ? explicitNextCursor
+                : (feedPosts?.length === limit)
                 ? (type === 'home' || type === 'curated' || type === 'local'
                     ? encodeFeedCursor(lastFeedPost?.feedActivityAt || lastFeedPost?.createdAt)
                     : lastFeedPost?.id)

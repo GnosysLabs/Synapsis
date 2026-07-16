@@ -8,11 +8,13 @@ import { getActiveSwarmNodes } from './registry';
 import type { SwarmPost } from '@/app/api/swarm/timeline/route';
 import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
+import { getSourceContinuationDate } from '@/lib/posts/feed-pagination';
 
 interface TimelineResult {
   posts: SwarmPost[];
   sources: { domain: string; postCount: number; filteredCount?: number; isNsfw?: boolean; error?: string }[];
   fetchedAt: string;
+  continuationDate: string | null;
 }
 
 interface TimelineOptions {
@@ -164,7 +166,7 @@ async function fetchNodeTimeline(
  * Filters out NSFW content unless explicitly requested.
  */
 export async function fetchSwarmTimeline(
-  maxNodes: number = 10,
+  maxNodes: number | undefined = undefined,
   postsPerNode: number = 10,
   options: TimelineOptions = {}
 ): Promise<TimelineResult> {
@@ -181,7 +183,8 @@ export async function fetchSwarmTimeline(
     ourDomain,
     ...nodes.map(n => n.domain).filter(d => d !== ourDomain)
   ];
-  const nodesToQuery = (await filterBlockedDomains(candidateDomains)).slice(0, maxNodes);
+  const allowedDomains = await filterBlockedDomains(candidateDomains);
+  const nodesToQuery = maxNodes === undefined ? allowedDomains : allowedDomains.slice(0, maxNodes);
 
   console.log(`[Swarm Timeline] Querying ${nodesToQuery.length} nodes: ${nodesToQuery.join(', ')}`);
   console.log(`[Swarm Timeline] includeNsfw: ${includeNsfw}, cursor: ${cursor || 'none'}`);
@@ -245,5 +248,6 @@ export async function fetchSwarmTimeline(
     posts: enrichedPosts,
     sources,
     fetchedAt: new Date().toISOString(),
+    continuationDate: getSourceContinuationDate(results, postsPerNode)?.toISOString() || null,
   };
 }

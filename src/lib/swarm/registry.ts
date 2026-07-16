@@ -149,7 +149,7 @@ export async function upsertSwarmNodes(
 /**
  * Get all active swarm nodes
  */
-export async function getActiveSwarmNodes(limit = 100): Promise<SwarmNodeInfo[]> {
+export async function getActiveSwarmNodes(limit?: number): Promise<SwarmNodeInfo[]> {
   if (!db) {
     return [];
   }
@@ -157,7 +157,7 @@ export async function getActiveSwarmNodes(limit = 100): Promise<SwarmNodeInfo[]>
   const nodes = await db.query.swarmNodes.findMany({
     where: { AND: [{ isActive: true }, { isBlocked: false }] },
     orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.lastSeenAt)],
-    limit,
+    ...(limit === undefined ? {} : { limit }),
   });
 
   return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);

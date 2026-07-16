@@ -301,6 +301,11 @@ export default function Home() {
               <p style={{ fontSize: '13px', marginTop: '8px' }}>Be the first to post something!</p>
             </>
           )}
+          {nextCursor && (
+            <div ref={loadMoreRef} style={{ padding: '24px', textAlign: 'center' }}>
+              <span style={{ fontSize: '13px' }}>Searching older posts...</span>
+            </div>
+          )}
         </div>
       ) : (
         <>

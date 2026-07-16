@@ -15,3 +15,54 @@ export function decodeFeedCursor(cursor: string | null): Date | null {
   const date = new Date(timestamp);
   return Number.isNaN(date.getTime()) ? null : date;
 }
+
+interface FeedTimestamped {
+  createdAt: string | number | Date;
+  feedActivityAt?: string;
+}
+
+export function feedActivityDate(post: FeedTimestamped): Date {
+  return new Date(post.feedActivityAt || post.createdAt);
+}
+
+export function selectFeedWindow<T extends FeedTimestamped>(posts: T[], limit: number): {
+  posts: T[];
+  hasOverflow: boolean;
+  oldestActivityAt: Date | null;
+} {
+  const ordered = [...posts].sort((a, b) => feedActivityDate(b).getTime() - feedActivityDate(a).getTime());
+  const selected = ordered.slice(0, limit);
+
+  return {
+    posts: selected,
+    hasOverflow: ordered.length > selected.length,
+    oldestActivityAt: selected.length > 0 ? feedActivityDate(selected[selected.length - 1]) : null,
+  };
+}
+
+/**
+ * A global timestamp cursor must stop at the newest boundary among sources
+ * that returned a full page. Older exhausted sources may safely repeat, while
+ * advancing past this boundary would skip unseen posts from a busy source.
+ */
+export function getSourceContinuationDate<T extends { createdAt: string | number | Date }>(
+  sources: Array<{ posts: T[] }>,
+  pageSize: number,
+): Date | null {
+  const boundaries = sources
+    .filter((source) => source.posts.length >= pageSize)
+    .map((source) => source.posts.reduce<Date | null>((oldest, post) => {
+      const date = new Date(post.createdAt);
+      return !oldest || date < oldest ? date : oldest;
+    }, null))
+    .filter((date): date is Date => date !== null && Number.isFinite(date.getTime()));
+
+  if (boundaries.length === 0) return null;
+  return boundaries.reduce((newest, boundary) => boundary > newest ? boundary : newest);
+}
+
+export function newestDate(dates: Array<Date | null | undefined>): Date | null {
+  const validDates = dates.filter((date): date is Date => Boolean(date && Number.isFinite(date.getTime())));
+  if (validDates.length === 0) return null;
+  return validDates.reduce((newest, date) => date > newest ? date : newest);
+}
