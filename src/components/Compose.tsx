@@ -20,6 +20,7 @@ import {
     replaceMentionQuery,
     type ActiveMentionQuery,
 } from '@/lib/mentions/parser';
+import { useAppDialog } from '@/lib/contexts/DialogContext';
 
 interface MediaAttachment extends Attachment {
     clientId?: string;
@@ -56,6 +57,7 @@ interface ComposeProps {
 
 export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placeholder = "What's happening?", isReply, autoFocus = false }: ComposeProps) {
     const { isIdentityUnlocked } = useAuth();
+    const { showAlert } = useAppDialog();
     const replyToHandle = useFormattedHandle(replyingTo?.author.handle || '');
     const [content, setContent] = useState('');
     const [isPosting, setIsPosting] = useState(false);
@@ -238,7 +240,11 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
 
         // With persistence, identity should be unlocked. If not, user needs to re-login
         if (!isIdentityUnlocked) {
-            alert('Your session has expired. Please log in again.');
+            await showAlert({
+                title: 'Session expired',
+                message: 'Please log in again before publishing your post.',
+                dismissLabel: 'Got it',
+            });
             return;
         }
 

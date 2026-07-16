@@ -15,6 +15,7 @@ import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
 import { ProfileBanner } from '@/components/ProfileBanner';
+import { useAppDialog } from '@/lib/contexts/DialogContext';
 
 interface UserSummary {
     id: string;
@@ -58,6 +59,7 @@ export default function ProfilePage() {
     const router = useRouter();
     const handle = (params.handle as string)?.replace(/^@/, '') || '';
     const { did, handle: currentHandle, isIdentityUnlocked, signUserAction, updateUserProfile } = useAuth();
+    const { showAlert } = useAppDialog();
 
     const [user, setUser] = useState<User | null>(null);
     const userFullHandle = useFormattedHandle(user?.handle || '');
@@ -314,12 +316,18 @@ export default function ProfilePage() {
         if (!currentUser) return;
 
         if (!isIdentityUnlocked) {
-            alert('Session expired. Please log in again.');
+            await showAlert({
+                title: 'Session expired',
+                message: 'Please log in again before following this user.',
+            });
             return;
         }
 
         if (!did || !currentHandle) {
-            alert('Session expired. Please log in again.');
+            await showAlert({
+                title: 'Session expired',
+                message: 'Please log in again before following this user.',
+            });
             return;
         }
 
@@ -340,7 +348,10 @@ export default function ProfilePage() {
         if (!currentUser) return;
 
         if (!isIdentityUnlocked) {
-            alert('Session expired. Please log in again.');
+            await showAlert({
+                title: 'Session expired',
+                message: 'Please log in again before changing block settings.',
+            });
             return;
         }
 

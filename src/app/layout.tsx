@@ -54,6 +54,7 @@ export const dynamic = 'force-dynamic';
 
 import { AuthProvider } from '@/lib/contexts/AuthContext';
 import { ToastProvider } from '@/lib/contexts/ToastContext';
+import { DialogProvider } from '@/lib/contexts/DialogContext';
 import { AccentColorProvider } from '@/lib/contexts/AccentColorContext';
 import { ConfigProvider } from '@/lib/contexts/ConfigContext';
 import { LayoutWrapper } from '@/components/LayoutWrapper';
@@ -69,11 +70,13 @@ export default function RootLayout({
         <ConfigProvider>
           <AuthProvider>
             <AccentColorProvider>
-              <ToastProvider>
-                <LayoutWrapper>
-                  {children}
-                </LayoutWrapper>
-              </ToastProvider>
+              <DialogProvider>
+                <ToastProvider>
+                  <LayoutWrapper>
+                    {children}
+                  </LayoutWrapper>
+                </ToastProvider>
+              </DialogProvider>
             </AccentColorProvider>
           </AuthProvider>
         </ConfigProvider>

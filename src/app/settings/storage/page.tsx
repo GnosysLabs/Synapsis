@@ -6,6 +6,7 @@ import { Box, ExternalLink, Loader2 } from 'lucide-react';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { getStoragePageState } from './storage-page-state';
+import { useAppDialog } from '@/lib/contexts/DialogContext';
 
 interface StorageStatus {
     provider: 'stuffbox' | null;
@@ -14,6 +15,7 @@ interface StorageStatus {
 }
 
 export default function StorageSettingsPage() {
+    const { showConfirm } = useAppDialog();
     const [status, setStatus] = useState<StorageStatus | null>(null);
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(true);
@@ -37,7 +39,13 @@ export default function StorageSettingsPage() {
     useEffect(() => { void loadStatus(true); }, [loadStatus]);
 
     const disconnectStuffbox = async () => {
-        if (!window.confirm('Disconnect Stuffbox from this Synapsis account? Existing media links will keep working.')) return;
+        const confirmed = await showConfirm({
+            title: 'Disconnect Stuffbox?',
+            message: 'Stuffbox will be disconnected from this Synapsis account. Existing media links will keep working.',
+            confirmLabel: 'Disconnect',
+            tone: 'danger',
+        });
+        if (!confirmed) return;
         setIsDisconnecting(true);
         setError('');
         try {

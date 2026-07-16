@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Bell } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { useAppDialog } from '@/lib/contexts/DialogContext';
 import {
     BROWSER_NOTIFICATIONS_CHANGED_EVENT,
     browserNotificationsEnabledKey,
@@ -31,9 +31,11 @@ function readSeenNotifications(key: string): string[] {
 
 export function BrowserNotificationBridge() {
     const { user } = useAuth();
+    const { showConfirm } = useAppDialog();
     const userId = user?.id;
     const [enabled, setEnabled] = useState(false);
     const [showPermissionPrompt, setShowPermissionPrompt] = useState(false);
+    const promptedUserRef = useRef<string | null>(null);
 
     useEffect(() => {
         const syncEnabledState = () => {
@@ -150,7 +152,7 @@ export function BrowserNotificationBridge() {
         };
     }, [enabled, userId]);
 
-    const finishPermissionPrompt = async (requestPermission: boolean) => {
+    const finishPermissionPrompt = useCallback(async (requestPermission: boolean) => {
         if (!userId || typeof Notification === 'undefined') return;
         localStorage.setItem(browserNotificationsPromptedKey(userId), 'true');
         setShowPermissionPrompt(false);
@@ -165,47 +167,18 @@ export function BrowserNotificationBridge() {
             icon: '/api/favicon',
             tag: 'synapsis-notifications-enabled',
         });
-    };
+    }, [userId]);
 
-    if (!showPermissionPrompt) return null;
+    useEffect(() => {
+        if (!showPermissionPrompt || !userId || promptedUserRef.current === userId) return;
+        promptedUserRef.current = userId;
+        void showConfirm({
+            title: 'Stay up to date',
+            message: 'Allow browser notifications for new follows, replies, mentions, and reactions.',
+            confirmLabel: 'Allow notifications',
+            cancelLabel: 'Not now',
+        }).then((requestPermission) => finishPermissionPrompt(requestPermission));
+    }, [finishPermissionPrompt, showConfirm, showPermissionPrompt, userId]);
 
-    return (
-        <div
-            role="dialog"
-            aria-labelledby="browser-notification-prompt-title"
-            style={{
-                position: 'fixed',
-                left: '50%',
-                bottom: '24px',
-                transform: 'translateX(-50%)',
-                width: 'min(calc(100% - 32px), 420px)',
-                padding: '18px',
-                background: 'var(--background)',
-                border: '1px solid var(--border)',
-                borderRadius: '14px',
-                boxShadow: '0 16px 48px rgba(0, 0, 0, 0.35)',
-                zIndex: 1000,
-            }}
-        >
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                <Bell size={22} style={{ flexShrink: 0, marginTop: '2px' }} />
-                <div>
-                    <div id="browser-notification-prompt-title" style={{ fontWeight: 650 }}>
-                        Stay up to date
-                    </div>
-                    <p style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.45, marginTop: '5px' }}>
-                        Allow browser notifications for new follows, replies, mentions, and reactions.
-                    </p>
-                </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
-                <button type="button" className="btn btn-ghost" onClick={() => void finishPermissionPrompt(false)}>
-                    Not Now
-                </button>
-                <button type="button" className="btn btn-primary" onClick={() => void finishPermissionPrompt(true)}>
-                    Allow Notifications
-                </button>
-            </div>
-        </div>
-    );
+    return null;
 }

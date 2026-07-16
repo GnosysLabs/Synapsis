@@ -10,9 +10,11 @@ import { useAccentColor } from '@/lib/contexts/AccentColorContext';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
+import { useAppDialog } from '@/lib/contexts/DialogContext';
 
 export default function AdminPage() {
     const { showToast } = useToast();
+    const { showConfirm } = useAppDialog();
     const { refreshAccentColor } = useAccentColor();
     const { setNodeNsfw } = useRuntimeConfig();
     const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
@@ -495,13 +497,14 @@ export default function AdminPage() {
                                             background: nodeSettings.isNsfw ? 'var(--error)' : undefined,
                                             flexShrink: 0,
                                         }}
-                                        onClick={() => {
+                                        onClick={async () => {
                                             if (!nodeSettings.isNsfw) {
-                                                const confirmed = window.confirm(
-                                                    'Are you sure you want to mark this node as NSFW?\n\n' +
-                                                    'All content from this node will be hidden from users who haven\'t enabled NSFW viewing. ' +
-                                                    'This affects the entire swarm.'
-                                                );
+                                                const confirmed = await showConfirm({
+                                                    title: 'Mark this node as NSFW?',
+                                                    message: 'All content from this node will be hidden from users who have not enabled NSFW viewing. This affects the entire swarm.',
+                                                    confirmLabel: 'Mark as NSFW',
+                                                    tone: 'danger',
+                                                });
                                                 if (confirmed) {
                                                     setNodeSettings({ ...nodeSettings, isNsfw: true });
                                                 }

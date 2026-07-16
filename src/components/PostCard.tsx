@@ -21,6 +21,7 @@ import { AudioPlayer } from '@/components/AudioPlayer';
 import { getMediaKind } from '@/lib/media/upload-policy';
 import { tokenizePostContent } from '@/lib/mentions/parser';
 import { setReposterInSummary } from '@/lib/posts/node-feed';
+import { useAppDialog } from '@/lib/contexts/DialogContext';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -129,6 +130,7 @@ export function PostCard(props: PostCardProps) {
 function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId }: PostCardProps) {
     const { user: currentUser, did, handle: currentUserHandle, isIdentityUnlocked } = useAuth();
     const { showToast } = useToast();
+    const { showConfirm, showPrompt } = useAppDialog();
     const router = useRouter();
     const [liked, setLiked] = useState(post.isLiked || false);
     const [likesCount, setLikesCount] = useState(post.likesCount || 0);
@@ -348,14 +350,21 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
         e.preventDefault();
         e.stopPropagation();
         if (reporting) return;
-        const reason = window.prompt('Why are you reporting this post?');
-        if (!reason || !did || !currentUserHandle) return;
+        const reason = await showPrompt({
+            title: 'Report post',
+            message: 'Tell the moderation team what is wrong with this post.',
+            inputLabel: 'Reason for reporting',
+            placeholder: 'Describe the issue',
+            confirmLabel: 'Submit report',
+            required: true,
+        });
+        if (!reason?.trim() || !did || !currentUserHandle) return;
         setReporting(true);
         try {
             const res = await signedAPI.report(
                 'post',
                 post.id,
-                reason,
+                reason.trim(),
                 did,
                 currentUserHandle
             );
@@ -378,7 +387,13 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
         e.preventDefault();
         e.stopPropagation();
         if (deleting) return;
-        if (!window.confirm('Are you sure you want to delete this post? This action cannot be undone.')) return;
+        const confirmed = await showConfirm({
+            title: 'Delete post?',
+            message: 'This post will be permanently deleted. This action cannot be undone.',
+            confirmLabel: 'Delete post',
+            tone: 'danger',
+        });
+        if (!confirmed) return;
         if (!did || !currentUserHandle) return;
         setDeleting(true);
         try {

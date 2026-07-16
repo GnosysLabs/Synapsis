@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { getProfilePath } from '@/lib/utils/handle';
+import { useAppDialog } from '@/lib/contexts/DialogContext';
 
 type AdminUser = {
     id: string;
@@ -63,6 +64,7 @@ const formatDate = (value: string) => {
 };
 
 export default function ModerationPage() {
+    const { showPrompt } = useAppDialog();
     const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
     const [tab, setTab] = useState<'reports' | 'posts' | 'users' | 'nodes'>('reports');
     const [reports, setReports] = useState<Report[]>([]);
@@ -142,7 +144,18 @@ export default function ModerationPage() {
     }, [isAdmin, loadNodes, loadPosts, loadReports, loadUsers, tab]);
 
     const handleReportResolve = async (id: string, status: 'open' | 'resolved') => {
-        const note = status === 'resolved' ? window.prompt('Resolution note (optional):') || '' : '';
+        let note = '';
+        if (status === 'resolved') {
+            const response = await showPrompt({
+                title: 'Resolve report',
+                message: 'Optionally leave a note explaining how this report was resolved.',
+                inputLabel: 'Resolution note (optional)',
+                placeholder: 'Add a note',
+                confirmLabel: 'Resolve report',
+            });
+            if (response === null) return;
+            note = response.trim();
+        }
         await fetch(`/api/admin/reports/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -152,7 +165,19 @@ export default function ModerationPage() {
     };
 
     const handlePostAction = async (id: string, action: 'remove' | 'restore') => {
-        const reason = action === 'remove' ? window.prompt('Reason (optional):') || '' : '';
+        let reason = '';
+        if (action === 'remove') {
+            const response = await showPrompt({
+                title: 'Remove post',
+                message: 'Optionally record why this post is being removed.',
+                inputLabel: 'Removal reason (optional)',
+                placeholder: 'Add a reason',
+                confirmLabel: 'Remove post',
+                tone: 'danger',
+            });
+            if (response === null) return;
+            reason = response.trim();
+        }
         await fetch(`/api/admin/posts/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -167,7 +192,20 @@ export default function ModerationPage() {
 
     const handleUserAction = async (id: string, action: 'suspend' | 'unsuspend' | 'silence' | 'unsilence') => {
         const needsReason = action === 'suspend' || action === 'silence';
-        const reason = needsReason ? window.prompt('Reason (optional):') || '' : '';
+        let reason = '';
+        if (needsReason) {
+            const actionLabel = action === 'suspend' ? 'Suspend user' : 'Silence user';
+            const response = await showPrompt({
+                title: actionLabel,
+                message: `Optionally record why this user is being ${action === 'suspend' ? 'suspended' : 'silenced'}.`,
+                inputLabel: 'Reason (optional)',
+                placeholder: 'Add a reason',
+                confirmLabel: actionLabel,
+                tone: 'danger',
+            });
+            if (response === null) return;
+            reason = response.trim();
+        }
         await fetch(`/api/admin/users/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -593,7 +631,18 @@ export default function ModerationPage() {
                                                 ) : (
                                                     <button
                                                         className="btn btn-primary btn-sm"
-                                                        onClick={() => handleNodeAction('block', node.domain, window.prompt('Reason (optional):') || '')}
+                                                        onClick={async () => {
+                                                            const reason = await showPrompt({
+                                                                title: 'Block node',
+                                                                message: `Block ${node.domain} from this node. You can optionally record a reason.`,
+                                                                inputLabel: 'Reason (optional)',
+                                                                placeholder: 'Add a reason',
+                                                                confirmLabel: 'Block node',
+                                                                tone: 'danger',
+                                                            });
+                                                            if (reason === null) return;
+                                                            await handleNodeAction('block', node.domain, reason.trim());
+                                                        }}
                                                     >
                                                         Block
                                                     </button>
