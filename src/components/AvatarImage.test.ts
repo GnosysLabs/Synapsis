@@ -14,4 +14,17 @@ describe('getDiceBearAvatarUrl', () => {
             getDiceBearAvatarUrl('cyph3r@node.example'),
         );
     });
+
+    it('qualifies a local account with the runtime node domain', () => {
+        expect(getDiceBearAvatarSeed('cyph3r', undefined, 'node.example')).toBe('cyph3r@node.example');
+        expect(getDiceBearAvatarUrl('cyph3r', undefined, 'node.example')).toBe(
+            getDiceBearAvatarUrl('cyph3r@node.example'),
+        );
+    });
+
+    it('keeps an explicit remote domain ahead of the local node fallback', () => {
+        expect(getDiceBearAvatarSeed('cyph3r', 'remote.example', 'local.example')).toBe(
+            'cyph3r@remote.example',
+        );
+    });
 });
