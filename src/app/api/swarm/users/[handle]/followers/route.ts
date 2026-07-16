@@ -14,7 +14,6 @@ export interface SwarmFollowerUser {
   displayName: string;
   avatarUrl?: string;
   bio?: string;
-  isBot?: boolean;
   isRemote?: boolean;
 }
 
@@ -68,7 +67,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
       displayName: f.follower.displayName || f.follower.handle,
       avatarUrl: f.follower.avatarUrl || undefined,
       bio: f.follower.bio || undefined,
-      isBot: f.follower.isBot || undefined,
       isRemote: false,
     }));
 
@@ -98,7 +96,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
       avatarUrl: f.avatarUrl,
       bio: f.bio,
       isRemote: f.isRemote || false,
-      isBot: f.isBot,
       nodeDomain: undefined,
     }));
 
@@ -110,7 +107,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
       displayName: u.displayName || u.handle.split('@')[0], // Ensure non-null
       avatarUrl: u.avatarUrl || undefined, // Map null to undefined
       bio: u.bio || undefined,
-      isBot: u.isBot,
       isRemote: u.isRemote,
     }));
 

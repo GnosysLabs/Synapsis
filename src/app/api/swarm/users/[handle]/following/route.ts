@@ -13,7 +13,6 @@ export interface SwarmFollowingUser {
   displayName: string;
   avatarUrl?: string;
   bio?: string;
-  isBot?: boolean;
   isRemote?: boolean;
 }
 
@@ -67,7 +66,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
       displayName: f.following.displayName || f.following.handle,
       avatarUrl: f.following.avatarUrl || undefined,
       bio: f.following.bio || undefined,
-      isBot: f.following.isBot || undefined,
       isRemote: false,
     }));
 

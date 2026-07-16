@@ -23,7 +23,6 @@ export interface SwarmPost {
     displayName: string;
     avatarUrl?: string;
     isNsfw: boolean;
-    isBot?: boolean;
   };
   nodeDomain: string;
   nodeIsNsfw: boolean;
@@ -64,7 +63,6 @@ interface TimelinePostRow {
   authorDisplayName: string | null;
   authorAvatarUrl: string | null;
   authorIsNsfw: boolean;
-  authorIsBot: boolean | null;
 }
 
 function buildSwarmPost(
@@ -88,7 +86,6 @@ function buildSwarmPost(
       displayName: post.authorDisplayName || post.authorHandle,
       avatarUrl: post.authorAvatarUrl || undefined,
       isNsfw: post.authorIsNsfw,
-      isBot: post.authorIsBot || undefined,
     },
     nodeDomain,
     nodeIsNsfw,
@@ -176,7 +173,6 @@ export async function GET(request: NextRequest) {
         authorDisplayName: users.displayName,
         authorAvatarUrl: users.avatarUrl,
         authorIsNsfw: users.isNsfw,
-        authorIsBot: users.isBot,
         authorNodeId: users.nodeId,
       })
       .from(posts)
@@ -217,7 +213,6 @@ export async function GET(request: NextRequest) {
             authorDisplayName: users.displayName,
             authorAvatarUrl: users.avatarUrl,
             authorIsNsfw: users.isNsfw,
-            authorIsBot: users.isBot,
           })
           .from(posts)
           .innerJoin(users, eq(posts.userId, users.id))

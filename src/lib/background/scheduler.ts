@@ -2,22 +2,18 @@
  * Background Task Scheduler
  * 
  * Runs periodic tasks within the Next.js process:
- * - Bot autonomous posting (every 1 minute)
  * - Swarm gossip (every 5 minutes)
  * - Remote follows sync (every 10 minutes)
  * - Swarm announcement (on startup)
  */
 
-import { processAllAutonomousBots } from '@/lib/bots/autonomous';
 import { runGossipRound } from '@/lib/swarm/gossip';
 import { announceToSeeds } from '@/lib/swarm/discovery';
 import { getSwarmStats } from '@/lib/swarm/registry';
 import { syncRemoteFollowsPosts } from '@/lib/background/remote-sync';
 import { isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { processMentionDeliveryOutbox } from '@/lib/mentions/delivery';
-import { processAllActiveBotMentions } from '@/lib/bots/mentionHandler';
 
-const BOT_INTERVAL_MS = 60 * 1000; // 1 minute
 const GOSSIP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const REMOTE_SYNC_INTERVAL_MS = 60 * 1000; // 1 minute - keep feeds fresh
 const MENTION_DELIVERY_INTERVAL_MS = 30 * 1000;
@@ -31,42 +27,6 @@ function log(category: string, message: string, data?: unknown) {
     console.log(`[${timestamp}] [${category}] ${message}`, JSON.stringify(data, null, 2));
   } else {
     console.log(`[${timestamp}] [${category}] ${message}`);
-  }
-}
-
-async function runBotTasks() {
-  try {
-    const mentions = await processAllActiveBotMentions();
-    const results = await processAllAutonomousBots();
-    
-    const posted = results.filter(r => r.result.posted).length;
-    const errors = results.filter(r => r.error).length;
-    
-    if (posted > 0) {
-      log('BOTS', `Created ${posted} posts`);
-    } else if (results.length > 0) {
-      // Log why bots didn't post
-      const reasons = results
-        .filter(r => !r.result.posted)
-        .map(r => `${r.botHandle}: ${r.result.reason || r.error || 'unknown'}`)
-        .slice(0, 5);
-      
-      if (reasons.length > 0) {
-        log('BOTS', `${results.length} bots checked, no posts. Reasons: ${reasons.join('; ')}`);
-      }
-    } else {
-      log('BOTS', 'No active bots found');
-    }
-    
-    if (errors > 0) {
-      const errorMsgs = results.filter(r => r.error).map(r => `${r.botHandle}: ${r.error}`);
-      log('BOTS', `Errors: ${errorMsgs.join('; ')}`);
-    }
-    if (mentions.detected > 0 || mentions.responded > 0 || mentions.failed > 0) {
-      log('BOTS', `Mentions: ${mentions.detected} detected, ${mentions.responded} responded, ${mentions.failed} failed`);
-    }
-  } catch (error) {
-    log('BOTS', `Error: ${error}`);
   }
 }
 
@@ -143,7 +103,7 @@ export function startBackgroundTasks(origin?: string) {
   const publicSwarmEnabled = isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
 
   log('STARTUP', 'Background task scheduler starting...');
-  log('STARTUP', `Bot interval: ${BOT_INTERVAL_MS / 1000}s, Gossip interval: ${GOSSIP_INTERVAL_MS / 1000}s, Remote sync interval: ${REMOTE_SYNC_INTERVAL_MS / 1000}s`);
+  log('STARTUP', `Gossip interval: ${GOSSIP_INTERVAL_MS / 1000}s, Remote sync interval: ${REMOTE_SYNC_INTERVAL_MS / 1000}s`);
 
   // Wait for server to be fully ready before starting tasks
   setTimeout(async () => {
@@ -156,15 +116,12 @@ export function startBackgroundTasks(origin?: string) {
       log('SWARM', 'Public swarm disabled: NEXT_PUBLIC_NODE_DOMAIN is not a public ICANN domain');
     }
     
-    // Run initial bot check
-    await runBotTasks();
     await runMentionDeliveries();
     
     // Run initial remote sync (after 15s to let server stabilize)
     setTimeout(() => runRemoteSync(syncOrigin), 15 * 1000);
     
     // Schedule recurring tasks
-    setInterval(runBotTasks, BOT_INTERVAL_MS);
     setInterval(runMentionDeliveries, MENTION_DELIVERY_INTERVAL_MS);
     if (publicSwarmEnabled) {
       setInterval(runSwarmGossip, GOSSIP_INTERVAL_MS);

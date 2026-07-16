@@ -40,7 +40,7 @@ describe('mention parser', () => {
     expect(mention.end).toBe('Hello (@alice@remote.example'.length);
   });
 
-  it('supports the full bot handle length', () => {
+  it('supports the full federated handle length', () => {
     const handle = 'b'.repeat(30);
     expect(parseMentions(`Ask @${handle}`)[0]).toMatchObject({ handle });
   });

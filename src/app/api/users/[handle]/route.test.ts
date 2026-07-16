@@ -47,13 +47,11 @@ const localUser = {
   createdAt: new Date('2026-07-15T19:32:12Z'),
   website: null,
   movedTo: null,
-  isBot: false,
   publicKey: 'public-key',
   did: 'did:key:local-user',
   dmPrivacy: 'everyone',
   isNsfw: true,
   isSuspended: false,
-  botOwnerId: null,
 };
 
 describe('user profile route', () => {

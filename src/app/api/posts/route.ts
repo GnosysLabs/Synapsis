@@ -4,7 +4,6 @@ import { getSession, requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, desc, and, inArray, isNull, isNotNull, or, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { buildNotificationTarget } from '@/lib/notifications';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { isLocalNodeNsfw } from '@/lib/node/local-node';
@@ -34,7 +33,7 @@ type FeedPostWithChildren = {
 
 function mapUserSwarmRepostToFeedPost(
     row: typeof userSwarmReposts.$inferSelect,
-    author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl' | 'isBot'>
+    author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl'>
 ): FeedPostWithChildren {
     const remoteAuthorHandle = row.authorHandle.includes('@')
         ? row.authorHandle
@@ -53,7 +52,6 @@ function mapUserSwarmRepostToFeedPost(
             handle: author.handle,
             displayName: author.displayName,
             avatarUrl: author.avatarUrl,
-            isBot: author.isBot,
         },
         repostOfId: remoteOriginalId,
         repostOf: {
@@ -141,12 +139,10 @@ function applyInteractionFlags(
 
 const embeddedPostRelations = {
     author: true,
-    bot: true,
     media: true,
     replyTo: {
         with: {
             author: true,
-            bot: true,
             media: true,
         },
     },
@@ -371,8 +367,6 @@ export async function POST(request: Request) {
                 });
 
                 if (parentPost && parentPost.userId !== user.id) {
-                    const parentAuthor = parentPost.author as typeof users.$inferSelect | undefined;
-
                     await db.insert(notifications).values({
                         userId: parentPost.userId,
                         actorId: user.id,
@@ -382,24 +376,8 @@ export async function POST(request: Request) {
                         actorNodeDomain: null,
                         postId: parentPost.id,
                         postContent: post.content?.slice(0, 200) || null,
-                        ...(parentAuthor?.isBot ? buildNotificationTarget(parentAuthor) : {}),
                         type: 'reply',
                     });
-
-                    if (parentAuthor?.isBot && parentAuthor.botOwnerId) {
-                        await db.insert(notifications).values({
-                            userId: parentAuthor.botOwnerId,
-                            actorId: user.id,
-                            actorHandle: user.handle,
-                            actorDisplayName: user.displayName,
-                            actorAvatarUrl: user.avatarUrl,
-                            actorNodeDomain: null,
-                            postId: parentPost.id,
-                            postContent: post.content?.slice(0, 200) || null,
-                            ...buildNotificationTarget(parentAuthor),
-                            type: 'reply',
-                        });
-                    }
                 }
             } catch (err) {
                 console.error('[Posts] Error creating reply notifications:', err);
@@ -841,7 +819,6 @@ export async function GET(request: Request) {
                                         handle,
                                         displayName: follow.displayName || profileData.profile?.displayName || handle,
                                         avatarUrl: follow.avatarUrl || profileData.profile?.avatarUrl,
-                                        isBot: profileData.profile?.isBot,
                                     },
                                 }, domain));
                         } catch (error) {

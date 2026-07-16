@@ -4,7 +4,6 @@ import { requireAuth } from '@/lib/auth';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import crypto from 'crypto';
-import { buildNotificationTarget } from '@/lib/notifications';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -201,10 +200,6 @@ export async function POST(request: Request, context: RouteContext) {
             .where(eq(users.id, user.id));
 
         if (originalPost.userId !== user.id) {
-            const postAuthor = await db.query.users.findFirst({
-                where: { id: originalPost.userId },
-            });
-
             // Create notification with actor info stored directly
             await db.insert(notifications).values({
                 userId: originalPost.userId,
@@ -215,25 +210,8 @@ export async function POST(request: Request, context: RouteContext) {
                 actorNodeDomain: null, // Local user
                 postId,
                 postContent: originalPost.content?.slice(0, 200) || null,
-                ...(postAuthor?.isBot ? buildNotificationTarget(postAuthor) : {}),
                 type: 'repost',
             });
-
-            // Also notify bot owner if this is a bot's post
-            if (postAuthor?.isBot && postAuthor.botOwnerId) {
-                await db.insert(notifications).values({
-                    userId: postAuthor.botOwnerId,
-                    actorId: user.id,
-                    actorHandle: user.handle,
-                    actorDisplayName: user.displayName,
-                    actorAvatarUrl: user.avatarUrl,
-                    actorNodeDomain: null,
-                    postId,
-                    postContent: originalPost.content?.slice(0, 200) || null,
-                    ...buildNotificationTarget(postAuthor),
-                    type: 'repost',
-                });
-            }
         }
 
         // SWARM-FIRST: Deliver repost to swarm node

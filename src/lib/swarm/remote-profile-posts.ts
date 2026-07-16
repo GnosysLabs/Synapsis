@@ -17,7 +17,6 @@ type RemoteProfilePost = {
     handle: string;
     displayName?: string | null;
     avatarUrl?: string | null;
-    isBot?: boolean;
   };
   nodeDomain?: string | null;
   isSwarm?: boolean;

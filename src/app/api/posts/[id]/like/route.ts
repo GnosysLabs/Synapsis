@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
-import { db, posts, likes, users, notifications, userSwarmLikes } from '@/db';
+import { db, posts, likes, notifications, userSwarmLikes } from '@/db';
 import { requireAuth } from '@/lib/auth';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import crypto from 'crypto';
-import { buildNotificationTarget } from '@/lib/notifications';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -209,10 +208,6 @@ export async function POST(request: Request, context: RouteContext) {
             .where(eq(posts.id, postId));
 
         if (post.userId !== user.id) {
-            const postAuthor = await db.query.users.findFirst({
-                where: { id: post.userId },
-            });
-
             // Create notification with actor info stored directly
             await db.insert(notifications).values({
                 userId: post.userId,
@@ -223,25 +218,8 @@ export async function POST(request: Request, context: RouteContext) {
                 actorNodeDomain: null, // Local user
                 postId,
                 postContent: post.content?.slice(0, 200) || null,
-                ...(postAuthor?.isBot ? buildNotificationTarget(postAuthor) : {}),
                 type: 'like',
             });
-
-            // Also notify bot owner if this is a bot's post
-            if (postAuthor?.isBot && postAuthor.botOwnerId) {
-                await db.insert(notifications).values({
-                    userId: postAuthor.botOwnerId,
-                    actorId: user.id,
-                    actorHandle: user.handle,
-                    actorDisplayName: user.displayName,
-                    actorAvatarUrl: user.avatarUrl,
-                    actorNodeDomain: null,
-                    postId,
-                    postContent: post.content?.slice(0, 200) || null,
-                    ...buildNotificationTarget(postAuthor),
-                    type: 'like',
-                });
-            }
         }
 
         // If this is a cached swarm post (has swarm: apId), also deliver to origin

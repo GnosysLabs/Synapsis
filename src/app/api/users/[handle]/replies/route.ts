@@ -9,12 +9,10 @@ import { resolveUserHandle } from '@/lib/swarm/user-handle';
 
 const embeddedPostRelations = {
   author: true,
-  bot: true,
   media: true,
   replyTo: {
     with: {
       author: true,
-      bot: true,
       media: true,
     },
   },

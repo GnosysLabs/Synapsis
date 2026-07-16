@@ -7,12 +7,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, users, notifications, remoteLikes } from '@/db';
-import { eq, and } from 'drizzle-orm';
+import { db, posts, notifications, remoteLikes } from '@/db';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
-import { buildNotificationTarget } from '@/lib/notifications';
 
 const swarmLikeSchema = z.object({
   postId: z.string().uuid(),
@@ -85,8 +84,6 @@ export async function POST(request: NextRequest) {
       .set({ likesCount: post.likesCount + 1 })
       .where(eq(posts.id, data.postId));
 
-    const author = post.author as { isBot?: boolean; botOwnerId?: string; handle?: string; displayName?: string | null; avatarUrl?: string | null } | null;
-
     // Create notification with actor info stored directly
     try {
       await db.insert(notifications).values({
@@ -97,7 +94,6 @@ export async function POST(request: NextRequest) {
         actorNodeDomain: data.like.actorNodeDomain,
         postId: data.postId,
         postContent: post.content?.slice(0, 200) || null,
-        ...(author?.isBot ? buildNotificationTarget(author as any) : {}),
         type: 'like',
       });
       console.log(`[Swarm] Created like notification for post ${data.postId} from ${data.like.actorHandle}@${data.like.actorNodeDomain}`);
@@ -105,27 +101,6 @@ export async function POST(request: NextRequest) {
       // Log error with context but don't fail the request - notification creation is best-effort
       console.error('[Swarm Like] Failed to create notification:', notifError);
       console.error('[Swarm Like] Context:', { postId: data.postId, userId: post.userId, actor: data.like.actorHandle });
-    }
-
-    // Also notify bot owner if this is a bot's post
-    if (author?.isBot && author.botOwnerId) {
-      try {
-        await db.insert(notifications).values({
-          userId: author.botOwnerId,
-          actorHandle: data.like.actorHandle,
-          actorDisplayName: data.like.actorDisplayName,
-          actorAvatarUrl: data.like.actorAvatarUrl || null,
-          actorNodeDomain: data.like.actorNodeDomain,
-          postId: data.postId,
-          postContent: post.content?.slice(0, 200) || null,
-          ...buildNotificationTarget(author as any),
-          type: 'like',
-        });
-      } catch (err) {
-        // Log error with context but don't fail the request - bot owner notification is best-effort
-        console.error('[Swarm Like] Failed to notify bot owner:', err);
-        console.error('[Swarm Like] Context:', { postId: data.postId, botOwnerId: author.botOwnerId, actor: data.like.actorHandle });
-      }
     }
 
     console.log(`[Swarm] Received like from ${data.like.actorHandle}@${data.like.actorNodeDomain} on post ${data.postId}`);

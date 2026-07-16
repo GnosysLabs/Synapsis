@@ -7,7 +7,6 @@ export interface RemoteProfile {
     displayName: string;
     avatarUrl?: string | null;
     did: string;
-    isBot?: boolean;
     publicKey?: string;
 }
 
@@ -58,7 +57,6 @@ export async function upsertRemoteUser(profile: RemoteProfile): Promise<void> {
                 .set({
                     displayName: profile.displayName || existing.displayName,
                     avatarUrl: profile.avatarUrl || existing.avatarUrl,
-                    isBot: profile.isBot ?? existing.isBot,
                     publicKey: shouldUpdateKey ? profile.publicKey : existing.publicKey,
                     updatedAt: new Date(),
                 })
@@ -71,7 +69,6 @@ export async function upsertRemoteUser(profile: RemoteProfile): Promise<void> {
                 handle: profile.handle, // user@domain
                 displayName: profile.displayName || profile.handle,
                 avatarUrl: profile.avatarUrl || null,
-                isBot: profile.isBot || false,
                 publicKey: profile.publicKey,
                 // Note: nodeId is null for remote placeholders unless we specifically link it
             });

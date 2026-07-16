@@ -31,9 +31,6 @@ const mocks = vi.hoisted(() => ({
         chatMessages: { table: 'chatMessages' },
         e2eeKeyBundles: { table: 'e2eeKeyBundles' },
         e2eeMessageReceipts: { table: 'e2eeMessageReceipts' },
-        bots: { table: 'bots' },
-        botContentSources: { table: 'botContentSources' },
-        botActivityLogs: { table: 'botActivityLogs' },
     },
     requireAuth: vi.fn(),
     verifyPassword: vi.fn(),
@@ -44,7 +41,6 @@ const mocks = vi.hoisted(() => ({
     findRemoteFollows: vi.fn(),
     findConversations: vi.fn(),
     findE2EEKeyBundle: vi.fn(),
-    findBots: vi.fn(),
     findUsers: vi.fn(),
     findNodes: vi.fn(),
     insert: vi.fn(),
@@ -74,19 +70,12 @@ vi.mock('@/db', () => ({
             remoteFollows: { findMany: mocks.findRemoteFollows },
             chatConversations: { findMany: mocks.findConversations },
             e2eeKeyBundles: { findFirst: mocks.findE2EEKeyBundle },
-            bots: { findMany: mocks.findBots },
         },
     },
 }));
 vi.mock('drizzle-orm', async (importOriginal) => ({
     ...await importOriginal<typeof import('drizzle-orm')>(),
     eq: vi.fn(() => ({})),
-}));
-vi.mock('@/lib/bots/encryption', () => ({
-    decryptApiKey: vi.fn(),
-    deserializeEncryptedData: vi.fn(),
-    encryptApiKey: vi.fn(),
-    serializeEncryptedData: vi.fn(),
 }));
 vi.mock('@/lib/federation/handles', () => ({ upsertHandleEntries: vi.fn() }));
 vi.mock('@/lib/swarm/safe-federation-http', () => ({
@@ -115,7 +104,6 @@ interface ExportResponseBody {
         posts: unknown[];
         following: unknown[];
         dms: unknown[];
-        bots: unknown[];
         e2eeKeyBundle: unknown | null;
     };
 }
@@ -133,7 +121,6 @@ describe('account export manifest integrity', () => {
         mocks.findRemoteFollows.mockResolvedValue([]);
         mocks.findConversations.mockResolvedValue([]);
         mocks.findE2EEKeyBundle.mockResolvedValue(undefined);
-        mocks.findBots.mockResolvedValue([]);
         mocks.findUsers.mockResolvedValue(undefined);
         mocks.findNodes.mockResolvedValue(undefined);
         mocks.safeFederationRequest.mockResolvedValue({ status: 204 });
@@ -335,7 +322,6 @@ describe('account export manifest integrity', () => {
             posts: body.export.posts,
             following: body.export.following,
             dms: body.export.dms,
-            bots: body.export.bots,
             e2eeKeyBundle: body.export.e2eeKeyBundle,
         };
         expect(body.export.manifest.payloadDigest).toBe(

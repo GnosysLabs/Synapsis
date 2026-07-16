@@ -15,14 +15,6 @@ interface NotificationActor {
     avatarUrl: string | null;
 }
 
-interface NotificationTarget {
-    handle: string;
-    displayName: string | null;
-    avatarUrl: string | null;
-    nodeDomain?: string | null;
-    isBot?: boolean | null;
-}
-
 interface NotificationPost {
     id: string;
     content: string | null;
@@ -41,7 +33,6 @@ interface Notification {
     createdAt: string;
     readAt: string | null;
     actor: NotificationActor | null;
-    target: NotificationTarget | null;
     post: NotificationPost | null;
 }
 
@@ -95,28 +86,17 @@ export default function NotificationsPage() {
     };
 
     const getNotificationText = (notification: Notification) => {
-        const targetName = notification.target?.displayName || notification.target?.handle;
         switch (notification.type) {
             case 'follow':
-                return notification.target?.isBot && targetName
-                    ? `followed your bot ${targetName}`
-                    : 'followed you';
+                return 'followed you';
             case 'like':
-                return notification.target?.isBot && targetName
-                    ? `liked a post from ${targetName}`
-                    : 'liked your post';
+                return 'liked your post';
             case 'repost':
-                return notification.target?.isBot && targetName
-                    ? `reposted a post from ${targetName}`
-                    : 'reposted your post';
+                return 'reposted your post';
             case 'mention':
-                return notification.target?.isBot && targetName
-                    ? `mentioned your bot ${targetName}`
-                    : 'mentioned you';
+                return 'mentioned you';
             case 'reply':
-                return notification.target?.isBot && targetName
-                    ? `replied to a post from ${targetName}`
-                    : 'replied to your post';
+                return 'replied to your post';
             default:
                 return 'interacted with you';
         }

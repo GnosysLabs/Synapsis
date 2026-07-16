@@ -707,7 +707,7 @@ export default function ChatPage() {
                 if (requestId !== composeRequestRef.current
                     || renderedAccountDidRef.current !== requestAccountDid) return;
                 if (data.user) {
-                    if (data.user.isBot || data.user.canReceiveDms === false) {
+                    if (data.user.canReceiveDms === false) {
                         setComposeIntentError({
                             handle: composeHandle,
                             message: 'This account cannot receive direct messages.',

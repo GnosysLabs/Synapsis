@@ -21,7 +21,6 @@ const remoteDirectorySchema = z.object({
     handle: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
     displayName: z.string().max(100).nullable(),
     avatarUrl: z.string().url().nullable(),
-    isBot: z.boolean(),
   })).max(12),
 });
 
@@ -29,7 +28,6 @@ export interface MentionSuggestion {
   handle: string;
   displayName: string | null;
   avatarUrl: string | null;
-  isBot: boolean;
   isRemote: boolean;
   nodeDomain: string | null;
 }
@@ -62,7 +60,6 @@ async function localSuggestions(
     handle: users.handle,
     displayName: users.displayName,
     avatarUrl: users.avatarUrl,
-    isBot: users.isBot,
   })
     .from(users)
     .where(and(
@@ -85,7 +82,6 @@ async function localSuggestions(
       handle: row.handle,
       displayName: row.displayName,
       avatarUrl: row.avatarUrl,
-      isBot: row.isBot,
       isRemote: false,
       nodeDomain: null,
     }));
@@ -214,7 +210,6 @@ export async function GET(request: NextRequest) {
         handle: row.handle.toLowerCase(),
         displayName: row.displayName,
         avatarUrl: row.avatarUrl,
-        isBot: false,
         isRemote: true,
         nodeDomain: parts[1],
       }];

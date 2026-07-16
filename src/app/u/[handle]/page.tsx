@@ -10,19 +10,11 @@ import AutoTextarea from '@/components/AutoTextarea';
 import { UserStorageImageUpload } from '@/components/UserStorageImageUpload';
 import { Rocket, MoreHorizontal, Mail } from 'lucide-react';
 import { useFormattedHandle } from '@/lib/utils/handle';
-import { Bot } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
 import { ProfileBanner } from '@/components/ProfileBanner';
-
-interface BotOwner {
-    id: string;
-    handle: string;
-    displayName?: string | null;
-    avatarUrl?: string | null;
-}
 
 interface UserSummary {
     id: string;
@@ -30,7 +22,6 @@ interface UserSummary {
     displayName?: string | null;
     bio?: string | null;
     avatarUrl?: string | null;
-    isBot?: boolean;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
 }
@@ -51,27 +42,7 @@ function UserRow({ user }: { user: UserSummary }) {
                 <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
             </div>
             <div className="user-row-content">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontWeight: 600 }}>{user.displayName || user.handle}</span>
-                    {user.isBot && (
-                        <span
-                            style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                fontSize: '10px',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                background: 'var(--accent-muted)',
-                                color: 'var(--accent)',
-                                fontWeight: 500,
-                            }}
-                        >
-                            <Bot size={12} />
-                            AI Account
-                        </span>
-                    )}
-                </div>
+                <span style={{ fontWeight: 600 }}>{user.displayName || user.handle}</span>
                 <div style={{ color: 'var(--foreground-tertiary)', fontSize: '13px' }}>{fullHandle}</div>
                 {user.bio && stripHtml(user.bio) && (
                     <div className="user-row-bio">{stripHtml(user.bio)}</div>
@@ -279,10 +250,7 @@ export default function ProfilePage() {
     }, [user, currentUser, isEditing]);
 
     useEffect(() => {
-        const ownerHandle = user?.botOwner?.handle?.replace(/^@/, '').split('@')[0];
-        const isOwnedBot = Boolean(user?.isBot && currentUser && ownerHandle === currentUser.handle);
-
-        if (!currentUser || !user || currentUser.handle === user.handle || isOwnedBot) {
+        if (!currentUser || !user || currentUser.handle === user.handle) {
             setIsFollowing(false);
             setIsBlocked(false);
             return;
@@ -340,12 +308,6 @@ export default function ProfilePage() {
                 .finally(() => setRepliesLoading(false));
         }
             }, [activeTab, handle, user]);
-
-    useEffect(() => {
-        if (user?.isBot && activeTab === 'following') {
-            setActiveTab('posts');
-        }
-    }, [user?.isBot, activeTab]);
 
     const handleFollow = async () => {
         if (!currentUser) return;
@@ -500,19 +462,7 @@ export default function ProfilePage() {
     }
 
     const isOwnProfile = currentUser?.handle === user.handle;
-    const botOwner = user.botOwner as BotOwner | null | undefined;
-    const botOwnerLocalHandle = botOwner?.handle?.replace(/^@/, '').split('@')[0] || null;
-    const isOwnedBotProfile = Boolean(
-        user.isBot &&
-        currentUser &&
-        botOwner &&
-        (botOwner.id === currentUser.id || botOwnerLocalHandle === currentUser.handle)
-    );
-    const showFollowingUi = !user.isBot;
-    const visibleTabs = (user.isBot
-        ? ['posts', 'replies', 'followers'] as const
-        : ['posts', 'replies', 'likes', 'followers', 'following'] as const
-    );
+    const visibleTabs = ['posts', 'replies', 'likes', 'followers', 'following'] as const;
 
     return (
         <div style={{ maxWidth: '600px', margin: '0 auto', minHeight: '100vh' }}>
@@ -596,7 +546,7 @@ export default function ProfilePage() {
                         </div>
 
                         <div style={{ paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            {!isOwnProfile && !isOwnedBotProfile && currentUser && (
+                            {!isOwnProfile && currentUser && (
                                 <>
                                     {!isBlocked && (
                                         <button
@@ -607,7 +557,7 @@ export default function ProfilePage() {
                                         </button>
                                     )}
                                     {/* Message Button (V2 Chat) - Respect privacy settings */}
-                                    {user.did && !user.isBot && (user as any).canReceiveDms !== false && (
+                                    {user.did && (user as any).canReceiveDms !== false && (
                                         <Link href={`/chat?compose=${user.handle}`} className="btn btn-ghost" style={{ padding: '8px' }}>
                                             <Mail size={20} />
                                         </Link>
@@ -713,36 +663,6 @@ export default function ProfilePage() {
                             </div>
                         )}
 
-                        {/* Bot indicator and owner info */}
-                        {user.isBot && (
-                            <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                marginTop: '12px',
-                                padding: '8px 12px',
-                                background: 'var(--accent-muted)',
-                                borderRadius: 'var(--radius-md)',
-                                fontSize: '14px',
-                            }}>
-                                <Bot size={16} style={{ color: 'var(--accent)' }} />
-                                <span style={{ color: 'var(--foreground-secondary)' }}>
-                                    Automated account
-                                    {(user as any).botOwner && (
-                                        <>
-                                            {' · Managed by '}
-                                            <Link
-                                                href={`/u/${(user as any).botOwner.handle}`}
-                                                style={{ color: 'var(--accent)', fontWeight: 500 }}
-                                            >
-                                                @{(user as any).botOwner.handle}
-                                            </Link>
-                                        </>
-                                    )}
-                                </span>
-                            </div>
-                        )}
-
                         <div style={{ display: 'flex', gap: '16px', marginTop: '12px' }}>
                             <button
                                 onClick={() => setActiveTab('followers')}
@@ -756,8 +676,7 @@ export default function ProfilePage() {
                                 <strong>{user.followersCount}</strong>{' '}
                                 <span style={{ color: 'var(--foreground-tertiary)' }}>Followers</span>
                             </button>
-                            {showFollowingUi && (
-                                <button
+                            <button
                                     onClick={() => setActiveTab('following')}
                                     style={{
                                         background: 'none',
@@ -768,8 +687,7 @@ export default function ProfilePage() {
                                 >
                                     <strong>{user.followingCount}</strong>{' '}
                                     <span style={{ color: 'var(--foreground-tertiary)' }}>Following</span>
-                                </button>
-                            )}
+                            </button>
                         </div>
                     </div>
                 </div>

@@ -11,7 +11,6 @@ import { db, notifications } from '@/db';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
-import { buildNotificationTarget } from '@/lib/notifications';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 
 const swarmMentionSchema = z.object({
@@ -120,30 +119,10 @@ export async function POST(request: NextRequest) {
         remotePostDomain: actorDomain,
         postContent: data.mention.postContent.slice(0, 200),
         interactionId: interactionKey,
-        ...(mentionedUser.isBot ? buildNotificationTarget(mentionedUser) : {}),
         type: 'mention',
       }).onConflictDoNothing().returning({ id: notifications.id });
     if (inserted.length > 0) {
       console.log(`[Swarm] Created mention notification for @${data.mentionedHandle} from ${data.mention.actorHandle}@${data.mention.actorNodeDomain}`);
-    }
-
-    // Also notify bot owner if this is a bot being mentioned
-    if (mentionedUser.isBot
-      && mentionedUser.botOwnerId
-      && await acceptsRemoteMention(mentionedUser.botOwnerId, actorDomain, cachedActor?.id || null)) {
-        await db.insert(notifications).values({
-          userId: mentionedUser.botOwnerId,
-          actorHandle: data.mention.actorHandle,
-          actorDisplayName: data.mention.actorDisplayName,
-          actorAvatarUrl: data.mention.actorAvatarUrl || null,
-          actorNodeDomain: actorDomain,
-          remotePostId: data.mention.postId,
-          remotePostDomain: actorDomain,
-          postContent: data.mention.postContent.slice(0, 200),
-          interactionId: `${interactionKey}:owner:${mentionedUser.id}`,
-          ...buildNotificationTarget(mentionedUser),
-          type: 'mention',
-        }).onConflictDoNothing();
     }
 
     console.log(`[Swarm] Received mention from ${data.mention.actorHandle}@${data.mention.actorNodeDomain} for @${data.mentionedHandle}`);

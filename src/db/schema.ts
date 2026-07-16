@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index, foreignKey, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 
@@ -49,9 +49,6 @@ export const users = sqliteTable('users', {
   privateKeyEncrypted: text('private_key_encrypted'), // For cryptographic signing
   publicKey: text('public_key').notNull(),
   nodeId: text('node_id').references(() => nodes.id),
-  // Bot-related fields
-  isBot: integer('is_bot', { mode: 'boolean' }).default(false).notNull(),
-  botOwnerId: text('bot_owner_id'),
   // NSFW settings
   isNsfw: integer('is_nsfw', { mode: 'boolean' }).default(false).notNull(), // Account produces NSFW content
   nsfwEnabled: integer('nsfw_enabled', { mode: 'boolean' }).default(false).notNull(), // User wants to see NSFW content
@@ -90,14 +87,7 @@ export const users = sqliteTable('users', {
   uniqueIndex('users_did_unique_idx').on(table.did),
   index('users_suspended_idx').on(table.isSuspended),
   index('users_silenced_idx').on(table.isSilenced),
-  index('users_is_bot_idx').on(table.isBot),
-  index('users_bot_owner_idx').on(table.botOwnerId),
   index('users_nsfw_idx').on(table.isNsfw),
-  foreignKey({
-    columns: [table.botOwnerId],
-    foreignColumns: [table.id],
-    name: 'users_bot_owner_id_users_id_fk'
-  }).onDelete('cascade'),
 ]);
 
 // ============================================
@@ -124,7 +114,6 @@ export const stuffboxConnections = sqliteTable('stuffbox_connections', {
 export const posts = sqliteTable('posts', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  botId: text('bot_id').references(() => bots.id, { onDelete: 'set null' }), // If posted by a bot
   content: text('content').notNull(),
   replyToId: text('reply_to_id'),
   repostOfId: text('repost_of_id'),
@@ -157,7 +146,6 @@ export const posts = sqliteTable('posts', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
   index('posts_user_id_idx').on(table.userId),
-  index('posts_bot_id_idx').on(table.botId),
   index('posts_created_at_idx').on(table.createdAt),
   index('posts_reply_to_idx').on(table.replyToId),
   index('posts_removed_idx').on(table.isRemoved),
@@ -401,12 +389,6 @@ export const notifications = sqliteTable('notifications', {
   actorDisplayName: text('actor_display_name'),
   actorAvatarUrl: text('actor_avatar_url'),
   actorNodeDomain: text('actor_node_domain'), // null for local actors
-  // Target info - used for owner-shadow notifications like interactions with owned bots
-  targetHandle: text('target_handle'),
-  targetDisplayName: text('target_display_name'),
-  targetAvatarUrl: text('target_avatar_url'),
-  targetNodeDomain: text('target_node_domain'),
-  targetIsBot: integer('target_is_bot', { mode: 'boolean' }),
   // Post reference
   postId: text('post_id').references(() => posts.id, { onDelete: 'cascade' }),
   remotePostId: text('remote_post_id'),
@@ -536,174 +518,6 @@ export const reports = sqliteTable('reports', {
   index('reports_reporter_idx').on(table.reporterId),
 ]);
 
-
-
-// ============================================
-// BOTS
-// ============================================
-
-export const bots = sqliteTable('bots', {
-  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }), // The bot's own user account
-  ownerId: text('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }), // The human who manages this bot
-  name: text('name').notNull(),
-
-  // Personality configuration (JSON)
-  personalityConfig: text('personality_config').notNull(), // JSON
-
-  // LLM configuration
-  llmProvider: text('llm_provider').notNull(), // openrouter, openai, anthropic, custom
-  llmModel: text('llm_model').notNull(),
-  llmEndpoint: text('llm_endpoint'),
-  llmApiKeyEncrypted: text('llm_api_key_encrypted').notNull(),
-
-  // Scheduling
-  scheduleConfig: text('schedule_config'), // JSON
-  autonomousMode: integer('autonomous_mode', { mode: 'boolean' }).default(false).notNull(),
-
-  // Status
-  isActive: integer('is_active', { mode: 'boolean' }).default(true).notNull(),
-  isSuspended: integer('is_suspended', { mode: 'boolean' }).default(false).notNull(),
-  suspensionReason: text('suspension_reason'),
-  suspendedAt: integer('suspended_at', { mode: 'timestamp' }),
-
-  // Timestamps
-  lastPostAt: integer('last_post_at', { mode: 'timestamp' }),
-  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
-}, (table) => [
-  index('bots_user_id_idx').on(table.userId),
-  index('bots_owner_id_idx').on(table.ownerId),
-  index('bots_active_idx').on(table.isActive),
-]);
-
-
-// ============================================
-// BOT CONTENT SOURCES
-// ============================================
-
-export const botContentSources = sqliteTable('bot_content_sources', {
-  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
-  botId: text('bot_id').notNull().references(() => bots.id, { onDelete: 'cascade' }),
-
-  type: text('type').notNull(), // rss, reddit, news_api, brave_news
-  url: text('url').notNull(),
-  subreddit: text('subreddit'), // For Reddit sources
-  apiKeyEncrypted: text('api_key_encrypted'), // For news APIs
-  sourceConfig: text('source_config'), // JSON config for brave_news, news_api query builder
-
-  keywords: text('keywords'), // JSON array for filtering
-
-  isActive: integer('is_active', { mode: 'boolean' }).default(true).notNull(),
-  lastFetchAt: integer('last_fetch_at', { mode: 'timestamp' }),
-  lastError: text('last_error'),
-  consecutiveErrors: integer('consecutive_errors').default(0).notNull(),
-
-  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
-  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
-}, (table) => [
-  index('bot_content_sources_bot_idx').on(table.botId),
-  index('bot_content_sources_type_idx').on(table.type),
-]);
-
-
-// ============================================
-// BOT CONTENT ITEMS
-// ============================================
-
-export const botContentItems = sqliteTable('bot_content_items', {
-  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
-  sourceId: text('source_id').notNull().references(() => botContentSources.id, { onDelete: 'cascade' }),
-
-  externalId: text('external_id').notNull(), // Unique ID from source
-  title: text('title').notNull(),
-  content: text('content'),
-  url: text('url').notNull(),
-
-  publishedAt: integer('published_at', { mode: 'timestamp' }).notNull(),
-  fetchedAt: integer('fetched_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
-
-  isProcessed: integer('is_processed', { mode: 'boolean' }).default(false).notNull(),
-  processedAt: integer('processed_at', { mode: 'timestamp' }),
-  postId: text('post_id').references(() => posts.id, { onDelete: 'set null' }), // If a post was created
-
-  interestScore: integer('interest_score'), // LLM evaluation score
-  interestReason: text('interest_reason'),
-}, (table) => [
-  index('bot_content_items_source_idx').on(table.sourceId),
-  index('bot_content_items_processed_idx').on(table.isProcessed),
-  index('bot_content_items_external_idx').on(table.externalId),
-]);
-
-
-// ============================================
-// BOT MENTIONS
-// ============================================
-
-export const botMentions = sqliteTable('bot_mentions', {
-  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
-  botId: text('bot_id').notNull().references(() => bots.id, { onDelete: 'cascade' }),
-  postId: text('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
-
-  authorId: text('author_id').notNull().references(() => users.id),
-  content: text('content').notNull(),
-
-  isProcessed: integer('is_processed', { mode: 'boolean' }).default(false).notNull(),
-  processedAt: integer('processed_at', { mode: 'timestamp' }),
-  responsePostId: text('response_post_id').references(() => posts.id),
-
-  // For federated mentions
-  isRemote: integer('is_remote', { mode: 'boolean' }).default(false).notNull(),
-  remoteActorUrl: text('remote_actor_url'),
-
-  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
-}, (table) => [
-  index('bot_mentions_bot_idx').on(table.botId),
-  index('bot_mentions_processed_idx').on(table.isProcessed),
-  index('bot_mentions_created_idx').on(table.createdAt),
-  uniqueIndex('bot_mentions_bot_post_unique_idx').on(table.botId, table.postId),
-]);
-
-
-// ============================================
-// BOT ACTIVITY LOGS
-// ============================================
-
-export const botActivityLogs = sqliteTable('bot_activity_logs', {
-  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
-  botId: text('bot_id').notNull().references(() => bots.id, { onDelete: 'cascade' }),
-
-  action: text('action').notNull(), // post_created, mention_response, etc.
-  details: text('details').notNull(), // JSON
-
-  success: integer('success', { mode: 'boolean' }).notNull(),
-  errorMessage: text('error_message'),
-
-  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
-}, (table) => [
-  index('bot_activity_logs_bot_idx').on(table.botId),
-  index('bot_activity_logs_action_idx').on(table.action),
-  index('bot_activity_logs_created_idx').on(table.createdAt),
-]);
-
-
-// ============================================
-// BOT RATE LIMITS
-// ============================================
-
-export const botRateLimits = sqliteTable('bot_rate_limits', {
-  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
-  botId: text('bot_id').notNull().references(() => bots.id, { onDelete: 'cascade' }),
-
-  windowStart: integer('window_start', { mode: 'timestamp' }).notNull(),
-  windowType: text('window_type').notNull(), // daily, hourly
-  postCount: integer('post_count').default(0).notNull(),
-  replyCount: integer('reply_count').default(0).notNull(),
-
-  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
-}, (table) => [
-  index('bot_rate_limits_bot_window_idx').on(table.botId, table.windowStart),
-]);
 
 
 // ============================================

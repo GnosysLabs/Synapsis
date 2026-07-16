@@ -24,7 +24,6 @@ export async function GET(request: Request) {
             isSilenced: users.isSilenced,
             silenceReason: users.silenceReason,
             createdAt: users.createdAt,
-            isBot: users.isBot,
         })
             .from(users)
             .where(sql`${users.handle} NOT LIKE '%@%'`)

@@ -2,12 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, lte, or } from 'drizzle-orm';
 
 import {
-  botMentions,
   db,
   mentionDeliveries,
   notifications,
 } from '@/db';
-import { buildNotificationTarget } from '@/lib/notifications';
 import { discoverNode } from '@/lib/swarm/discovery';
 import {
   deliverSwarmMention,
@@ -80,28 +78,6 @@ async function insertMentionNotification(values: typeof notifications.$inferInse
   return inserted.length > 0;
 }
 
-async function registerLocalBotMention(
-  mentionedUserId: string,
-  postId: string,
-  actorId: string,
-  content: string,
-): Promise<void> {
-  const bot = await db.query.bots.findFirst({
-    where: { userId: mentionedUserId },
-    columns: { id: true, isActive: true, isSuspended: true },
-  });
-  if (!bot || !bot.isActive || bot.isSuspended) return;
-
-  await db.insert(botMentions).values({
-    botId: bot.id,
-    postId,
-    authorId: actorId,
-    content,
-    isProcessed: false,
-    isRemote: false,
-  }).onConflictDoNothing();
-}
-
 /** Resolve local mentions synchronously and persist remote delivery work. */
 export async function registerPostMentions(
   input: RegisterPostMentionsInput,
@@ -139,33 +115,9 @@ export async function registerPostMentions(
         postId: input.postId,
         postContent: input.content.slice(0, 200),
         interactionId: `mention:local:${input.postId}:${mentionedUser.id}`,
-        ...(mentionedUser.isBot ? buildNotificationTarget(mentionedUser) : {}),
         type: 'mention',
       });
       if (created) result.localNotifications += 1;
-
-      if (mentionedUser.isBot) {
-        await registerLocalBotMention(mentionedUser.id, input.postId, input.actor.id, input.content);
-      }
-
-      if (mentionedUser.isBot
-        && mentionedUser.botOwnerId
-        && await localInteractionAllowed(mentionedUser.botOwnerId, input.actor.id)) {
-        const ownerCreated = await insertMentionNotification({
-          userId: mentionedUser.botOwnerId,
-          actorId: input.actor.id,
-          actorHandle: input.actor.handle,
-          actorDisplayName: input.actor.displayName,
-          actorAvatarUrl: input.actor.avatarUrl,
-          actorNodeDomain: null,
-          postId: input.postId,
-          postContent: input.content.slice(0, 200),
-          interactionId: `mention:local-owner:${input.postId}:${mentionedUser.id}`,
-          ...buildNotificationTarget(mentionedUser),
-          type: 'mention',
-        });
-        if (ownerCreated) result.localNotifications += 1;
-      }
       continue;
     }
 

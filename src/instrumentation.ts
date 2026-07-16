@@ -4,7 +4,6 @@
  * This file runs when the Next.js server starts.
  * We use it to initialize background tasks like:
  * - Swarm announcement (on startup)
- * - Bot cron (every 1 minute)
  * - Swarm gossip (every 5 minutes)
  * 
  * This eliminates the need for a separate cron process.

@@ -7,12 +7,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, users, notifications, remoteReposts } from '@/db';
-import { eq, sql, and } from 'drizzle-orm';
+import { db, posts, notifications, remoteReposts } from '@/db';
+import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
-import { buildNotificationTarget } from '@/lib/notifications';
 
 const swarmRepostSchema = z.object({
   postId: z.string().uuid(),
@@ -87,8 +86,6 @@ export async function POST(request: NextRequest) {
       actorNodeDomain: data.repost.actorNodeDomain,
     });
 
-    const author = post.author as { isBot?: boolean; botOwnerId?: string; handle?: string; displayName?: string | null; avatarUrl?: string | null } | null;
-
     // Create notification with actor info stored directly
     try {
       await db.insert(notifications).values({
@@ -99,31 +96,11 @@ export async function POST(request: NextRequest) {
         actorNodeDomain: data.repost.actorNodeDomain,
         postId: data.postId,
         postContent: post.content?.slice(0, 200) || null,
-        ...(author?.isBot ? buildNotificationTarget(author as any) : {}),
         type: 'repost',
       });
       console.log(`[Swarm] Created repost notification for post ${data.postId} from ${data.repost.actorHandle}@${data.repost.actorNodeDomain}`);
     } catch (notifError) {
       console.error(`[Swarm] Failed to create repost notification:`, notifError);
-    }
-
-    // Also notify bot owner if this is a bot's post
-    if (author?.isBot && author.botOwnerId) {
-      try {
-        await db.insert(notifications).values({
-          userId: author.botOwnerId,
-          actorHandle: data.repost.actorHandle,
-          actorDisplayName: data.repost.actorDisplayName,
-          actorAvatarUrl: data.repost.actorAvatarUrl || null,
-          actorNodeDomain: data.repost.actorNodeDomain,
-          postId: data.postId,
-          postContent: post.content?.slice(0, 200) || null,
-          ...buildNotificationTarget(author as any),
-          type: 'repost',
-        });
-      } catch (err) {
-        console.error('[Swarm] Failed to notify bot owner:', err);
-      }
     }
 
     console.log(`[Swarm] Received repost from ${data.repost.actorHandle}@${data.repost.actorNodeDomain} on post ${data.postId}`);

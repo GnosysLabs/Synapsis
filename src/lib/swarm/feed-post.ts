@@ -31,7 +31,6 @@ export function mapSwarmPostToPost(post: InteractiveSwarmPost): Post {
             displayName: post.author.displayName,
             avatarUrl: post.author.avatarUrl,
             isSwarm: true,
-            isBot: post.author.isBot,
             isNsfw: post.author.isNsfw,
             nodeIsNsfw: post.nodeIsNsfw,
             nodeDomain: post.nodeDomain,

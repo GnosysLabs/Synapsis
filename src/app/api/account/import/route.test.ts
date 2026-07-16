@@ -34,7 +34,6 @@ function basePayload(dms: unknown[]) {
         posts: [],
         following: [],
         dms,
-        bots: [],
     };
 }
 
@@ -272,6 +271,30 @@ describe('account import DM integrity', () => {
 
         expect(response.status).toBe(401);
         await expect(response.json()).resolves.toMatchObject({ error: 'Invalid password' });
+    });
+
+    it('accepts the empty automated-account field from older exports', async () => {
+        const legacyPayload = {
+            ...basePayload([]),
+            bots: [],
+        };
+        const response = await importResponse(signedV11Export(legacyPayload));
+
+        expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toMatchObject({ error: 'Invalid password' });
+    });
+
+    it('rejects older exports that contain automated accounts', async () => {
+        const legacyPayload = {
+            ...basePayload([]),
+            bots: [{ handle: 'automated' }],
+        };
+        const response = await importResponse(signedV11Export(legacyPayload));
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+            error: 'Export payload contains unsupported account types',
+        });
     });
 
     it('accepts a valid account-signed E2EE continuity anchor', async () => {

@@ -1,6 +1,6 @@
 import type { LinkPreviewData } from './linkPreview';
 
-const GENERIC_PREVIEW_USER_AGENT = 'Mozilla/5.0 (compatible; SynapsisBot/1.0; +https://synapsis.social)';
+const GENERIC_PREVIEW_USER_AGENT = 'Mozilla/5.0 (compatible; SynapsisPreview/1.0; +https://synapsis.social)';
 
 function decodeHtmlEntities(value: string): string {
   return value

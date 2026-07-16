@@ -6,11 +6,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, users, posts, media, follows, remoteFollows, chatConversations, chatMessages, e2eeKeyBundles, e2eeMessageReceipts, bots, botContentSources, botActivityLogs } from '@/db';
+import { db, users, posts, media, follows, remoteFollows, chatConversations, chatMessages, e2eeKeyBundles, e2eeMessageReceipts } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { z } from 'zod';
-import { encryptApiKey, serializeEncryptedData } from '@/lib/bots/encryption';
 import { v4 as uuid } from 'uuid';
 import { upsertHandleEntries } from '@/lib/federation/handles';
 import { canonicalize, verifySignedActionSignature } from '@/lib/crypto/user-signing';
@@ -152,44 +151,6 @@ interface ImportDMMessage {
     e2eeActionTs: number | null;
     deliveredAt: string | null;
     readAt: string | null;
-    createdAt: string;
-}
-
-interface ImportBot {
-    id: string;
-    name: string;
-    handle: string;
-    bio: string | null;
-    avatarUrl: string | null;
-    headerUrl: string | null;
-    personalityConfig: unknown;
-    llmProvider: string;
-    llmModel: string;
-    llmApiKey: string;
-    botPrivateKey: string;
-    publicKey: string;
-    scheduleConfig: unknown;
-    autonomousMode: boolean;
-    isActive: boolean;
-    sources: ImportBotSource[];
-    activityLogs: ImportBotActivityLog[];
-}
-
-interface ImportBotSource {
-    type: string;
-    url: string;
-    subreddit?: string | null;
-    apiKeyEncrypted?: string | null;
-    sourceConfig?: unknown;
-    keywords?: unknown;
-    isActive: boolean;
-}
-
-interface ImportBotActivityLog {
-    action: string;
-    details: unknown;
-    success: boolean;
-    errorMessage?: string | null;
     createdAt: string;
 }
 
@@ -661,10 +622,28 @@ export async function POST(req: NextRequest) {
         if (!isRecord(rawProfile) || !Array.isArray(rawPosts) || !Array.isArray(rawFollowing)) {
             return NextResponse.json({ error: 'Invalid export payload' }, { status: 400 });
         }
+        const supportedPayloadFields = new Set([
+            'manifest',
+            'profile',
+            'posts',
+            'following',
+            'dms',
+            'e2eeKeyBundle',
+            // Older exports always included this field. Empty arrays remain
+            // importable, but automated accounts themselves are unsupported.
+            'bots',
+        ]);
+        if (Object.keys(exportData).some((field) => !supportedPayloadFields.has(field))) {
+            return NextResponse.json({ error: 'Export payload contains unsupported fields' }, { status: 400 });
+        }
         const rawDMs = exportData.dms === undefined ? [] : exportData.dms;
-        const rawBots = exportData.bots === undefined ? [] : exportData.bots;
-        if (!Array.isArray(rawDMs) || !Array.isArray(rawBots)) {
+        if (!Array.isArray(rawDMs)) {
             return NextResponse.json({ error: 'Invalid export payload' }, { status: 400 });
+        }
+        const legacyAutomatedAccounts = exportData.bots;
+        if (legacyAutomatedAccounts !== undefined
+            && (!Array.isArray(legacyAutomatedAccounts) || legacyAutomatedAccounts.length > 0)) {
+            return NextResponse.json({ error: 'Export payload contains unsupported account types' }, { status: 400 });
         }
         let importedE2EEKeyBundle: ImportedE2EEContinuityAnchor | null = null;
         if (manifest.version === '1.1' && exportData.e2eeKeyBundle != null) {
@@ -698,7 +677,6 @@ export async function POST(req: NextRequest) {
         const profile = rawProfile as unknown as ImportProfile;
         const importPosts = rawPosts as ImportPost[];
         const following = rawFollowing as ImportFollowing[];
-        const importBots = rawBots as ImportBot[];
 
         // Decrypt private key to verify password is correct
         let privateKey: string;
@@ -958,75 +936,6 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // Import Bots
-        for (const botData of importBots) {
-            try {
-                // 1. Create Bot User Account
-                const botDid = `did:web:${nodeDomain}:users:${botData.handle.toLowerCase()}`;
-
-                // Re-encrypt bot private key
-                const encryptedBotPrivKey = encryptApiKey(botData.botPrivateKey);
-
-                const [botUser] = await db.insert(users).values({
-                    did: botDid,
-                    handle: botData.handle.toLowerCase(),
-                    displayName: botData.name,
-                    bio: botData.bio,
-                    avatarUrl: botData.avatarUrl,
-                    headerUrl: botData.headerUrl,
-                    publicKey: botData.publicKey,
-                    privateKeyEncrypted: serializeEncryptedData(encryptedBotPrivKey),
-                    isBot: true,
-                    botOwnerId: newUser.id
-                }).returning();
-
-                // 2. Create Bot Config
-                const encryptedLlmKey = encryptApiKey(botData.llmApiKey);
-
-                const [newBot] = await db.insert(bots).values({
-                    userId: botUser.id,
-                    ownerId: newUser.id,
-                    name: botData.name,
-                    personalityConfig: JSON.stringify(botData.personalityConfig),
-                    llmProvider: botData.llmProvider,
-                    llmModel: botData.llmModel,
-                    llmApiKeyEncrypted: serializeEncryptedData(encryptedLlmKey),
-                    scheduleConfig: botData.scheduleConfig ? JSON.stringify(botData.scheduleConfig) : null,
-                    autonomousMode: botData.autonomousMode,
-                    isActive: botData.isActive
-                }).returning();
-
-                // 3. Import Sources
-                for (const source of botData.sources) {
-                    await db.insert(botContentSources).values({
-                        botId: newBot.id,
-                        type: source.type,
-                        url: source.url,
-                        subreddit: source.subreddit,
-                        apiKeyEncrypted: source.apiKeyEncrypted,
-                        sourceConfig: source.sourceConfig ? JSON.stringify(source.sourceConfig) : null,
-                        keywords: source.keywords ? JSON.stringify(source.keywords) : null,
-                        isActive: source.isActive
-                    });
-                }
-
-                // 4. Import Activity Logs
-                for (const log of botData.activityLogs) {
-                    await db.insert(botActivityLogs).values({
-                        botId: newBot.id,
-                        action: log.action,
-                        details: JSON.stringify(log.details),
-                        success: log.success,
-                        errorMessage: log.errorMessage,
-                        createdAt: new Date(log.createdAt)
-                    });
-                }
-
-            } catch (error) {
-                console.error(`Failed to import bot ${botData.name}:`, error);
-            }
-        }
-
         // Notify old node about the migration
         try {
             await notifyOldNode(sourceNode, manifest.handle, newActorUrl, manifest.did, privateKey);
@@ -1058,7 +967,6 @@ export async function POST(req: NextRequest) {
                 postsImported: importedPosts,
                 followingImported: importedFollowing,
                 dmsImported: importedDMs,
-                botsImported: importBots.length,
             },
             warnings: [encryptedDMImportWarning, federatedMoveWarning, sessionWarning]
                 .filter((warning): warning is string => warning !== null),

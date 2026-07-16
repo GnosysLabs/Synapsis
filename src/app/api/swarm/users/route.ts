@@ -24,7 +24,6 @@ export async function GET(request: NextRequest) {
     handle: users.handle,
     displayName: users.displayName,
     avatarUrl: users.avatarUrl,
-    isBot: users.isBot,
   })
     .from(users)
     .where(and(

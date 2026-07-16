@@ -6,8 +6,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
-import { HomeIcon, SearchIcon, BellIcon, UserIcon, ShieldIcon, SettingsIcon, BotIcon } from './Icons';
-import { useFormattedHandle } from '@/lib/utils/handle';
+import { HomeIcon, SearchIcon, BellIcon, UserIcon, ShieldIcon, SettingsIcon } from './Icons';
 import { Check, ChevronDown, LogOut, Plus, Settings2 } from 'lucide-react';
 import { AuthScreen } from '@/app/login/page';
 import { AvatarImage } from './AvatarImage';
@@ -268,12 +267,6 @@ export function Sidebar() {
                                 }} className="notification-dot" />
                             )}
                         </span>
-                    </Link>
-                )}
-                {user && (
-                    <Link href="/bots" className={`nav-item ${pathname?.startsWith('/bots') ? 'active' : ''}`} title="Bots">
-                        <BotIcon />
-                        <span>Bots</span>
                     </Link>
                 )}
                 {user ? (

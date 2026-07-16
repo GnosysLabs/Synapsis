@@ -47,7 +47,6 @@ export async function GET(request: Request, context: RouteContext) {
                     avatarUrl: f.avatarUrl,
                     bio: f.bio,
                     isRemote: true,
-                    isBot: f.isBot,
                 }));
                 const hydratedFollowers = await hydrateSwarmUsers(followers);
                 return NextResponse.json({ followers: hydratedFollowers, nextCursor: null });
@@ -90,7 +89,6 @@ export async function GET(request: Request, context: RouteContext) {
             displayName: f.follower.displayName,
             avatarUrl: f.follower.avatarUrl,
             bio: f.follower.bio,
-            isBot: f.follower.isBot,
             isRemote: false,
         }));
 
@@ -106,7 +104,6 @@ export async function GET(request: Request, context: RouteContext) {
             displayName: f.handle?.split('@')[0] || 'Unknown',
             avatarUrl: null,
             bio: null,
-            isBot: false,
             isRemote: true,
         }));
 

@@ -18,12 +18,10 @@ const postIdSchema = z.union([localPostIdSchema, swarmPostIdSchema]);
 
 const embeddedPostRelations = {
     author: true,
-    bot: true,
     media: true,
     replyTo: {
         with: {
             author: true,
-            bot: true,
             media: true,
         },
     },
@@ -282,7 +280,6 @@ export async function DELETE(
 ) {
     try {
         const { requireAuth } = await import('@/lib/auth');
-        const { bots } = await import('@/db');
         const user = await requireAuth();
         const { id } = await params;
 
@@ -382,21 +379,14 @@ export async function DELETE(
             }
         }
 
-        const post = await db.query.posts.findFirst({
-            where: { id: id },
-            with: {
-                bot: true,
-            },
-        });
+        const post = await db.query.posts.findFirst({ where: { id } });
 
         if (!post) {
             return NextResponse.json({ error: 'Post not found' }, { status: 404 });
         }
 
-        // Allow deletion if user owns the post OR if user owns the bot that made the post
-        // OR if user owns the parent post (can delete replies on their posts)
+        // Allow deletion if the user owns the post or its parent post.
         const isPostOwner = post.userId === user.id;
-        const isBotOwner = post.bot && post.bot.ownerId === user.id;
 
         // Check if user owns the parent post (for deleting replies on their posts)
         let isParentPostOwner = false;
@@ -409,7 +399,7 @@ export async function DELETE(
             }
         }
 
-        if (!isPostOwner && !isBotOwner && !isParentPostOwner) {
+        if (!isPostOwner && !isParentPostOwner) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
         }
 

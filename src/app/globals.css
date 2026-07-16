@@ -878,17 +878,6 @@ a.btn-primary:visited {
   font-size: 13px;
 }
 
-.compose-mention-bot {
-  padding: 1px 5px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--foreground-secondary);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
 .compose-mention-loading {
   padding: 12px;
 }
@@ -2567,11 +2556,6 @@ a.btn-primary:visited {
   .profile-stats {
     flex-wrap: wrap;
     gap: 12px;
-  }
-
-  /* Improve bot pages */
-  .bot-card {
-    padding: 16px;
   }
 
   /* Better moderation pages */

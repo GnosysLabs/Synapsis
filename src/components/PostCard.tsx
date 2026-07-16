@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { HeartIcon, RepeatIcon, MessageIcon, FlagIcon, TrashIcon } from '@/components/Icons';
-import { Bot, MoreHorizontal, UserX, VolumeX, Globe, Download, MessageCircle, Link2, Share } from 'lucide-react';
+import { MoreHorizontal, UserX, VolumeX, Globe, Download, MessageCircle, Link2, Share } from 'lucide-react';
 import { Post, LinkPreviewMediaItem } from '@/lib/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useToast } from '@/lib/contexts/ToastContext';
@@ -128,10 +128,9 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
     const [hydratedPreview, setHydratedPreview] = useState<LinkPreviewData | null>(null);
     const domain = useDomain();
     const authorHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
-    const isOwnOrOwnedBotPost = Boolean(
+    const isOwnPost = Boolean(
         currentUser && (
             currentUser.id === post.author.id ||
-            (post.bot && currentUser.id === post.bot.ownerId) ||
             (post.author.id.startsWith('swarm:') && (
                 post.author.handle === currentUser.handle ||
                 post.author.handle === `${currentUser.handle}@${domain}`
@@ -140,7 +139,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
     );
     const canDeletePost = Boolean(
         currentUser && (
-            isOwnOrOwnedBotPost ||
+            isOwnPost ||
             (parentPostAuthorId && currentUser.id === parentPostAuthorId)
         )
     );
@@ -838,29 +837,10 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                             <Link href={`/u/${profileHandle}`} className="post-handle" onClick={(e) => e.stopPropagation()}>
                                 {post.author.displayName || post.author.handle}
                             </Link>
-                            {(post.bot || post.author.isBot) && (
-                                <span
-                                    style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '3px',
-                                        fontSize: '10px',
-                                        padding: '2px 6px',
-                                        borderRadius: '4px',
-                                        background: 'var(--accent-muted)',
-                                        color: 'var(--accent)',
-                                        fontWeight: 500,
-                                    }}
-                                    title={post.bot ? `AI Account: ${post.bot.name}` : `AI Account: ${post.author.displayName || post.author.handle}`}
-                                >
-                                    <Bot size={12} />
-                                    AI Account
-                                </span>
-                            )}
                         </div>
                         <span className="post-time">{authorHandle} · {formatTime(post.createdAt)}</span>
                     </div>
-                    {currentUser && !isOwnOrOwnedBotPost && (
+                    {currentUser && !isOwnPost && (
                         <div style={{ position: 'relative', marginLeft: 'auto' }}>
                             <button
                                 className="post-menu-btn"
@@ -1040,7 +1020,7 @@ export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, 
                             <HeartIcon filled={liked} />
                             <span>{likesCount || ''}</span>
                         </button>
-                        {!isOwnOrOwnedBotPost && (
+                        {!isOwnPost && (
                             <button className="post-action" onClick={handleReport} disabled={reporting} title="Report post">
                                 <FlagIcon />
                                 <span>{reporting ? '...' : ''}</span>

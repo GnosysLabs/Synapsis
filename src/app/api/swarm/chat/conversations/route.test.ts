@@ -74,7 +74,6 @@ describe('GET /api/swarm/chat/conversations', () => {
           avatarUrl: null,
           did: 'did:key:alice',
           publicKey: 'alice-signing-key',
-          isBot: false,
         },
         {
           handle: 'bob',
@@ -82,7 +81,6 @@ describe('GET /api/swarm/chat/conversations', () => {
           avatarUrl: '/bob.png',
           did: 'did:key:bob',
           publicKey: 'bob-signing-key',
-          isBot: false,
         },
       ]));
 

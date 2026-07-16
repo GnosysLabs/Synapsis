@@ -6,7 +6,6 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { PostCard } from '@/components/PostCard';
 import { Post } from '@/lib/types';
-import { Bot } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
@@ -19,7 +18,6 @@ interface User {
     bio?: string;
     profileUrl?: string | null;
     isRemote?: boolean;
-    isBot?: boolean;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
 }
@@ -88,27 +86,7 @@ function UserCard({ user }: { user: User }) {
                 <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontWeight: 600 }}>{user.displayName || user.handle}</span>
-                    {user.isBot && (
-                        <span 
-                            style={{ 
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                fontSize: '10px', 
-                                padding: '2px 6px', 
-                                borderRadius: '4px', 
-                                background: 'var(--accent-muted)', 
-                                color: 'var(--accent)',
-                                fontWeight: 500,
-                            }}
-                        >
-                            <Bot size={12} />
-                            AI Account
-                        </span>
-                    )}
-                </div>
+                <span style={{ fontWeight: 600 }}>{user.displayName || user.handle}</span>
                 <div style={{ color: 'var(--foreground-tertiary)', fontSize: '14px' }}>{fullHandle}</div>
                 {user.bio && (
                     <div style={{

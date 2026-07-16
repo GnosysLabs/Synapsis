@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import { eq, and } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
-import { db, users, follows } from '@/db';
+import { db } from '@/db';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
@@ -53,16 +52,6 @@ export async function GET(request: Request, context: RouteContext) {
                     const profileData = await fetchSwarmUserProfile(remote.handle, remote.domain, 0);
                     if (profileData?.profile) {
                         const profile = profileData.profile;
-                        const rawBotOwnerHandle = profile.botOwnerHandle?.toLowerCase().replace(/^@/, '') || null;
-                        const normalizedBotOwnerHandle = rawBotOwnerHandle
-                            ? rawBotOwnerHandle.includes('@')
-                                ? rawBotOwnerHandle
-                                : `${rawBotOwnerHandle}@${remote.domain}`
-                            : null;
-                        const botOwnerLocalHandle = rawBotOwnerHandle
-                            ? rawBotOwnerHandle.split('@')[0]
-                            : null;
-
                         // CACHE: Upsert the remote user into our local database
                         const { upsertRemoteUser } = await import('@/lib/swarm/user-cache');
                         await upsertRemoteUser({
@@ -70,7 +59,6 @@ export async function GET(request: Request, context: RouteContext) {
                             displayName: profile.displayName,
                             avatarUrl: profile.avatarUrl || null,
                             did: profile.did || '',
-                            isBot: profile.isBot || false,
                             publicKey: profile.publicKey,
                         });
 
@@ -90,13 +78,6 @@ export async function GET(request: Request, context: RouteContext) {
                                 isRemote: true,
                                 isSwarm: true,
                                 nodeDomain: remote.domain,
-                                isBot: profile.isBot || false,
-                                botOwner: normalizedBotOwnerHandle && botOwnerLocalHandle ? {
-                                    id: `swarm:${remote.domain}:${botOwnerLocalHandle}`,
-                                    handle: normalizedBotOwnerHandle,
-                                    displayName: botOwnerLocalHandle,
-                                    avatarUrl: null,
-                                } : null,
                                 did: profile.did,
                                 isNsfw: profile.isNsfw,
                                 nodeIsNsfw: profile.nodeIsNsfw,
@@ -134,7 +115,6 @@ export async function GET(request: Request, context: RouteContext) {
             createdAt: user.createdAt,
             website: user.website,
             movedTo: user.movedTo,
-            isBot: user.isBot,
             publicKey: user.publicKey, // Signing key
             did: user.did, // V2 Identity
             dmPrivacy: user.dmPrivacy,
@@ -143,9 +123,7 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Check if viewer can DM this user
         let canReceiveDms = true;
-        if (user.isBot) {
-            canReceiveDms = false;
-        } else if (user.dmPrivacy === 'none') {
+        if (user.dmPrivacy === 'none') {
             canReceiveDms = false;
         } else if (user.dmPrivacy === 'following') {
             canReceiveDms = false; // Default to false for 'following'
@@ -164,21 +142,6 @@ export async function GET(request: Request, context: RouteContext) {
             }
         }
         userResponse.canReceiveDms = canReceiveDms;
-
-        // If this is a bot, include owner info
-        if (user.isBot && user.botOwnerId) {
-            const owner = await db.query.users.findFirst({
-                where: { id: user.botOwnerId },
-            });
-            if (owner) {
-                userResponse.botOwner = {
-                    id: owner.id,
-                    handle: owner.handle,
-                    displayName: owner.displayName,
-                    avatarUrl: owner.avatarUrl,
-                };
-            }
-        }
 
         return NextResponse.json({ user: userResponse });
     } catch (error) {

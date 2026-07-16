@@ -20,10 +20,8 @@ export interface SwarmUserProfile {
   followingCount: number;
   postsCount: number;
   createdAt: string;
-  isBot?: boolean;
   isNsfw: boolean;
   nodeIsNsfw: boolean;
-  botOwnerHandle?: string; // Handle of the bot's owner (e.g., "user" or "user@domain")
   nodeDomain: string;
   publicKey?: string; // Signing key for verifying actions
   did?: string;
@@ -43,7 +41,6 @@ export interface SwarmUserPost {
     handle: string;
     displayName?: string;
     avatarUrl?: string;
-    isBot?: boolean;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
     nodeDomain?: string;
@@ -100,7 +97,6 @@ function mapLocalPostToSwarmPost(post: any, nodeDomain: string, nodeIsNsfw: bool
       handle: post.author.handle,
       displayName: post.author.displayName || post.author.handle,
       avatarUrl: post.author.avatarUrl || undefined,
-      isBot: post.author.isBot || undefined,
       isNsfw: post.author.isNsfw,
       nodeIsNsfw,
       nodeDomain,
@@ -142,7 +138,6 @@ function mapUserSwarmRepostToSwarmPost(
       handle: author.handle,
       displayName: author.displayName || author.handle,
       avatarUrl: author.avatarUrl || undefined,
-      isBot: author.isBot || undefined,
       isNsfw: author.isNsfw,
       nodeIsNsfw,
       nodeDomain,
@@ -208,12 +203,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const nodeIsNsfw = node?.isNsfw === true;
 
     // Find the user
-    const user = await db.query.users.findFirst({
-      where: { handle: cleanHandle },
-      with: {
-        botOwner: true, // Include bot owner if this is a bot
-      },
-    });
+    const user = await db.query.users.findFirst({ where: { handle: cleanHandle } });
 
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
@@ -235,10 +225,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
       followingCount: user.followingCount,
       postsCount: user.postsCount,
       createdAt: user.createdAt.toISOString(),
-      isBot: user.isBot || undefined,
       isNsfw: user.isNsfw,
       nodeIsNsfw,
-      botOwnerHandle: user.isBot && user.botOwner ? user.botOwner.handle : undefined,
       nodeDomain,
       publicKey: user.publicKey, // Expose signing key
       did: user.did || undefined,

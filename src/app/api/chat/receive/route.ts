@@ -40,7 +40,6 @@ const remoteProfileResponseSchema = z.object({
     publicKey: z.string(),
     displayName: z.string().nullish(),
     avatarUrl: z.string().nullish(),
-    isBot: z.boolean().optional(),
   }).passthrough(),
 }).passthrough();
 
@@ -146,7 +145,7 @@ export async function POST(request: NextRequest) {
     if (!recipientHandleMatches) {
       return NextResponse.json({ error: 'Recipient identity mismatch' }, { status: 403 });
     }
-    if (recipient.isBot || recipient.dmPrivacy === 'none') {
+    if (recipient.dmPrivacy === 'none') {
       return NextResponse.json({ error: 'Recipient does not accept direct messages' }, { status: 403 });
     }
     if (recipient.dmPrivacy === 'following') {
@@ -260,7 +259,6 @@ export async function POST(request: NextRequest) {
         displayName: senderDisplayName,
         avatarUrl: senderAvatarUrl,
         did: signedAction.did,
-        isBot: resolvedProfile.isBot || false,
         publicKey: normalizeSigningPublicKey(resolvedProfile.publicKey)!,
       });
       senderUser = await db.query.users.findFirst({ where: { did: signedAction.did } });

@@ -11,7 +11,6 @@ import { eq, desc, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { upsertRemoteUser } from '@/lib/swarm/user-cache';
-import { buildNotificationTarget } from '@/lib/notifications';
 
 // Schema for incoming swarm reply
 const swarmReplySchema = z.object({
@@ -143,8 +142,6 @@ export async function POST(request: NextRequest) {
 
     await syncParentReplyCount(data.postId);
 
-    const parentAuthor = parentPost.author as { isBot?: boolean; botOwnerId?: string; handle?: string; displayName?: string | null; avatarUrl?: string | null } | null;
-
     if (parentPost.userId !== remoteUser.id) {
       await db.insert(notifications).values({
         userId: parentPost.userId,
@@ -154,23 +151,8 @@ export async function POST(request: NextRequest) {
         actorNodeDomain: sourceDomain,
         postId: data.postId,
         postContent: data.reply.content.slice(0, 200),
-        ...(parentAuthor?.isBot ? buildNotificationTarget(parentAuthor as any) : {}),
         type: 'reply',
       });
-
-      if (parentAuthor?.isBot && parentAuthor.botOwnerId) {
-        await db.insert(notifications).values({
-          userId: parentAuthor.botOwnerId,
-          actorHandle: data.reply.author.handle,
-          actorDisplayName: data.reply.author.displayName || data.reply.author.handle,
-          actorAvatarUrl: data.reply.author.avatarUrl || null,
-          actorNodeDomain: sourceDomain,
-          postId: data.postId,
-          postContent: data.reply.content.slice(0, 200),
-          ...buildNotificationTarget(parentAuthor as any),
-          type: 'reply',
-        });
-      }
     }
 
     return NextResponse.json({ success: true, message: 'Reply received' });
@@ -193,7 +175,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { replyId, nodeDomain, authorHandle } = body;
+    const { replyId, nodeDomain } = body;
 
     if (!replyId || !nodeDomain) {
       return NextResponse.json({ error: 'replyId and nodeDomain required' }, { status: 400 });

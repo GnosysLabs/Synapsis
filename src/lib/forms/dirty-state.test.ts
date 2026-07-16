@@ -14,11 +14,10 @@ describe('hasUnsavedChanges', () => {
     expect(hasUnsavedChanges({ ...saved }, saved)).toBe(false);
   });
 
-  it('detects nested array changes such as bot sources', () => {
+  it('detects nested array changes such as source configurations', () => {
     const saved = [{ id: 'source-1', config: { active: true } }];
 
     expect(hasUnsavedChanges(saved, saved)).toBe(false);
     expect(hasUnsavedChanges([...saved, { id: 'source-2', config: { active: true } }], saved)).toBe(true);
   });
 });
-

@@ -47,7 +47,6 @@ export async function GET(request: Request, context: RouteContext) {
                     avatarUrl: f.avatarUrl,
                     bio: f.bio,
                     isRemote: true,
-                    isBot: f.isBot,
                 }));
                 const hydratedFollowing = await hydrateSwarmUsers(following);
                 return NextResponse.json({ following: hydratedFollowing, nextCursor: null });
@@ -91,7 +90,6 @@ export async function GET(request: Request, context: RouteContext) {
             avatarUrl: f.following.avatarUrl,
             bio: f.following.bio,
             isRemote: false,
-            isBot: f.following.isBot,
         }));
 
         // Get remote following

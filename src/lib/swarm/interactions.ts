@@ -357,10 +357,8 @@ export interface SwarmUserProfile {
   followingCount: number;
   postsCount: number;
   createdAt: string;
-  isBot?: boolean;
   isNsfw: boolean;
   nodeIsNsfw: boolean;
-  botOwnerHandle?: string; // Handle of the bot's owner (e.g., "user" or "user@domain")
   nodeDomain: string;
   chatPublicKey?: string;
   publicKey?: string;
@@ -381,7 +379,6 @@ export interface SwarmUserPost {
     handle: string;
     displayName?: string;
     avatarUrl?: string;
-    isBot?: boolean;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
     nodeDomain?: string;

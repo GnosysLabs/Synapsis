@@ -12,12 +12,10 @@ type RouteContext = { params: Promise<{ handle: string }> };
 
 const embeddedPostRelations = {
     author: true,
-    bot: true,
     media: true,
     replyTo: {
         with: {
             author: true,
-            bot: true,
             media: true,
         },
     },
@@ -134,11 +132,6 @@ export async function GET(request: Request, context: RouteContext) {
 
         if (!user) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
-        }
-
-        // Don't show likes for bot accounts
-        if (user.isBot) {
-            return NextResponse.json({ posts: [] });
         }
 
         // Get user's liked posts

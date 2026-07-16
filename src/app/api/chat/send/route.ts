@@ -109,9 +109,6 @@ export async function POST(request: NextRequest) {
       if (envelope.recipientHandle.toLowerCase() !== recipientUser.handle.toLowerCase()) {
         return NextResponse.json({ error: 'Recipient identity mismatch' }, { status: 403 });
       }
-      if (recipientUser.isBot) {
-        return NextResponse.json({ error: 'Cannot DM a bot account' }, { status: 400 });
-      }
       if (recipientUser.dmPrivacy === 'none') {
         return NextResponse.json({ error: 'This user does not accept direct messages' }, { status: 403 });
       }

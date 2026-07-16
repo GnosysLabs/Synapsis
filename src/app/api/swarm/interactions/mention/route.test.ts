@@ -71,8 +71,6 @@ describe('swarm mention receiver', () => {
         id: 'recipient-id',
         handle: 'localuser',
         isSuspended: false,
-        isBot: false,
-        botOwnerId: null,
       })
       .mockResolvedValueOnce(null);
     mocks.mutedNodeFindFirst.mockResolvedValue(null);

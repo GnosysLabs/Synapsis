@@ -11,11 +11,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, users, notifications, remoteFollowers } from '@/db';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
-import { buildNotificationTarget } from '@/lib/notifications';
 
 const swarmFollowSchema = z.object({
   targetHandle: localHandleSchema,
@@ -105,7 +104,6 @@ export async function POST(request: NextRequest) {
         actorDisplayName: data.follow.followerDisplayName,
         actorAvatarUrl: data.follow.followerAvatarUrl || null,
         actorNodeDomain: data.follow.followerNodeDomain,
-        ...(targetUser.isBot ? buildNotificationTarget(targetUser) : {}),
         type: 'follow',
       });
       console.log(`[Swarm] Created follow notification for @${data.targetHandle} from ${data.follow.followerHandle}@${data.follow.followerNodeDomain}`);
@@ -113,25 +111,6 @@ export async function POST(request: NextRequest) {
       // Log error with context but don't fail the request - notification creation is best-effort
       console.error('[Swarm Follow] Failed to create notification:', notifError);
       console.error('[Swarm Follow] Context:', { targetHandle: data.targetHandle, userId: targetUser.id, actor: data.follow.followerHandle });
-    }
-
-    // Also notify bot owner if this is a bot being followed
-    if (targetUser.isBot && targetUser.botOwnerId) {
-      try {
-        await db.insert(notifications).values({
-          userId: targetUser.botOwnerId,
-          actorHandle: data.follow.followerHandle,
-          actorDisplayName: data.follow.followerDisplayName,
-          actorAvatarUrl: data.follow.followerAvatarUrl || null,
-          actorNodeDomain: data.follow.followerNodeDomain,
-          ...buildNotificationTarget(targetUser),
-          type: 'follow',
-        });
-      } catch (err) {
-        // Log error with context but don't fail the request - bot owner notification is best-effort
-        console.error('[Swarm Follow] Failed to notify bot owner:', err);
-        console.error('[Swarm Follow] Context:', { targetHandle: data.targetHandle, botOwnerId: targetUser.botOwnerId, actor: data.follow.followerHandle });
-      }
     }
 
     console.log(`[Swarm] Received follow from ${data.follow.followerHandle}@${data.follow.followerNodeDomain} for @${data.targetHandle}`);

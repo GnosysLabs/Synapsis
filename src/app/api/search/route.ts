@@ -6,12 +6,10 @@ import { discoverNode } from '@/lib/swarm/discovery';
 
 const embeddedPostRelations = {
     author: true,
-    bot: true,
     media: true,
     replyTo: {
         with: {
             author: true,
-            bot: true,
             media: true,
         },
     },
@@ -32,7 +30,6 @@ type SearchUser = {
     bio: string | null;
     profileUrl?: string | null;
     isRemote?: boolean;
-    isBot?: boolean;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
 };
@@ -103,7 +100,6 @@ export async function GET(request: Request) {
                     displayName: users.displayName,
                     avatarUrl: users.avatarUrl,
                     bio: users.bio,
-                    isBot: users.isBot,
                     isNsfw: users.isNsfw,
                 })
                     .from(users)
@@ -135,7 +131,6 @@ export async function GET(request: Request) {
                     displayName: users.displayName,
                     avatarUrl: users.avatarUrl,
                     bio: users.bio,
-                    isBot: users.isBot,
                     isNsfw: users.isNsfw,
                 })
                     .from(users)
@@ -171,7 +166,6 @@ export async function GET(request: Request) {
                                 bio: profileData.profile.bio || null,
                                 profileUrl: `https://${parsedRemote.domain}/@${parsedRemote.handle}`,
                                 isRemote: true,
-                                isBot: profileData.profile.isBot,
                                 isNsfw: profileData.profile.isNsfw,
                                 nodeIsNsfw: profileData.profile.nodeIsNsfw,
                             };

@@ -6,7 +6,6 @@ export interface HydratedUser {
     displayName: string | null;
     avatarUrl?: string | null;
     bio?: string | null;
-    isBot?: boolean;
     isRemote: boolean;
     nodeDomain?: string; // For remote users
 }
@@ -26,7 +25,6 @@ export async function hydrateSwarmUsers(
         avatarUrl?: string | null;
         bio?: string | null;
         isRemote: boolean;
-        isBot?: boolean;
     }[]
 ): Promise<HydratedUser[]> {
     const needsHydration = users.filter(u => u.isRemote);
@@ -65,7 +63,6 @@ export async function hydrateSwarmUsers(
                     displayName: response.profile.displayName,
                     avatarUrl: response.profile.avatarUrl,
                     bio: response.profile.bio,
-                    isBot: response.profile.isBot,
                     nodeDomain: response.nodeDomain,
                 });
             }

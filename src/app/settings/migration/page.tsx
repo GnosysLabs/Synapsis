@@ -11,7 +11,6 @@ interface ExportStats {
     following: number;
     mediaFiles: number;
     dms: number;
-    bots: number;
 }
 
 export default function MigrationPage() {
@@ -140,7 +139,6 @@ export default function MigrationPage() {
                         <li>All your posts</li>
                         <li>Your following list</li>
                         <li>DM conversation records and encrypted message envelopes</li>
-                        <li>Your automated bots and their configuration</li>
                     </ul>
                 </div>
 
@@ -188,7 +186,7 @@ export default function MigrationPage() {
                         borderRadius: '8px',
                         marginBottom: '20px',
                     }}>
-                        Export successful! Downloaded {exportStats.posts} posts, {exportStats.dms} DM threads, and {exportStats.bots} bots.
+                        Export successful! Downloaded {exportStats.posts} posts and {exportStats.dms} DM threads.
                     </div>
                 )}
 

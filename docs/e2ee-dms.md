@@ -79,7 +79,7 @@ Invalid signatures, altered envelopes, authentication failures, and messages enc
 
 ## Export and migration limits
 
-Account export preserves new message envelopes as ciphertext and preserves legacy messages as legacy plaintext. Fresh exports sign a canonical digest of the complete payload. Digest-less historical exports are rejected because their profile, posts, follows, bots, and message history cannot be authenticated; users must create a fresh export on the old node. The server does not decrypt E2EE messages for export.
+Account export preserves new message envelopes as ciphertext and preserves legacy messages as legacy plaintext. Fresh exports sign a canonical digest of the complete payload. Digest-less historical exports are rejected because their profile, posts, follows, and message history cannot be authenticated; users must create a fresh export on the old node. The server does not decrypt E2EE messages for export.
 
 V1 does not migrate the account encryption private key or recovery enrollment between home nodes. It does migrate the signed public key-continuity anchor. On first opening Chat at the destination, the user sets a PIN once and the browser signs a monotonic replacement key. Preserved old ciphertext remains unreadable on the destination. Copying a node-wide `E2EE_RECOVERY_SECRET` for one account is not acceptable.
 

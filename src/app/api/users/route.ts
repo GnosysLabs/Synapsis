@@ -20,7 +20,6 @@ export async function GET(request: NextRequest) {
                 bio: users.bio,
                 avatarUrl: users.avatarUrl,
                 createdAt: users.createdAt,
-                isBot: users.isBot,
                 isNsfw: users.isNsfw,
             })
             .from(users)

@@ -28,7 +28,6 @@ interface MentionSuggestion {
     handle: string;
     displayName: string | null;
     avatarUrl: string | null;
-    isBot: boolean;
     isRemote: boolean;
     nodeDomain: string | null;
 }
@@ -396,7 +395,6 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                                 <span className="compose-mention-identity">
                                     <span className="compose-mention-name">
                                         {suggestion.displayName || suggestion.handle.split('@')[0]}
-                                        {suggestion.isBot && <span className="compose-mention-bot">Bot</span>}
                                     </span>
                                     <span className="compose-mention-handle">@{suggestion.handle}</span>
                                 </span>

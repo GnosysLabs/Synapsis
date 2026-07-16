@@ -10,12 +10,10 @@ import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 
 const embeddedPostRelations = {
     author: true,
-    bot: true,
     media: true,
     replyTo: {
         with: {
             author: true,
-            bot: true,
             media: true,
         },
     },
@@ -55,7 +53,7 @@ function parseMediaJson(mediaJson: string | null) {
 
 function mapUserSwarmRepostToFeedPost(
     row: typeof userSwarmReposts.$inferSelect,
-    author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl' | 'isBot'>
+    author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl'>
 ): FeedPostWithChildren {
     const remoteAuthorHandle = row.authorHandle.includes('@')
         ? row.authorHandle
@@ -74,7 +72,6 @@ function mapUserSwarmRepostToFeedPost(
             handle: author.handle,
             displayName: author.displayName,
             avatarUrl: author.avatarUrl,
-            isBot: author.isBot,
         },
         repostOfId: remoteOriginalId,
         repostOf: {

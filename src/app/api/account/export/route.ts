@@ -9,7 +9,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth, verifyPassword } from '@/lib/auth';
 import { db } from '@/db';
 import * as crypto from 'crypto';
-import { decryptApiKey, deserializeEncryptedData } from '@/lib/bots/encryption';
 import { canonicalize, verifySignedActionSignature } from '@/lib/crypto/user-signing';
 import {
     decryptPrivateKey as decryptStoredPrivateKey,
@@ -101,32 +100,11 @@ interface ExportE2EEContinuityAnchor {
     proofAction: SignedUserAction;
 }
 
-interface ExportBot {
-    id: string;
-    name: string;
-    handle: string;
-    bio: string | null;
-    avatarUrl: string | null;
-    headerUrl: string | null;
-    personalityConfig: unknown;
-    llmProvider: string;
-    llmModel: string;
-    llmApiKey: string; // Decrypted
-    botPrivateKey: string; // Decrypted
-    publicKey: string;
-    scheduleConfig: unknown;
-    autonomousMode: boolean;
-    isActive: boolean;
-    sources: unknown[];
-    activityLogs: unknown[];
-}
-
 interface ExportPayload {
     profile: ExportProfile;
     posts: ExportPost[];
     following: ExportFollowing[];
     dms: ExportDMConversation[];
-    bots: ExportBot[];
     e2eeKeyBundle: ExportE2EEContinuityAnchor | null;
 }
 
@@ -272,19 +250,6 @@ export async function POST(req: NextRequest) {
         });
         const e2eeKeyBundle = await exportE2EEContinuityAnchor(currentE2EEKeyBundle, user);
 
-        // Fetch Bots
-        const userBots = await db.query.bots.findMany({
-            where: { ownerId: user.id },
-            with: {
-                user: true,
-                contentSources: true,
-                activityLogs: {
-                    limit: 50,
-                    orderBy: (logs, { desc }) => [desc(logs.createdAt)]
-                }
-            }
-        });
-
         // Build export data
         const exportPosts: ExportPost[] = userPosts.map(post => ({
             id: post.id,
@@ -354,62 +319,11 @@ export async function POST(req: NextRequest) {
             }))
         }));
 
-        const exportBots: ExportBot[] = userBots.map(bot => {
-            // Decrypt bot keys
-            let llmApiKey = '';
-            let botPrivateKey = '';
-            try {
-                if (bot.llmApiKeyEncrypted) {
-                    llmApiKey = decryptApiKey(deserializeEncryptedData(bot.llmApiKeyEncrypted));
-                }
-                if (bot.user?.privateKeyEncrypted) {
-                    botPrivateKey = decryptApiKey(deserializeEncryptedData(bot.user.privateKeyEncrypted));
-                }
-            } catch (e) {
-                console.error(`Failed to decrypt keys for bot ${bot.name}:`, e);
-            }
-
-            return {
-                id: bot.id,
-                name: bot.name,
-                handle: bot.user.handle,
-                bio: bot.user.bio,
-                avatarUrl: bot.user.avatarUrl,
-                headerUrl: bot.user.headerUrl,
-                personalityConfig: JSON.parse(bot.personalityConfig),
-                llmProvider: bot.llmProvider,
-                llmModel: bot.llmModel,
-                llmApiKey,
-                botPrivateKey,
-                publicKey: bot.user.publicKey,
-                scheduleConfig: bot.scheduleConfig ? JSON.parse(bot.scheduleConfig) : null,
-                autonomousMode: bot.autonomousMode,
-                isActive: bot.isActive,
-                sources: bot.contentSources.map(s => ({
-                    type: s.type,
-                    url: s.url,
-                    subreddit: s.subreddit,
-                    apiKeyEncrypted: s.apiKeyEncrypted, // These are specific to sources and might need their own decryption if they use AUTH_SECRET
-                    sourceConfig: s.sourceConfig ? JSON.parse(s.sourceConfig) : null,
-                    keywords: s.keywords ? JSON.parse(s.keywords) : null,
-                    isActive: s.isActive
-                })),
-                activityLogs: bot.activityLogs.map(l => ({
-                    action: l.action,
-                    details: JSON.parse(l.details),
-                    success: l.success,
-                    errorMessage: l.errorMessage,
-                    createdAt: l.createdAt.toISOString()
-                }))
-            };
-        });
-
         const exportPayload: ExportPayload = {
             profile,
             posts: exportPosts,
             following: exportFollowing,
             dms: exportDMs,
-            bots: exportBots,
             e2eeKeyBundle,
         };
 
@@ -448,7 +362,6 @@ export async function POST(req: NextRequest) {
                 posts: exportPosts.length,
                 following: exportFollowing.length,
                 dms: exportDMs.length,
-                bots: exportBots.length,
                 mediaFiles: exportPosts.reduce((sum, p) => sum + p.media.length, 0),
             },
         });

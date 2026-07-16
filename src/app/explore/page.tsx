@@ -6,7 +6,7 @@ import { SearchIcon, TrendingIcon, UsersIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
 import { Post } from '@/lib/types';
 import { useFormattedHandle } from '@/lib/utils/handle';
-import { Bot, Network, Server, EyeOff } from 'lucide-react';
+import { Network, Server, EyeOff } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
@@ -21,7 +21,6 @@ interface User {
     bio?: string;
     profileUrl?: string | null;
     isRemote?: boolean;
-    isBot?: boolean;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
 }
@@ -34,27 +33,7 @@ function UserCard({ user }: { user: User }) {
                 <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
             </div>
             <div className="user-card-info">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span className="user-card-name">{user.displayName || user.handle}</span>
-                    {user.isBot && (
-                        <span
-                            style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                fontSize: '10px',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                background: 'var(--accent-muted)',
-                                color: 'var(--accent)',
-                                fontWeight: 500,
-                            }}
-                        >
-                            <Bot size={12} />
-                            AI Account
-                        </span>
-                    )}
-                </div>
+                <span className="user-card-name">{user.displayName || user.handle}</span>
                 <div className="user-card-handle">{fullHandle}</div>
                 {user.bio && <div className="user-card-bio">{user.bio}</div>}
             </div>
@@ -446,7 +425,7 @@ export default function ExplorePage() {
                             <div className="feed-meta card">
                                 <div className="feed-meta-title">Users on this node</div>
                                 <div className="feed-meta-body">
-                                    People and bots with accounts on this Synapsis node. Follow them to see their posts in your timeline.
+                                    People with accounts on this Synapsis node. Follow them to see their posts in your timeline.
                                 </div>
                             </div>
                             <div className="explore-users">

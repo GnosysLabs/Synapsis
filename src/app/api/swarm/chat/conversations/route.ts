@@ -73,7 +73,6 @@ export async function GET() {
             avatarUrl: users.avatarUrl,
             did: users.did,
             publicKey: users.publicKey,
-            isBot: users.isBot,
           })
           .from(users)
           .where(inArray(users.handle, [...participantLookupHandles]))
@@ -157,17 +156,14 @@ export async function GET() {
         void _rawMessages;
         return {
           ...conversation,
-          participant2: {
-            ...participant2Info,
-            isBot: cachedUser?.isBot || false,
-          },
+          participant2: participant2Info,
           lastMessage,
           unreadCount: unreadByConversation.get(conv.id) || 0,
         };
       });
 
     return NextResponse.json({
-      conversations: conversationsWithUnread.filter(c => !c.participant2.isBot),
+      conversations: conversationsWithUnread,
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('List conversations error:', error);
