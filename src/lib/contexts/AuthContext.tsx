@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { useUserIdentity } from '@/lib/hooks/useUserIdentity';
 import { unlockE2EEFromSignIn } from '@/lib/e2ee/sign-in-unlock';
 
@@ -33,7 +33,7 @@ interface AuthContextType {
     handle: string | null;
     checkAdmin: () => Promise<void>;
     unlockIdentity: (password: string, explicitUser?: User) => Promise<void>;
-    login: (user?: User) => Promise<void>;
+    login: (user: User, password: string) => Promise<void>;
     logout: (userId?: string) => Promise<void>;
     switchAccount: (userId: string) => Promise<void>;
     refreshAuth: () => Promise<void>;
@@ -75,6 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [isAdmin, setIsAdmin] = useState(false);
     const [loading, setLoading] = useState(true);
     const [showUnlockPrompt, setShowUnlockPrompt] = useState(false);
+    const authGenerationRef = useRef(0);
 
     // Integrate useUserIdentity hook with persistence
     const {
@@ -118,18 +119,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, [checkAdmin, clearIdentity, initializeIdentity]);
 
     const refreshAuth = useCallback(async () => {
+        const generation = ++authGenerationRef.current;
         setLoading(true);
         try {
             const res = await fetch('/api/auth/me', { cache: 'no-store' });
             const data = await res.json();
+            if (generation !== authGenerationRef.current) return;
             await applyAuthState({
                 user: res.ok ? data.user ?? null : null,
                 accounts: res.ok ? data.accounts ?? [] : [],
             });
         } catch {
+            if (generation !== authGenerationRef.current) return;
             await applyAuthState({ user: null, accounts: [] });
         } finally {
-            setLoading(false);
+            if (generation === authGenerationRef.current) setLoading(false);
         }
     }, [applyAuthState]);
 
@@ -153,19 +157,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         );
 
         if (targetUser.did && targetUser.handle) {
-            try {
-                // Consume the credential while sign-in already has it. Only
-                // the encrypted chat key is persisted; the password is not.
-                await unlockE2EEFromSignIn({
-                    did: targetUser.did,
-                    handle: targetUser.handle,
-                    password,
-                });
-            } catch (error) {
-                // Authentication succeeded independently. Leave Chat's
-                // recovery screen available if its vault is damaged or stale.
-                console.warn('[Auth] Could not prepare encrypted messages after sign-in:', error);
-            }
+            // Consume the credential while the user has already supplied it.
+            // Only encrypted key material is persisted; the password is not.
+            await unlockE2EEFromSignIn({
+                did: targetUser.did,
+                handle: targetUser.handle,
+                password,
+            });
         }
 
         setShowUnlockPrompt(false); // Close prompt on success
@@ -179,12 +177,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, [lockIdentityHook]);
 
     /**
-     * Manually set the user state (called after successful login)
+     * Complete a password sign-in as one ordered operation. Applying the
+     * returned user directly invalidates any older /auth/me request, then the
+     * same ephemeral credential unlocks identity and encrypted messages before
+     * the login screen is allowed to navigate away.
      */
-    const login = useCallback(async (userData?: User) => {
-        void userData;
-        await refreshAuth();
-    }, [refreshAuth]);
+    const login = useCallback(async (userData: User, password: string) => {
+        const generation = ++authGenerationRef.current;
+        setLoading(true);
+        try {
+            await applyAuthState({
+                user: userData,
+                accounts: [{ ...userData, isActive: true }],
+            });
+            if (generation !== authGenerationRef.current) {
+                throw new Error('Active account changed while signing in');
+            }
+            await unlockIdentity(password, userData);
+            if (generation !== authGenerationRef.current) {
+                throw new Error('Active account changed while signing in');
+            }
+        } finally {
+            if (generation === authGenerationRef.current) setLoading(false);
+        }
+    }, [applyAuthState, unlockIdentity]);
 
     /**
      * Logout the user and clear their identity

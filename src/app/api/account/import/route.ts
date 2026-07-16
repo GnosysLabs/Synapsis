@@ -957,11 +957,14 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({
             success: true,
+            signedIn: sessionWarning === null,
             user: {
                 id: newUser.id,
                 did: newUser.did,
                 handle: newUser.handle,
                 displayName: newUser.displayName,
+                publicKey: newUser.publicKey,
+                privateKeyEncrypted: newUser.privateKeyEncrypted,
             },
             stats: {
                 postsImported: importedPosts,

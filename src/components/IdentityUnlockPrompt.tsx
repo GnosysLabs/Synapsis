@@ -44,7 +44,7 @@ export function IdentityUnlockPrompt({ onUnlock, onCancel }: IdentityUnlockPromp
             }
         } catch (err) {
             console.error('[IdentityUnlockPrompt] Failed to unlock identity:', err);
-            setError('Incorrect password. Please try again.');
+            setError(err instanceof Error ? err.message : 'Your identity could not be unlocked. Please try again.');
         } finally {
             setIsUnlocking(false);
         }

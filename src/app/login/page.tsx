@@ -4,8 +4,6 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { TriangleAlert, X } from 'lucide-react';
-import { decryptPrivateKey } from '@/lib/crypto/private-key-client';
-import { keyStore, importPrivateKey } from '@/lib/crypto/user-signing';
 import { useAuth } from '@/lib/contexts/AuthContext';
 
 declare global {
@@ -47,7 +45,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
     const turnstileRef = useRef<HTMLDivElement>(null);
     const turnstileWidgetId = useRef<string | null>(null);
 
-    const { unlockIdentity, login } = useAuth();
+    const { login } = useAuth();
 
     const [importFile, setImportFile] = useState<File | null>(null);
     const [importPassword, setImportPassword] = useState('');
@@ -205,6 +203,11 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             const warnings = Array.isArray(data.warnings)
                 ? data.warnings.filter((warning: unknown): warning is string => typeof warning === 'string')
                 : [];
+            if (data.signedIn) {
+                if (!data.user) throw new Error('Import succeeded without an account');
+                await login(data.user, importPassword);
+                setImportPassword('');
+            }
             setImportSuccess(data.message || 'Account imported successfully.');
             setImportWarnings(warnings);
             if (warnings.length === 0) {
@@ -277,50 +280,14 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                 throw new Error(data.error || 'Authentication failed');
             }
 
-            // Decrypt and store private key if available
-            if (data.user?.privateKeyEncrypted) {
-                try {
-                    const privateKeyDecrypted = await decryptPrivateKey(
-                        data.user.privateKeyEncrypted,
-                        password
-                    );
+            if (!data.user) throw new Error('Authentication succeeded without an account');
 
-                    // Import and set in memory store
-                    // Remove PEM headers if present and clean whitespace
-                    const cleanKey = privateKeyDecrypted
-                        .replace(/-----BEGIN [A-Z ]+-----/, '')
-                        .replace(/-----END [A-Z ]+-----/, '')
-                        .replace(/\s/g, '');
-
-                    const binaryDer = Buffer.from(cleanKey, 'base64');
-                    const cryptoKey = await importPrivateKey(binaryDer);
-
-                    keyStore.setPrivateKey(cryptoKey);
-
-                    console.log('[Auth] Private key decrypted and stored successfully');
-                } catch (decryptError) {
-                    console.error('[Auth] Failed to decrypt private key:', decryptError);
-                    // Don't block login/registration if decryption fails - user can unlock later
-                    // The identity unlock prompt will be shown in the app
-                }
-            } else {
-                if (process.env.NODE_ENV === 'development') console.log('[Auth] No encrypted private key returned from server');
-            }
-
-            // Sync with global auth state if we have a key (or even if we don't, to trigger load)
-            // But unlockIdentity specifically needs the key. 
-            // If data.user.privateKeyEncrypted is present, we try to unlock globally.
-            if (data.user?.privateKeyEncrypted) {
-                try {
-                    // Update AuthContext first so it has the user and key
-                    await login(data.user);
-
-                    // Now unlock (passing user explicitly to avoid async state delay)
-                    await unlockIdentity(password, data.user);
-                } catch (e) {
-                    console.error("Failed to auto-unlock identity:", e);
-                }
-            }
+            // This is deliberately awaited before navigation: the password the
+            // user just supplied unlocks their signing identity and creates or
+            // unlocks encrypted messaging in one pass. It is never persisted.
+            await login(data.user, password);
+            setPassword('');
+            setConfirmPassword('');
 
             // Start Chat in a fresh JavaScript realm before it creates or loads
             // the E2EE account key. Turnstile-enabled credential handling remains

@@ -68,6 +68,14 @@ describe('encrypted messages after sign-in', () => {
     });
   });
 
+  it('does not hide automatic setup failures from the sign-in flow', async () => {
+    const setupError = new Error('Encrypted messages were not set up');
+    fetchE2EEVaultStatus.mockResolvedValue({ ownerDid: input.did, configured: false });
+    provisionE2EEAccount.mockRejectedValue(setupError);
+
+    await expect(unlockE2EEFromSignIn(input)).rejects.toBe(setupError);
+  });
+
   it('does no recovery work when the current password vault is already remembered', async () => {
     fetchE2EEVaultStatus.mockResolvedValue(configured);
     restoreE2EEKeyMaterial.mockResolvedValue({
