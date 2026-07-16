@@ -8,6 +8,13 @@ interface DuplicateIdentityRow {
   duplicateCount: number;
 }
 
+interface ForeignKeyViolationRow {
+  table: string;
+  rowid: number | null;
+  parent: string;
+  fkid: number;
+}
+
 async function assertIdentityUniqueness(): Promise<void> {
   const tables = await db.all<{ name: string }>(sql.raw(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users' LIMIT 1",
@@ -36,6 +43,17 @@ async function assertIdentityUniqueness(): Promise<void> {
   );
 }
 
+async function assertForeignKeyIntegrity(): Promise<void> {
+  const violations = await db.all<ForeignKeyViolationRow>(sql.raw('PRAGMA foreign_key_check'));
+  if (violations.length === 0) return;
+
+  const sample = violations
+    .slice(0, 20)
+    .map((row) => `${row.table}[rowid=${row.rowid ?? 'unknown'}] -> ${row.parent} (fk ${row.fkid})`)
+    .join(', ');
+  throw new Error(`Database foreign-key check failed after migration: ${sample}`);
+}
+
 async function main() {
   try {
     await assertIdentityUniqueness();
@@ -45,6 +63,7 @@ async function main() {
       throw new Error(`Database migration failed: ${JSON.stringify(result)}`);
     }
 
+    await assertForeignKeyIntegrity();
     await db.run(sql.raw('PRAGMA wal_checkpoint(TRUNCATE)'));
     console.log('Database migrations are up to date.');
   } finally {

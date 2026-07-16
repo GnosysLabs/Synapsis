@@ -110,7 +110,18 @@ interface PostCardProps {
     parentPostAuthorId?: string; // ID of the parent post's author (for allowing deletion of replies)
 }
 
-export function PostCard({ post, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId }: PostCardProps) {
+export function PostCard(props: PostCardProps) {
+    // Historical databases may contain posts whose user was deleted while
+    // SQLite foreign-key enforcement was disabled. Never let one malformed
+    // API row crash the entire feed while the repair migration catches up.
+    if (!props.post.author) {
+        return null;
+    }
+
+    return <AuthoredPostCard {...props} />;
+}
+
+function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId }: PostCardProps) {
     const { user: currentUser, did, handle: currentUserHandle, isIdentityUnlocked } = useAuth();
     const { showToast } = useToast();
     const router = useRouter();

@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { Database } from '@tursodatabase/database';
 import { drizzle } from 'drizzle-orm/tursodatabase/database';
 import { relations } from './relations';
 
@@ -10,14 +11,33 @@ if (databasePath !== ':memory:') {
     mkdirSync(dirname(databasePath), { recursive: true });
 }
 
-const createDb = () => drizzle(databasePath, { relations });
+class SynapsisDatabaseClient extends Database {
+    private initialization?: Promise<void>;
+
+    override connect(): Promise<void> {
+        this.initialization ??= this.connectWithForeignKeys();
+        return this.initialization;
+    }
+
+    private async connectWithForeignKeys(): Promise<void> {
+        await super.connect();
+        await super.exec('PRAGMA foreign_keys = ON');
+    }
+}
+
+const createDb = () => drizzle({
+    client: new SynapsisDatabaseClient(databasePath),
+    relations,
+});
 type SynapsisDatabase = ReturnType<typeof createDb>;
 
 const globalForDb = globalThis as typeof globalThis & {
     synapsisDb?: SynapsisDatabase;
 };
 
-export const db = globalForDb.synapsisDb ?? createDb();
+const database = globalForDb.synapsisDb ?? createDb();
+
+export const db = database;
 
 globalForDb.synapsisDb = db;
 
