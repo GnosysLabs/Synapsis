@@ -114,4 +114,69 @@ describe('GET /api/swarm/chat/conversations', () => {
     expect(mocks.select).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it('resolves an encrypted preview signing key by sender DID across nodes', async () => {
+    const senderDid = 'did:synapsis:remote-alice';
+    const encryptedEnvelope = {
+      protocol: 'synapsis-e2ee-v1',
+      cipherSuite: 'x25519+xchacha20poly1305+blake2b-v1',
+      messageId: '11111111-1111-4111-8111-111111111111',
+      conversationId: 'dm1_conversation123',
+      senderDid,
+      senderHandle: 'alice',
+      recipientDid: 'did:key:owner',
+      recipientHandle: 'owner',
+      createdAt: 1_700_000_000_000,
+      senderKeyId: 'k1_sender_key_123',
+      senderKeyVersion: 1,
+      recipientKeyId: 'k1_recipient_key_123',
+      recipientKeyVersion: 1,
+      nonce: 'nonce',
+      ciphertext: 'ciphertext',
+      keyCommitment: 'commitment',
+      keyEnvelopes: [{
+        did: 'did:key:owner',
+        keyId: 'k1_recipient_key_123',
+        keyVersion: 1,
+        sealedKey: 'sealed_key',
+      }],
+    };
+    mocks.findConversations.mockResolvedValue([{
+      id: 'remote-conversation',
+      participant1Id: 'owner-id',
+      participant2Handle: 'alice@remote.example',
+      messages: [{
+        id: 'latest-message',
+        protocolVersion: 1,
+        content: null,
+        encryptedEnvelope: JSON.stringify(encryptedEnvelope),
+        senderDid,
+        e2eeSignature: 'signature',
+        e2eeActionNonce: 'action_nonce',
+        e2eeActionTs: encryptedEnvelope.createdAt,
+      }],
+    }]);
+    mocks.select
+      .mockReturnValueOnce(selectResult([], true))
+      .mockReturnValueOnce(selectResult([{
+        // Deliberately does not match participant2Handle. The message DID is
+        // the stable identity used for signature verification.
+        handle: 'alice@canonical.example',
+        displayName: 'Alice',
+        avatarUrl: null,
+        did: senderDid,
+        publicKey: 'alice-signing-key',
+      }]));
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.conversations[0].lastMessage).toMatchObject({
+      protocolVersion: 1,
+      senderPublicKey: 'alice-signing-key',
+      signedAction: { did: senderDid },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

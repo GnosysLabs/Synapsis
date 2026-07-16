@@ -6,7 +6,7 @@
 
 import { NextResponse } from 'next/server';
 import { db, chatMessages, users } from '@/db';
-import { and, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
 import { E2EE_CHAT_ACTION, E2EE_PROTOCOL_VERSION, e2eeMessageEnvelopeSchema } from '@/lib/e2ee/protocol';
 
@@ -35,10 +35,13 @@ export async function GET() {
 
     const conversationIds = conversations.map((conversation) => conversation.id);
     const participantLookupHandles = new Set<string>();
+    const latestSenderDids = new Set<string>();
     const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
     for (const conversation of conversations) {
       const participantHandle = conversation.participant2Handle;
       participantLookupHandles.add(participantHandle);
+      const latestSenderDid = conversation.messages[0]?.senderDid;
+      if (latestSenderDid) latestSenderDids.add(latestSenderDid);
       const separator = participantHandle.lastIndexOf('@');
       if (separator > 0 && participantHandle.slice(separator + 1) === localNodeDomain) {
         participantLookupHandles.add(participantHandle.slice(0, separator));
@@ -75,7 +78,12 @@ export async function GET() {
             publicKey: users.publicKey,
           })
           .from(users)
-          .where(inArray(users.handle, [...participantLookupHandles]))
+          .where(latestSenderDids.size > 0
+            ? or(
+                inArray(users.handle, [...participantLookupHandles]),
+                inArray(users.did, [...latestSenderDids]),
+              )
+            : inArray(users.handle, [...participantLookupHandles]))
         : Promise.resolve([]),
     ]);
 
@@ -83,6 +91,7 @@ export async function GET() {
       unreadRows.map((row) => [row.conversationId, Number(row.count || 0)]),
     );
     const usersByHandle = new Map(cachedUsers.map((user) => [user.handle, user]));
+    const usersByDid = new Map(cachedUsers.map((user) => [user.did, user]));
 
     const conversationsWithUnread = conversations.map((conv) => {
         const participant2Handle = conv.participant2Handle;
@@ -126,11 +135,13 @@ export async function GET() {
           && latest.senderDid && latest.e2eeSignature && latest.e2eeActionNonce && latest.e2eeActionTs) {
           try {
             const encryptedEnvelope = e2eeMessageEnvelopeSchema.parse(JSON.parse(latest.encryptedEnvelope));
+            // The sender is cryptographically identified by DID. Do not infer
+            // their signing key from the conversation partner's cached handle:
+            // federated handles can be qualified, normalized, or stale aliases.
+            const senderUser = usersByDid.get(latest.senderDid);
             const senderPublicKey = latest.senderDid === session.user.did
               ? session.user.publicKey
-              : cachedUser?.did === latest.senderDid
-                ? cachedUser.publicKey
-                : null;
+              : senderUser?.publicKey || null;
             lastMessage = {
               protocolVersion: E2EE_PROTOCOL_VERSION,
               content: null,
