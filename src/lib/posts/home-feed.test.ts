@@ -13,8 +13,8 @@ describe('home feed defaults', () => {
         expect(HOME_FEED_API_TYPES.following).toBe('home');
     });
 
-    it('rebrands the cross-node curated timeline as Explore', () => {
-        expect(HOME_FEED_LABELS.explore).toBe('Explore');
-        expect(HOME_FEED_API_TYPES.explore).toBe('curated');
+    it('keeps Explore out of the Home feed tabs', () => {
+        expect(Object.keys(HOME_FEED_LABELS)).toEqual(['node', 'following']);
+        expect(Object.values(HOME_FEED_API_TYPES)).toEqual(['local', 'home']);
     });
 });

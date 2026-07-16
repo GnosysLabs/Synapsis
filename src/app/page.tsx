@@ -19,20 +19,6 @@ export default function Home() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<Post | null>(null);
   const [feedType, setFeedType] = useState<HomeFeedType>(DEFAULT_HOME_FEED);
-  const [feedMeta, setFeedMeta] = useState<{
-    algorithm: string;
-    windowHours: number;
-    seedLimit: number;
-    weights: {
-      engagement: number;
-      recency: number;
-      authorRepeat: number;
-      nodeRepeat: number;
-      formatRepeat: number;
-      consecutiveAuthor: number;
-      consecutiveNode: number;
-    };
-  } | null>(null);
 
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const loadingCursorRef = useRef<string | null>(null);
@@ -83,7 +69,6 @@ export default function Home() {
       } else {
         setPosts(data.posts || []);
       }
-      setFeedMeta(data.meta || null);
       setNextCursor(data.nextCursor && data.nextCursor !== cursor ? data.nextCursor : null);
     } catch {
       if (type !== feedTypeRef.current) return;
@@ -91,7 +76,6 @@ export default function Home() {
       if (!cursor) {
         setPosts([]);
       }
-      setFeedMeta(null);
       setNextCursor(null);
     } finally {
       if (type === feedTypeRef.current) {
@@ -159,13 +143,7 @@ export default function Home() {
 
     if (res.ok) {
       const data = await res.json();
-      if (feedType === 'explore') {
-        setPosts([]);
-        setNextCursor(null);
-        loadFeed('explore');
-      } else {
-        setPosts([{ ...data.post, author: user }, ...posts]);
-      }
+      setPosts([{ ...data.post, author: user }, ...posts]);
       setReplyingTo(null);
     }
   };
@@ -231,14 +209,6 @@ export default function Home() {
             >
               {HOME_FEED_LABELS.following}
             </button>
-            <button
-              className={`feed-toggle-btn ${feedType === 'explore' ? 'active' : ''}`}
-              onClick={() => setFeedType('explore')}
-              role="tab"
-              aria-selected={feedType === 'explore'}
-            >
-              {HOME_FEED_LABELS.explore}
-            </button>
           </div>
         </div>
       </header>
@@ -267,30 +237,13 @@ export default function Home() {
         </div>
       )}
 
-      {feedType === 'explore' && feedMeta && (
-        <div className="feed-meta card">
-          <div className="feed-meta-title">Explore</div>
-          <div className="feed-meta-body">
-            Discover posts from nodes across the Synapsis network, balanced for freshness, active discussions, and variety.
-          </div>
-        </div>
-      )}
-
       {loading ? (
         <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
           Loading...
         </div>
       ) : posts.length === 0 ? (
         <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
-          {feedType === 'explore' ? (
-            <>
-              <p>No posts from the swarm yet</p>
-              <p style={{ fontSize: '13px', marginTop: '8px' }}>
-                Explore brings together posts from nodes across the Synapsis network.
-                Check back as nodes are discovered, or switch to Node or Following.
-              </p>
-            </>
-          ) : feedType === 'following' ? (
+          {feedType === 'following' ? (
             <>
               <p>No posts from accounts you follow yet</p>
               <p style={{ fontSize: '13px', marginTop: '8px' }}>Follow people locally or across the swarm to build this feed.</p>

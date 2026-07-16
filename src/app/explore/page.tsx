@@ -1,37 +1,31 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { Network } from 'lucide-react';
 import { SearchIcon, UsersIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
-import { Post } from '@/lib/types';
-import { useFormattedHandle } from '@/lib/utils/handle';
-import { Network, Server, EyeOff } from 'lucide-react';
-import { useAuth } from '@/lib/contexts/AuthContext';
-import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
-import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
-import { mapSwarmPostToPost, type InteractiveSwarmPost } from '@/lib/swarm/feed-post';
-
-interface User {
-    id: string;
-    handle: string;
-    displayName: string;
-    avatarUrl?: string;
-    bio?: string;
-    profileUrl?: string | null;
-    isRemote?: boolean;
-    isNsfw?: boolean;
-    nodeIsNsfw?: boolean;
-    nodeDomain?: string | null;
-}
+import { signedAPI } from '@/lib/api/signed-fetch';
+import { useAuth } from '@/lib/contexts/AuthContext';
+import { EXPLORE_FEED_API_TYPE, EXPLORE_TABS, type ExploreTab } from '@/lib/posts/explore-feed';
+import type { Post, User } from '@/lib/types';
+import { useFormattedHandle } from '@/lib/utils/handle';
 
 function UserCard({ user }: { user: User }) {
     const fullHandle = useFormattedHandle(user.handle);
+
     return (
         <Link href={`/u/${user.handle}`} className="user-card">
             <div className="avatar">
-                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} nodeDomain={user.nodeDomain} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
+                <AvatarImage
+                    avatarUrl={user.avatarUrl}
+                    seed={user.handle}
+                    nodeDomain={user.nodeDomain}
+                    isNsfw={user.isNsfw}
+                    nodeIsNsfw={user.nodeIsNsfw}
+                    alt={user.displayName || user.handle}
+                />
             </div>
             <div className="user-card-info">
                 <span className="user-card-name">{user.displayName || user.handle}</span>
@@ -43,172 +37,130 @@ function UserCard({ user }: { user: User }) {
 }
 
 export default function ExplorePage() {
-    const { user, did, handle } = useAuth();
-    const { config } = useRuntimeConfig();
-    const [query, setQuery] = useState('');
-    const [activeTab, setActiveTab] = useState<'node' | 'swarm' | 'users' | 'search'>('node');
-    const [nodePosts, setNodePosts] = useState<Post[]>([]);
-    const [swarmPosts, setSwarmPosts] = useState<InteractiveSwarmPost[]>([]);
-    const [swarmSources, setSwarmSources] = useState<{ domain: string; postCount: number }[]>([]);
-    const [users, setUsers] = useState<User[]>([]);
-    const [searchResults, setSearchResults] = useState<{ posts: Post[]; users: User[] }>({ posts: [], users: [] });
-    const [loading, setLoading] = useState(true);
-    const [searching, setSearching] = useState(false);
-    const [nodeCursor, setNodeCursor] = useState<string | null>(null);
-    const [swarmCursor, setSwarmCursor] = useState<string | null>(null);
+    const { did, handle } = useAuth();
+    const [activeTab, setActiveTab] = useState<ExploreTab>('explore');
+    const [posts, setPosts] = useState<Post[]>([]);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [postsLoading, setPostsLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
-    const [hasMoreNode, setHasMoreNode] = useState(true);
-    const [hasMoreSwarm, setHasMoreSwarm] = useState(true);
-    const isNsfwNode = config?.isNsfw === true;
+    const [users, setUsers] = useState<User[]>([]);
+    const [usersLoading, setUsersLoading] = useState(false);
+    const [usersLoaded, setUsersLoaded] = useState(false);
+    const [query, setQuery] = useState('');
+    const [searching, setSearching] = useState(false);
+    const [hasSearched, setHasSearched] = useState(false);
+    const [searchResults, setSearchResults] = useState<{ posts: Post[]; users: User[] }>({ posts: [], users: [] });
+    const loadMoreRef = useRef<HTMLDivElement>(null);
+    const loadingCursorRef = useRef<string | null>(null);
+
+    const loadExplore = useCallback(async (cursor: string | null = null) => {
+        if (cursor && loadingCursorRef.current === cursor) return;
+        if (cursor) {
+            loadingCursorRef.current = cursor;
+            setLoadingMore(true);
+        } else {
+            setPostsLoading(true);
+        }
+
+        try {
+            const endpoint = `/api/posts?type=${EXPLORE_FEED_API_TYPE}&limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+            const response = await fetch(endpoint);
+            if (!response.ok) throw new Error('Failed to load Explore');
+
+            const data = await response.json();
+            const incomingPosts = (data.posts || []) as Post[];
+
+            if (cursor) {
+                setPosts((currentPosts) => {
+                    const seen = new Set(currentPosts.map((post) => post.id));
+                    return [
+                        ...currentPosts,
+                        ...incomingPosts.filter((post) => {
+                            if (seen.has(post.id)) return false;
+                            seen.add(post.id);
+                            return true;
+                        }),
+                    ];
+                });
+            } else {
+                setPosts(incomingPosts);
+            }
+
+            setNextCursor(data.nextCursor && data.nextCursor !== cursor ? data.nextCursor : null);
+        } catch {
+            if (!cursor) setPosts([]);
+            setNextCursor(null);
+        } finally {
+            if (cursor && loadingCursorRef.current === cursor) {
+                loadingCursorRef.current = null;
+            }
+            setPostsLoading(false);
+            setLoadingMore(false);
+        }
+    }, []);
 
     useEffect(() => {
-        // Load node posts (local only)
-        const loadNodePosts = async () => {
-            setLoading(true);
+        void loadExplore();
+    }, [loadExplore]);
+
+    useEffect(() => {
+        if (activeTab !== 'users' || usersLoaded || usersLoading) return;
+
+        const loadUsers = async () => {
+            setUsersLoading(true);
             try {
-                const res = await fetch('/api/posts?type=local&limit=20');
-                const data = await res.json();
-                setNodePosts(data.posts || []);
-                setNodeCursor(data.nextCursor || null);
-                setHasMoreNode(!!data.nextCursor);
+                const response = await fetch('/api/users?limit=20');
+                if (!response.ok) throw new Error('Failed to load users');
+                const data = await response.json();
+                setUsers(data.users || []);
             } catch {
-                setNodePosts([]);
+                setUsers([]);
             } finally {
-                setLoading(false);
+                setUsersLoaded(true);
+                setUsersLoading(false);
             }
         };
 
-        if (activeTab === 'node' && nodePosts.length === 0) {
-            loadNodePosts();
-        }
-    }, [activeTab, nodePosts.length]);
+        void loadUsers();
+    }, [activeTab, usersLoaded, usersLoading]);
 
     useEffect(() => {
-        // Load swarm posts when tab changes
-        if (activeTab === 'swarm' && swarmPosts.length === 0) {
-            const loadSwarm = async () => {
-                setLoading(true);
-                try {
-                    const res = await fetch('/api/posts/swarm');
-                    const data = await res.json();
-                    setSwarmPosts(data.posts || []);
-                    setSwarmSources(data.sources || []);
+        if (activeTab !== 'explore' || hasSearched || !loadMoreRef.current || !nextCursor || loadingMore) return;
 
-                    // Set cursor from the last post if available
-                    if (data.posts && data.posts.length > 0) {
-                        const lastPost = data.posts[data.posts.length - 1];
-                        setSwarmCursor(lastPost.createdAt); // Use timestamp as cursor
-                        setHasMoreSwarm(true);
-                    } else {
-                        setHasMoreSwarm(false);
-                    }
-                } catch {
-                    setSwarmPosts([]);
-                } finally {
-                    setLoading(false);
-                }
-            };
-            loadSwarm();
-        }
-    }, [activeTab, swarmPosts.length]);
-
-    // Load more node posts
-    const loadMoreNode = useCallback(async () => {
-        if (!nodeCursor || loadingMore || !hasMoreNode) return;
-        setLoadingMore(true);
-        try {
-            const res = await fetch(`/api/posts?type=local&limit=20&cursor=${nodeCursor}`);
-            const data = await res.json();
-            if (data.posts && data.posts.length > 0) {
-                setNodePosts(prev => [...prev, ...data.posts]);
-                setNodeCursor(data.nextCursor || null);
-                setHasMoreNode(!!data.nextCursor);
-            } else {
-                setHasMoreNode(false);
-            }
-        } catch {
-            // Error loading more
-        } finally {
-            setLoadingMore(false);
-        }
-    }, [hasMoreNode, loadingMore, nodeCursor]);
-
-    // Load more swarm posts
-    const loadMoreSwarm = useCallback(async () => {
-        if (!swarmCursor || loadingMore || !hasMoreSwarm) return;
-        setLoadingMore(true);
-        try {
-            // Use timestamp of last post as cursor
-            const res = await fetch(`/api/posts/swarm?limit=20&cursor=${encodeURIComponent(swarmCursor)}`);
-            const data = await res.json();
-            if (data.posts && data.posts.length > 0) {
-                setSwarmPosts(prev => [...prev, ...data.posts]);
-
-                const lastPost = data.posts[data.posts.length - 1];
-                setSwarmCursor(lastPost.createdAt);
-                setHasMoreSwarm(true);
-            } else {
-                setHasMoreSwarm(false);
-            }
-        } catch {
-            // Error loading more
-        } finally {
-            setLoadingMore(false);
-        }
-    }, [hasMoreSwarm, loadingMore, swarmCursor]);
-
-    // Intersection Observer for Infinite Scroll
-    useEffect(() => {
         const observer = new IntersectionObserver(
             (entries) => {
                 if (entries[0].isIntersecting) {
-                    if (activeTab === 'node') {
-                        loadMoreNode();
-                    } else if (activeTab === 'swarm') {
-                        loadMoreSwarm();
-                    }
+                    void loadExplore(nextCursor);
                 }
             },
-            { threshold: 0.5 }
+            { threshold: 0.1 }
         );
 
-        const sentinel = document.getElementById('scroll-sentinel');
-        if (sentinel) {
-            observer.observe(sentinel);
-        }
-
+        observer.observe(loadMoreRef.current);
         return () => observer.disconnect();
-    }, [activeTab, loadMoreNode, loadMoreSwarm]);
+    }, [activeTab, hasSearched, loadExplore, loadingMore, nextCursor]);
 
-    useEffect(() => {
-        // Load users when tab changes to users
-        if (activeTab === 'users' && users.length === 0) {
-            const loadUsers = async () => {
-                setLoading(true);
-                try {
-                    const res = await fetch('/api/users?limit=20');
-                    const data = await res.json();
-                    setUsers(data.users || []);
-                } catch {
-                    setUsers([]);
-                } finally {
-                    setLoading(false);
-                }
-            };
-            loadUsers();
+    const selectTab = (tab: ExploreTab) => {
+        setActiveTab(tab);
+        setHasSearched(false);
+    };
+
+    const handleSearch = async (event: React.FormEvent) => {
+        event.preventDefault();
+        const trimmedQuery = query.trim();
+
+        if (!trimmedQuery) {
+            setHasSearched(false);
+            return;
         }
-    }, [activeTab, users.length]);
 
-    const handleSearch = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!query.trim()) return;
-
+        setHasSearched(true);
         setSearching(true);
-        setActiveTab('search');
 
         try {
-            const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-            const data = await res.json();
+            const response = await fetch(`/api/search?q=${encodeURIComponent(trimmedQuery)}`);
+            if (!response.ok) throw new Error('Search failed');
+            const data = await response.json();
             setSearchResults({
                 posts: data.posts || [],
                 users: data.users || [],
@@ -221,43 +173,151 @@ export default function ExplorePage() {
     };
 
     const handleLike = async (postId: string, currentLiked: boolean) => {
-        if (!did || !handle) {
-            throw new Error('Please log in again.');
-        }
+        if (!did || !handle) throw new Error('Please log in again.');
 
-        const res = currentLiked
+        const response = currentLiked
             ? await signedAPI.unlikePost(postId, did, handle)
             : await signedAPI.likePost(postId, did, handle);
 
-        if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
             throw new Error(data.error || 'Failed to update like');
         }
     };
 
     const handleRepost = async (postId: string, currentReposted: boolean) => {
-        if (!did || !handle) {
-            throw new Error('Please log in again.');
-        }
+        if (!did || !handle) throw new Error('Please log in again.');
 
-        const res = currentReposted
+        const response = currentReposted
             ? await signedAPI.unrepostPost(postId, did, handle)
             : await signedAPI.repostPost(postId, did, handle);
 
-        if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
             throw new Error(data.error || 'Failed to update repost');
         }
     };
 
     const handleDelete = (postId: string) => {
-        setNodePosts(prev => prev.filter(p => p.id !== postId));
-        setSwarmPosts(prev => prev.filter(p => p.id !== postId));
-        setSearchResults(prev => ({
-            ...prev,
-            posts: prev.posts.filter(p => p.id !== postId)
+        setPosts((currentPosts) => currentPosts.filter((post) => post.id !== postId));
+        setSearchResults((currentResults) => ({
+            ...currentResults,
+            posts: currentResults.posts.filter((post) => post.id !== postId),
         }));
     };
+
+    const renderSearchResults = () => {
+        if (searching) return <div className="explore-loading">Searching...</div>;
+
+        if (searchResults.users.length === 0 && searchResults.posts.length === 0) {
+            return (
+                <div className="explore-empty">
+                    <SearchIcon />
+                    <p>No results found for &ldquo;{query.trim()}&rdquo;</p>
+                </div>
+            );
+        }
+
+        return (
+            <div className="explore-search-results">
+                {searchResults.users.length > 0 && (
+                    <div className="search-section">
+                        <h2>Users</h2>
+                        <div className="explore-users">
+                            {searchResults.users.map((resultUser) => (
+                                <UserCard key={resultUser.id} user={resultUser} />
+                            ))}
+                        </div>
+                    </div>
+                )}
+                {searchResults.posts.length > 0 && (
+                    <div className="search-section">
+                        <h2>Posts</h2>
+                        <div className="explore-posts">
+                            {searchResults.posts.map((post) => (
+                                <PostCard
+                                    key={post.id}
+                                    post={post}
+                                    onLike={handleLike}
+                                    onRepost={handleRepost}
+                                    onDelete={handleDelete}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const renderExplore = () => (
+        <>
+            <div className="feed-meta card">
+                <div className="feed-meta-title">Explore</div>
+                <div className="feed-meta-body">
+                    Discover posts from nodes across the Synapsis network, balanced for freshness, active discussions, and variety.
+                </div>
+            </div>
+            {postsLoading ? (
+                <div className="explore-loading">Loading Explore...</div>
+            ) : posts.length === 0 ? (
+                <div className="explore-empty">
+                    <Network size={24} />
+                    <p>No posts to explore yet</p>
+                    <p style={{ fontSize: '14px', opacity: 0.7 }}>
+                        Posts will appear here as nodes and communities join the network.
+                    </p>
+                    {nextCursor && (
+                        <div ref={loadMoreRef} style={{ padding: '12px', textAlign: 'center' }}>
+                            {loadingMore ? 'Searching older posts...' : ''}
+                        </div>
+                    )}
+                </div>
+            ) : (
+                <div className="explore-posts">
+                    {posts.map((post) => (
+                        <PostCard
+                            key={post.id}
+                            post={post}
+                            onLike={handleLike}
+                            onRepost={handleRepost}
+                            onDelete={handleDelete}
+                        />
+                    ))}
+                    {nextCursor && (
+                        <div ref={loadMoreRef} style={{ minHeight: '40px', padding: '12px', textAlign: 'center', opacity: 0.6 }}>
+                            {loadingMore ? 'Loading more...' : ''}
+                        </div>
+                    )}
+                </div>
+            )}
+        </>
+    );
+
+    const renderUsers = () => (
+        <>
+            <div className="feed-meta card">
+                <div className="feed-meta-title">Users on this node</div>
+                <div className="feed-meta-body">
+                    People with accounts on this Synapsis node. Follow them to see their posts in your Following feed.
+                </div>
+            </div>
+            {!usersLoaded || usersLoading ? (
+                <div className="explore-loading">Loading users...</div>
+            ) : users.length === 0 ? (
+                <div className="explore-empty">
+                    <UsersIcon />
+                    <p>No users found</p>
+                </div>
+            ) : (
+                <div className="explore-users">
+                    {users.map((listedUser) => (
+                        <UserCard key={listedUser.id} user={listedUser} />
+                    ))}
+                </div>
+            )}
+        </>
+    );
 
     return (
         <div className="explore-page">
@@ -270,9 +330,7 @@ export default function ExplorePage() {
                 zIndex: 10,
                 backdropFilter: 'blur(12px)',
             }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <h1 style={{ fontSize: '20px', fontWeight: 600 }}>Explore</h1>
-                </div>
+                <h1 style={{ fontSize: '20px', fontWeight: 600 }}>Explore</h1>
             </header>
 
             <div style={{ padding: '0 16px' }}>
@@ -282,196 +340,35 @@ export default function ExplorePage() {
                         type="text"
                         placeholder="Search posts and users..."
                         value={query}
-                        onChange={(e) => setQuery(e.target.value)}
+                        onChange={(event) => {
+                            setQuery(event.target.value);
+                            if (!event.target.value.trim()) setHasSearched(false);
+                        }}
                     />
                 </form>
             </div>
 
-            <div className="explore-tabs">
-                <button
-                    className={`explore-tab ${activeTab === 'node' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('node')}
-                >
-                    <Server size={18} />
-                    <span>Node</span>
-                </button>
-                <button
-                    className={`explore-tab ${activeTab === 'swarm' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('swarm')}
-                >
-                    <Network size={18} />
-                    <span>Swarm</span>
-                </button>
-                <button
-                    className={`explore-tab ${activeTab === 'users' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('users')}
-                >
-                    <UsersIcon />
-                    <span>Users</span>
-                </button>
-                {searchResults.posts.length > 0 || searchResults.users.length > 0 ? (
+            <div className="explore-tabs" role="tablist" aria-label="Explore views">
+                {EXPLORE_TABS.map((tab) => (
                     <button
-                        className={`explore-tab ${activeTab === 'search' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('search')}
+                        key={tab.id}
+                        className={`explore-tab ${activeTab === tab.id ? 'active' : ''}`}
+                        onClick={() => selectTab(tab.id)}
+                        role="tab"
+                        aria-selected={activeTab === tab.id}
                     >
-                        <SearchIcon />
-                        <span>Results</span>
+                        {tab.id === 'explore' ? <Network size={18} /> : <UsersIcon />}
+                        <span>{tab.label}</span>
                     </button>
-                ) : null}
+                ))}
             </div>
 
             <div className="explore-content">
-                {activeTab === 'node' && (
-                    !user && isNsfwNode ? (
-                        <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                            <EyeOff size={48} style={{ marginBottom: '16px', opacity: 0.5 }} />
-                            <p style={{ fontSize: '16px', fontWeight: 500, color: 'var(--foreground-secondary)', marginBottom: '8px' }}>
-                                Adult Content
-                            </p>
-                            <p style={{ fontSize: '14px', maxWidth: '320px', margin: '0 auto' }}>
-                                This node contains adult or sensitive content. You must be 18 or older and signed in to view posts.
-                            </p>
-                        </div>
-                    ) : loading ? (
-                        <div className="explore-loading">Loading posts...</div>
-                    ) : nodePosts.length === 0 ? (
-                        <>
-                            <div className="feed-meta card">
-                                <div className="feed-meta-title">Node feed</div>
-                                <div className="feed-meta-body">
-                                    A chronological feed of all posts from users on this node. See what the local community is sharing.
-                                </div>
-                            </div>
-                            <div className="explore-empty">
-                                <Server size={24} />
-                                <p>No posts on this node yet</p>
-                            </div>
-                        </>
-                    ) : (
-                        <>
-                            <div className="feed-meta card">
-                                <div className="feed-meta-title">Node feed</div>
-                                <div className="feed-meta-body">
-                                    A chronological feed of all posts from users on this node. See what the local community is sharing.
-                                </div>
-                            </div>
-                            <div className="explore-posts">
-                                {nodePosts.map((post) => (
-                                    <PostCard key={post.id} post={post} onLike={handleLike} onRepost={handleRepost} onDelete={handleDelete} />
-                                ))}
-                                {/* Sentinel for Infinite Scroll */}
-                                {hasMoreNode && (
-                                    <div id="scroll-sentinel" style={{ height: '20px', margin: '20px 0', textAlign: 'center', opacity: 0.5 }}>
-                                        {loadingMore ? 'Loading more...' : ''}
-                                    </div>
-                                )}
-                            </div>
-                        </>
-                    )
-                )}
-
-                {activeTab === 'swarm' && (
-                    loading ? (
-                        <div className="explore-loading">Loading swarm posts...</div>
-                    ) : swarmPosts.length === 0 ? (
-                        <div className="explore-empty">
-                            <Network size={24} />
-                            <p>No swarm posts yet</p>
-                            <p style={{ fontSize: '14px', opacity: 0.7, marginTop: '8px' }}>
-                                Posts from other Synapsis nodes will appear here
-                            </p>
-                        </div>
-                    ) : (
-                        <>
-                            <div className="feed-meta card">
-                                <div className="feed-meta-title">Swarm feed</div>
-                                <div className="feed-meta-body">
-                                    Posts from across the Synapsis network. Currently showing posts from {swarmSources.filter(s => s.postCount > 0).length} node{swarmSources.filter(s => s.postCount > 0).length !== 1 ? 's' : ''}.
-                                </div>
-                            </div>
-                            <div className="explore-posts">
-                                {swarmPosts.map((post) => {
-                                    const transformedPost = mapSwarmPostToPost(post, { localDomain: config?.domain });
-                                    return (
-                                        <PostCard
-                                            key={`${post.nodeDomain}:${post.id}`}
-                                            post={transformedPost}
-                                            onLike={handleLike}
-                                            onRepost={handleRepost}
-                                            onDelete={handleDelete}
-                                        />
-                                    );
-                                })}
-                                {/* Sentinel for Infinite Scroll */}
-                                {hasMoreSwarm && (
-                                    <div id="scroll-sentinel" style={{ height: '20px', margin: '20px 0', textAlign: 'center', opacity: 0.5 }}>
-                                        {loadingMore ? 'Loading more...' : ''}
-                                    </div>
-                                )}
-                            </div>
-                        </>
-                    )
-                )}
-
-                {activeTab === 'users' && (
-                    loading ? (
-                        <div className="explore-loading">Loading users...</div>
-                    ) : users.length === 0 ? (
-                        <div className="explore-empty">
-                            <UsersIcon />
-                            <p>No users found</p>
-                        </div>
-                    ) : (
-                        <>
-                            <div className="feed-meta card">
-                                <div className="feed-meta-title">Users on this node</div>
-                                <div className="feed-meta-body">
-                                    People with accounts on this Synapsis node. Follow them to see their posts in your timeline.
-                                </div>
-                            </div>
-                            <div className="explore-users">
-                                {users.map((user) => (
-                                    <UserCard key={user.id} user={user} />
-                                ))}
-                            </div>
-                        </>
-                    )
-                )}
-
-                {activeTab === 'search' && (
-                    searching ? (
-                        <div className="explore-loading">Searching...</div>
-                    ) : (
-                        <div className="explore-search-results">
-                            {searchResults.users.length > 0 && (
-                                <div className="search-section">
-                                    <h2>Users</h2>
-                                    <div className="explore-users">
-                                        {searchResults.users.map((user) => (
-                                            <UserCard key={user.id} user={user} />
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                            {searchResults.posts.length > 0 && (
-                                <div className="search-section">
-                                    <h2>Posts</h2>
-                                    <div className="explore-posts">
-                                        {searchResults.posts.map((post) => (
-                                            <PostCard key={post.id} post={post} onLike={handleLike} onRepost={handleRepost} onDelete={handleDelete} />
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                            {searchResults.users.length === 0 && searchResults.posts.length === 0 && (
-                                <div className="explore-empty">
-                                    <SearchIcon />
-                                    <p>No results found for &ldquo;{query}&rdquo;</p>
-                                </div>
-                            )}
-                        </div>
-                    )
-                )}
+                {hasSearched
+                    ? renderSearchResults()
+                    : activeTab === 'explore'
+                        ? renderExplore()
+                        : renderUsers()}
             </div>
         </div>
     );
