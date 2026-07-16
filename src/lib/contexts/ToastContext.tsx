@@ -69,7 +69,7 @@ function ToastContainer({ toasts, removeToast }: { toasts: Toast[]; removeToast:
     return (
         <div style={{
             position: 'fixed',
-            bottom: '24px',
+            top: 'calc(24px + env(safe-area-inset-top))',
             right: '24px',
             zIndex: 9999,
             display: 'flex',
