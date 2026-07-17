@@ -1,40 +1,64 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { TriangleAlert } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { PostCard } from '@/components/PostCard';
 import { Compose } from '@/components/Compose';
 import { Post } from '@/lib/types';
 import { signedAPI } from '@/lib/api/signed-fetch';
-import { DEFAULT_HOME_FEED, HOME_FEED_API_TYPES, HOME_FEED_LABELS, type HomeFeedType } from '@/lib/posts/home-feed';
+import {
+  DEFAULT_HOME_FEED,
+  HOME_FEED_API_TYPES,
+  HOME_FEED_LABELS,
+  type HomeFeedType,
+} from '@/lib/posts/home-feed';
+import { canAccessNodeFeed } from '@/lib/nsfw/feed-access';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 
+function AdultNodeWarning() {
+  return (
+    <section className="adult-node-warning card" role="alert" aria-labelledby="adult-node-warning-title">
+      <div className="adult-node-warning-icon" aria-hidden="true">
+        <TriangleAlert size={30} />
+      </div>
+      <div>
+        <h2 id="adult-node-warning-title">Adult content warning</h2>
+        <p>This node contains adult or sensitive content intended only for adults.</p>
+        <p>The node feed is available only after you sign in to an account hosted on this node.</p>
+      </div>
+      <Link href="/login" className="btn btn-primary">
+        Sign in or create an account
+      </Link>
+    </section>
+  );
+}
+
 export default function Home() {
-  const router = useRouter();
-  const { user, did, handle } = useAuth();
+  const { user, did, handle, loading: authLoading } = useAuth();
+  const { config } = useRuntimeConfig();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<Post | null>(null);
   const [feedType, setFeedType] = useState<HomeFeedType>(DEFAULT_HOME_FEED);
+  const activeFeedType = user ? feedType : DEFAULT_HOME_FEED;
+  const nodeFeedBlocked = !canAccessNodeFeed({
+    isAuthenticated: Boolean(user),
+    localNodeIsNsfw: config?.isNsfw === true,
+  });
 
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const loadingCursorRef = useRef<string | null>(null);
 
-  // Redirect unauthenticated users to explore page
-  useEffect(() => {
-    if (user === null) {
-      router.push('/explore');
-    }
-  }, [user, router]);
-
-  const feedTypeRef = useRef(feedType);
+  const feedTypeRef = useRef(activeFeedType);
 
   useEffect(() => {
-    feedTypeRef.current = feedType;
-  }, [feedType]);
+    feedTypeRef.current = activeFeedType;
+  }, [activeFeedType]);
 
   const loadFeed = async (type: HomeFeedType, cursor?: string | null, options: { silent?: boolean } = {}) => {
     const { silent = false } = options;
@@ -91,8 +115,12 @@ export default function Home() {
   useEffect(() => {
     setPosts([]);
     setNextCursor(null);
-    loadFeed(feedType);
-  }, [feedType]);
+    if (nodeFeedBlocked) {
+      setLoading(false);
+      return;
+    }
+    loadFeed(activeFeedType);
+  }, [activeFeedType, nodeFeedBlocked]);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -101,7 +129,7 @@ export default function Home() {
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && nextCursor && !loadingMore) {
-          loadFeed(feedType, nextCursor);
+          loadFeed(activeFeedType, nextCursor);
         }
       },
       { threshold: 0.1 }
@@ -109,7 +137,7 @@ export default function Home() {
 
     observer.observe(loadMoreRef.current);
     return () => observer.disconnect();
-  }, [nextCursor, loadingMore, feedType]);
+  }, [nextCursor, loadingMore, activeFeedType]);
 
   const handlePost = async (content: string, mediaIds: string[], linkPreview?: LinkPreviewData, replyToId?: string, isNsfw?: boolean) => {
     // Check if we're replying to a swarm post
@@ -171,7 +199,7 @@ export default function Home() {
       throw new Error(data.error || 'Failed to update repost');
     }
 
-    await loadFeed(feedType, null, { silent: true });
+    await loadFeed(activeFeedType, null, { silent: true });
   };
 
   const handleDelete = (postId: string) => {
@@ -179,7 +207,7 @@ export default function Home() {
   };
 
   // Show loading while checking auth
-  if (user === null) {
+  if (authLoading || !config) {
     return (
       <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
         Loading...
@@ -191,96 +219,108 @@ export default function Home() {
     <>
       <header className="home-feed-header">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-          <h1 style={{ fontSize: '20px', fontWeight: 600 }}>Home</h1>
-          <div className="feed-toggle" role="tablist" aria-label="Home feed">
-            <button
-              className={`feed-toggle-btn ${feedType === 'node' ? 'active' : ''}`}
-              onClick={() => setFeedType('node')}
-              role="tab"
-              aria-selected={feedType === 'node'}
-            >
-              {HOME_FEED_LABELS.node}
-            </button>
-            <button
-              className={`feed-toggle-btn ${feedType === 'following' ? 'active' : ''}`}
-              onClick={() => setFeedType('following')}
-              role="tab"
-              aria-selected={feedType === 'following'}
-            >
-              {HOME_FEED_LABELS.following}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <Compose
-        onPost={handlePost}
-        replyingTo={replyingTo}
-        onCancelReply={() => setReplyingTo(null)}
-      />
-
-      {feedType === 'node' && (
-        <div className="feed-meta card">
-          <div className="feed-meta-title">Node feed</div>
-          <div className="feed-meta-body">
-            All posts published by accounts hosted on this node, with the newest posts first.
-          </div>
-        </div>
-      )}
-
-      {feedType === 'following' && (
-        <div className="feed-meta card">
-          <div className="feed-meta-title">Following feed</div>
-          <div className="feed-meta-body">
-            Posts from accounts you follow across the Synapsis network, with the newest posts first.
-          </div>
-        </div>
-      )}
-
-      {loading ? (
-        <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
-          Loading...
-        </div>
-      ) : posts.length === 0 ? (
-        <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
-          {feedType === 'following' ? (
-            <>
-              <p>No posts from accounts you follow yet</p>
-              <p style={{ fontSize: '13px', marginTop: '8px' }}>Follow people locally or across the swarm to build this feed.</p>
-            </>
-          ) : (
-            <>
-              <p>No posts on this node yet</p>
-              <p style={{ fontSize: '13px', marginTop: '8px' }}>Be the first to post something!</p>
-            </>
-          )}
-          {nextCursor && (
-            <div ref={loadMoreRef} style={{ padding: '24px', textAlign: 'center' }}>
-              <span style={{ fontSize: '13px' }}>Searching older posts...</span>
+          <h1 style={{ fontSize: '20px', fontWeight: 600 }}>{user ? 'Home' : 'Node'}</h1>
+          {user && (
+            <div className="feed-toggle" role="tablist" aria-label="Home feed">
+              <button
+                className={`feed-toggle-btn ${activeFeedType === 'node' ? 'active' : ''}`}
+                onClick={() => setFeedType('node')}
+                role="tab"
+                aria-selected={activeFeedType === 'node'}
+              >
+                {HOME_FEED_LABELS.node}
+              </button>
+              <button
+                className={`feed-toggle-btn ${activeFeedType === 'following' ? 'active' : ''}`}
+                onClick={() => setFeedType('following')}
+                role="tab"
+                aria-selected={activeFeedType === 'following'}
+              >
+                {HOME_FEED_LABELS.following}
+              </button>
             </div>
           )}
         </div>
+      </header>
+
+      {nodeFeedBlocked ? (
+        <AdultNodeWarning />
       ) : (
         <>
-          {posts.map(post => (
-            <PostCard
-              key={post.id}
-              post={post}
-              onLike={handleLike}
-              onRepost={handleRepost}
-              onDelete={handleDelete}
-              onComment={(p) => {
-                setReplyingTo(p);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
+          {user && (
+            <Compose
+              onPost={handlePost}
+              replyingTo={replyingTo}
+              onCancelReply={() => setReplyingTo(null)}
             />
-          ))}
-          {/* Infinite scroll trigger */}
-          <div ref={loadMoreRef} style={{ padding: '24px', textAlign: 'center' }}>
-            {loadingMore && (
-              <span style={{ color: 'var(--foreground-tertiary)' }}>Loading more...</span>
-            )}
-          </div>
+          )}
+
+          {activeFeedType === 'node' && (
+            <div className="feed-meta card">
+              <div className="feed-meta-title">Node feed</div>
+              <div className="feed-meta-body">
+                All posts published by accounts hosted on this node, with the newest posts first.
+              </div>
+            </div>
+          )}
+
+          {activeFeedType === 'following' && (
+            <div className="feed-meta card">
+              <div className="feed-meta-title">Following feed</div>
+              <div className="feed-meta-body">
+                Posts from accounts you follow across the Synapsis network, with the newest posts first.
+              </div>
+            </div>
+          )}
+
+          {loading ? (
+            <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
+              Loading...
+            </div>
+          ) : posts.length === 0 ? (
+            <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
+              {activeFeedType === 'following' ? (
+                <>
+                  <p>No posts from accounts you follow yet</p>
+                  <p style={{ fontSize: '13px', marginTop: '8px' }}>Follow people locally or across the swarm to build this feed.</p>
+                </>
+              ) : (
+                <>
+                  <p>No posts on this node yet</p>
+                  <p style={{ fontSize: '13px', marginTop: '8px' }}>
+                    {user ? 'Be the first to post something!' : 'Sign in to publish the first post.'}
+                  </p>
+                </>
+              )}
+              {nextCursor && (
+                <div ref={loadMoreRef} style={{ padding: '24px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '13px' }}>Searching older posts...</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {posts.map(post => (
+                <PostCard
+                  key={post.id}
+                  post={post}
+                  onLike={handleLike}
+                  onRepost={handleRepost}
+                  onDelete={handleDelete}
+                  onComment={(p) => {
+                    setReplyingTo(p);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                />
+              ))}
+              {/* Infinite scroll trigger */}
+              <div ref={loadMoreRef} style={{ padding: '24px', textAlign: 'center' }}>
+                {loadingMore && (
+                  <span style={{ color: 'var(--foreground-tertiary)' }}>Loading more...</span>
+                )}
+              </div>
+            </>
+          )}
         </>
       )}
     </>

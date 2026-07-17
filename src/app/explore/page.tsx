@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Network } from 'lucide-react';
 import { SearchIcon, UsersIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
 import { AvatarImage } from '@/components/AvatarImage';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { ANONYMOUS_APP_DESTINATION } from '@/lib/posts/home-feed';
 import { EXPLORE_FEED_API_TYPE, EXPLORE_TABS, type ExploreTab } from '@/lib/posts/explore-feed';
 import type { Post, User } from '@/lib/types';
 import { useFormattedHandle } from '@/lib/utils/handle';
@@ -37,7 +39,8 @@ function UserCard({ user }: { user: User }) {
 }
 
 export default function ExplorePage() {
-    const { did, handle } = useAuth();
+    const router = useRouter();
+    const { user, loading: authLoading, did, handle } = useAuth();
     const [activeTab, setActiveTab] = useState<ExploreTab>('explore');
     const [posts, setPosts] = useState<Post[]>([]);
     const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -100,11 +103,17 @@ export default function ExplorePage() {
     }, []);
 
     useEffect(() => {
-        void loadExplore();
-    }, [loadExplore]);
+        if (!authLoading && !user) {
+            router.replace(ANONYMOUS_APP_DESTINATION);
+        }
+    }, [authLoading, router, user]);
 
     useEffect(() => {
-        if (activeTab !== 'users' || usersLoaded || usersLoading) return;
+        if (user) void loadExplore();
+    }, [loadExplore, user]);
+
+    useEffect(() => {
+        if (!user || activeTab !== 'users' || usersLoaded || usersLoading) return;
 
         const loadUsers = async () => {
             setUsersLoading(true);
@@ -122,7 +131,7 @@ export default function ExplorePage() {
         };
 
         void loadUsers();
-    }, [activeTab, usersLoaded, usersLoading]);
+    }, [activeTab, user, usersLoaded, usersLoading]);
 
     useEffect(() => {
         if (activeTab !== 'explore' || hasSearched || !loadMoreRef.current || !nextCursor || loadingMore) return;
@@ -318,6 +327,10 @@ export default function ExplorePage() {
             )}
         </>
     );
+
+    if (authLoading || !user) {
+        return <div className="explore-loading">Loading node feed...</div>;
+    }
 
     return (
         <div className="explore-page">

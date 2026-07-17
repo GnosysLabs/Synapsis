@@ -2,6 +2,16 @@ export interface NsfwFeedViewer {
     nsfwEnabled?: boolean;
 }
 
+export function canAccessNodeFeed({
+    isAuthenticated,
+    localNodeIsNsfw,
+}: {
+    isAuthenticated: boolean;
+    localNodeIsNsfw: boolean;
+}): boolean {
+    return isAuthenticated || !localNodeIsNsfw;
+}
+
 export function shouldIncludeNsfwFeed({
     viewer,
     localNodeIsNsfw,

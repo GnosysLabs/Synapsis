@@ -5,7 +5,7 @@ import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signat
 import { eq, and, desc, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
-import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
+import { canAccessNodeFeed, shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { isLocalNodeNsfw } from '@/lib/node/local-node';
 import { hasPublishablePostContent } from '@/lib/posts/content-policy';
 import { decodeFeedCursor, encodeFeedCursor, newestDate, selectFeedWindow } from '@/lib/posts/feed-pagination';
@@ -743,6 +743,22 @@ export async function GET(request: Request) {
         const userId = searchParams.get('userId');
         const cursor = searchParams.get('cursor');
         const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
+
+        if (type === 'local') {
+            const localNodeIsNsfw = await isLocalNodeNsfw();
+            if (localNodeIsNsfw) {
+                const session = await getSession().catch(() => null);
+                if (!canAccessNodeFeed({
+                    isAuthenticated: Boolean(session?.user),
+                    localNodeIsNsfw,
+                })) {
+                    return NextResponse.json({
+                        error: 'Sign in to this node to view its adult content feed',
+                        code: 'LOCAL_AUTH_REQUIRED',
+                    }, { status: 401 });
+                }
+            }
+        }
 
         let feedPosts;
         let explicitNextCursor: string | null | undefined;

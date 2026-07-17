@@ -12,3 +12,5 @@ export const HOME_FEED_API_TYPES: Record<HomeFeedType, HomeFeedApiType> = {
     node: 'local',
     following: 'home',
 };
+
+export const ANONYMOUS_APP_DESTINATION = '/';

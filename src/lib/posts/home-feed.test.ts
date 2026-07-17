@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_HOME_FEED, HOME_FEED_API_TYPES, HOME_FEED_LABELS } from './home-feed';
+import {
+    ANONYMOUS_APP_DESTINATION,
+    DEFAULT_HOME_FEED,
+    HOME_FEED_API_TYPES,
+    HOME_FEED_LABELS,
+} from './home-feed';
 
 describe('home feed defaults', () => {
     it('opens on the local node feed by default', () => {
@@ -17,4 +22,9 @@ describe('home feed defaults', () => {
         expect(Object.keys(HOME_FEED_LABELS)).toEqual(['node', 'following']);
         expect(Object.values(HOME_FEED_API_TYPES)).toEqual(['local', 'home']);
     });
+
+    it('sends signed-out visitors to the node feed', () => {
+        expect(ANONYMOUS_APP_DESTINATION).toBe('/');
+    });
+
 });

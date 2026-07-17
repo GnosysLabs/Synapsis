@@ -998,10 +998,44 @@ a.btn-primary:visited {
 }
 
 .blurred-video-container:hover .video-player-controls,
-.blurred-video-container:focus-within .video-player-controls {
+.blurred-video-container:has(:focus-visible) .video-player-controls {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
+}
+
+.adult-node-warning {
+  margin: 24px 16px;
+  padding: 32px;
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+  border-color: color-mix(in srgb, var(--error) 45%, var(--border));
+  background: color-mix(in srgb, var(--error) 6%, var(--background-secondary));
+}
+
+.adult-node-warning-icon {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
+  border-radius: 50%;
+}
+
+.adult-node-warning h2 {
+  margin: 0 0 10px;
+  font-size: 22px;
+}
+
+.adult-node-warning p {
+  max-width: 520px;
+  margin: 6px auto 0;
+  color: var(--foreground-secondary);
+  line-height: 1.55;
 }
 
 .video-player-control-button {

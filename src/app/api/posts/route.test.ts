@@ -6,12 +6,23 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { POST } from './route';
+import { GET, POST } from './route';
+import { getSession } from '@/lib/auth';
 import { requireSignedAction } from '@/lib/auth/verify-signature';
+import { isLocalNodeNsfw } from '@/lib/node/local-node';
 
 // Mock the dependencies
 vi.mock('@/lib/auth/verify-signature', () => ({
   requireSignedAction: vi.fn(),
+}));
+
+vi.mock('@/lib/auth', () => ({
+  getSession: vi.fn(),
+  requireAuth: vi.fn(),
+}));
+
+vi.mock('@/lib/node/local-node', () => ({
+  isLocalNodeNsfw: vi.fn(),
 }));
 
 vi.mock('@/lib/mentions/delivery', () => ({
@@ -321,5 +332,23 @@ describe('POST /api/posts', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('Invalid input');
+  });
+});
+
+describe('GET /api/posts?type=local', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rejects an anonymous request for an NSFW node feed', async () => {
+    vi.mocked(isLocalNodeNsfw).mockResolvedValue(true);
+    vi.mocked(getSession).mockResolvedValue(null);
+
+    const response = await GET(new Request('http://localhost:43821/api/posts?type=local'));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'LOCAL_AUTH_REQUIRED',
+    });
   });
 });

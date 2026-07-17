@@ -10,6 +10,7 @@ import { HomeIcon, SearchIcon, BellIcon, UserIcon, ShieldIcon, SettingsIcon } fr
 import { Check, ChevronDown, LogOut, Plus, Settings2 } from 'lucide-react';
 import { AuthScreen } from '@/app/login/page';
 import { AvatarImage } from './AvatarImage';
+import { ANONYMOUS_APP_DESTINATION } from '@/lib/posts/home-feed';
 // import { IdentityUnlockPrompt } from './IdentityUnlockPrompt'; // Moved to LayoutWrapper
 
 function shortHandle(handle: string) {
@@ -127,7 +128,7 @@ export function Sidebar() {
             setAccountMenuOpen(false);
 
             if (isLastAccount) {
-                window.location.href = '/explore';
+                window.location.href = ANONYMOUS_APP_DESTINATION;
             } else {
                 router.refresh();
             }
@@ -215,7 +216,7 @@ export function Sidebar() {
 
     return (
         <aside className="sidebar">
-            <Link href={user ? "/" : "/explore"} className="logo" style={{ minHeight: '42px' }}>
+            <Link href="/" className="logo" style={{ minHeight: '42px' }}>
                 {customLogoUrl === undefined ? null : customLogoUrl ? (
                     <Image unoptimized src={customLogoUrl} alt="Logo" width={200} height={50} style={{ maxWidth: '200px', maxHeight: '50px', objectFit: 'contain' }} />
                 ) : (
@@ -223,16 +224,16 @@ export function Sidebar() {
                 )}
             </Link>
             <nav>
+                <Link href="/" className={`nav-item ${isHome ? 'active' : ''}`} title={user ? 'Home' : 'Node feed'}>
+                    <HomeIcon />
+                    <span>{user ? 'Home' : 'Node feed'}</span>
+                </Link>
                 {user && (
-                    <Link href="/" className={`nav-item ${isHome ? 'active' : ''}`} title="Home">
-                        <HomeIcon />
-                        <span>Home</span>
+                    <Link href="/explore" className={`nav-item ${pathname?.startsWith('/explore') ? 'active' : ''}`} title="Explore">
+                        <SearchIcon />
+                        <span>Explore</span>
                     </Link>
                 )}
-                <Link href="/explore" className={`nav-item ${pathname?.startsWith('/explore') ? 'active' : ''}`} title="Explore">
-                    <SearchIcon />
-                    <span>Explore</span>
-                </Link>
                 {user && (
                     <Link href="/notifications" className={`nav-item ${pathname?.startsWith('/notifications') ? 'active' : ''}`} title="Notifications">
                         <BellIcon />
