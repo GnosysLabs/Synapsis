@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-    user: null as null | { nsfwEnabled: boolean },
+    user: null as null | { nsfwEnabled: boolean; ageVerifiedAt?: string | null },
     config: {
         domain: 'local.example',
         isNsfw: false,
@@ -43,6 +43,36 @@ describe('ProfileBanner', () => {
 
         expect(html).not.toContain(privateUrl);
         expect(html).toContain('Sensitive profile banner hidden');
+    });
+
+    it('renders the node-owned banner as a blurred preview for signed-out visitors on an NSFW node', () => {
+        mocks.config.isNsfw = true;
+        const bannerUrl = 'https://adult.example/node-banner.jpg';
+        const html = renderToStaticMarkup(createElement(ProfileBanner, {
+            url: bannerUrl,
+            nodeIsNsfw: true,
+            showBlurredSourceToSignedOutViewers: true,
+        }));
+
+        expect(html).toContain(bannerUrl);
+        expect(html).toContain('NSFW node banner blurred');
+        expect(html).toContain('blur(18px)');
+        expect(html).not.toContain('Sensitive profile banner hidden');
+    });
+
+    it('does not blur or alter the node banner for an eligible signed-in viewer', () => {
+        mocks.config.isNsfw = true;
+        mocks.user = { nsfwEnabled: true, ageVerifiedAt: '2026-07-17T00:00:00.000Z' };
+        const bannerUrl = 'https://adult.example/node-banner.jpg';
+        const html = renderToStaticMarkup(createElement(ProfileBanner, {
+            url: bannerUrl,
+            nodeIsNsfw: true,
+            showBlurredSourceToSignedOutViewers: true,
+        }));
+
+        expect(html).toContain(bannerUrl);
+        expect(html).not.toContain('NSFW node banner blurred');
+        expect(html).not.toContain('blur(18px)');
     });
 
     it('fails closed for an explicitly remote profile with incomplete classification', () => {

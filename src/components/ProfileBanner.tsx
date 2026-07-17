@@ -15,6 +15,7 @@ export function ProfileBanner({
     height,
     aspectRatio,
     borderBottom,
+    showBlurredSourceToSignedOutViewers = false,
 }: {
     url?: string | null;
     accountHandle?: string;
@@ -25,6 +26,7 @@ export function ProfileBanner({
     height?: string | number;
     aspectRatio?: string;
     borderBottom?: string;
+    showBlurredSourceToSignedOutViewers?: boolean;
 }) {
     const { user } = useAuth();
     const { config } = useRuntimeConfig();
@@ -51,19 +53,31 @@ export function ProfileBanner({
         localNodeIsNsfw,
         viewer: user,
     });
+    const showBlurredSource = Boolean(
+        url
+        && blurred
+        && !user
+        && nodeIsNsfw === true
+        && showBlurredSourceToSignedOutViewers
+    );
 
     return (
         <div style={{ width: '100%', height, aspectRatio, overflow: 'hidden', borderBottom, position: 'relative' }}>
             <div
-                aria-label={blurred ? 'Sensitive profile banner hidden' : undefined}
+                aria-label={showBlurredSource
+                    ? 'NSFW node banner blurred'
+                    : blurred
+                        ? 'Sensitive profile banner hidden'
+                        : undefined}
                 style={{
                     position: 'absolute',
-                    inset: 0,
+                    inset: showBlurredSource ? '-12px' : 0,
                     // A CSS blur still downloads and exposes the source URL.
-                    // Restricted banners must never put that URL in the DOM.
-                    background: url && !blurred
+                    // Only the node-owned banner opts into that signed-out preview.
+                    background: url && (!blurred || showBlurredSource)
                         ? `url(${url}) center/cover no-repeat`
                         : 'linear-gradient(135deg, var(--accent-muted) 0%, var(--background-tertiary) 100%)',
+                    filter: showBlurredSource ? 'blur(18px) brightness(0.72)' : undefined,
                 }}
             />
         </div>
