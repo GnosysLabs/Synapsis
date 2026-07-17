@@ -20,7 +20,7 @@ import { AvatarImage } from '@/components/AvatarImage';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import { getMediaKind } from '@/lib/media/upload-policy';
 import { tokenizePostContent } from '@/lib/mentions/parser';
-import { setReposterInSummary } from '@/lib/posts/node-feed';
+import { dedupeReposters, setReposterInSummary } from '@/lib/posts/node-feed';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
 import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
 import { buildChatShareHref, type ChatRecipient } from '@/lib/chat/recipients';
@@ -739,7 +739,8 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
     const repostHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
     const hasOwnContent = decodeHtmlEntities(post.content).trim().length > 0;
     const isRepostEvent = Boolean(post.repostOf);
-    const visibleReposters = reposters.slice(0, 3);
+    const uniqueReposters = dedupeReposters(reposters, domain);
+    const visibleReposters = uniqueReposters.slice(0, 3);
     const hiddenReposters = Math.max(0, reposterCount - visibleReposters.length);
     const effectivePreview = {
         url: hydratedPreview?.url || post.linkPreviewUrl || null,
@@ -1082,14 +1083,7 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
                             return (
                                 <div className={`post-media-item ${mediaKind === 'audio' ? 'audio' : ''}`} key={item.id}>
                                     {mediaKind === 'video' ? (
-                                        <BlurredVideo
-                                            src={item.url}
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                const video = e.currentTarget;
-                                                video.muted = !video.muted;
-                                            }}
-                                        />
+                                        <BlurredVideo src={item.url} />
                                     ) : mediaKind === 'audio' ? (
                                         <AudioPlayer
                                             src={item.url}

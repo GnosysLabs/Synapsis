@@ -976,6 +976,84 @@ a.btn-primary:visited {
   z-index: 1;
 }
 
+.video-player-controls {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  left: 10px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  color: #fff;
+  background: rgba(8, 8, 8, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.blurred-video-container:hover .video-player-controls,
+.blurred-video-container:focus-within .video-player-controls {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.video-player-control-button {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.video-player-control-button:hover,
+.video-player-control-button:focus-visible {
+  color: #0b0b0b;
+  background: var(--accent);
+  outline: none;
+}
+
+.video-player-scrubber {
+  flex: 1;
+  min-width: 60px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.video-player-scrubber:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.video-player-time {
+  min-width: 34px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .video-player-controls {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+}
+
 /* Override post-media-item video styles for blurred container */
 .post-media-item .blurred-video-container video {
   background: transparent;

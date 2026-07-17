@@ -30,18 +30,78 @@ export interface RepostSummary<TReposter> {
     repostedByCount: number;
 }
 
+interface ReposterIdentity {
+    id: string;
+    handle?: string;
+    nodeDomain?: string | null;
+}
+
+function normalizeReposterDomain(value: string): string {
+    return value
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/\/.*$/, '')
+        .replace(/\.$/, '');
+}
+
+function getReposterHandleKey(
+    reposter: ReposterIdentity,
+    fallbackDomain?: string | null,
+): string | null {
+    const cleanHandle = reposter.handle?.trim().toLowerCase().replace(/^@/, '');
+    if (!cleanHandle) return null;
+
+    const separatorIndex = cleanHandle.lastIndexOf('@');
+    if (separatorIndex > 0 && separatorIndex < cleanHandle.length - 1) {
+        const handle = cleanHandle.slice(0, separatorIndex);
+        const domain = normalizeReposterDomain(cleanHandle.slice(separatorIndex + 1));
+        return domain ? `${handle}@${domain}` : null;
+    }
+
+    const domainValue = reposter.nodeDomain || fallbackDomain;
+    const domain = domainValue
+        ? normalizeReposterDomain(domainValue)
+        : '';
+    return domain ? `${cleanHandle}@${domain}` : null;
+}
+
+export function isSameReposter(
+    first: ReposterIdentity,
+    second: ReposterIdentity,
+    fallbackDomain?: string | null,
+): boolean {
+    if (first.id === second.id) return true;
+
+    const firstHandle = getReposterHandleKey(first, fallbackDomain);
+    const secondHandle = getReposterHandleKey(second, fallbackDomain);
+    return firstHandle !== null && firstHandle === secondHandle;
+}
+
+export function dedupeReposters<TReposter extends ReposterIdentity>(
+    reposters: TReposter[],
+    fallbackDomain?: string | null,
+): TReposter[] {
+    return reposters.filter((reposter, index, actors) =>
+        actors.findIndex((candidate) => isSameReposter(candidate, reposter, fallbackDomain)) === index);
+}
+
 /**
  * Keep one actor's presence in a repost summary deterministic. Included actors
  * are placed first so the active viewer remains visible inside the three-avatar
  * limit, while the supplied count remains the source of truth for hidden actors.
  */
-export function setReposterInSummary<TReposter extends { id: string }>(
+export function setReposterInSummary<TReposter extends ReposterIdentity>(
     repostedBy: TReposter[] | undefined,
     repostedByCount: number | undefined,
     reposter: TReposter,
     included: boolean,
 ): RepostSummary<TReposter> {
-    const otherReposters = (repostedBy || []).filter((actor) => actor.id !== reposter.id);
+    const fallbackDomain = reposter.nodeDomain;
+    const otherReposters = dedupeReposters(
+        (repostedBy || []).filter((actor) => !isSameReposter(actor, reposter, fallbackDomain)),
+        fallbackDomain,
+    );
     const nextReposters = included ? [reposter, ...otherReposters] : otherReposters;
 
     return {
@@ -81,6 +141,7 @@ export function assembleNodeFeedStories<TPost extends { id: string; repostsCount
     activityRows: NodeFeedActivity[],
     originalPosts: TPost[],
     repostRows: NodeFeedRepostRow[],
+    localNodeDomain?: string,
 ): Array<NodeFeedStory<TPost>> {
     const postsById = new Map(originalPosts.map((post) => [post.id, post]));
     const repostersByPostId = new Map<string, NodeFeedReposter[]>();
@@ -88,8 +149,11 @@ export function assembleNodeFeedStories<TPost extends { id: string; repostsCount
     for (const repost of repostRows) {
         if (!repost.repostOfId) continue;
         const reposters = repostersByPostId.get(repost.repostOfId) || [];
-        if (!reposters.some((actor) => actor.id === repost.author.id)) {
-            reposters.push(repost.author);
+        const reposter = repost.author.nodeDomain || !localNodeDomain
+            ? repost.author
+            : { ...repost.author, nodeDomain: localNodeDomain };
+        if (!reposters.some((actor) => isSameReposter(actor, reposter, localNodeDomain))) {
+            reposters.push(reposter);
         }
         repostersByPostId.set(repost.repostOfId, reposters);
     }
@@ -116,7 +180,7 @@ function activityTimestamp(post: Post): number {
  * Collapse repost wrapper events for shared feeds. Profile timelines deliberately
  * do not call this helper because there the wrapper is part of the user's history.
  */
-export function collapseSharedFeedPosts(posts: Post[]): Post[] {
+export function collapseSharedFeedPosts(posts: Post[], localNodeDomain?: string): Post[] {
     const stories = new Map<string, Post>();
     const orderedEvents = [...posts].sort((a, b) => activityTimestamp(b) - activityTimestamp(a));
 
@@ -125,13 +189,12 @@ export function collapseSharedFeedPosts(posts: Post[]): Post[] {
         const storyId = original.id;
         const existing = stories.get(storyId);
         const eventReposter = event.repostOf ? event.author : null;
-        const repostedBy = [
+        const repostedBy = dedupeReposters([
             ...(existing?.repostedBy || []),
             ...(original.repostedBy || []),
             ...(event.repostedBy || []),
             ...(eventReposter ? [eventReposter] : []),
-        ].filter((actor, index, actors) =>
-            actors.findIndex((candidate) => candidate.id === actor.id) === index);
+        ], localNodeDomain);
         const feedActivityAt = new Date(Math.max(
             existing ? activityTimestamp(existing) : 0,
             activityTimestamp(event),

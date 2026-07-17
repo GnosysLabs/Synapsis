@@ -64,6 +64,7 @@ function mapUserSwarmRepostToFeedPost(
     row: typeof userSwarmReposts.$inferSelect,
     author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl'>
 ): FeedPostWithChildren {
+    const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
     const remoteAuthorHandle = row.authorHandle.includes('@')
         ? row.authorHandle
         : `${row.authorHandle}@${row.nodeDomain}`;
@@ -81,6 +82,7 @@ function mapUserSwarmRepostToFeedPost(
             handle: author.handle,
             displayName: author.displayName,
             avatarUrl: author.avatarUrl,
+            nodeDomain: localNodeDomain,
         },
         repostOfId: remoteOriginalId,
         repostOf: {

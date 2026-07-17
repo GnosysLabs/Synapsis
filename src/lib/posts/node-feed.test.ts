@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     assembleNodeFeedStories,
     collapseSharedFeedPosts,
+    dedupeReposters,
     mergeNodeFeedActivities,
     setReposterInSummary,
     type NodeFeedReposter,
@@ -65,6 +66,43 @@ describe('collapseSharedFeedPosts', () => {
 
         expect(result.repostedBy?.map((reposter) => reposter.id)).toEqual(['remote-reposter']);
         expect(result.feedActivityAt).toBe('2026-07-16T15:00:00.000Z');
+    });
+
+    it('collapses local and federated IDs for the same reposter identity', () => {
+        const localViewer = {
+            ...user('viewer'),
+            nodeDomain: 'synapsis.social',
+        };
+        const federatedViewer = {
+            ...user('swarm:synapsis.social:viewer'),
+            handle: 'viewer@synapsis.social',
+            nodeDomain: 'synapsis.social',
+        };
+        const original = post('original', user('author'), '2026-07-16T12:00:00Z', {
+            repostsCount: 1,
+            repostedBy: [federatedViewer],
+            repostedByCount: 1,
+        });
+        const repost = post('repost', localViewer, '2026-07-16T13:00:00Z', { repostOf: original });
+
+        const localReposterWithoutDomain = { ...localViewer, nodeDomain: undefined };
+        const localRepost = { ...repost, author: localReposterWithoutDomain };
+        const [result] = collapseSharedFeedPosts([original, localRepost], 'synapsis.social');
+
+        expect(result.repostedBy).toHaveLength(1);
+        expect(result.repostedByCount).toBe(1);
+    });
+});
+
+describe('dedupeReposters', () => {
+    it('uses the qualified handle and node when IDs differ', () => {
+        const result = dedupeReposters([
+            { ...user('local-id'), handle: 'alice', nodeDomain: 'Example.COM' },
+            { ...user('swarm:example.com:alice'), handle: 'alice@example.com', nodeDomain: 'example.com' },
+            { ...user('other-node-id'), handle: 'alice@other.example', nodeDomain: 'other.example' },
+        ]);
+
+        expect(result.map((reposter) => reposter.id)).toEqual(['local-id', 'other-node-id']);
     });
 });
 
@@ -148,6 +186,22 @@ describe('setReposterInSummary', () => {
         expect(result.repostedBy.map((reposter) => reposter.id)).toEqual(['viewer', 'alice', 'bob']);
         expect(result.repostedBy[0].avatarUrl).toBe('/new-avatar.png');
         expect(result.repostedByCount).toBe(3);
+    });
+
+    it('replaces the federated form of the viewer instead of adding a second avatar', () => {
+        const viewer = { ...user('viewer-id'), handle: 'viewer', nodeDomain: 'synapsis.social' };
+        const federatedViewer = {
+            ...user('swarm:synapsis.social:viewer'),
+            handle: 'viewer@synapsis.social',
+            nodeDomain: 'synapsis.social',
+        };
+
+        const result = setReposterInSummary([federatedViewer], 1, viewer, true);
+
+        expect(result).toEqual({
+            repostedBy: [viewer],
+            repostedByCount: 1,
+        });
     });
 
     it('removes the viewer while preserving other reposters and the supplied total', () => {

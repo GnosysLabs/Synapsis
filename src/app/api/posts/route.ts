@@ -56,6 +56,7 @@ function mapUserSwarmRepostToFeedPost(
     row: typeof userSwarmReposts.$inferSelect,
     author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl'>
 ): FeedPostWithChildren {
+    const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
     const remoteAuthorHandle = row.authorHandle.includes('@')
         ? row.authorHandle
         : `${row.authorHandle}@${row.nodeDomain}`;
@@ -73,6 +74,7 @@ function mapUserSwarmRepostToFeedPost(
             handle: author.handle,
             displayName: author.displayName,
             avatarUrl: author.avatarUrl,
+            nodeDomain: localNodeDomain,
         },
         repostOfId: remoteOriginalId,
         repostOf: {
@@ -195,6 +197,7 @@ const feedPostRelations = {
 } as const;
 
 async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<FeedPostWithChildren[]> {
+    const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
     const storyId = sql<string>`coalesce(${posts.repostOfId}, ${posts.id})`;
     const latestActivityAt = sql<Date>`max(${posts.createdAt})`.mapWith(posts.createdAt);
     const latestRemoteActivityAt = sql<Date>`max(
@@ -293,6 +296,7 @@ async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<F
         activityRows,
         originalPosts,
         [...repostRows, ...federatedRepostRows],
+        localNodeDomain,
     ) as FeedPostWithChildren[];
 }
 
@@ -339,7 +343,7 @@ async function getLocallyRepostedRemoteStories(
         return reposter ? [mapUserSwarmRepostToFeedPost(row, reposter)] : [];
     });
 
-    return collapseSharedFeedPosts(wrappers as unknown as Post[]) as FeedPostWithChildren[];
+    return collapseSharedFeedPosts(wrappers as unknown as Post[], localDomain) as FeedPostWithChildren[];
 }
 
 const createPostSchema = z.object({
@@ -766,7 +770,8 @@ export async function GET(request: Request) {
             feedPosts = collapseSharedFeedPosts([
                 ...localStories,
                 ...remoteStories,
-            ] as unknown as Post[]).slice(0, limit) as FeedPostWithChildren[];
+            ] as unknown as Post[], process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821')
+                .slice(0, limit) as FeedPostWithChildren[];
         } else if (type === 'public') {
             // Public timeline - all local posts + all cached remote posts
             const localPosts = await db.query.posts.findMany({
@@ -881,7 +886,7 @@ export async function GET(request: Request) {
             const eligiblePosts = collapseSharedFeedPosts([
                 ...swarmPosts,
                 ...locallyRepostedRemoteStories as unknown as Post[],
-            ])
+            ], localDomain)
                 .filter((post) => !mutedIds.has(post.author.id) && !blockedIds.has(post.author.id));
             const pageWindow = selectFeedWindow(eligiblePosts, limit);
             const rankedPosts = rankCuratedFeed(pageWindow.posts, { limit });
@@ -1027,7 +1032,7 @@ export async function GET(request: Request) {
                     ...localPosts,
                     ...localRepostEvents,
                     ...liveRemotePosts,
-                ] as unknown as Post[])
+                ] as unknown as Post[], process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821')
                     .slice(0, limit);
 
                 feedPosts = allPosts;
