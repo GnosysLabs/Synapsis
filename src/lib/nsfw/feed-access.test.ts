@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canAccessNodeFeed, shouldIncludeNsfwFeed } from './feed-access';
+import { canAccessNodeFeed, canAccessSensitiveRemoteProfile, shouldIncludeNsfwFeed } from './feed-access';
 
 describe('canAccessNodeFeed', () => {
     it('blocks signed-out visitors on an NSFW node', () => {
@@ -48,5 +48,39 @@ describe('shouldIncludeNsfwFeed', () => {
             viewer: { nsfwEnabled: false },
             localNodeIsNsfw: false,
         })).toBe(false);
+    });
+});
+
+describe('canAccessSensitiveRemoteProfile', () => {
+    it('blocks signed-out visitors from profiles on adult-only nodes', () => {
+        expect(canAccessSensitiveRemoteProfile({
+            profileRequiresNsfw: true,
+            viewer: null,
+            localNodeIsNsfw: false,
+        })).toBe(false);
+    });
+
+    it('blocks signed-in viewers who have not enabled NSFW on general-purpose nodes', () => {
+        expect(canAccessSensitiveRemoteProfile({
+            profileRequiresNsfw: true,
+            viewer: { nsfwEnabled: false },
+            localNodeIsNsfw: false,
+        })).toBe(false);
+    });
+
+    it('allows viewers who explicitly enabled NSFW content', () => {
+        expect(canAccessSensitiveRemoteProfile({
+            profileRequiresNsfw: true,
+            viewer: { nsfwEnabled: true },
+            localNodeIsNsfw: false,
+        })).toBe(true);
+    });
+
+    it('leaves general-audience remote profiles public', () => {
+        expect(canAccessSensitiveRemoteProfile({
+            profileRequiresNsfw: false,
+            viewer: null,
+            localNodeIsNsfw: false,
+        })).toBe(true);
     });
 });

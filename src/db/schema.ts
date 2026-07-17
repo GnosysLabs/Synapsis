@@ -24,7 +24,7 @@ export const nodes = sqliteTable('nodes', {
   publicKey: text('public_key'),
   privateKeyEncrypted: text('private_key_encrypted'), // Encrypted with AUTH_SECRET
   // NSFW settings
-  isNsfw: integer('is_nsfw', { mode: 'boolean' }).default(false).notNull(), // Entire node is NSFW
+  isNsfw: integer('is_nsfw', { mode: 'boolean' }).default(false).notNull(), // Permanent adult-only node classification
   // Cloudflare Turnstile settings
   turnstileSiteKey: text('turnstile_site_key'),
   turnstileSecretKey: text('turnstile_secret_key'),

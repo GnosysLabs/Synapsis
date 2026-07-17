@@ -11,13 +11,15 @@ import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stu
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
+import { matchesNodeDomainConfirmation } from '@/lib/node/nsfw-classification';
 
 export default function AdminPage() {
     const { showToast } = useToast();
-    const { showConfirm } = useAppDialog();
+    const { showPrompt } = useAppDialog();
     const { refreshAccentColor } = useAccentColor();
     const { setNodeNsfw } = useRuntimeConfig();
     const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+    const [nodeDomain, setNodeDomain] = useState('');
     const [loading, setLoading] = useState(false);
     const [nodeSettings, setNodeSettings] = useState({
         name: '',
@@ -71,6 +73,7 @@ export default function AdminPage() {
                 turnstileSecretKey: data.turnstileSecretKey || '',
             };
             setNodeSettings(loadedSettings);
+            setNodeDomain(data.domain || window.location.host);
             savedNodeSettingsRef.current = loadedSettings;
         } catch {
             // error
@@ -85,18 +88,21 @@ export default function AdminPage() {
         }
     }, [isAdmin]);
 
-    const handleSaveSettings = async (override?: typeof nodeSettings) => {
+    const handleSaveSettings = async (
+        override?: typeof nodeSettings,
+        nsfwConfirmationDomain?: string,
+    ): Promise<boolean> => {
         const payload = override ?? nodeSettings;
         setSavingSettings(true);
         try {
             const res = await fetch('/api/admin/node', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
+                body: JSON.stringify({ ...payload, nsfwConfirmationDomain }),
             });
+            const data = await res.json().catch(() => ({}));
             if (res.ok) {
                 savedNodeSettingsRef.current = payload;
-                const data = await res.json().catch(() => ({}));
                 if (data.node) {
                     // Keep the global local-node classification and the sidebar's
                     // node payload in the same React batch. Otherwise profile
@@ -107,14 +113,44 @@ export default function AdminPage() {
                 }
                 showToast('Settings saved!', 'success');
                 refreshAccentColor();
+                return true;
             } else {
-                showToast('Failed to save settings.', 'error');
+                showToast(data.error || 'Failed to save settings.', 'error');
+                return false;
             }
         } catch {
             showToast('Failed to save settings.', 'error');
+            return false;
         } finally {
             setSavingSettings(false);
         }
+    };
+
+    const handleMakeNodeAdultOnly = async () => {
+        if (nodeSettings.isNsfw || savingSettings || !nodeDomain) return;
+
+        const confirmation = await showPrompt({
+            title: 'Permanently make this node adult-only?',
+            message: `This cannot be undone. Every post from this node will be treated as NSFW across the swarm. Type ${nodeDomain} to confirm.`,
+            inputLabel: `Type ${nodeDomain} exactly`,
+            placeholder: nodeDomain,
+            confirmLabel: 'Make adult-only permanently',
+            tone: 'danger',
+            required: true,
+        });
+
+        if (confirmation === null) return;
+        if (!matchesNodeDomainConfirmation(confirmation, nodeDomain)) {
+            showToast(`Type ${nodeDomain} exactly to confirm.`, 'error');
+            return;
+        }
+
+        const previousSettings = nodeSettings;
+        const nextSettings = { ...nodeSettings, isNsfw: true };
+        setNodeSettings(nextSettings);
+
+        const saved = await handleSaveSettings(nextSettings, nodeDomain);
+        if (!saved) setNodeSettings(previousSettings);
     };
 
     const uploadBannerFile = async (file: File, allowPrompt = true) => {
@@ -483,37 +519,25 @@ export default function AdminPage() {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
                                     <div>
                                         <label style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px', display: 'block' }}>
-                                            NSFW Node
+                                            Adult-only node
                                         </label>
                                         <p style={{ fontSize: '12px', color: 'var(--foreground-secondary)', margin: 0 }}>
                                             {nodeSettings.isNsfw 
-                                                ? 'This node is marked as NSFW. All content will be hidden from users who haven\'t enabled NSFW viewing.'
-                                                : 'Enable this if your node primarily hosts adult or sensitive content. All posts from this node will be treated as NSFW across the swarm.'}
+                                                ? 'This node is permanently classified as adult-only. It cannot return to general-audience status.'
+                                                : 'Permanently classify this node as adult-only. Every post from this node will be treated as NSFW across the swarm.'}
                                         </p>
                                     </div>
                                     <button
                                         className={`btn btn-sm ${nodeSettings.isNsfw ? 'btn-primary' : 'btn-ghost'}`}
+                                        type="button"
+                                        disabled={nodeSettings.isNsfw || savingSettings || !nodeDomain}
                                         style={{ 
                                             background: nodeSettings.isNsfw ? 'var(--error)' : undefined,
                                             flexShrink: 0,
                                         }}
-                                        onClick={async () => {
-                                            if (!nodeSettings.isNsfw) {
-                                                const confirmed = await showConfirm({
-                                                    title: 'Mark this node as NSFW?',
-                                                    message: 'All content from this node will be hidden from users who have not enabled NSFW viewing. This affects the entire swarm.',
-                                                    confirmLabel: 'Mark as NSFW',
-                                                    tone: 'danger',
-                                                });
-                                                if (confirmed) {
-                                                    setNodeSettings({ ...nodeSettings, isNsfw: true });
-                                                }
-                                            } else {
-                                                setNodeSettings({ ...nodeSettings, isNsfw: false });
-                                            }
-                                        }}
+                                        onClick={handleMakeNodeAdultOnly}
                                     >
-                                        {nodeSettings.isNsfw ? 'Remove NSFW' : 'Mark as NSFW'}
+                                        {nodeSettings.isNsfw ? 'Permanently adult-only' : 'Make adult-only'}
                                     </button>
                                 </div>
                             </div>

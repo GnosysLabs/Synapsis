@@ -13,6 +13,7 @@ import {
   getPublicSwarmDomain,
   isPublicSwarmDomain,
 } from './node-domain';
+import { mergePermanentNodeNsfwClassification } from '@/lib/node/nsfw-classification';
 
 interface NetworkStatNode {
   isActive: boolean;
@@ -100,7 +101,7 @@ export async function upsertSwarmNode(
       userCount: node.userCount ?? existing.userCount,
       postCount: node.postCount ?? existing.postCount,
       mediaCount: node.mediaCount ?? existing.mediaCount,
-      isNsfw: node.isNsfw ?? existing.isNsfw,
+      isNsfw: mergePermanentNodeNsfwClassification(existing.isNsfw, node.isNsfw),
       capabilities: capabilities ?? existing.capabilities,
       lastSeenAt: new Date(),
       consecutiveFailures: 0,

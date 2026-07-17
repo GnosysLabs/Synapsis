@@ -6,6 +6,7 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 import { normalizeSameNodePostId } from '@/lib/swarm/post-id';
+import { isLocalNodeNsfw } from '@/lib/node/local-node';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -96,6 +97,7 @@ export async function POST(request: Request, context: RouteContext) {
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
         }
+        const actorIsNsfw = user.isNsfw || await isLocalNodeNsfw();
 
         // Handle swarm posts (format: swarm:domain:uuid)
         if (postId.startsWith('swarm:')) {
@@ -123,6 +125,7 @@ export async function POST(request: Request, context: RouteContext) {
                     actorHandle: user.handle,
                     actorDisplayName: user.displayName || user.handle,
                     actorAvatarUrl: user.avatarUrl || undefined,
+                    actorIsNsfw,
                     actorNodeDomain: nodeDomain,
                     repostId: crypto.randomUUID(),
                     interactionId: crypto.randomUUID(),
@@ -239,7 +242,7 @@ export async function POST(request: Request, context: RouteContext) {
                                 actorHandle: user.handle,
                                 actorDisplayName: user.displayName || user.handle,
                                 actorAvatarUrl: user.avatarUrl || undefined,
-                                actorIsNsfw: user.isNsfw,
+                                actorIsNsfw,
                                 actorNodeDomain: nodeDomain,
                                 repostId: repost.id,
                                 interactionId: crypto.randomUUID(),

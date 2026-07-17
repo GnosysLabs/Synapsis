@@ -3,6 +3,7 @@ import { db, users, posts } from '@/db';
 import { like, or, and, eq } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
+import { canCurrentViewerAccessSensitiveRemoteProfile } from '@/lib/nsfw/remote-profile-access';
 
 const embeddedPostRelations = {
     author: true,
@@ -157,17 +158,21 @@ export async function GET(request: Request) {
                     try {
                         const profileData = await fetchSwarmUserProfile(parsedRemote.handle, parsedRemote.domain, 0);
                         if (profileData?.profile) {
+                            const profile = profileData.profile;
+                            const canAccessProfile = await canCurrentViewerAccessSensitiveRemoteProfile(
+                                profile.isNsfw || profile.nodeIsNsfw,
+                            );
                             const fullHandle = `${parsedRemote.handle}@${parsedRemote.domain}`;
                             const remoteUser: SearchUser = {
                                 id: `swarm:${parsedRemote.domain}:${parsedRemote.handle}`,
                                 handle: fullHandle,
-                                displayName: profileData.profile.displayName || parsedRemote.handle,
-                                avatarUrl: profileData.profile.avatarUrl || null,
-                                bio: profileData.profile.bio || null,
+                                displayName: canAccessProfile ? profile.displayName || parsedRemote.handle : parsedRemote.handle,
+                                avatarUrl: canAccessProfile ? profile.avatarUrl || null : null,
+                                bio: canAccessProfile ? profile.bio || null : null,
                                 profileUrl: `https://${parsedRemote.domain}/@${parsedRemote.handle}`,
                                 isRemote: true,
-                                isNsfw: profileData.profile.isNsfw,
-                                nodeIsNsfw: profileData.profile.nodeIsNsfw,
+                                isNsfw: profile.isNsfw,
+                                nodeIsNsfw: profile.nodeIsNsfw,
                             };
                             if (!searchUsers.some((user) => user.handle.toLowerCase() === remoteUser.handle.toLowerCase())) {
                                 searchUsers = [remoteUser, ...searchUsers].slice(0, limit);

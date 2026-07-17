@@ -8,7 +8,7 @@ import { PostCard } from '@/components/PostCard';
 import { User, Post } from '@/lib/types';
 import AutoTextarea from '@/components/AutoTextarea';
 import { UserStorageImageUpload } from '@/components/UserStorageImageUpload';
-import { Rocket, MoreHorizontal, Mail } from 'lucide-react';
+import { Rocket, MoreHorizontal, Mail, ShieldAlert } from 'lucide-react';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
@@ -58,7 +58,7 @@ export default function ProfilePage() {
     const params = useParams();
     const router = useRouter();
     const handle = (params.handle as string)?.replace(/^@/, '') || '';
-    const { did, handle: currentHandle, isIdentityUnlocked, signUserAction, updateUserProfile } = useAuth();
+    const { user: authenticatedViewer, did, handle: currentHandle, isIdentityUnlocked, signUserAction, updateUserProfile } = useAuth();
     const { showAlert } = useAppDialog();
 
     const [user, setUser] = useState<User | null>(null);
@@ -469,6 +469,36 @@ export default function ProfilePage() {
             }}>
                 <h1 style={{ fontSize: '24px', fontWeight: 600 }}>User not found</h1>
                 <Link href="/" className="btn btn-primary">Go home</Link>
+            </div>
+        );
+    }
+
+    if (user.nsfwRestricted) {
+        const settingsPath = authenticatedViewer ? '/settings/content' : '/login';
+        const actionLabel = authenticatedViewer ? 'Open content settings' : 'Sign in to continue';
+
+        return (
+            <div style={{ maxWidth: '600px', margin: '0 auto', minHeight: '100vh' }}>
+                <header style={{
+                    padding: '16px',
+                    borderBottom: '1px solid var(--border)',
+                }}>
+                    <h1 style={{ fontSize: '18px', fontWeight: 600 }}>@{user.handle}</h1>
+                </header>
+                <div style={{ padding: '48px 24px' }}>
+                    <div className="card" style={{ padding: '28px', textAlign: 'center' }}>
+                        <ShieldAlert size={36} style={{ color: 'var(--warning)', margin: '0 auto 14px' }} aria-hidden="true" />
+                        <h2 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '10px' }}>
+                            Sensitive profile hidden
+                        </h2>
+                        <p style={{ color: 'var(--foreground-secondary)', lineHeight: 1.5, marginBottom: '20px' }}>
+                            This account is marked NSFW or belongs to an adult-only node. Its profile details and posts are hidden until you explicitly enable NSFW viewing.
+                        </p>
+                        <Link href={settingsPath} className="btn btn-primary">
+                            {actionLabel}
+                        </Link>
+                    </div>
+                </div>
             </div>
         );
     }

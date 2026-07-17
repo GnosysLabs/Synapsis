@@ -25,3 +25,16 @@ export function shouldIncludeNsfwFeed({
     // the viewer's explicit account preference remains authoritative.
     return localNodeIsNsfw || viewer.nsfwEnabled === true;
 }
+
+export function canAccessSensitiveRemoteProfile({
+    profileRequiresNsfw,
+    viewer,
+    localNodeIsNsfw,
+}: {
+    profileRequiresNsfw: boolean;
+    viewer: NsfwFeedViewer | null;
+    localNodeIsNsfw: boolean;
+}): boolean {
+    if (!profileRequiresNsfw) return true;
+    return shouldIncludeNsfwFeed({ viewer, localNodeIsNsfw });
+}

@@ -3,10 +3,14 @@ import { db, users, userSwarmReposts } from '@/db';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
-import { getRemoteBaseUrl, mapRemoteProfilePost, type RemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
+import { mapRemoteProfilePost, type RemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
+import {
+    canCurrentViewerAccessSensitiveRemoteProfile,
+    SENSITIVE_REMOTE_PROFILE_MESSAGE,
+} from '@/lib/nsfw/remote-profile-access';
 
 const embeddedPostRelations = {
     author: true,
@@ -234,21 +238,22 @@ export async function GET(request: Request, context: RouteContext) {
                 return NextResponse.json({ posts: [], nextCursor: null });
             }
 
-            const baseUrl = getRemoteBaseUrl(remote.domain);
-            const res = await fetch(
-                `${baseUrl}/api/users/${remote.handle}/posts?limit=${limit}`,
-                {
-                    headers: { Accept: 'application/json' },
-                    signal: AbortSignal.timeout(10000),
-                }
-            );
-
-            if (!res.ok) {
+            const profileData = await fetchSwarmUserProfile(remote.handle, remote.domain, limit);
+            if (!profileData) {
                 return NextResponse.json({ posts: [], nextCursor: null });
             }
 
-            const data = await res.json() as { posts?: RemoteProfilePost[] };
-            const mappedPosts = (data.posts || []).map((post) => mapRemoteProfilePost(post, remote.domain) as unknown as FeedPostWithChildren);
+            const profileRequiresNsfw = profileData.profile.isNsfw || profileData.profile.nodeIsNsfw;
+            if (!await canCurrentViewerAccessSensitiveRemoteProfile(profileRequiresNsfw)) {
+                return NextResponse.json(
+                    { posts: [], nextCursor: null, restricted: true, error: SENSITIVE_REMOTE_PROFILE_MESSAGE },
+                    { status: 403 },
+                );
+            }
+
+            const mappedPosts = profileData.posts.map((post) => (
+                mapRemoteProfilePost(post as unknown as RemoteProfilePost, remote.domain) as unknown as FeedPostWithChildren
+            ));
             return NextResponse.json({
                 posts: await populateViewerLikeState(mappedPosts),
                 nextCursor: null,
@@ -271,42 +276,7 @@ export async function GET(request: Request, context: RouteContext) {
                 return NextResponse.json({ posts: [], message: 'Only Synapsis swarm nodes are supported' });
             }
 
-            const profileData = await fetchSwarmUserProfile(remote.handle, remote.domain, limit);
-            if (profileData?.posts) {
-                const profile = profileData.profile;
-                const authorHandle = `${profile.handle}@${remote.domain}`;
-                const author = {
-                    id: `swarm:${remote.domain}:${profile.handle}`,
-                    handle: authorHandle,
-                    displayName: profile.displayName || profile.handle,
-                    avatarUrl: profile.avatarUrl,
-                };
-
-                const remotePosts = profileData.posts.map((post) => ({
-                    id: post.id,
-                    originalPostId: post.id,
-                    content: post.content,
-                    createdAt: post.createdAt,
-                    likesCount: post.likesCount || 0,
-                    repostsCount: post.repostsCount || 0,
-                    repliesCount: post.repliesCount || 0,
-                    author,
-                    media: post.media || [],
-                    linkPreviewUrl: post.linkPreviewUrl || null,
-                    linkPreviewTitle: post.linkPreviewTitle || null,
-                    linkPreviewDescription: post.linkPreviewDescription || null,
-                    linkPreviewImage: post.linkPreviewImage || null,
-                    linkPreviewType: post.linkPreviewType || null,
-                    linkPreviewVideoUrl: post.linkPreviewVideoUrl || null,
-                    linkPreviewMedia: post.linkPreviewMedia || null,
-                    isSwarm: true,
-                    nodeDomain: remote.domain,
-                }));
-
-                return NextResponse.json({ posts: await populateViewerLikeState(remotePosts), nextCursor: null });
-            }
-
-            return NextResponse.json({ posts: [] });
+            return await fetchRemotePostsRoute();
         }
 
         // Find the user

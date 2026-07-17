@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/db';
 import { discoverNode } from '@/lib/swarm/discovery';
-import { isSwarmNode } from '@/lib/swarm/interactions';
+import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { getRemoteBaseUrl, mapRemoteProfilePost, type RemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
+import {
+    canCurrentViewerAccessSensitiveRemoteProfile,
+    SENSITIVE_REMOTE_PROFILE_MESSAGE,
+} from '@/lib/nsfw/remote-profile-access';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 type LikedPost = {
@@ -61,6 +65,19 @@ export async function GET(request: Request, context: RouteContext) {
         const fetchRemoteLikesRoute = async () => {
             if (!remote) {
                 return NextResponse.json({ posts: [], nextCursor: null });
+            }
+
+            const profileData = await fetchSwarmUserProfile(remote.handle, remote.domain, 0);
+            if (!profileData) {
+                return NextResponse.json({ posts: [], nextCursor: null });
+            }
+
+            const profileRequiresNsfw = profileData.profile.isNsfw || profileData.profile.nodeIsNsfw;
+            if (!await canCurrentViewerAccessSensitiveRemoteProfile(profileRequiresNsfw)) {
+                return NextResponse.json(
+                    { posts: [], nextCursor: null, restricted: true, error: SENSITIVE_REMOTE_PROFILE_MESSAGE },
+                    { status: 403 },
+                );
             }
 
             const baseUrl = getRemoteBaseUrl(remote.domain);

@@ -5,6 +5,9 @@ const mocks = vi.hoisted(() => ({
   fetchSwarmUserProfile: vi.fn(),
   isSwarmNode: vi.fn(),
   discoverNode: vi.fn(),
+  getSession: vi.fn(),
+  isLocalNodeNsfw: vi.fn(),
+  upsertRemoteUser: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
@@ -20,7 +23,15 @@ vi.mock('@/db', () => ({
 }));
 
 vi.mock('@/lib/auth', () => ({
-  getSession: vi.fn().mockResolvedValue(null),
+  getSession: mocks.getSession,
+}));
+
+vi.mock('@/lib/node/local-node', () => ({
+  isLocalNodeNsfw: mocks.isLocalNodeNsfw,
+}));
+
+vi.mock('@/lib/swarm/user-cache', () => ({
+  upsertRemoteUser: mocks.upsertRemoteUser,
 }));
 
 vi.mock('@/lib/swarm/interactions', () => ({
@@ -63,6 +74,9 @@ describe('user profile route', () => {
     mocks.fetchSwarmUserProfile.mockReset();
     mocks.isSwarmNode.mockReset();
     mocks.discoverNode.mockReset();
+    mocks.getSession.mockReset().mockResolvedValue(null);
+    mocks.isLocalNodeNsfw.mockReset().mockResolvedValue(false);
+    mocks.upsertRemoteUser.mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -90,5 +104,49 @@ describe('user profile route', () => {
     expect(mocks.isSwarmNode).not.toHaveBeenCalled();
     expect(mocks.discoverNode).not.toHaveBeenCalled();
     expect(mocks.fetchSwarmUserProfile).not.toHaveBeenCalled();
+  });
+
+  it('redacts an adult-only remote profile for a signed-out visitor', async () => {
+    mocks.findUser.mockResolvedValue(null);
+    mocks.isSwarmNode.mockResolvedValue(true);
+    mocks.fetchSwarmUserProfile.mockResolvedValue({
+      profile: {
+        handle: 'remoteuser',
+        displayName: 'Explicit display name',
+        bio: 'Explicit biography',
+        avatarUrl: 'https://adult.example/avatar.jpg',
+        headerUrl: 'https://adult.example/header.jpg',
+        website: 'https://adult.example/profile',
+        followersCount: 1,
+        followingCount: 2,
+        postsCount: 3,
+        createdAt: '2026-07-17T00:00:00.000Z',
+        isNsfw: false,
+        nodeIsNsfw: true,
+        nodeDomain: 'adult.example',
+      },
+      posts: [],
+      nodeDomain: 'adult.example',
+      timestamp: '2026-07-17T00:00:00.000Z',
+    });
+
+    const response = await GET(
+      new Request('https://rprh.link/api/users/remoteuser%40adult.example'),
+      { params: Promise.resolve({ handle: 'remoteuser@adult.example' }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      user: {
+        handle: 'remoteuser@adult.example',
+        displayName: 'remoteuser',
+        bio: null,
+        avatarUrl: null,
+        headerUrl: null,
+        website: null,
+        nodeIsNsfw: true,
+        nsfwRestricted: true,
+      },
+    });
   });
 });

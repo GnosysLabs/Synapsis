@@ -4,6 +4,7 @@ import { db } from '@/db';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
+import { canCurrentViewerAccessSensitiveRemoteProfile } from '@/lib/nsfw/remote-profile-access';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -52,6 +53,8 @@ export async function GET(request: Request, context: RouteContext) {
                     const profileData = await fetchSwarmUserProfile(remote.handle, remote.domain, 0);
                     if (profileData?.profile) {
                         const profile = profileData.profile;
+                        const profileRequiresNsfw = profile.isNsfw || profile.nodeIsNsfw;
+                        const canAccessProfile = await canCurrentViewerAccessSensitiveRemoteProfile(profileRequiresNsfw);
                         // CACHE: Upsert the remote user into our local database
                         const { upsertRemoteUser } = await import('@/lib/swarm/user-cache');
                         await upsertRemoteUser({
@@ -66,14 +69,14 @@ export async function GET(request: Request, context: RouteContext) {
                             user: {
                                 id: `swarm:${remote.domain}:${profile.handle}`,
                                 handle: `${profile.handle}@${remote.domain}`,
-                                displayName: profile.displayName,
-                                bio: profile.bio || null,
-                                avatarUrl: profile.avatarUrl || null,
-                                headerUrl: profile.headerUrl || null,
+                                displayName: canAccessProfile ? profile.displayName : profile.handle,
+                                bio: canAccessProfile ? profile.bio || null : null,
+                                avatarUrl: canAccessProfile ? profile.avatarUrl || null : null,
+                                headerUrl: canAccessProfile ? profile.headerUrl || null : null,
                                 followersCount: profile.followersCount,
                                 followingCount: profile.followingCount,
                                 postsCount: profile.postsCount,
-                                website: profile.website || null,
+                                website: canAccessProfile ? profile.website || null : null,
                                 createdAt: profile.createdAt,
                                 isRemote: true,
                                 isSwarm: true,
@@ -81,6 +84,7 @@ export async function GET(request: Request, context: RouteContext) {
                                 did: profile.did,
                                 isNsfw: profile.isNsfw,
                                 nodeIsNsfw: profile.nodeIsNsfw,
+                                nsfwRestricted: !canAccessProfile,
                             }
                         });
                     }

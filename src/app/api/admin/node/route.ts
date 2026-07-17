@@ -3,6 +3,7 @@ import { db } from '@/db';
 import { nodes } from '@/db';
 import { eq } from 'drizzle-orm';
 import { requireAdmin } from '@/lib/auth/admin';
+import { resolveNodeNsfwTransition } from '@/lib/node/nsfw-classification';
 
 export async function PATCH(req: NextRequest) {
     try {
@@ -23,6 +24,20 @@ export async function PATCH(req: NextRequest) {
             }
         }
 
+        const nsfwTransition = resolveNodeNsfwTransition({
+            currentIsNsfw: node?.isNsfw === true,
+            requestedIsNsfw: data.isNsfw,
+            confirmationDomain: data.nsfwConfirmationDomain,
+            nodeDomain: node?.domain || domain,
+        });
+
+        if (!nsfwTransition.allowed) {
+            return NextResponse.json(
+                { error: nsfwTransition.error, code: nsfwTransition.code },
+                { status: nsfwTransition.status },
+            );
+        }
+
         if (!node) {
             [node] = await db.insert(nodes).values({
                 domain,
@@ -36,7 +51,7 @@ export async function PATCH(req: NextRequest) {
                 logoData: data.logoData,
                 faviconData: data.faviconData,
                 accentColor: data.accentColor,
-                isNsfw: data.isNsfw ?? false,
+                isNsfw: nsfwTransition.isNsfw,
                 turnstileSiteKey: data.turnstileSiteKey,
                 turnstileSecretKey: data.turnstileSecretKey,
             }).returning();
@@ -50,7 +65,7 @@ export async function PATCH(req: NextRequest) {
                 logoUrl: data.logoUrl,
                 faviconUrl: data.faviconUrl,
                 accentColor: data.accentColor,
-                isNsfw: data.isNsfw ?? node.isNsfw,
+                isNsfw: nsfwTransition.isNsfw,
                 turnstileSiteKey: data.turnstileSiteKey !== undefined ? data.turnstileSiteKey : node.turnstileSiteKey,
                 turnstileSecretKey: data.turnstileSecretKey !== undefined ? data.turnstileSecretKey : node.turnstileSecretKey,
                 // Fix domain drift: ensure the DB matches the current environment
