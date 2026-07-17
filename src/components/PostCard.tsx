@@ -170,9 +170,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     const { config } = useRuntimeConfig();
     const localNodeClassificationKnown = config?.classificationKnown === true;
     const localNodeIsNsfw = localNodeClassificationKnown && config?.isNsfw === true;
-    const canRevealSensitiveContent = Boolean(
-        currentUser && (localNodeIsNsfw || currentUser.ageVerifiedAt),
-    );
+    const canRevealSensitiveContent = Boolean(currentUser?.ageVerifiedAt);
     const isRemotePost = Boolean(
         post.isSwarm
         || post.author.isRemote

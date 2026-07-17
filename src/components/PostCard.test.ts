@@ -159,7 +159,7 @@ describe('PostCard', () => {
         expect(html).toContain('private-video.mp4');
     });
 
-    it('shows sensitive content by default to a signed-in member of an adult node', () => {
+    it('requires a pre-existing adult-node member to confirm their age', () => {
         mocks.nodeIsNsfw = true;
         mocks.user = {
             id: 'viewer-1',
@@ -171,9 +171,26 @@ describe('PostCard', () => {
 
         const html = renderToStaticMarkup(createElement(PostCard, { post: sensitivePost }));
 
+        expect(html).toContain('Review settings');
+        expect(html).toContain('Sensitive content');
+        expect(html).not.toContain('PRIVATE SENSITIVE BODY');
+        expect(html).not.toContain('private-video.mp4');
+    });
+
+    it('shows adult-node content after the member confirms their age', () => {
+        mocks.nodeIsNsfw = true;
+        mocks.user = {
+            id: 'viewer-1',
+            handle: 'viewer',
+            displayName: 'Viewer',
+            nsfwEnabled: false,
+            ageVerifiedAt: '2026-07-17T00:00:00.000Z',
+        };
+
+        const html = renderToStaticMarkup(createElement(PostCard, { post: sensitivePost }));
+
         expect(html).not.toContain('Review settings');
         expect(html).not.toContain('Sensitive content');
         expect(html).toContain('PRIVATE SENSITIVE BODY');
-        expect(html).toContain('private-video.mp4');
     });
 });

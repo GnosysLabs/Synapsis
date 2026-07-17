@@ -23,6 +23,7 @@ export default function ContentSettingsPage() {
     const [showAgeModal, setShowAgeModal] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
+    const localNodeIsNsfw = config?.isNsfw === true;
     const sensitiveViewingActive = Boolean(settings?.nsfwEnabled && settings.ageVerifiedAt);
 
     useEffect(() => {
@@ -179,7 +180,8 @@ export default function ContentSettingsPage() {
         );
     }
 
-    if (!shouldExposeAccountNsfwSettings(config?.isNsfw ?? false)) {
+    if (!shouldExposeAccountNsfwSettings(config?.isNsfw ?? false)
+        && settings?.ageVerifiedAt) {
         return (
             <div style={{ maxWidth: '600px', margin: '0 auto', padding: '24px 16px 64px' }}>
                 <header style={{
@@ -204,7 +206,7 @@ export default function ContentSettingsPage() {
                         Sensitive content enabled
                     </div>
                     <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.6 }}>
-                        This node is permanently designated adult-only, so sensitive content is enabled by default for every signed-in account.
+                        This node is permanently designated adult-only. Your age confirmation is on file, so sensitive content is enabled while you are signed in.
                     </div>
                 </div>
             </div>
@@ -281,7 +283,9 @@ export default function ContentSettingsPage() {
                                 Show NSFW Content
                             </div>
                             <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px' }}>
-                                {sensitiveViewingActive
+                                {localNodeIsNsfw && !settings?.ageVerifiedAt
+                                    ? 'This node is adult-only. Confirm that you are 18 or older before sensitive content can be shown.'
+                                    : sensitiveViewingActive
                                     ? 'You can see posts marked as sensitive or from NSFW accounts/nodes.'
                                     : settings?.nsfwEnabled && !settings.ageVerifiedAt
                                         ? 'Age confirmation is required before sensitive content can be shown.'
@@ -302,7 +306,11 @@ export default function ContentSettingsPage() {
                             disabled={saving}
                             className={`btn btn-sm ${sensitiveViewingActive ? 'btn-ghost' : 'btn-primary'}`}
                         >
-                            {sensitiveViewingActive ? 'Disable' : settings?.nsfwEnabled ? 'Verify age' : 'Enable'}
+                            {localNodeIsNsfw && !settings?.ageVerifiedAt
+                                ? 'Verify age'
+                                : sensitiveViewingActive
+                                    ? 'Disable'
+                                    : settings?.nsfwEnabled ? 'Verify age' : 'Enable'}
                         </button>
                     </div>
                 </div>

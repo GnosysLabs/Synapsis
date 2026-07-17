@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { nodes, users } from '@/db';
-import { eq } from 'drizzle-orm';
+import { eq, isNull } from 'drizzle-orm';
 import { requireAdmin } from '@/lib/auth/admin';
 import { resolveNodeNsfwTransition } from '@/lib/node/nsfw-classification';
 
@@ -24,6 +24,7 @@ export async function PATCH(req: NextRequest) {
             }
         }
 
+        const wasNsfw = node?.isNsfw === true;
         const nsfwTransition = resolveNodeNsfwTransition({
             currentIsNsfw: node?.isNsfw === true,
             requestedIsNsfw: data.isNsfw,
@@ -93,9 +94,10 @@ export async function PATCH(req: NextRequest) {
                 .returning();
         }
 
-        if (node.isNsfw) {
+        if (!wasNsfw && node.isNsfw) {
             await db.update(users)
-                .set({ nsfwEnabled: true, updatedAt: new Date() });
+                .set({ nsfwEnabled: false, updatedAt: new Date() })
+                .where(isNull(users.ageVerifiedAt));
         }
 
         return NextResponse.json({ node });

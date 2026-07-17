@@ -5,23 +5,33 @@ import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/tursodatabase/database';
 import { describe, expect, it } from 'vitest';
 
-const migrationPath = resolve(
+const correctionMigrationPath = resolve(
     process.cwd(),
-    'drizzle/20260717222500_adult_node_viewing_defaults/migration.sql',
+    'drizzle/20260717223800_require_adult_node_age_verification/migration.sql',
 );
 
-async function runMigration(nodeIsNsfw: boolean) {
+async function runCorrection({
+    nodeIsNsfw,
+    ageVerified,
+    nsfwEnabled,
+}: {
+    nodeIsNsfw: boolean;
+    ageVerified: boolean;
+    nsfwEnabled: boolean;
+}) {
     const client = new Database(':memory:');
     await client.connect();
     const database = drizzle({ client });
 
     try {
         await database.run(sql.raw('CREATE TABLE nodes (is_nsfw integer NOT NULL)'));
-        await database.run(sql.raw('CREATE TABLE users (id text PRIMARY KEY, nsfw_enabled integer NOT NULL, updated_at integer NOT NULL)'));
+        await database.run(sql.raw('CREATE TABLE users (id text PRIMARY KEY, nsfw_enabled integer NOT NULL, age_verified_at integer, updated_at integer NOT NULL)'));
         await database.run(sql.raw(`INSERT INTO nodes (is_nsfw) VALUES (${nodeIsNsfw ? 1 : 0})`));
-        await database.run(sql.raw("INSERT INTO users (id, nsfw_enabled, updated_at) VALUES ('legacy-user', 0, 0)"));
+        await database.run(sql.raw(
+            `INSERT INTO users (id, nsfw_enabled, age_verified_at, updated_at) VALUES ('legacy-user', ${nsfwEnabled ? 1 : 0}, ${ageVerified ? 1 : 'NULL'}, 0)`,
+        ));
 
-        const migration = await readFile(migrationPath, 'utf8');
+        const migration = await readFile(correctionMigrationPath, 'utf8');
         await database.run(sql.raw(migration));
 
         return await database.all<{ nsfwEnabled: number }>(sql.raw(
@@ -32,12 +42,28 @@ async function runMigration(nodeIsNsfw: boolean) {
     }
 }
 
-describe('adult-node viewing-default migration', () => {
-    it('persists nsfwEnabled=true for every existing account on an adult node', async () => {
-        await expect(runMigration(true)).resolves.toEqual([{ nsfwEnabled: 1 }]);
+describe('adult-node age-verification correction migration', () => {
+    it('undoes automatic opt-in for an existing account that never verified its age', async () => {
+        await expect(runCorrection({
+            nodeIsNsfw: true,
+            ageVerified: false,
+            nsfwEnabled: true,
+        })).resolves.toEqual([{ nsfwEnabled: 0 }]);
     });
 
-    it('does not opt accounts in on a general-purpose node', async () => {
-        await expect(runMigration(false)).resolves.toEqual([{ nsfwEnabled: 0 }]);
+    it('preserves access for an account that explicitly verified its age', async () => {
+        await expect(runCorrection({
+            nodeIsNsfw: true,
+            ageVerified: true,
+            nsfwEnabled: true,
+        })).resolves.toEqual([{ nsfwEnabled: 1 }]);
+    });
+
+    it('does not alter accounts on a general-purpose node', async () => {
+        await expect(runCorrection({
+            nodeIsNsfw: false,
+            ageVerified: false,
+            nsfwEnabled: false,
+        })).resolves.toEqual([{ nsfwEnabled: 0 }]);
     });
 });

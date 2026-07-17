@@ -218,7 +218,7 @@ export async function GET(
         const canRevealRequestedSensitivePost = Boolean(
             viewerAccess.viewer
             && revealSensitive
-            && (viewerAccess.localNodeIsNsfw || viewerAccess.viewer.ageVerifiedAt),
+            && viewerAccess.viewer.ageVerifiedAt,
         );
         if (viewerAccess.localNodeIsNsfw && !viewerAccess.viewer) {
             return NextResponse.json(

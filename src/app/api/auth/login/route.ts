@@ -43,7 +43,9 @@ export async function POST(request: Request) {
                 publicKey: user.publicKey,
                 privateKeyEncrypted: user.privateKeyEncrypted, // Client will decrypt with password
                 isNsfw: user.isNsfw,
-                nsfwEnabled: localNodeIsNsfw || user.nsfwEnabled,
+                nsfwEnabled: localNodeIsNsfw
+                    ? Boolean(user.ageVerifiedAt)
+                    : user.nsfwEnabled,
                 ageVerifiedAt: user.ageVerifiedAt?.toISOString() || null,
             },
         });

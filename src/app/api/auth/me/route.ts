@@ -44,12 +44,16 @@ export async function GET() {
                 publicKey: session.user.publicKey,
                 privateKeyEncrypted: session.user.privateKeyEncrypted,
                 isNsfw: session.user.isNsfw,
-                nsfwEnabled: localNodeIsNsfw || session.user.nsfwEnabled,
+                nsfwEnabled: localNodeIsNsfw
+                    ? Boolean(session.user.ageVerifiedAt)
+                    : session.user.nsfwEnabled,
                 ageVerifiedAt: session.user.ageVerifiedAt?.toISOString() || null,
             },
             accounts: accounts.map((account) => ({
                 ...account,
-                nsfwEnabled: localNodeIsNsfw || account.nsfwEnabled,
+                nsfwEnabled: localNodeIsNsfw
+                    ? Boolean(account.ageVerifiedAt)
+                    : account.nsfwEnabled,
             })),
         });
     } catch (error) {

@@ -22,16 +22,12 @@ export function shouldIncludeNsfwFeed({
 }): boolean {
     if (!viewer) return false;
 
-    // Signing in to a permanently adult-only node is the viewing opt-in. Those
-    // nodes do not expose an account-level NSFW toggle, so requiring that
-    // hidden preference (or a newer per-user age field) would lock legacy
-    // members out of their own node.
-    if (localNodeIsNsfw) return true;
-
-    // General-purpose nodes require both persisted age confirmation and the
-    // explicit account preference.
+    // A node becoming adult-only is not age consent for accounts that already
+    // existed there. Every viewer still needs their own persisted 18+
+    // confirmation. Once confirmed, adult-node membership implies the viewing
+    // preference because those nodes do not expose an account-level opt-out.
     if (!viewer.ageVerifiedAt) return false;
-    return viewer.nsfwEnabled === true;
+    return localNodeIsNsfw || viewer.nsfwEnabled === true;
 }
 
 export function canAccessSensitiveRemoteProfile({

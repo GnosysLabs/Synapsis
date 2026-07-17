@@ -29,7 +29,9 @@ export async function GET() {
     const localNodeIsNsfw = await isLocalNodeNsfw();
 
     return NextResponse.json({
-      nsfwEnabled: localNodeIsNsfw || user.nsfwEnabled,
+      nsfwEnabled: localNodeIsNsfw
+        ? Boolean(user.ageVerifiedAt)
+        : user.nsfwEnabled,
       ageVerifiedAt: user.ageVerifiedAt?.toISOString() || null,
       isNsfw: user.isNsfw, // Whether their account is marked NSFW
     });
@@ -62,9 +64,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Database not available' }, { status: 500 });
     }
 
-    // Adult-only nodes do not offer an account-level opt-out. Keep the stored
-    // preference aligned even if an old client calls this endpoint directly.
-    if (await isLocalNodeNsfw()) {
+    const localNodeIsNsfw = await isLocalNodeNsfw();
+
+    // A node conversion cannot consent on behalf of its existing users.
+    // Unverified adult-node members must explicitly confirm they are 18+.
+    if (localNodeIsNsfw && !user.ageVerifiedAt && (!nsfwEnabled || !confirmAge)) {
+      return NextResponse.json({
+        error: 'Age verification required',
+        requiresAgeConfirmation: true,
+        message: 'You must confirm you are 18 or older to access this adult-only node',
+      }, { status: 400 });
+    }
+
+    // Adult-only nodes have no account-level opt-out after age confirmation.
+    if (localNodeIsNsfw && user.ageVerifiedAt) {
       await db.update(users)
         .set({
           nsfwEnabled: true,

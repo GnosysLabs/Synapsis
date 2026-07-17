@@ -29,6 +29,7 @@ vi.mock('@/lib/auth/admin', () => ({
 
 vi.mock('drizzle-orm', () => ({
     eq: vi.fn(() => 'node-id-match'),
+    isNull: vi.fn(() => 'age-not-verified'),
 }));
 
 import { PATCH } from './route';
@@ -96,7 +97,8 @@ describe('PATCH /api/admin/node adult-only classification', () => {
             node: { isNsfw: true },
         });
         expect(update.set).toHaveBeenCalledWith(expect.objectContaining({ isNsfw: true }));
-        expect(update.set).toHaveBeenCalledWith(expect.objectContaining({ nsfwEnabled: true }));
+        expect(update.set).toHaveBeenCalledWith(expect.objectContaining({ nsfwEnabled: false }));
+        expect(update.where).toHaveBeenCalledWith('age-not-verified');
     });
 
     it('preserves adult-only status during unrelated settings updates', async () => {

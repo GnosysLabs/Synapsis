@@ -17,10 +17,6 @@ export function shouldBlurProfileMedia({
     if (!accountIsNsfw && !nodeIsNsfw) return false;
     if (!viewer) return true;
 
-    // Adult-only local nodes make sensitive viewing part of authenticated
-    // membership and intentionally hide the per-account viewing toggle.
-    if (localNodeIsNsfw) return false;
-
     if (!viewer.ageVerifiedAt) return true;
-    return viewer.nsfwEnabled !== true;
+    return !localNodeIsNsfw && viewer.nsfwEnabled !== true;
 }

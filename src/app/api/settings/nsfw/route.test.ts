@@ -81,6 +81,42 @@ describe('NSFW settings mutations', () => {
     await expect(response.json()).resolves.toMatchObject({ nsfwEnabled: true });
   });
 
+  it('does not opt an unverified account in when its node becomes adult-only', async () => {
+    nodeMocks.isLocalNodeNsfw.mockResolvedValue(true);
+    vi.mocked(requireSignedAction).mockResolvedValue({
+      id: 'unverified-user-id',
+      ageVerifiedAt: null,
+    } as never);
+    const payload = signedAction('update_nsfw_settings', { nsfwEnabled: false });
+
+    const response = await updateViewingPreference(request(payload) as never);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      requiresAgeConfirmation: true,
+    });
+  });
+
+  it('allows an adult-node member to opt in only after explicit age confirmation', async () => {
+    nodeMocks.isLocalNodeNsfw.mockResolvedValue(true);
+    vi.mocked(requireSignedAction).mockResolvedValue({
+      id: 'unverified-user-id',
+      ageVerifiedAt: null,
+    } as never);
+    const payload = signedAction('update_nsfw_settings', {
+      nsfwEnabled: true,
+      confirmAge: true,
+    });
+
+    const response = await updateViewingPreference(request(payload) as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      nsfwEnabled: true,
+      ageVerifiedAt: expect.any(String),
+    });
+  });
+
   it('lets an unverified legacy account persist age confirmation', async () => {
     vi.mocked(requireSignedAction).mockResolvedValue({
       id: 'legacy-user-id',

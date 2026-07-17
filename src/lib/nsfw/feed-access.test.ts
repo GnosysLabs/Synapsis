@@ -36,11 +36,11 @@ describe('shouldIncludeNsfwFeed', () => {
         })).toBe(true);
     });
 
-    it('defaults authenticated adult-node members to sensitive viewing', () => {
+    it('does not treat a node conversion as age consent for existing members', () => {
         expect(shouldIncludeNsfwFeed({
             viewer: { nsfwEnabled: false, ageVerifiedAt: null },
             localNodeIsNsfw: true,
-        })).toBe(true);
+        })).toBe(false);
     });
 
     it('respects an enabled account preference on a general-purpose node', () => {
