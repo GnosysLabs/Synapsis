@@ -7,6 +7,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { z } from 'zod';
+import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { isPostSensitive } from '@/lib/nsfw/content-visibility';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -59,11 +63,29 @@ export async function GET(request: NextRequest, context: RouteContext) {
     // Find the post
     const post = await db.query.posts.findFirst({
       where: { id: postId },
+      with: { author: true },
     });
 
     if (!post || post.isRemoved) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
+
+    const trustedRead = await isTrustedFederationRead(request);
+    const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
+    const authorIsLocal = Boolean(post.author && hasStrictLocalUserOrigin(post.author));
+    const sensitive = !post.author || isPostSensitive({
+      postIsNsfw: post.isNsfw,
+      authorIsNsfw: post.author.isNsfw,
+      nodeIsNsfw: authorIsLocal ? localNodeIsNsfw : undefined,
+      isRemote: !authorIsLocal,
+    });
+    if ((sensitive || checkHandle) && !trustedRead) {
+      return NextResponse.json(
+        { error: 'Trusted federation read required' },
+        { status: 403, headers: { 'Cache-Control': 'private, no-store' } },
+      );
+    }
+    const privateHeaders = { 'Cache-Control': 'private, no-store' };
 
     // If checking a specific handle
     if (checkHandle) {
@@ -79,7 +101,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
           isLiked: !!remoteLike,
           checkedHandle: checkHandle,
           checkedDomain: checkDomain,
-        });
+        }, { headers: privateHeaders });
       }
 
       // No domain = local user
@@ -97,7 +119,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
           likesCount: post.likesCount,
           isLiked: !!liked,
           checkedHandle: checkHandle,
-        });
+        }, { headers: privateHeaders });
       }
 
       return NextResponse.json({
@@ -105,14 +127,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
         likesCount: post.likesCount,
         isLiked: false,
         checkedHandle: checkHandle,
-      });
+      }, { headers: privateHeaders });
     }
 
     // Return general like info
     return NextResponse.json({
       postId,
       likesCount: post.likesCount,
-    });
+    }, { headers: privateHeaders });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid input', details: error.issues }, { status: 400 });

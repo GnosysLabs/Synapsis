@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import { db, users, posts } from '@/db';
-import { like, or, and, eq } from 'drizzle-orm';
+import { like, or, and, eq, isNull, notLike } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { canCurrentViewerAccessSensitiveRemoteProfile } from '@/lib/nsfw/remote-profile-access';
+import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
+import {
+    isPostSensitive,
+    redactSensitivePostForViewer,
+    redactSensitiveUserSummary,
+} from '@/lib/nsfw/content-visibility';
 
 const embeddedPostRelations = {
     author: true,
@@ -70,6 +76,10 @@ export async function GET(request: Request) {
                 message: 'Search requires database connection'
             });
         }
+        const { viewer, localNodeIsNsfw, canViewSensitive } = await getSensitiveContentViewerAccess();
+        if (localNodeIsNsfw && !viewer) {
+            return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+        }
 
         // Normalize query for local user search
         // Strip leading @ and local domain if present
@@ -106,6 +116,8 @@ export async function GET(request: Request) {
                     .from(users)
                     .where(and(
                         eq(users.handle, localSearchQuery),
+                        isNull(users.nodeId),
+                        notLike(users.handle, '%@%'),
                         eq(users.isSuspended, false),
                         eq(users.isSilenced, false)
                     ))
@@ -123,6 +135,8 @@ export async function GET(request: Request) {
                         like(users.displayName, searchPattern),
                         like(users.bio, searchPattern)
                     ),
+                    isNull(users.nodeId),
+                    notLike(users.handle, '%@%'),
                     eq(users.isSuspended, false),
                     eq(users.isSilenced, false)
                 );
@@ -141,6 +155,11 @@ export async function GET(request: Request) {
                 // Filter out remote placeholder users (those with @ in handle)
                 searchUsers = localUsers.filter(u => !u.handle.includes('@'));
             }
+            searchUsers = searchUsers.map((searchUser) => redactSensitiveUserSummary({
+                ...searchUser,
+                isRemote: false,
+                nodeIsNsfw: localNodeIsNsfw,
+            }, canViewSensitive));
         }
 
         // Swarm user lookup (exact handle@domain queries)
@@ -159,9 +178,10 @@ export async function GET(request: Request) {
                         const profileData = await fetchSwarmUserProfile(parsedRemote.handle, parsedRemote.domain, 0);
                         if (profileData?.profile) {
                             const profile = profileData.profile;
-                            const canAccessProfile = await canCurrentViewerAccessSensitiveRemoteProfile(
-                                profile.isNsfw || profile.nodeIsNsfw,
-                            );
+                            const canAccessProfile = await canCurrentViewerAccessSensitiveRemoteProfile({
+                                accountIsNsfw: profile.isNsfw,
+                                nodeIsNsfw: profile.nodeIsNsfw,
+                            });
                             const fullHandle = `${parsedRemote.handle}@${parsedRemote.domain}`;
                             const remoteUser: SearchUser = {
                                 id: `swarm:${parsedRemote.domain}:${parsedRemote.handle}`,
@@ -203,6 +223,16 @@ export async function GET(request: Request) {
                 limit,
             });
             searchPosts = postResults;
+            if (!canViewSensitive) {
+                searchPosts = searchPosts.filter((post) => !isPostSensitive({
+                    postIsNsfw: post.isNsfw,
+                    authorIsNsfw: (post as typeof post & {
+                        author?: { isNsfw?: boolean };
+                    }).author?.isNsfw,
+                    nodeIsNsfw: localNodeIsNsfw,
+                    isRemote: false,
+                }));
+            }
 
             // Populate isLiked and isReposted for authenticated users
             try {
@@ -238,7 +268,14 @@ export async function GET(request: Request) {
 
         return NextResponse.json({
             users: searchUsers,
-            posts: searchPosts,
+            posts: searchPosts.map((post) => redactSensitivePostForViewer(
+                post as unknown as Record<string, unknown>,
+                {
+                    canViewSensitive,
+                    localNodeDomain: localDomain || 'localhost:43821',
+                    localNodeIsNsfw,
+                },
+            )),
         });
     } catch (error) {
         console.error('Search error:', error);

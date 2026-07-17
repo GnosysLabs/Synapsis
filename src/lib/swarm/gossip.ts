@@ -20,6 +20,7 @@ import {
 import { upsertHandleEntries } from '@/lib/federation/handles';
 import { buildAnnouncement } from './discovery';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
+import { safeFederationRequest } from './safe-federation-http';
 
 /**
  * Build a gossip payload to send to another node
@@ -148,18 +149,20 @@ export async function gossipToNode(
     const baseUrl = `https://${publicTargetDomain}`;
     const url = `${baseUrl}/api/swarm/gossip`;
 
-    const response = await fetch(url, {
+    const response = await safeFederationRequest(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
       body: JSON.stringify(signedPayload),
+      timeoutMs: 8_000,
+      maxResponseBytes: 256 * 1024,
     });
 
     const durationMs = Date.now() - startTime;
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       const error = `HTTP ${response.status}`;
       await markNodeFailure(publicTargetDomain);
       await logSync(publicTargetDomain, 'push', {
@@ -182,7 +185,7 @@ export async function gossipToNode(
       };
     }
 
-    const gossipResponse = await response.json() as SwarmGossipResponse;
+    const gossipResponse = response.json() as SwarmGossipResponse;
 
     // Process the response (nodes and handles they sent back)
     const nodeResult = await upsertSwarmNodes(gossipResponse.nodes, publicTargetDomain);

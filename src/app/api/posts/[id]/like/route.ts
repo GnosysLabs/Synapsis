@@ -6,14 +6,39 @@ import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
-import { normalizeSameNodePostId } from '@/lib/swarm/post-id';
+import { signedFederationRead } from '@/lib/swarm/signed-read';
+
+type SwarmPostSnapshotResponse = {
+    post?: {
+        author?: { handle?: string; displayName?: string; avatarUrl?: string | null };
+        content?: string;
+        createdAt?: string;
+        likesCount?: number;
+        repostsCount?: number;
+        repliesCount?: number;
+        linkPreviewUrl?: string | null;
+        linkPreviewTitle?: string | null;
+        linkPreviewDescription?: string | null;
+        linkPreviewImage?: string | null;
+        linkPreviewType?: string | null;
+        linkPreviewVideoUrl?: string | null;
+        linkPreviewMedia?: Array<{
+            url: string;
+            width?: number | null;
+            height?: number | null;
+            mimeType?: string | null;
+        }> | null;
+        media?: unknown[];
+    };
+};
+import { normalizeSameNodePostId, parseSwarmPostId } from '@/lib/swarm/post-id';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
 // UUID or swarm post ID format (swarm:domain:uuid)
 const postIdSchema = z.union([
     z.string().uuid(),
-    z.string().regex(/^swarm:[^:]+:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, 'Invalid swarm post ID format'),
+    z.string().refine((value) => parseSwarmPostId(value) !== null, 'Invalid swarm post ID format'),
 ]);
 
 function isSignedActionPayload(payload: unknown): payload is SignedAction {
@@ -65,16 +90,17 @@ function extractSwarmPostId(apId: string): string | null {
 async function fetchSwarmPostSnapshot(domain: string, originalPostId: string) {
     try {
         const protocol = domain.includes('localhost') ? 'http' : 'https';
-        const res = await fetch(`${protocol}://${domain}/api/swarm/posts/${originalPostId}`, {
+        const res = await signedFederationRead(`${protocol}://${domain}/api/swarm/posts/${originalPostId}`, {
             headers: { Accept: 'application/json' },
-            signal: AbortSignal.timeout(5000),
+            timeoutMs: 5_000,
+            maxResponseBytes: 1024 * 1024,
         });
 
-        if (!res.ok) {
+        if (res.status < 200 || res.status >= 300) {
             return null;
         }
 
-        const data = await res.json();
+        const data = res.json() as SwarmPostSnapshotResponse;
         const post = data.post;
         if (!post) {
             return null;
@@ -129,12 +155,11 @@ export async function POST(request: Request, context: RouteContext) {
 
         // Handle swarm posts (format: swarm:domain:uuid)
         if (postId.startsWith('swarm:')) {
-            const targetDomain = extractSwarmDomain(postId);
-            const originalPostId = extractSwarmPostId(postId);
-
-            if (!targetDomain || !originalPostId) {
+            const parsedSwarmId = parseSwarmPostId(postId);
+            if (!parsedSwarmId) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
             }
+            const { domain: targetDomain, originalPostId } = parsedSwarmId;
 
             // Deliver like directly to the origin node
             const { deliverSwarmLike } = await import('@/lib/swarm/interactions');
@@ -316,12 +341,11 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Handle swarm posts (format: swarm:domain:uuid)
         if (postId.startsWith('swarm:')) {
-            const targetDomain = extractSwarmDomain(postId);
-            const originalPostId = extractSwarmPostId(postId);
-
-            if (!targetDomain || !originalPostId) {
+            const parsedSwarmId = parseSwarmPostId(postId);
+            if (!parsedSwarmId) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
             }
+            const { domain: targetDomain, originalPostId } = parsedSwarmId;
 
             // Deliver unlike directly to the origin node
             const { deliverSwarmUnlike } = await import('@/lib/swarm/interactions');

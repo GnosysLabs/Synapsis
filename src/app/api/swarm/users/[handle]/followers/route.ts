@@ -6,8 +6,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, follows, users } from '@/db';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull, notLike } from 'drizzle-orm';
 import { hydrateSwarmUsers } from '@/lib/swarm/user-hydration';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 
 export interface SwarmFollowerUser {
   handle: string;
@@ -15,6 +19,9 @@ export interface SwarmFollowerUser {
   avatarUrl?: string;
   bio?: string;
   isRemote?: boolean;
+  isNsfw?: boolean;
+  nodeIsNsfw?: boolean;
+  nodeDomain?: string;
 }
 
 type RouteContext = { params: Promise<{ handle: string }> };
@@ -29,6 +36,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const { handle } = await context.params;
     const cleanHandle = handle.toLowerCase().replace(/^@/, '');
+    if (!/^[a-z0-9_]{1,64}$/.test(cleanHandle)) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
     const { searchParams } = new URL(request.url);
     const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 100);
 
@@ -37,13 +47,20 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
 
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
+    const nodeIsNsfw = await requireLocalNodeNsfwClassification();
+    const trustedRead = await isTrustedFederationRead(request);
 
     // Find the user
     const user = await db.query.users.findFirst({
-      where: { handle: cleanHandle },
+      where: {
+        AND: [
+          { handle: cleanHandle },
+          { nodeId: { isNull: true } },
+        ],
+      },
     });
 
-    if (!user) {
+    if (!user || !hasStrictLocalUserOrigin(user)) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
@@ -59,16 +76,25 @@ export async function GET(request: NextRequest, context: RouteContext) {
       })
       .from(follows)
       .innerJoin(users, eq(follows.followerId, users.id))
-      .where(eq(follows.followingId, user.id))
+      .where(and(
+        eq(follows.followingId, user.id),
+        isNull(users.nodeId),
+        notLike(users.handle, '%@%'),
+      ))
       .limit(limit);
 
-    const localFollowers: SwarmFollowerUser[] = userFollowers.map(f => ({
-      handle: f.follower.handle, // Local handle without domain
-      displayName: f.follower.displayName || f.follower.handle,
-      avatarUrl: f.follower.avatarUrl || undefined,
-      bio: f.follower.bio || undefined,
-      isRemote: false,
-    }));
+    const localFollowers: SwarmFollowerUser[] = userFollowers
+      .filter((entry) => hasStrictLocalUserOrigin(entry.follower))
+      .map(f => ({
+        handle: f.follower.handle, // Local handle without domain
+        displayName: f.follower.displayName || f.follower.handle,
+        avatarUrl: f.follower.avatarUrl || undefined,
+        bio: f.follower.bio || undefined,
+        isRemote: false,
+        isNsfw: f.follower.isNsfw,
+        nodeIsNsfw,
+        nodeDomain,
+      }));
 
     // Get remote followers
     const userRemoteFollowers = await db.query.remoteFollowers.findMany({
@@ -82,6 +108,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       avatarUrl: undefined,
       bio: undefined,
       isRemote: true,
+      nodeDomain: f.handle?.split('@').pop(),
     }));
 
     // Merge all followers
@@ -97,6 +124,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
       bio: f.bio,
       isRemote: f.isRemote || false,
       nodeDomain: undefined,
+      isNsfw: f.isNsfw,
+      nodeIsNsfw: f.nodeIsNsfw,
     }));
 
     const hydrated = await hydrateSwarmUsers(toHydrate);
@@ -108,10 +137,20 @@ export async function GET(request: NextRequest, context: RouteContext) {
       avatarUrl: u.avatarUrl || undefined, // Map null to undefined
       bio: u.bio || undefined,
       isRemote: u.isRemote,
+      isNsfw: u.isNsfw,
+      nodeIsNsfw: u.nodeIsNsfw,
+      nodeDomain: u.nodeDomain,
     }));
+    const profileRestricted = !trustedRead && (user.isNsfw || nodeIsNsfw);
+    const responseFollowers = profileRestricted
+      ? []
+      : trustedRead
+        ? finalFollowers
+        : finalFollowers.map((follower) => redactSensitiveUserSummary(follower, false));
 
     return NextResponse.json({
-      followers: finalFollowers,
+      followers: responseFollowers,
+      restricted: profileRestricted || undefined,
       nodeDomain,
       timestamp: new Date().toISOString(),
     });

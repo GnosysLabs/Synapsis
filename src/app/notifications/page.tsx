@@ -13,6 +13,9 @@ interface NotificationActor {
     handle: string;
     displayName: string | null;
     avatarUrl: string | null;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
+    nodeDomain?: string | null;
 }
 
 interface NotificationPost {
@@ -25,6 +28,7 @@ interface NotificationPost {
         altText: string | null;
     }>;
     linkPreviewImage: string | null;
+    sensitiveRestricted?: boolean;
 }
 
 interface Notification {
@@ -211,7 +215,14 @@ function NotificationItem({
         >
             <Link href={actorProfilePath} style={{ flexShrink: 0 }}>
                 <div className="avatar">
-                    <AvatarImage avatarUrl={actor?.avatarUrl} seed={actor?.handle || 'unknown'} alt={actor?.displayName || actor?.handle || 'Unknown user'} />
+                    <AvatarImage
+                        avatarUrl={actor?.avatarUrl}
+                        seed={actor?.handle || 'unknown'}
+                        nodeDomain={actor?.nodeDomain}
+                        isNsfw={actor?.isNsfw}
+                        nodeIsNsfw={actor?.nodeIsNsfw}
+                        alt={actor?.displayName || actor?.handle || 'Unknown user'}
+                    />
                 </div>
             </Link>
 
@@ -251,7 +262,7 @@ function NotificationItem({
                             textDecoration: 'none',
                             overflow: 'hidden',
                         }}
-                        aria-label={`View post: ${postPreview?.label || 'View post'}`}
+                        aria-label={`View post: ${notification.post.sensitiveRestricted ? 'Sensitive post hidden' : postPreview?.label || 'View post'}`}
                     >
                         {postPreview?.imageUrl && (
                             // eslint-disable-next-line @next/next/no-img-element
@@ -274,7 +285,9 @@ function NotificationItem({
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
                         }}>
-                            {postPreview?.label || 'View post'}
+                            {notification.post.sensitiveRestricted
+                                ? 'Sensitive post hidden'
+                                : postPreview?.label || 'View post'}
                         </span>
                     </Link>
                 )}

@@ -1,5 +1,6 @@
 export interface NsfwFeedViewer {
     nsfwEnabled?: boolean;
+    ageVerifiedAt?: string | Date | null;
 }
 
 export function canAccessNodeFeed({
@@ -21,8 +22,10 @@ export function shouldIncludeNsfwFeed({
 }): boolean {
     if (!viewer) return false;
 
-    // Signing in to an NSFW node is consent to view its feed. On other nodes,
-    // the viewer's explicit account preference remains authoritative.
+    // Authentication alone is not age consent. Adult-only nodes may imply the
+    // viewing preference, but every viewer still needs a persisted 18+
+    // confirmation before raw sensitive data can leave the server.
+    if (!viewer.ageVerifiedAt) return false;
     return localNodeIsNsfw || viewer.nsfwEnabled === true;
 }
 

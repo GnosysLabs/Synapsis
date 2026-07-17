@@ -5,6 +5,7 @@ import { useState, type ComponentProps } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useDomain, useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { shouldBlurProfileMedia } from '@/lib/nsfw/profile-media';
+import { isRemoteAvatarSensitivityUnknown } from '@/lib/nsfw/content-visibility';
 
 export function getDiceBearAvatarSeed(
     seed: string,
@@ -38,22 +39,36 @@ interface AvatarImageProps extends Omit<ComponentProps<typeof Image>, 'src' | 'a
     height?: number;
 }
 
-export function AvatarImage({ avatarUrl, seed, isNsfw = false, nodeIsNsfw, nodeDomain, alt = '', width = 96, height = 96, onError, style, ...props }: AvatarImageProps) {
+export function AvatarImage({ avatarUrl, seed, isNsfw, nodeIsNsfw, nodeDomain, alt = '', width = 96, height = 96, onError, style, ...props }: AvatarImageProps) {
     const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
     const { user } = useAuth();
     const { config } = useRuntimeConfig();
     const localNodeDomain = useDomain();
     const customAvatar = avatarUrl?.trim();
-    const src = customAvatar && failedAvatarUrl !== customAvatar
-        ? customAvatar
-        : getDiceBearAvatarUrl(seed, nodeDomain, localNodeDomain);
-    const localNodeIsNsfw = config?.isNsfw ?? false;
+    const placeholderUrl = getDiceBearAvatarUrl(seed, nodeDomain, localNodeDomain);
+    const localNodeClassificationKnown = config?.classificationKnown === true;
+    const localNodeIsNsfw = localNodeClassificationKnown && config?.isNsfw === true;
+    const sensitivityUnknown = isRemoteAvatarSensitivityUnknown({
+        seed,
+        nodeDomain,
+        localNodeDomain,
+        isNsfw,
+        nodeIsNsfw,
+    });
     const blurred = shouldBlurProfileMedia({
-        accountIsNsfw: isNsfw,
+        accountIsNsfw: isNsfw === true || sensitivityUnknown || !localNodeClassificationKnown,
         nodeIsNsfw: nodeIsNsfw ?? localNodeIsNsfw,
         localNodeIsNsfw,
         viewer: user,
     });
+    // Do not rely on CSS blur for access control: a blurred image still fetches
+    // and exposes its original URL in the DOM. Restricted avatars use a
+    // generated placeholder, so the sensitive URL never reaches the browser.
+    const src = blurred
+        ? placeholderUrl
+        : customAvatar && failedAvatarUrl !== customAvatar
+            ? customAvatar
+            : placeholderUrl;
 
     return (
         <Image
@@ -63,14 +78,10 @@ export function AvatarImage({ avatarUrl, seed, isNsfw = false, nodeIsNsfw, nodeD
             alt={alt}
             width={width}
             height={height}
-            style={{
-                ...style,
-                filter: blurred ? 'blur(12px)' : style?.filter,
-                transform: blurred ? 'scale(1.12)' : style?.transform,
-            }}
+            style={style}
             onError={(event) => {
                 onError?.(event);
-                if (customAvatar && failedAvatarUrl !== customAvatar) setFailedAvatarUrl(customAvatar);
+                if (!blurred && customAvatar && failedAvatarUrl !== customAvatar) setFailedAvatarUrl(customAvatar);
             }}
         />
     );

@@ -9,6 +9,9 @@ import { db, chatMessages, users } from '@/db';
 import { and, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
 import { E2EE_CHAT_ACTION, E2EE_PROTOCOL_VERSION, e2eeMessageEnvelopeSchema } from '@/lib/e2ee/protocol';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
+import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 
 export async function GET() {
   try {
@@ -20,6 +23,11 @@ export async function GET() {
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
+    const canViewSensitive = shouldIncludeNsfwFeed({
+      viewer: session.user,
+      localNodeIsNsfw,
+    });
 
     // Get all conversations for this user
     const conversations = await db.query.chatConversations.findMany({
@@ -92,6 +100,7 @@ export async function GET() {
           avatarUrl: users.avatarUrl,
           did: users.did,
           publicKey: users.publicKey,
+          isNsfw: users.isNsfw,
         })
         .from(users)
         .where(latestSenderDids.size > 0
@@ -117,19 +126,31 @@ export async function GET() {
           : null;
         const cachedUser = usersByHandle.get(participant2Handle)
           || (localHandle ? usersByHandle.get(localHandle) : undefined);
-        const participant2Info = cachedUser
+        const participantDomain = separator > 0 ? participant2Handle.slice(separator + 1) : null;
+        const participantIsRemote = Boolean(participantDomain && participantDomain !== localNodeDomain);
+        const participant2Info = redactSensitiveUserSummary(cachedUser
           ? {
               handle: cachedUser.handle,
               displayName: cachedUser.displayName || cachedUser.handle,
               avatarUrl: cachedUser.avatarUrl || null,
               did: cachedUser.did || '',
+              isRemote: participantIsRemote,
+              nodeDomain: participantDomain,
+              isNsfw: participantIsRemote
+                ? cachedUser.isNsfw === true ? true : undefined
+                : cachedUser.isNsfw,
+              nodeIsNsfw: participantIsRemote ? undefined : localNodeIsNsfw,
             }
           : {
               handle: participant2Handle,
               displayName: participant2Handle,
               avatarUrl: null as string | null,
               did: '',
-            };
+              isRemote: participantIsRemote,
+              nodeDomain: participantDomain,
+              isNsfw: participantIsRemote ? undefined : false,
+              nodeIsNsfw: participantIsRemote ? undefined : localNodeIsNsfw,
+            }, canViewSensitive);
 
         const latest = latestByConversation.get(conv.id) || null;
         let lastMessage: {

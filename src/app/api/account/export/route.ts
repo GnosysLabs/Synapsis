@@ -21,6 +21,8 @@ import {
     type SignedUserAction,
 } from '@/lib/e2ee/protocol';
 import { encryptionKeyIdFromPublicKey } from '@/lib/e2ee/bundle-proof';
+import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 
 // We'll use a simple in-memory zip approach
 // For production, consider using a streaming zip library
@@ -215,6 +217,10 @@ export async function POST(req: NextRequest) {
         }
 
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const canViewSensitive = shouldIncludeNsfwFeed({
+            viewer: user,
+            localNodeIsNsfw: await requireLocalNodeNsfwClassification(),
+        });
 
         // Fetch user's posts
         const userPosts = await db.query.posts.findMany({
@@ -280,8 +286,11 @@ export async function POST(req: NextRequest) {
                 handle: f.targetHandle,
                 isRemote: true,
                 displayName: f.displayName,
-                bio: f.bio,
-                avatarUrl: f.avatarUrl,
+                // Legacy remote-follow snapshots do not carry authoritative
+                // account/node classifiers. Treat their profile media and bio
+                // as sensitive when the exporting viewer has NSFW disabled.
+                bio: canViewSensitive ? f.bio : null,
+                avatarUrl: canViewSensitive ? f.avatarUrl : null,
             })),
         ];
 
@@ -303,7 +312,11 @@ export async function POST(req: NextRequest) {
             messages: conv.messages.map(msg => ({
                 senderHandle: msg.senderHandle,
                 senderDisplayName: msg.senderDisplayName,
-                senderAvatarUrl: msg.senderAvatarUrl,
+                senderAvatarUrl: canViewSensitive
+                    || msg.senderDid === user.did
+                    || msg.senderHandle === user.handle
+                    ? msg.senderAvatarUrl
+                    : null,
                 senderNodeDomain: msg.senderNodeDomain,
                 senderDid: msg.senderDid,
                 content: msg.protocolVersion === 0 ? msg.content : null,

@@ -549,6 +549,9 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
 
   // NSFW flag (synced from remote node)
   isNsfw: integer('is_nsfw', { mode: 'boolean' }).default(false).notNull(),
+  // Legacy discovery payloads omitted isNsfw. Keep that distinct from an
+  // authoritative `false` so missing metadata can never be trusted as safe.
+  nsfwClassificationKnown: integer('nsfw_classification_known', { mode: 'boolean' }).default(false).notNull(),
 
   // Discovery metadata
   discoveredVia: text('discovered_via'), // Domain of node that told us about this one

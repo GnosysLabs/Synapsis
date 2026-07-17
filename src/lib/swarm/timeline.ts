@@ -9,6 +9,8 @@ import type { SwarmPost } from '@/app/api/swarm/timeline/route';
 import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import { feedActivityDate, getSourceContinuationDate } from '@/lib/posts/feed-pagination';
+import { isPostSensitive } from '@/lib/nsfw/content-visibility';
+import { signedFederationRead } from './signed-read';
 
 interface TimelineResult {
   posts: SwarmPost[];
@@ -30,6 +32,29 @@ function isReplyPost(post: SwarmPost): boolean {
     // Defensive against older or non-conforming node payloads.
     (post as SwarmPost & { replyTo?: unknown }).replyTo
   );
+}
+
+function isSensitiveSwarmPost(
+  post: SwarmPost,
+  fallbackNodeIsNsfw?: boolean,
+): boolean {
+  const nodeIsNsfw = typeof post.nodeIsNsfw === 'boolean'
+    ? post.nodeIsNsfw || fallbackNodeIsNsfw === true
+    : fallbackNodeIsNsfw;
+  if (isPostSensitive({
+    postIsNsfw: post.isNsfw,
+    authorIsNsfw: post.author?.isNsfw,
+    nodeIsNsfw,
+    isRemote: true,
+  })) {
+    return true;
+  }
+
+  if (post.repostOf && isSensitiveSwarmPost(post.repostOf, post.repostOf.nodeIsNsfw)) {
+    return true;
+  }
+  const legacyReply = (post as SwarmPost & { replyTo?: SwarmPost | null }).replyTo;
+  return Boolean(legacyReply && isSensitiveSwarmPost(legacyReply, legacyReply.nodeIsNsfw));
 }
 
 /**
@@ -137,21 +162,17 @@ async function fetchNodeTimeline(
     }
     const url = `${baseUrl}/api/swarm/timeline?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
-
-    const response = await fetch(url, {
+    const response = await signedFederationRead(url, {
       headers: { 'Accept': 'application/json' },
-      signal: controller.signal,
+      timeoutMs: 5_000,
+      maxResponseBytes: 1024 * 1024,
     });
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return { posts: [], error: `HTTP ${response.status}` };
     }
 
-    const data = await response.json();
+    const data = response.json() as { posts?: SwarmPost[]; nodeIsNsfw?: boolean };
     return { posts: data.posts || [], nodeIsNsfw: data.nodeIsNsfw };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -185,6 +206,9 @@ export async function fetchSwarmTimeline(
   ];
   const allowedDomains = await filterBlockedDomains(candidateDomains);
   const nodesToQuery = maxNodes === undefined ? allowedDomains : allowedDomains.slice(0, maxNodes);
+  const knownNsfwByDomain = new Map(
+    nodes.map((node) => [normalizeNodeDomain(node.domain), node.isNsfw]),
+  );
 
   console.log(`[Swarm Timeline] Querying ${nodesToQuery.length} nodes: ${nodesToQuery.join(', ')}`);
   console.log(`[Swarm Timeline] includeNsfw: ${includeNsfw}, cursor: ${cursor || 'none'}`);
@@ -195,6 +219,7 @@ export async function fetchSwarmTimeline(
       const result = await fetchNodeTimeline(domain, postsPerNode, cursor);
       return {
         domain,
+        knownNodeIsNsfw: knownNsfwByDomain.get(normalizeNodeDomain(domain)),
         ...result,
       };
     })
@@ -206,12 +231,19 @@ export async function fetchSwarmTimeline(
 
   for (const result of results) {
     const nonReplyPosts = result.posts.filter(post => !isReplyPost(post));
+    const effectiveNodeIsNsfw = result.knownNodeIsNsfw === true
+      || result.nodeIsNsfw === true;
 
     // Filter NSFW posts only if user doesn't want NSFW content
     // A post is NSFW if it's explicitly marked OR comes from an NSFW node
     const filteredPosts = includeNsfw
       ? nonReplyPosts
-      : nonReplyPosts.filter(p => !p.isNsfw && !p.nodeIsNsfw);
+      : nonReplyPosts.filter((post) => !isSensitiveSwarmPost(
+          post,
+          typeof result.nodeIsNsfw === 'boolean' || typeof result.knownNodeIsNsfw === 'boolean'
+            ? effectiveNodeIsNsfw
+            : undefined,
+        ));
 
     // Log filtering details for debugging
     const nsfwPosts = nonReplyPosts.filter(p => p.isNsfw);
@@ -223,7 +255,9 @@ export async function fetchSwarmTimeline(
       domain: result.domain,
       postCount: result.posts.length,
       filteredCount: filteredPosts.length,
-      isNsfw: result.nodeIsNsfw,
+      isNsfw: typeof result.nodeIsNsfw === 'boolean' || typeof result.knownNodeIsNsfw === 'boolean'
+        ? effectiveNodeIsNsfw
+        : undefined,
       error: result.error,
     });
 

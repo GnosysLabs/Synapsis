@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth/admin';
 import { upsertHandleEntries } from '@/lib/federation/handles';
+import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 
 const gossipSchema = z.object({
     nodes: z.array(z.string().min(1)).min(1),
@@ -25,14 +26,17 @@ export async function POST(request: Request) {
             }
 
             try {
-                const res = await fetch(url.toString(), { method: 'GET' });
-                if (!res.ok) {
+                const res = await safeFederationRequest(url.toString(), {
+                    timeoutMs: 8_000,
+                    maxResponseBytes: 256 * 1024,
+                });
+                if (res.status < 200 || res.status >= 300) {
                     results.push({ node, success: false, error: `HTTP ${res.status}` });
                     continue;
                 }
 
-                const payload = await res.json();
-                const handles = Array.isArray(payload?.handles) ? payload.handles : [];
+                const payload = res.json() as { handles?: unknown };
+                const handles = Array.isArray(payload.handles) ? payload.handles : [];
                 const merged = await upsertHandleEntries(handles);
 
                 results.push({

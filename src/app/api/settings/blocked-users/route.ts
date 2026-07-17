@@ -3,11 +3,19 @@ import { db } from '@/db';
 import { blocks } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
+import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 
 // GET - List blocked users
 export async function GET() {
     try {
         const currentUser = await requireAuth();
+        const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
+        const canViewSensitive = shouldIncludeNsfwFeed({
+            viewer: currentUser,
+            localNodeIsNsfw,
+        });
 
         const blocked = await db.query.blocks.findMany({
             where: { userId: currentUser.id },
@@ -18,13 +26,26 @@ export async function GET() {
         });
 
         return NextResponse.json({
-            blockedUsers: blocked.map(b => ({
-                id: b.blockedUser.id,
-                handle: b.blockedUser.handle,
-                displayName: b.blockedUser.displayName,
-                avatarUrl: b.blockedUser.avatarUrl,
-                blockedAt: b.createdAt.toISOString(),
-            })),
+            blockedUsers: blocked.map((b) => {
+                const separator = b.blockedUser.handle.lastIndexOf('@');
+                const nodeDomain = separator > 0
+                    ? b.blockedUser.handle.slice(separator + 1)
+                    : null;
+                const isRemote = Boolean(nodeDomain);
+                return redactSensitiveUserSummary({
+                    id: b.blockedUser.id,
+                    handle: b.blockedUser.handle,
+                    displayName: b.blockedUser.displayName,
+                    avatarUrl: b.blockedUser.avatarUrl,
+                    blockedAt: b.createdAt.toISOString(),
+                    isRemote,
+                    nodeDomain,
+                    isNsfw: isRemote
+                        ? b.blockedUser.isNsfw === true ? true : undefined
+                        : b.blockedUser.isNsfw,
+                    nodeIsNsfw: isRemote ? undefined : localNodeIsNsfw,
+                }, canViewSensitive);
+            }),
         });
     } catch (error) {
         if (error instanceof Error && error.message === 'Unauthorized') {

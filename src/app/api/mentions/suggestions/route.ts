@@ -7,9 +7,13 @@ import { requireAuth } from '@/lib/auth';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { isSwarmNode } from '@/lib/swarm/interactions';
 import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
-import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
+import { signedFederationRead } from '@/lib/swarm/signed-read';
+import { getKnownSwarmNodeNsfw } from '@/lib/swarm/registry';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { isValidNodeDomain } from '@/lib/utils/federation';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
+import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 
 const querySchema = z.object({
   q: z.string().max(280),
@@ -21,6 +25,8 @@ const remoteDirectorySchema = z.object({
     handle: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
     displayName: z.string().max(100).nullable(),
     avatarUrl: z.string().url().nullable(),
+    isNsfw: z.boolean().optional(),
+    nodeIsNsfw: z.boolean().optional(),
   })).max(12),
 });
 
@@ -30,6 +36,8 @@ export interface MentionSuggestion {
   avatarUrl: string | null;
   isRemote: boolean;
   nodeDomain: string | null;
+  isNsfw?: boolean;
+  nodeIsNsfw?: boolean;
 }
 
 async function excludedLocalUserIds(viewerId: string): Promise<Set<string>> {
@@ -53,6 +61,7 @@ async function localSuggestions(
   query: string,
   limit: number,
   excludedIds: ReadonlySet<string>,
+  nodeIsNsfw: boolean,
 ): Promise<MentionSuggestion[]> {
   const pattern = `${query.toLowerCase()}%`;
   const rows = await db.select({
@@ -60,6 +69,7 @@ async function localSuggestions(
     handle: users.handle,
     displayName: users.displayName,
     avatarUrl: users.avatarUrl,
+    isNsfw: users.isNsfw,
   })
     .from(users)
     .where(and(
@@ -84,6 +94,8 @@ async function localSuggestions(
       avatarUrl: row.avatarUrl,
       isRemote: false,
       nodeDomain: null,
+      isNsfw: row.isNsfw,
+      nodeIsNsfw,
     }));
 }
 
@@ -112,7 +124,7 @@ async function fetchRemoteSuggestions(
   const url = new URL('/api/swarm/users', `${protocol}://${publicDomain || domain}`);
   url.searchParams.set('q', handleQuery);
   url.searchParams.set('limit', String(limit));
-  const response = await safeFederationRequest(url.toString(), {
+  const response = await signedFederationRead(url.toString(), {
     headers: { Accept: 'application/json' },
     maxResponseBytes: 64 * 1024,
     timeoutMs: 4_000,
@@ -121,17 +133,27 @@ async function fetchRemoteSuggestions(
 
   const parsed = remoteDirectorySchema.safeParse(response.json());
   if (!parsed.success) return [];
+  const registryNodeIsNsfw = await getKnownSwarmNodeNsfw(domain);
   return parsed.data.users.map((user) => ({
     ...user,
     handle: `${user.handle.toLowerCase()}@${domain}`,
     isRemote: true,
     nodeDomain: domain,
+    nodeIsNsfw: registryNodeIsNsfw === true ? true : user.nodeIsNsfw,
   }));
 }
 
 export async function GET(request: NextRequest) {
   try {
     const viewer = await requireAuth();
+    const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
+    const canViewSensitive = shouldIncludeNsfwFeed({
+      viewer,
+      localNodeIsNsfw,
+    });
+    const redactSuggestions = (suggestions: MentionSuggestion[]) => (
+      suggestions.map((suggestion) => redactSensitiveUserSummary(suggestion, canViewSensitive))
+    );
     const parsed = querySchema.safeParse({
       q: (request.nextUrl.searchParams.get('q') || '').replace(/^@/, '').trim(),
       limit: request.nextUrl.searchParams.get('limit') || undefined,
@@ -155,7 +177,12 @@ export async function GET(request: NextRequest) {
       const resolution = resolveUserHandle(`user@${requestedDomain}`);
       if (resolution.isLocal) {
         return NextResponse.json({
-          suggestions: await localSuggestions(handleQuery, parsed.data.limit, excludedIds),
+          suggestions: redactSuggestions(await localSuggestions(
+            handleQuery,
+            parsed.data.limit,
+            excludedIds,
+            localNodeIsNsfw,
+          )),
         });
       }
 
@@ -175,13 +202,15 @@ export async function GET(request: NextRequest) {
         cachedRemoteUsers.filter((user) => excludedIds.has(user.id)).map((user) => user.handle.toLowerCase()),
       );
       return NextResponse.json({
-        suggestions: suggestions.filter((suggestion) => !excludedHandles.has(suggestion.handle.toLowerCase())),
+        suggestions: redactSuggestions(
+          suggestions.filter((suggestion) => !excludedHandles.has(suggestion.handle.toLowerCase())),
+        ),
       });
     }
 
-    const local = await localSuggestions(query, parsed.data.limit, excludedIds);
+    const local = await localSuggestions(query, parsed.data.limit, excludedIds, localNodeIsNsfw);
     if (local.length >= parsed.data.limit) {
-      return NextResponse.json({ suggestions: local });
+      return NextResponse.json({ suggestions: redactSuggestions(local) });
     }
 
     const mutedDomains = await mutedNodeDomains(viewer.id);
@@ -215,7 +244,9 @@ export async function GET(request: NextRequest) {
       }];
     });
 
-    return NextResponse.json({ suggestions: [...local, ...remote].slice(0, parsed.data.limit) });
+    return NextResponse.json({
+      suggestions: redactSuggestions([...local, ...remote].slice(0, parsed.data.limit)),
+    });
   } catch (error) {
     if (error instanceof Error && ['Unauthorized', 'Authentication required'].includes(error.message)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -4,7 +4,10 @@ import { db } from '@/db';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
-import { canCurrentViewerAccessSensitiveRemoteProfile } from '@/lib/nsfw/remote-profile-access';
+import {
+    canCurrentViewerAccessSensitiveRemoteProfile,
+    getCurrentViewerSensitiveProfileAccess,
+} from '@/lib/nsfw/remote-profile-access';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -53,8 +56,10 @@ export async function GET(request: Request, context: RouteContext) {
                     const profileData = await fetchSwarmUserProfile(remote.handle, remote.domain, 0);
                     if (profileData?.profile) {
                         const profile = profileData.profile;
-                        const profileRequiresNsfw = profile.isNsfw || profile.nodeIsNsfw;
-                        const canAccessProfile = await canCurrentViewerAccessSensitiveRemoteProfile(profileRequiresNsfw);
+                        const canAccessProfile = await canCurrentViewerAccessSensitiveRemoteProfile({
+                            accountIsNsfw: profile.isNsfw,
+                            nodeIsNsfw: profile.nodeIsNsfw,
+                        });
                         // CACHE: Upsert the remote user into our local database
                         const { upsertRemoteUser } = await import('@/lib/swarm/user-cache');
                         await upsertRemoteUser({
@@ -63,6 +68,7 @@ export async function GET(request: Request, context: RouteContext) {
                             avatarUrl: profile.avatarUrl || null,
                             did: profile.did || '',
                             publicKey: profile.publicKey,
+                            isNsfw: profile.isNsfw,
                         });
 
                         return NextResponse.json({
@@ -82,6 +88,7 @@ export async function GET(request: Request, context: RouteContext) {
                                 isSwarm: true,
                                 nodeDomain: remote.domain,
                                 did: profile.did,
+                                publicKey: profile.publicKey,
                                 isNsfw: profile.isNsfw,
                                 nodeIsNsfw: profile.nodeIsNsfw,
                                 nsfwRestricted: !canAccessProfile,
@@ -105,6 +112,32 @@ export async function GET(request: Request, context: RouteContext) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
+        const profileAccess = await getCurrentViewerSensitiveProfileAccess({
+            accountIsNsfw: user.isNsfw,
+        });
+        if (!profileAccess.allowed) {
+            return NextResponse.json({
+                user: {
+                    id: user.id,
+                    handle: user.handle,
+                    displayName: user.handle,
+                    bio: null,
+                    avatarUrl: null,
+                    headerUrl: null,
+                    followersCount: user.followersCount,
+                    followingCount: user.followingCount,
+                    postsCount: user.postsCount,
+                    website: null,
+                    createdAt: user.createdAt,
+                    did: user.did,
+                    publicKey: user.publicKey,
+                    isNsfw: user.isNsfw,
+                    nodeIsNsfw: profileAccess.nodeIsNsfw,
+                    nsfwRestricted: true,
+                },
+            });
+        }
+
         // Return user profile (without sensitive data)
         const userResponse: Record<string, unknown> = {
             id: user.id,
@@ -123,6 +156,7 @@ export async function GET(request: Request, context: RouteContext) {
             did: user.did, // V2 Identity
             dmPrivacy: user.dmPrivacy,
             isNsfw: user.isNsfw,
+            nodeIsNsfw: profileAccess.nodeIsNsfw,
         };
 
         // Check if viewer can DM this user

@@ -9,6 +9,10 @@ import { db } from '@/db';
 import { z } from 'zod';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -33,6 +37,17 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Invalid post ID format' }, { status: 400 });
     }
     const postId = postIdValidation.data;
+    const nodeIsNsfw = await requireLocalNodeNsfwClassification();
+    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
+    const trustedRead = await isTrustedFederationRead(request);
+    const serializePost = (value: Record<string, unknown>) => redactSensitivePostForViewer(
+      value,
+      {
+        canViewSensitive: trustedRead,
+        localNodeDomain: nodeDomain,
+        localNodeIsNsfw: nodeIsNsfw,
+      },
+    );
 
     // Find the post
     const post = await db.query.posts.findFirst({
@@ -56,8 +71,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
         where: { id: remoteRepost.userId },
       });
 
-      return NextResponse.json({
-        post: {
+      if (!repostAuthor || !hasStrictLocalUserOrigin(repostAuthor)) {
+        return NextResponse.json({ error: 'Post not found' }, { status: 404 });
+      }
+
+      const repostPayload = serializePost({
           id: remoteRepost.id,
           apId: null,
           content: '',
@@ -65,11 +83,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
           likesCount: 0,
           repostsCount: 0,
           repliesCount: 0,
-          author: repostAuthor ? {
+          isNsfw: repostAuthor?.isNsfw ?? nodeIsNsfw,
+          nodeIsNsfw,
+          author: {
             handle: repostAuthor.handle,
             displayName: repostAuthor.displayName,
             avatarUrl: repostAuthor.avatarUrl,
-          } : null,
+            isNsfw: repostAuthor.isNsfw,
+            nodeIsNsfw,
+          },
           media: [],
           repostOfId: remoteRepost.originalPostId,
           repostOf: {
@@ -81,12 +103,16 @@ export async function GET(request: NextRequest, context: RouteContext) {
             repostsCount: remoteRepost.repostsCount,
             repliesCount: remoteRepost.repliesCount,
             nodeDomain: remoteRepost.nodeDomain,
+            isNsfw: true,
+            nodeIsNsfw: true,
             author: {
               handle: remoteRepost.authorHandle.includes('@')
                 ? remoteRepost.authorHandle
                 : `${remoteRepost.authorHandle}@${remoteRepost.nodeDomain}`,
               displayName: remoteRepost.authorDisplayName,
               avatarUrl: remoteRepost.authorAvatarUrl,
+              isNsfw: true,
+              nodeIsNsfw: true,
             },
             media: remoteRepost.mediaJson ? JSON.parse(remoteRepost.mediaJson) : [],
             linkPreviewUrl: remoteRepost.linkPreviewUrl,
@@ -97,9 +123,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
             linkPreviewVideoUrl: remoteRepost.linkPreviewVideoUrl,
             linkPreviewMedia: parseLinkPreviewMediaJson(remoteRepost.linkPreviewMediaJson) || [],
           },
-        },
-        replies: [],
       });
+      if (!trustedRead && repostPayload.sensitiveContentRestricted === true) {
+        return NextResponse.json({ error: 'Sensitive post requires an authenticated node request' }, { status: 403 });
+      }
+      return NextResponse.json({ post: repostPayload, replies: [] });
     }
 
     // Get replies
@@ -123,8 +151,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const replySummariesById = new Map(replySummaries.map((reply) => [reply.id, reply]));
 
     const author = post.author;
+    const remoteMainAuthor = !hasStrictLocalUserOrigin(author);
+    if (remoteMainAuthor) {
+      return NextResponse.json({ error: 'Post not found' }, { status: 404 });
+    }
+    const localReplies = replies.filter((reply) => hasStrictLocalUserOrigin(reply.author));
 
-    return NextResponse.json({
+    const responsePayload = {
       post: {
         id: post.id,
         apId: post.apId, // Expose apId for swarm coordination (e.g. deletion recovery)
@@ -134,11 +167,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
         repostsCount: post.repostsCount,
         repostedBy: postSummary.repostedBy,
         repostedByCount: postSummary.repostedByCount,
-        repliesCount: replies.length,
+        repliesCount: localReplies.length,
+        isNsfw: remoteMainAuthor ? true : post.isNsfw,
+        nodeIsNsfw: remoteMainAuthor ? true : nodeIsNsfw,
         author: {
           handle: author.handle,
           displayName: author.displayName,
           avatarUrl: author.avatarUrl,
+          isNsfw: remoteMainAuthor ? true : author.isNsfw,
+          nodeIsNsfw: remoteMainAuthor ? true : nodeIsNsfw,
         },
         media: post.media?.map(m => ({
           url: m.url,
@@ -152,9 +189,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
         linkPreviewVideoUrl: post.linkPreviewVideoUrl,
         linkPreviewMedia: parseLinkPreviewMediaJson(post.linkPreviewMediaJson) || [],
       },
-      replies: replies.map(r => {
+      replies: localReplies.map(r => {
         const replyAuthor = r.author;
         const replySummary = replySummariesById.get(r.id);
+        const remoteReply = !hasStrictLocalUserOrigin(replyAuthor);
         return {
           id: r.id,
           content: r.content,
@@ -164,10 +202,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
           repostedBy: replySummary?.repostedBy,
           repostedByCount: replySummary?.repostedByCount,
           repliesCount: r.repliesCount,
+          isNsfw: remoteReply ? true : r.isNsfw,
+          nodeIsNsfw: remoteReply ? true : nodeIsNsfw,
           author: {
             handle: replyAuthor.handle,
             displayName: replyAuthor.displayName,
             avatarUrl: replyAuthor.avatarUrl,
+            isNsfw: remoteReply ? true : replyAuthor.isNsfw,
+            nodeIsNsfw: remoteReply ? true : nodeIsNsfw,
           },
           media: r.media?.map(m => ({
             url: m.url,
@@ -182,7 +224,19 @@ export async function GET(request: NextRequest, context: RouteContext) {
           linkPreviewMedia: parseLinkPreviewMediaJson(r.linkPreviewMediaJson) || [],
         };
       }),
-    });
+    };
+    if (trustedRead) {
+      return NextResponse.json(responsePayload);
+    }
+
+    const publicPost = serializePost(responsePayload.post);
+    if (publicPost.sensitiveContentRestricted === true) {
+      return NextResponse.json({ error: 'Sensitive post requires an authenticated node request' }, { status: 403 });
+    }
+    const publicReplies = responsePayload.replies
+      .map((reply) => serializePost(reply))
+      .filter((reply) => reply.sensitiveContentRestricted !== true);
+    return NextResponse.json({ post: publicPost, replies: publicReplies });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(

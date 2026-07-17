@@ -40,6 +40,8 @@ const remoteProfileResponseSchema = z.object({
     publicKey: z.string(),
     displayName: z.string().nullish(),
     avatarUrl: z.string().nullish(),
+    isNsfw: z.boolean().optional(),
+    nodeIsNsfw: z.boolean().optional(),
   }).passthrough(),
 }).passthrough();
 
@@ -260,6 +262,9 @@ export async function POST(request: NextRequest) {
         avatarUrl: senderAvatarUrl,
         did: signedAction.did,
         publicKey: normalizeSigningPublicKey(resolvedProfile.publicKey)!,
+        isNsfw: typeof resolvedProfile.isNsfw === 'boolean'
+          ? resolvedProfile.isNsfw
+          : undefined,
       });
       senderUser = await db.query.users.findFirst({ where: { did: signedAction.did } });
     }

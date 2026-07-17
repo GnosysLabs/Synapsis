@@ -227,6 +227,9 @@ export function ChatRecipientPicker({ currentUserHandle, onClose, onSelect }: Ch
                                         <AvatarImage
                                             avatarUrl={recipient.avatarUrl}
                                             seed={recipient.handle}
+                                            nodeDomain={recipient.nodeDomain}
+                                            isNsfw={recipient.isNsfw}
+                                            nodeIsNsfw={recipient.nodeIsNsfw}
                                             alt=""
                                         />
                                     </span>

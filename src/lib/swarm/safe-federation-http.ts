@@ -67,7 +67,7 @@ export type FederationRequestHeaders = Readonly<
 >;
 
 export interface SafeFederationRequestOptions {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'DELETE';
   headers?: FederationRequestHeaders;
   body?: string | Uint8Array;
   /** May only shorten, never extend, the eight-second safety timeout. */
@@ -505,7 +505,7 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 
 function requestPinnedTarget(
   target: PinnedFederationTarget,
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'DELETE',
   headers: Record<string, string | string[]>,
   body: Buffer | undefined,
   maxResponseBytes: number,
@@ -599,8 +599,8 @@ export function createSafeFederationRequester(
 
   return async (url, options = {}) => {
     const method = options.method ?? 'GET';
-    if (method !== 'GET' && method !== 'POST') {
-      return invalidOption('Federation requests only support GET and POST');
+    if (method !== 'GET' && method !== 'POST' && method !== 'DELETE') {
+      return invalidOption('Federation requests only support GET, POST, and DELETE');
     }
 
     if (method === 'GET' && options.body !== undefined) {

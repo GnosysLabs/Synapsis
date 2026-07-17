@@ -15,12 +15,32 @@ describe('shouldBlurProfileMedia', () => {
             accountIsNsfw: true,
             nodeIsNsfw: true,
             localNodeIsNsfw: true,
-            viewer: { nsfwEnabled: false },
+            viewer: { nsfwEnabled: false, ageVerifiedAt: '2026-07-17T00:00:00.000Z' },
         })).toBe(false);
     });
 
+    it('does not treat an adult-node session as age verification', () => {
+        expect(shouldBlurProfileMedia({
+            accountIsNsfw: true,
+            nodeIsNsfw: true,
+            localNodeIsNsfw: true,
+            viewer: { nsfwEnabled: true, ageVerifiedAt: null },
+        })).toBe(true);
+    });
+
     it('shows sensitive profile media when the viewer has enabled NSFW', () => {
-        expect(shouldBlurProfileMedia({ accountIsNsfw: true, nodeIsNsfw: true, viewer: { nsfwEnabled: true } })).toBe(false);
+        expect(shouldBlurProfileMedia({
+            accountIsNsfw: true,
+            nodeIsNsfw: true,
+            viewer: { nsfwEnabled: true, ageVerifiedAt: '2026-07-17T00:00:00.000Z' },
+        })).toBe(false);
+    });
+
+    it('keeps sensitive media hidden when age confirmation is missing', () => {
+        expect(shouldBlurProfileMedia({
+            accountIsNsfw: true,
+            viewer: { nsfwEnabled: true, ageVerifiedAt: null },
+        })).toBe(true);
     });
 
     it('does not blur safe profile media', () => {

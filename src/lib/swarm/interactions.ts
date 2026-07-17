@@ -12,13 +12,14 @@
  * - Mentions: Direct mention notifications
  */
 
-import { getActiveSwarmNodes } from './registry';
+import { getActiveSwarmNodes, getKnownSwarmNodeNsfw } from './registry';
 import type { SwarmNodeInfo } from './types';
 import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
 import { getPublicSwarmDomain } from './node-domain';
-import { safeFederationRequest } from './safe-federation-http';
+import { signedFederationRead } from './signed-read';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 import { parseMentions, uniqueMentions } from '@/lib/mentions/parser';
+import { safeFederationRequest } from './safe-federation-http';
 
 // ============================================
 // TYPES
@@ -300,26 +301,19 @@ async function deliverSwarmInteraction(
     const signature = signPayload(payload, privateKey);
     const signedPayload = { ...payload as object, signature };
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    const response = await safeFederationRequest(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(signedPayload),
+      timeoutMs: 8_000,
+      maxResponseBytes: 256 * 1024,
+    });
 
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify(signedPayload),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
+    if (response.status < 200 || response.status >= 300) {
+      const errorText = response.text();
       return {
         success: false,
         statusCode: response.status,
@@ -328,7 +322,7 @@ async function deliverSwarmInteraction(
       };
     }
 
-    const data = await response.json();
+    const data = response.json() as { message?: string };
     return {
       success: true,
       message: data.message,
@@ -403,6 +397,7 @@ export interface SwarmUserPost {
     displayName?: string | null;
     avatarUrl?: string | null;
     isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
   }>;
   repostedByCount?: number;
@@ -496,7 +491,7 @@ export async function fetchSwarmUserProfile(
     );
     if (cursor) url.searchParams.set('cursor', cursor.slice(0, 128));
 
-    const response = await safeFederationRequest(url.toString(), {
+    const response = await signedFederationRead(url.toString(), {
       headers: { 'Accept': 'application/json' },
       maxResponseBytes: 1024 * 1024,
     });
@@ -511,6 +506,19 @@ export async function fetchSwarmUserProfile(
       payload.profile.handle.toLowerCase() !== cleanHandle
     ) {
       return null;
+    }
+
+    const knownNodeIsNsfw = await getKnownSwarmNodeNsfw(normalizedDomain);
+    if (knownNodeIsNsfw === true && payload.profile.nodeIsNsfw !== true) {
+      return {
+        ...payload,
+        profile: { ...payload.profile, nodeIsNsfw: true },
+        posts: payload.posts.map((post) => ({
+          ...post,
+          isNsfw: true,
+          author: post.author ? { ...post.author, nodeIsNsfw: true } : post.author,
+        })),
+      };
     }
 
     return payload;
@@ -613,21 +621,17 @@ export async function fetchSwarmPost(
 
     const url = `${baseUrl}/api/swarm/posts/${postId}`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    const response = await fetch(url, {
+    const response = await signedFederationRead(url, {
       headers: { 'Accept': 'application/json' },
-      signal: controller.signal,
+      timeoutMs: 8_000,
+      maxResponseBytes: 1024 * 1024,
     });
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return null;
     }
 
-    return await response.json();
+    return response.json() as SwarmUserPost;
   } catch (error) {
     console.error(`[Swarm] Failed to fetch post ${postId} from ${domain}:`, error);
     return null;

@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, asc, eq, like, notLike } from 'drizzle-orm';
+import { and, asc, eq, isNull, like, notLike } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db, users } from '@/db';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 
 const querySchema = z.object({
   q: z.string().max(30).regex(/^[a-zA-Z0-9_]*$/),
@@ -20,14 +24,19 @@ export async function GET(request: NextRequest) {
   }
 
   const query = parsed.data.q.toLowerCase();
+  const nodeIsNsfw = await requireLocalNodeNsfwClassification();
+  const trustedRead = await isTrustedFederationRead(request);
   const matches = await db.select({
     handle: users.handle,
     displayName: users.displayName,
     avatarUrl: users.avatarUrl,
+    isNsfw: users.isNsfw,
+    nodeId: users.nodeId,
   })
     .from(users)
     .where(and(
       like(users.handle, `${query}%`),
+      isNull(users.nodeId),
       notLike(users.handle, '%@%'),
       eq(users.isSuspended, false),
       eq(users.isSilenced, false),
@@ -35,5 +44,17 @@ export async function GET(request: NextRequest) {
     .orderBy(asc(users.handle))
     .limit(parsed.data.limit);
 
-  return NextResponse.json({ users: matches });
+  return NextResponse.json({
+    users: matches.filter(hasStrictLocalUserOrigin).map((user) => {
+      const summary = {
+        handle: user.handle,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+        isNsfw: user.isNsfw,
+        isRemote: false,
+        nodeIsNsfw,
+      };
+      return trustedRead ? summary : redactSensitiveUserSummary(summary, false);
+    }),
+  });
 }

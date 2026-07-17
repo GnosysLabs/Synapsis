@@ -1,18 +1,25 @@
 'use client';
 
 import { useAuth } from '@/lib/contexts/AuthContext';
-import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
+import { useDomain, useRuntimeConfig } from '@/lib/contexts/ConfigContext';
+import { isRemoteAvatarSensitivityUnknown } from '@/lib/nsfw/content-visibility';
 import { shouldBlurProfileMedia } from '@/lib/nsfw/profile-media';
 
 export function ProfileBanner({
     url,
-    isNsfw = false,
+    accountHandle = '',
+    isRemote,
+    nodeDomain,
+    isNsfw,
     nodeIsNsfw,
     height,
     aspectRatio,
     borderBottom,
 }: {
     url?: string | null;
+    accountHandle?: string;
+    isRemote?: boolean;
+    nodeDomain?: string | null;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
     height?: string | number;
@@ -21,9 +28,25 @@ export function ProfileBanner({
 }) {
     const { user } = useAuth();
     const { config } = useRuntimeConfig();
-    const localNodeIsNsfw = config?.isNsfw ?? false;
+    const localNodeDomain = useDomain();
+    const localNodeClassificationKnown = config?.classificationKnown === true;
+    const localNodeIsNsfw = localNodeClassificationKnown && config?.isNsfw === true;
+    const inferredRemoteSensitivityUnknown = isRemoteAvatarSensitivityUnknown({
+        seed: accountHandle,
+        nodeDomain,
+        localNodeDomain,
+        isNsfw,
+        nodeIsNsfw,
+    });
+    const explicitRemoteSensitivityUnknown = isRemote === true && (
+        typeof isNsfw !== 'boolean'
+        || typeof nodeIsNsfw !== 'boolean'
+    );
     const blurred = shouldBlurProfileMedia({
-        accountIsNsfw: isNsfw,
+        accountIsNsfw: isNsfw === true
+            || inferredRemoteSensitivityUnknown
+            || explicitRemoteSensitivityUnknown
+            || !localNodeClassificationKnown,
         nodeIsNsfw: nodeIsNsfw ?? localNodeIsNsfw,
         localNodeIsNsfw,
         viewer: user,
@@ -36,11 +59,11 @@ export function ProfileBanner({
                 style={{
                     position: 'absolute',
                     inset: 0,
-                    background: url
+                    // A CSS blur still downloads and exposes the source URL.
+                    // Restricted banners must never put that URL in the DOM.
+                    background: url && !blurred
                         ? `url(${url}) center/cover no-repeat`
                         : 'linear-gradient(135deg, var(--accent-muted) 0%, var(--background-tertiary) 100%)',
-                    filter: blurred ? 'blur(20px)' : undefined,
-                    transform: blurred ? 'scale(1.12)' : undefined,
                 }}
             />
         </div>

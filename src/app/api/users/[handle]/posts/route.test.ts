@@ -25,6 +25,7 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/node/local-node', () => ({
     isLocalNodeNsfw: mocks.isLocalNodeNsfw,
+    requireLocalNodeNsfwClassification: mocks.isLocalNodeNsfw,
 }));
 
 vi.mock('@/lib/swarm/interactions', () => ({
@@ -62,6 +63,7 @@ const remotePost = {
     author: {
         handle: 'remoteuser',
         displayName: 'Remote User',
+        isNsfw: false,
         nodeIsNsfw: true,
         nodeDomain: 'adult.example',
     },

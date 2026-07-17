@@ -3,6 +3,10 @@ import { db, notifications } from '@/db';
 import { requireAuth } from '@/lib/auth';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
+import { isPostSensitive } from '@/lib/nsfw/content-visibility';
+import { fetchSwarmUserProfile } from '@/lib/swarm/interactions';
 
 const markSchema = z.object({
     ids: z.array(z.string().uuid()).optional(),
@@ -15,18 +19,21 @@ const markSchema = z.object({
 async function fetchRemoteProfile(handle: string, nodeDomain: string): Promise<{
     displayName: string | null;
     avatarUrl: string | null;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
 } | null> {
     try {
-        const protocol = nodeDomain.includes('localhost') ? 'http' : 'https';
-        const res = await fetch(`${protocol}://${nodeDomain}/api/swarm/users/${handle}`, {
-            headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(3000),
-        });
-        if (!res.ok) return null;
-        const data = await res.json();
+        const data = await fetchSwarmUserProfile(handle, nodeDomain, 0);
+        if (!data) return null;
         return {
-            displayName: data.profile?.displayName || null,
-            avatarUrl: data.profile?.avatarUrl || null,
+            displayName: data.profile.displayName || null,
+            avatarUrl: data.profile.avatarUrl || null,
+            isNsfw: typeof data.profile.isNsfw === 'boolean'
+                ? data.profile.isNsfw
+                : undefined,
+            nodeIsNsfw: typeof data.profile.nodeIsNsfw === 'boolean'
+                ? data.profile.nodeIsNsfw
+                : undefined,
         };
     } catch {
         return null;
@@ -44,6 +51,11 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const limit = Math.min(parseInt(searchParams.get('limit') || '30'), 50);
         const unreadOnly = searchParams.get('unread') === 'true';
+        const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
+        const canViewSensitive = shouldIncludeNsfwFeed({
+            viewer: user,
+            localNodeIsNsfw,
+        });
 
         const rows = await db.query.notifications.findMany({
             where: {
@@ -62,10 +74,11 @@ export async function GET(request: Request) {
             },
         });
 
-        // For remote actors missing avatar, fetch fresh data
+        // Always classify remote actors. A stored avatar without sensitivity
+        // metadata is not safe enough to display.
         const remoteToFetch = new Map<string, { handle: string; nodeDomain: string }>();
         for (const row of rows) {
-            if (row.actorNodeDomain && !row.actorAvatarUrl) {
+            if (row.actorNodeDomain) {
                 const key = `${row.actorHandle}@${row.actorNodeDomain}`;
                 if (!remoteToFetch.has(key)) {
                     remoteToFetch.set(key, {
@@ -77,7 +90,12 @@ export async function GET(request: Request) {
         }
 
         // Fetch fresh profile data in parallel
-        const freshProfiles = new Map<string, { displayName: string | null; avatarUrl: string | null }>();
+        const freshProfiles = new Map<string, {
+            displayName: string | null;
+            avatarUrl: string | null;
+            isNsfw?: boolean;
+            nodeIsNsfw?: boolean;
+        }>();
         if (remoteToFetch.size > 0) {
             const fetchPromises = Array.from(remoteToFetch.entries()).map(async ([key, { handle, nodeDomain }]) => {
                 const profile = await fetchRemoteProfile(handle, nodeDomain);
@@ -88,12 +106,55 @@ export async function GET(request: Request) {
             await Promise.all(fetchPromises);
         }
 
+        const localActorIds = Array.from(new Set(
+            rows
+                .filter((row) => !row.actorNodeDomain && row.actorId)
+                .map((row) => row.actorId as string),
+        ));
+        const localActors = localActorIds.length > 0
+            ? await db.query.users.findMany({ where: { id: { in: localActorIds } } })
+            : [];
+        const localActorMap = new Map(localActors.map((actor) => [actor.id, actor]));
+
         const payload = rows.map((row) => {
             const key = row.actorNodeDomain ? `${row.actorHandle}@${row.actorNodeDomain}` : null;
             const freshProfile = key ? freshProfiles.get(key) : null;
+            const localActor = row.actorId ? localActorMap.get(row.actorId) : null;
             const remotePostReference = row.remotePostId && row.remotePostDomain
                 ? `swarm:${row.remotePostDomain}:${row.remotePostId}`
                 : null;
+            const remotePostIsSensitive = remotePostReference
+                ? isPostSensitive({
+                    postIsNsfw: undefined,
+                    authorIsNsfw: freshProfile?.isNsfw,
+                    nodeIsNsfw: freshProfile?.nodeIsNsfw,
+                    isRemote: true,
+                })
+                : false;
+            const localPostIsSensitive = row.post
+                ? isPostSensitive({
+                    postIsNsfw: row.post.isNsfw,
+                    authorIsNsfw: row.post.author?.isNsfw,
+                    nodeIsNsfw: localNodeIsNsfw,
+                    isRemote: false,
+                })
+                : false;
+            const localPostMetadataMissing = Boolean(
+                row.postId && (!row.post || !row.post.author),
+            );
+            const postRestricted = !canViewSensitive
+                && (remotePostIsSensitive || localPostIsSensitive || localPostMetadataMissing);
+            const actorIsSensitive = row.actorNodeDomain
+                ? isPostSensitive({
+                    postIsNsfw: false,
+                    authorIsNsfw: freshProfile?.isNsfw,
+                    nodeIsNsfw: freshProfile?.nodeIsNsfw,
+                    isRemote: true,
+                })
+                : localActor
+                    ? localActor.isNsfw || localNodeIsNsfw
+                    : true;
+            const actorMediaRestricted = !canViewSensitive && actorIsSensitive;
 
             return {
                 id: row.id,
@@ -105,21 +166,32 @@ export async function GET(request: Request) {
                         ? `${row.actorHandle}@${row.actorNodeDomain}`
                         : row.actorHandle,
                     displayName: freshProfile?.displayName || row.actorDisplayName,
-                    avatarUrl: freshProfile?.avatarUrl || row.actorAvatarUrl,
+                    avatarUrl: actorMediaRestricted
+                        ? null
+                        : freshProfile
+                            ? freshProfile.avatarUrl
+                            : row.actorAvatarUrl,
                     nodeDomain: row.actorNodeDomain,
+                    isNsfw: row.actorNodeDomain
+                        ? freshProfile?.isNsfw
+                        : localActor?.isNsfw ?? true,
+                    nodeIsNsfw: row.actorNodeDomain
+                        ? freshProfile?.nodeIsNsfw
+                        : localNodeIsNsfw,
                 },
                 post: row.postId || remotePostReference ? {
                     id: row.postId || remotePostReference!,
-                    content: row.post?.content || row.postContent,
+                    content: postRestricted ? null : row.post?.content || row.postContent,
                     authorHandle: row.post?.author?.handle || (row.actorNodeDomain
                         ? `${row.actorHandle}@${row.actorNodeDomain}`
                         : row.actorHandle),
-                    media: row.post?.media.map((item) => ({
+                    media: postRestricted ? [] : row.post?.media.map((item) => ({
                         url: item.url,
                         mimeType: item.mimeType,
                         altText: item.altText,
                     })) || [],
-                    linkPreviewImage: row.post?.linkPreviewImage || null,
+                    linkPreviewImage: postRestricted ? null : row.post?.linkPreviewImage || null,
+                    sensitiveRestricted: postRestricted,
                 } : null,
             };
         });

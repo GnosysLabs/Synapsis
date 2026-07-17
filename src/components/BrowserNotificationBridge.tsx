@@ -83,16 +83,20 @@ export function BrowserNotificationBridge() {
 
         let stopped = false;
         let timeout: ReturnType<typeof setTimeout> | null = null;
+        let activeController: AbortController | null = null;
         const seenKey = browserNotificationsSeenKey(userId);
 
         const poll = async () => {
             try {
+                activeController = new AbortController();
                 const response = await fetch('/api/notifications?unread=true&limit=20', {
                     cache: 'no-store',
+                    signal: activeController.signal,
                 });
                 if (!response.ok || stopped) return;
 
                 const data = await response.json();
+                if (stopped) return;
                 const notifications = (Array.isArray(data.notifications)
                     ? data.notifications
                     : []) as BrowserNotificationItem[];
@@ -117,6 +121,7 @@ export function BrowserNotificationBridge() {
                     .reverse();
 
                 for (const item of unseen) {
+                    if (stopped) return;
                     seen.add(item.id);
                     if (!preferences[item.type]) continue;
                     const content = getBrowserNotificationContent(item);
@@ -139,8 +144,9 @@ export function BrowserNotificationBridge() {
                     );
                 }
             } catch (error) {
-                console.warn('[Notifications] Browser notification poll failed:', error);
+                if (!stopped) console.warn('[Notifications] Browser notification poll failed:', error);
             } finally {
+                activeController = null;
                 if (!stopped) timeout = setTimeout(poll, POLL_INTERVAL_MS);
             }
         };
@@ -148,9 +154,10 @@ export function BrowserNotificationBridge() {
         void poll();
         return () => {
             stopped = true;
+            activeController?.abort();
             if (timeout) clearTimeout(timeout);
         };
-    }, [enabled, userId]);
+    }, [enabled, user?.ageVerifiedAt, user?.nsfwEnabled, userId]);
 
     const finishPermissionPrompt = useCallback(async (requestPermission: boolean) => {
         if (!userId || typeof Notification === 'undefined') return;

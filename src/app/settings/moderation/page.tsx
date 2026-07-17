@@ -13,6 +13,9 @@ interface BlockedUser {
     displayName: string | null;
     avatarUrl: string | null;
     blockedAt: string;
+    nodeDomain?: string | null;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
 }
 
 interface MutedNode {
@@ -191,7 +194,14 @@ export default function ModerationSettingsPage() {
                                         }}
                                     >
                                         <div className="avatar">
-                                            <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} alt={user.displayName || user.handle} />
+                                            <AvatarImage
+                                                avatarUrl={user.avatarUrl}
+                                                seed={user.handle}
+                                                nodeDomain={user.nodeDomain}
+                                                isNsfw={user.isNsfw}
+                                                nodeIsNsfw={user.nodeIsNsfw}
+                                                alt={user.displayName || user.handle}
+                                            />
                                         </div>
                                         <div>
                                             <div style={{ fontWeight: 500 }}>

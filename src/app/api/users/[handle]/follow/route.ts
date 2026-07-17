@@ -103,7 +103,7 @@ export async function POST(request: Request, context: RouteContext) {
             // Only allow following swarm nodes
             let isSwarm = await isSwarmNode(remote.domain);
             if (!isSwarm) {
-                const discovery = await discoverNode(remote.domain, nodeDomain);
+                const discovery = await discoverNode(remote.domain);
                 isSwarm = discovery.success;
             }
 

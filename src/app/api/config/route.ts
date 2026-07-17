@@ -1,23 +1,22 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/db';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 
 export async function GET() {
   const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN || 'localhost:43821';
-  let isNsfw = false;
-
   try {
-    let node = await db.query.nodes.findFirst({ where: { domain } });
-    if (!node) {
-      const nodes = await db.query.nodes.findMany({ limit: 2 });
-      if (nodes.length === 1) node = nodes[0];
-    }
-    isNsfw = node?.isNsfw === true;
+    const isNsfw = await requireLocalNodeNsfwClassification();
+    return NextResponse.json({
+      domain,
+      isNsfw,
+      classificationKnown: true,
+    });
   } catch (error) {
     console.error('Runtime config lookup failed:', error);
+    // The client must never interpret an unavailable classification as safe.
+    return NextResponse.json({
+      domain,
+      isNsfw: true,
+      classificationKnown: false,
+    }, { status: 503 });
   }
-
-  return NextResponse.json({
-    domain,
-    isNsfw,
-  });
 }

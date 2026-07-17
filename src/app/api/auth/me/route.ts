@@ -42,6 +42,7 @@ export async function GET() {
                 privateKeyEncrypted: session.user.privateKeyEncrypted,
                 isNsfw: session.user.isNsfw,
                 nsfwEnabled: session.user.nsfwEnabled,
+                ageVerifiedAt: session.user.ageVerifiedAt?.toISOString() || null,
             },
             accounts,
         });

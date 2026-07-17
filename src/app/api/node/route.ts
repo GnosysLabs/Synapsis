@@ -4,12 +4,15 @@ import { users } from '@/db';
 import { inArray } from 'drizzle-orm';
 import { getNodePublicKey } from '@/lib/swarm/node-keys';
 import { getVersionedNodeAssetUrl } from '@/lib/node/assets';
+import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
+import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 
 export async function GET() {
     try {
         if (!db) return NextResponse.json({});
 
         const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const { localNodeIsNsfw, canViewSensitive } = await getSensitiveContentViewerAccess();
 
         // 1. Try exact match
         let node = await db.query.nodes.findFirst({
@@ -45,7 +48,11 @@ export async function GET() {
                 })
                 .from(users)
                 .where(inArray(users.email, adminEmails));
-            admins = adminUsers;
+            admins = adminUsers.map((admin) => redactSensitiveUserSummary({
+                ...admin,
+                isRemote: false,
+                nodeIsNsfw: localNodeIsNsfw,
+            }, canViewSensitive));
         }
 
         if (!node) {
@@ -57,7 +64,7 @@ export async function GET() {
                 publicKey,
                 admins,
                 turnstileSiteKey: null,
-                isNsfw: false,
+                isNsfw: localNodeIsNsfw,
             });
         }
 
@@ -68,22 +75,38 @@ export async function GET() {
             ? getVersionedNodeAssetUrl('/api/node/favicon', node.updatedAt)
             : node.faviconUrl;
 
+        const hideSensitiveBranding = node.isNsfw && !canViewSensitive;
+
+        // Keep this response as an explicit public DTO. Spreading the database row here
+        // would expose raw image data and any future private columns by default.
         return NextResponse.json({
-            ...node,
-            logoUrl,
-            faviconUrl,
-            publicKey, // Always include the public key
+            domain: node.domain,
+            name: node.name,
+            description: node.description,
+            longDescription: node.longDescription,
+            rules: node.rules,
+            bannerUrl: hideSensitiveBranding ? null : node.bannerUrl,
+            logoUrl: hideSensitiveBranding ? null : logoUrl,
+            faviconUrl: hideSensitiveBranding ? null : faviconUrl,
+            accentColor: node.accentColor,
+            publicKey,
+            isNsfw: node.isNsfw,
+            turnstileSiteKey: node.turnstileSiteKey,
+            createdAt: node.createdAt,
+            updatedAt: node.updatedAt,
             admins,
-            // Don't expose the secret keys
-            turnstileSecretKey: undefined,
-            privateKeyEncrypted: undefined,
         });
     } catch (error) {
         console.error('Node info error:', error);
         return NextResponse.json({
-            name: process.env.NEXT_PUBLIC_NODE_NAME || 'Synapsis Node',
-            description: process.env.NEXT_PUBLIC_NODE_DESCRIPTION || 'A swarm social network node.',
+            name: 'Synapsis Node',
+            description: null,
+            bannerUrl: null,
+            logoUrl: null,
+            faviconUrl: null,
+            isNsfw: true,
+            classificationKnown: false,
             admins: [],
-        });
+        }, { status: 503 });
     }
 }

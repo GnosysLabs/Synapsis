@@ -28,6 +28,7 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/node/local-node', () => ({
   isLocalNodeNsfw: mocks.isLocalNodeNsfw,
+  requireLocalNodeNsfwClassification: mocks.isLocalNodeNsfw,
 }));
 
 vi.mock('@/lib/swarm/user-cache', () => ({

@@ -1,5 +1,6 @@
 'use client';
 
+import { Fragment } from 'react';
 import { usePathname } from 'next/navigation';
 import { Sidebar } from './Sidebar';
 import { RightSidebar } from './RightSidebar';
@@ -10,8 +11,8 @@ import { GlobalPostComposer } from './GlobalPostComposer';
 import { BrowserNotificationBridge } from './BrowserNotificationBridge';
 
 export function LayoutWrapper({ children }: { children: React.ReactNode }) {
-    const { loading } = useAuth();
-    const { isLoading: configLoading } = useRuntimeConfig();
+    const { loading, user, activeAccountId } = useAuth();
+    const { config, isLoading: configLoading } = useRuntimeConfig();
     const pathname = usePathname();
 
     // Paths that should NOT have the app layout
@@ -21,6 +22,11 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
 
     // Hide right sidebar on chat page for more space
     const hideRightSidebar = false;
+    // Sensitive payloads can exist in client component state after a deliberate
+    // per-post reveal. Remount every account-scoped surface whenever identity
+    // or sensitive-content permission changes so stale data cannot cross that
+    // boundary (including preference changes that do not navigate).
+    const viewerStateKey = `${activeAccountId ?? user?.id ?? 'anonymous'}:${user?.nsfwEnabled === true ? 'enabled' : 'disabled'}:${user?.ageVerifiedAt ?? 'unverified'}:${config?.classificationKnown === true ? 'classified' : 'unknown'}:${config?.isNsfw === true ? 'adult' : 'general'}`;
 
     if (!isAppBootstrapReady({ authLoading: loading, configLoading })) {
         return (
@@ -56,12 +62,14 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
     return (
         <div className="layout" style={{ position: 'relative', minHeight: '100vh' }}>
             <Sidebar />
-            <main className="main">
-                {children}
-            </main>
-            {!hideRightSidebar && <RightSidebar />}
-            <GlobalPostComposer />
-            <BrowserNotificationBridge />
+            <Fragment key={viewerStateKey}>
+                <main className="main">
+                    {children}
+                </main>
+                {!hideRightSidebar && <RightSidebar />}
+                <GlobalPostComposer />
+                <BrowserNotificationBridge />
+            </Fragment>
 
         </div>
     );

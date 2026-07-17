@@ -10,10 +10,11 @@ import { getSession } from '@/lib/auth';
 import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
 import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
-import { isLocalNodeNsfw } from '@/lib/node/local-node';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { db, likes, posts, userSwarmLikes, userSwarmReposts } from '@/db';
 import { and, eq, inArray } from 'drizzle-orm';
 import { isLocalSwarmDomain } from '@/lib/swarm/post-id';
+import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 
 type SwarmFeedPost = {
   id: string;
@@ -72,9 +73,16 @@ export async function GET(request: NextRequest) {
 
     const session = await getSession().catch(() => null);
     const viewer = session?.user ?? null;
+    const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
+    if (localNodeIsNsfw && !viewer) {
+      return NextResponse.json({
+        error: 'Sign in to this node to view its adult content feed',
+        code: 'LOCAL_AUTH_REQUIRED',
+      }, { status: 401 });
+    }
     const includeNsfw = shouldIncludeNsfwFeed({
       viewer,
-      localNodeIsNsfw: await isLocalNodeNsfw(),
+      localNodeIsNsfw,
     });
 
     // Fetch swarm timeline (no caching - user preferences vary)
@@ -159,8 +167,22 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const postsWithInteractionFlags = applyInteractionFlags(
+      timeline.posts as SwarmFeedPost[],
+      likedPostIds,
+      repostedPostIds,
+    );
+    const serializedPosts = postsWithInteractionFlags.map((post) => redactSensitivePostForViewer(
+      post as unknown as Record<string, unknown>,
+      {
+        canViewSensitive: includeNsfw,
+        localNodeDomain: nodeDomain,
+        localNodeIsNsfw,
+      },
+    ));
+
     return NextResponse.json({
-      posts: applyInteractionFlags(timeline.posts as SwarmFeedPost[], likedPostIds, repostedPostIds),
+      posts: serializedPosts,
       sources: timeline.sources,
       cached: false,
       fetchedAt: timeline.fetchedAt,

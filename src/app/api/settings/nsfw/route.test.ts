@@ -62,6 +62,25 @@ describe('NSFW settings mutations', () => {
     expect(db?.update).toHaveBeenCalled();
   });
 
+  it('lets an unverified legacy account persist age confirmation', async () => {
+    vi.mocked(requireSignedAction).mockResolvedValue({
+      id: 'legacy-user-id',
+      ageVerifiedAt: null,
+    } as never);
+    const payload = signedAction('update_nsfw_settings', {
+      nsfwEnabled: true,
+      confirmAge: true,
+    });
+    const response = await updateViewingPreference(request(payload) as never);
+
+    expect(response.status).toBe(200);
+    expect(db?.update).toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      nsfwEnabled: true,
+      ageVerifiedAt: expect.any(String),
+    });
+  });
+
   it('accepts a signed account-level update', async () => {
     const payload = signedAction('update_account_nsfw', { isNsfw: true });
     const response = await updateAccountPreference(request(payload) as never);
@@ -89,4 +108,3 @@ describe('NSFW settings mutations', () => {
     });
   });
 });
-

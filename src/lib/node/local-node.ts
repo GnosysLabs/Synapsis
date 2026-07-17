@@ -21,3 +21,16 @@ export async function isLocalNodeNsfw(): Promise<boolean> {
         return false;
     }
 }
+
+/**
+ * Authorization decisions must not silently classify an unknown node as safe.
+ * Unlike the best-effort display helper above, this throws when the node cannot
+ * be resolved so callers can deny the request.
+ */
+export async function requireLocalNodeNsfwClassification(): Promise<boolean> {
+    const node = await getLocalNode();
+    if (!node) {
+        throw new Error('Local node NSFW classification is unavailable');
+    }
+    return node.isNsfw === true;
+}

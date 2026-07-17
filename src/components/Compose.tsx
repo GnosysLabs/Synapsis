@@ -43,6 +43,8 @@ interface MentionSuggestion {
     avatarUrl: string | null;
     isRemote: boolean;
     nodeDomain: string | null;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
 }
 
 interface ComposeProps {
@@ -484,6 +486,9 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                                     <AvatarImage
                                         avatarUrl={suggestion.avatarUrl}
                                         seed={suggestion.handle}
+                                        nodeDomain={suggestion.nodeDomain}
+                                        isNsfw={suggestion.isNsfw}
+                                        nodeIsNsfw={suggestion.nodeIsNsfw}
                                         alt=""
                                     />
                                 </span>

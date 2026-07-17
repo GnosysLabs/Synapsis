@@ -15,6 +15,8 @@ import {
   isPublicSwarmDomain,
   resolveNodeAssetUrl,
 } from './node-domain';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { safeFederationRequest } from './safe-federation-http';
 
 const PUBLIC_SWARM_DOMAIN_ERROR = 'Public swarm participation requires a real ICANN domain';
 
@@ -32,7 +34,9 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
   let userCount = 0;
   let postCount = 0;
   let mediaCount = 0;
-  let isNsfw = false;
+  // Announcements are authoritative and signed. Never publish a guessed
+  // `false` classification when local configuration cannot be read.
+  const isNsfw = await requireLocalNodeNsfwClassification();
 
   if (db) {
     // Get node info
@@ -43,9 +47,8 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     if (node) {
       name = node.name;
       description = node.description ?? undefined;
-      logoUrl = resolveNodeAssetUrl(node.logoUrl, domain);
+      logoUrl = node.isNsfw ? undefined : resolveNodeAssetUrl(node.logoUrl, domain);
       publicKey = node.publicKey ?? '';
-      isNsfw = node.isNsfw;
     }
 
     // Get counts
@@ -113,23 +116,25 @@ export async function announceToNode(targetDomain: string): Promise<{ success: b
     const baseUrl = `https://${publicTargetDomain}`;
     const url = `${baseUrl}/api/swarm/announce`;
 
-    const response = await fetch(url, {
+    const response = await safeFederationRequest(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
       body: JSON.stringify(signedAnnouncement),
+      timeoutMs: 8_000,
+      maxResponseBytes: 256 * 1024,
     });
 
-    if (!response.ok) {
-      const error = await response.text();
+    if (response.status < 200 || response.status >= 300) {
+      const error = response.text();
       await markNodeFailure(publicTargetDomain);
       return { success: false, error: `HTTP ${response.status}: ${error}` };
     }
 
     // The remote node should respond with their info
-    const remoteInfo = await response.json() as SwarmNodeInfo;
+    const remoteInfo = response.json() as SwarmNodeInfo;
     if (getPublicSwarmDomain(remoteInfo.domain) !== publicTargetDomain) {
       return { success: false, error: 'Remote node returned a different domain identity' };
     }
@@ -191,22 +196,26 @@ export async function fetchNodeInfo(domain: string): Promise<SwarmNodeInfo | nul
     const baseUrl = `https://${publicDomain}`;
     
     // Try the swarm endpoint first
-    let response = await fetch(`${baseUrl}/api/swarm/info`, {
+    let response = await safeFederationRequest(`${baseUrl}/api/swarm/info`, {
       headers: { 'Accept': 'application/json' },
+      timeoutMs: 8_000,
+      maxResponseBytes: 256 * 1024,
     });
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       // Fall back to standard node endpoint
-      response = await fetch(`${baseUrl}/api/node`, {
+      response = await safeFederationRequest(`${baseUrl}/api/node`, {
         headers: { 'Accept': 'application/json' },
+        timeoutMs: 8_000,
+        maxResponseBytes: 256 * 1024,
       });
     }
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return null;
     }
 
-    const data = await response.json();
+    const data = response.json() as Partial<SwarmNodeInfo>;
     
     const returnedDomain = getPublicSwarmDomain(data.domain || publicDomain);
     if (returnedDomain !== publicDomain) return null;
@@ -233,8 +242,7 @@ export async function fetchNodeInfo(domain: string): Promise<SwarmNodeInfo | nul
  * Discover a node and add it to the registry
  */
 export async function discoverNode(
-  domain: string, 
-  discoveredVia?: string
+  domain: string,
 ): Promise<{ success: boolean; isNew: boolean; error?: string }> {
   const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
   const publicDomain = getPublicSwarmDomain(domain);
@@ -254,7 +262,9 @@ export async function discoverNode(
     return { success: false, isNew: false, error: 'Could not fetch node info' };
   }
 
-  const result = await upsertSwarmNode(info, discoveredVia);
+  // This metadata was fetched directly from the origin over its own domain,
+  // so its classification is authoritative regardless of who triggered discovery.
+  const result = await upsertSwarmNode(info, 'direct');
   
   return { success: true, isNew: result.isNew };
 }

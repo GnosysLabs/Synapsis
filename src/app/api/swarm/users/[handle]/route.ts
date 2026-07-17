@@ -8,6 +8,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, media, posts, users, userSwarmReposts } from '@/db';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 
 export interface SwarmUserProfile {
   handle: string;
@@ -61,6 +65,7 @@ export interface SwarmUserPost {
     displayName: string;
     avatarUrl?: string | null;
     isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
   }>;
   repostedByCount?: number;
@@ -146,7 +151,7 @@ function mapUserSwarmRepostToSwarmPost(
     originalPostId: row.id,
     content: '',
     createdAt: row.repostedAt.toISOString(),
-    isNsfw: false,
+    isNsfw: author.isNsfw,
     likesCount: 0,
     repostsCount: 0,
     repliesCount: 0,
@@ -165,7 +170,9 @@ function mapUserSwarmRepostToSwarmPost(
       originalPostId: row.originalPostId,
       content: row.content,
       createdAt: row.postCreatedAt.toISOString(),
-      isNsfw: false,
+      // These legacy snapshots predate classifier persistence. Treat the
+      // unknown remote original as sensitive instead of inventing `false`.
+      isNsfw: true,
       likesCount: row.likesCount,
       repostsCount: row.repostsCount,
       repliesCount: row.repliesCount,
@@ -174,7 +181,8 @@ function mapUserSwarmRepostToSwarmPost(
         handle: row.authorHandle.includes('@') ? row.authorHandle : `${row.authorHandle}@${row.nodeDomain}`,
         displayName: row.authorDisplayName || row.authorHandle,
         avatarUrl: row.authorAvatarUrl || undefined,
-        nodeIsNsfw: false,
+        isNsfw: true,
+        nodeIsNsfw: true,
         nodeDomain: row.nodeDomain,
       },
       media: parseMediaJson(row.mediaJson),
@@ -199,6 +207,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const { handle } = await context.params;
     const cleanHandle = handle.toLowerCase().replace(/^@/, '');
+    if (!/^[a-z0-9_]{1,64}$/.test(cleanHandle)) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
     const { searchParams } = new URL(request.url);
     const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
     const cursorValue = searchParams.get('cursor');
@@ -212,17 +223,20 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
 
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
-    let node = await db.query.nodes.findFirst({ where: { domain: nodeDomain } });
-    if (!node) {
-      const localNodes = await db.query.nodes.findMany({ limit: 2 });
-      if (localNodes.length === 1) node = localNodes[0];
-    }
-    const nodeIsNsfw = node?.isNsfw === true;
+    const nodeIsNsfw = await requireLocalNodeNsfwClassification();
+    const trustedRead = await isTrustedFederationRead(request);
 
     // Find the user
-    const user = await db.query.users.findFirst({ where: { handle: cleanHandle } });
+    const user = await db.query.users.findFirst({
+      where: {
+        AND: [
+          { handle: cleanHandle },
+          { nodeId: { isNull: true } },
+        ],
+      },
+    });
 
-    if (!user) {
+    if (!user || !hasStrictLocalUserOrigin(user)) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
@@ -289,10 +303,36 @@ export async function GET(request: NextRequest, context: RouteContext) {
     ]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, limit);
+    const profileRestricted = !trustedRead && (user.isNsfw || nodeIsNsfw);
+    const responseProfile: SwarmUserProfile & { nsfwRestricted?: boolean } = profileRestricted
+      ? {
+          ...profile,
+          displayName: profile.handle,
+          bio: undefined,
+          avatarUrl: undefined,
+          headerUrl: undefined,
+          website: undefined,
+          nsfwRestricted: true,
+        }
+      : profile;
+    const responsePosts = profileRestricted
+      ? []
+      : trustedRead
+        ? swarmPosts
+        : swarmPosts
+            .map((post) => redactSensitivePostForViewer(
+              post as unknown as Record<string, unknown>,
+              {
+                canViewSensitive: false,
+                localNodeDomain: nodeDomain,
+                localNodeIsNsfw: nodeIsNsfw,
+              },
+            ))
+            .filter((post) => post.sensitiveContentRestricted !== true);
 
     return NextResponse.json({
-      profile,
-      posts: swarmPosts,
+      profile: responseProfile,
+      posts: responsePosts,
       nodeDomain,
       timestamp: new Date().toISOString(),
     });

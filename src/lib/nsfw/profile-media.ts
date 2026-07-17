@@ -1,5 +1,6 @@
 export interface ProfileMediaViewer {
     nsfwEnabled?: boolean;
+    ageVerifiedAt?: string | Date | null;
 }
 
 export function shouldBlurProfileMedia({
@@ -16,7 +17,8 @@ export function shouldBlurProfileMedia({
     if (!accountIsNsfw && !nodeIsNsfw) return false;
     if (!viewer) return true;
 
-    // Signing in to an NSFW node is itself consent to view that node's media.
-    // The explicit preference still controls sensitive media on non-NSFW nodes.
-    return viewer.nsfwEnabled !== true && !localNodeIsNsfw;
+    if (!viewer.ageVerifiedAt) return true;
+    // Adult-only membership implies the viewing preference only after age
+    // confirmation. General-purpose nodes still honor the explicit toggle.
+    return !localNodeIsNsfw && viewer.nsfwEnabled !== true;
 }

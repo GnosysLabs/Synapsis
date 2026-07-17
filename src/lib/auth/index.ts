@@ -33,6 +33,7 @@ export interface AuthAccount {
     email: string | null;
     isNsfw: boolean;
     nsfwEnabled: boolean;
+    ageVerifiedAt: string | null;
     isActive: boolean;
 }
 
@@ -116,6 +117,7 @@ function toAuthAccount(session: SessionRecord, activeToken: string | null): Auth
         email: session.user.email,
         isNsfw: session.user.isNsfw,
         nsfwEnabled: session.user.nsfwEnabled,
+        ageVerifiedAt: session.user.ageVerifiedAt?.toISOString() || null,
         isActive: session.token === activeToken,
     };
 }

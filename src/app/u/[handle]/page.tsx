@@ -561,6 +561,9 @@ export default function ProfilePage() {
                 {/* Banner */}
                 <ProfileBanner
                     url={isEditing ? profileForm.headerUrl : user.headerUrl}
+                    accountHandle={user.handle}
+                    isRemote={user.isRemote}
+                    nodeDomain={user.nodeDomain}
                     isNsfw={user.isNsfw}
                     nodeIsNsfw={user.nodeIsNsfw}
                     aspectRatio="3 / 1"

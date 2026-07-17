@@ -6,10 +6,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, posts, users, media, remoteReposts } from '@/db';
-import { eq, desc, and, isNull, lt, inArray, sql } from 'drizzle-orm';
+import { eq, desc, and, isNull, lt, inArray, notLike, sql } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 import type { User } from '@/lib/types';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 
 export interface SwarmPost {
   id: string;
@@ -76,6 +80,7 @@ interface LocalRepostRow {
   author: {
     id: string;
     handle: string;
+    nodeId: string | null;
     displayName: string | null;
     avatarUrl: string | null;
     isNsfw: boolean;
@@ -91,6 +96,7 @@ function attachLocalRepostSummaries(
 
   for (const row of repostRows) {
     if (!row.repostOfId) continue;
+    if (!hasStrictLocalUserOrigin(row.author)) continue;
     const actors = actorsByPostId.get(row.repostOfId) || [];
     const actor: User = {
       id: `swarm:${nodeDomain}:${row.author.handle}`,
@@ -178,16 +184,13 @@ export async function GET(request: NextRequest) {
     const cursor = searchParams.get('cursor');
 
     if (!db) {
-      return NextResponse.json({ posts: [], nodeDomain: '', nodeIsNsfw: false });
+      return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
 
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
 
-    // Get node NSFW status
-    const node = await db.query.nodes.findFirst({
-      where: { domain: nodeDomain },
-    });
-    const nodeIsNsfw = node?.isNsfw ?? false;
+    const nodeIsNsfw = await requireLocalNodeNsfwClassification();
+    const trustedRead = await isTrustedFederationRead(request);
 
     // Use query builder for better conditional logic
     // Only return posts from local users (not remote placeholder users)
@@ -197,6 +200,7 @@ export async function GET(request: NextRequest) {
       isNull(posts.swarmReplyToId), // Not a swarm reply
       eq(posts.isRemoved, false), // Not removed
       isNull(users.nodeId), // Local user (not from another swarm node)
+      notLike(users.handle, '%@%'), // Cached remote placeholders may not have a nodeId
       sql`not exists (
         select 1 from ${remoteReposts}
         where ${remoteReposts.postId} = coalesce(${posts.repostOfId}, ${posts.id})
@@ -270,6 +274,7 @@ export async function GET(request: NextRequest) {
         isNull(posts.swarmReplyToId),
         eq(posts.isRemoved, false),
         isNull(users.nodeId),
+        notLike(users.handle, '%@%'),
       ))
       .groupBy(remoteReposts.postId)
       .orderBy(desc(latestRemoteActivityAt))
@@ -308,7 +313,11 @@ export async function GET(request: NextRequest) {
           })
           .from(posts)
           .innerJoin(users, eq(posts.userId, users.id))
-          .where(inArray(posts.id, remoteStoryIds))
+          .where(and(
+            inArray(posts.id, remoteStoryIds),
+            isNull(users.nodeId),
+            notLike(users.handle, '%@%'),
+          ))
       : [];
     const selectedById = new Map<string, TimelinePostRow>();
     for (const post of [
@@ -366,6 +375,8 @@ export async function GET(request: NextRequest) {
           .where(and(
             inArray(posts.id, repostIds),
             eq(posts.isRemoved, false),
+            isNull(users.nodeId),
+            notLike(users.handle, '%@%'),
           ))
       : [];
 
@@ -440,9 +451,21 @@ export async function GET(request: NextRequest) {
       localRepostRows,
       nodeDomain,
     );
+    const responsePosts = trustedRead
+      ? swarmPosts
+      : swarmPosts
+          .map((post) => redactSensitivePostForViewer(
+            post as unknown as Record<string, unknown>,
+            {
+              canViewSensitive: false,
+              localNodeDomain: nodeDomain,
+              localNodeIsNsfw: nodeIsNsfw,
+            },
+          ))
+          .filter((post) => post.sensitiveContentRestricted !== true);
 
     return NextResponse.json({
-      posts: swarmPosts,
+      posts: responsePosts,
       nodeDomain,
       nodeIsNsfw,
       timestamp: new Date().toISOString(),

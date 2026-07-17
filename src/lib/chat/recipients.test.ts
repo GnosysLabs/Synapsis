@@ -13,11 +13,27 @@ describe('chat recipient picker helpers', () => {
             { handle: 'viewer', displayName: 'Me', avatarUrl: null },
             { handle: 'Alice', displayName: 'Alice', avatarUrl: '/alice.png' },
             { handle: 'alice', displayName: 'Duplicate', avatarUrl: null },
-            { handle: 'bob@remote.example', displayName: null, avatarUrl: null, isRemote: true },
+            {
+                handle: 'bob@remote.example',
+                displayName: null,
+                avatarUrl: null,
+                isRemote: true,
+                nodeDomain: 'remote.example',
+                isNsfw: true,
+                nodeIsNsfw: true,
+            },
             { nope: true },
         ], '@viewer')).toEqual([
             { handle: 'Alice', displayName: 'Alice', avatarUrl: '/alice.png', isRemote: false },
-            { handle: 'bob@remote.example', displayName: null, avatarUrl: null, isRemote: true },
+            {
+                handle: 'bob@remote.example',
+                displayName: null,
+                avatarUrl: null,
+                isRemote: true,
+                nodeDomain: 'remote.example',
+                isNsfw: true,
+                nodeIsNsfw: true,
+            },
         ]);
     });
 

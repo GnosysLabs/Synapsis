@@ -4,6 +4,9 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef } f
 import { useUserIdentity } from '@/lib/hooks/useUserIdentity';
 import { unlockE2EEFromSignIn } from '@/lib/e2ee/sign-in-unlock';
 
+const AUTH_SYNC_CHANNEL = 'synapsis-auth-state';
+const AUTH_SYNC_STORAGE_KEY = 'synapsis:auth-state-changed';
+
 export interface User {
     id: string;
     handle: string;
@@ -15,6 +18,7 @@ export interface User {
     privateKeyEncrypted?: string;
     isNsfw?: boolean;
     nsfwEnabled?: boolean;
+    ageVerifiedAt?: string | null;
 }
 
 export interface AuthAccount extends User {
@@ -137,6 +141,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
     }, [applyAuthState]);
 
+    const broadcastAuthChange = useCallback(() => {
+        if (typeof window === 'undefined') return;
+        const marker = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        if (typeof BroadcastChannel !== 'undefined') {
+            const channel = new BroadcastChannel(AUTH_SYNC_CHANNEL);
+            channel.postMessage(marker);
+            channel.close();
+            return;
+        }
+        try {
+            window.localStorage.setItem(AUTH_SYNC_STORAGE_KEY, marker);
+        } catch {
+            // Focus refresh below remains the fallback when storage is unavailable.
+        }
+    }, []);
+
     /**
      * Unlock the user's identity with their password
      * Persists the key for auto-unlock on refresh
@@ -185,6 +205,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const login = useCallback(async (userData: User, password: string) => {
         const generation = ++authGenerationRef.current;
         setLoading(true);
+        // The server session has already changed by the time login is called.
+        // Invalidate every other tab before identity/E2EE initialization can wait
+        // or fail so stale authorized content is removed immediately.
+        broadcastAuthChange();
         try {
             await applyAuthState({
                 user: userData,
@@ -200,7 +224,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } finally {
             if (generation === authGenerationRef.current) setLoading(false);
         }
-    }, [applyAuthState, unlockIdentity]);
+    }, [applyAuthState, broadcastAuthChange, unlockIdentity]);
 
     /**
      * Logout the user and clear their identity
@@ -212,13 +236,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(userId ? { userId } : {}),
             });
+            broadcastAuthChange();
             setShowUnlockPrompt(false);
             await refreshAuth();
         } catch (error) {
             console.error('[Auth] Logout failed:', error);
             throw error;
         }
-    }, [refreshAuth]);
+    }, [broadcastAuthChange, refreshAuth]);
 
     const switchAccount = useCallback(async (userId: string) => {
         try {
@@ -234,6 +259,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 throw new Error(data.error || 'Failed to switch account');
             }
 
+            broadcastAuthChange();
             await refreshAuth();
         } catch (error) {
             console.error('[Auth] Switch account failed:', error);
@@ -241,16 +267,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } finally {
             setLoading(false);
         }
-    }, [refreshAuth]);
+    }, [broadcastAuthChange, refreshAuth]);
 
     const updateUserProfile = useCallback((updates: Partial<User>) => {
         setUser(current => current ? { ...current, ...updates } : current);
-        setAccounts(current => current.map(account => account.id === updates.id ? { ...account, ...updates } : account));
-    }, []);
+        setAccounts(current => current.map(account => (
+            account.id === (updates.id ?? user?.id)
+                ? { ...account, ...updates }
+                : account
+        )));
+        broadcastAuthChange();
+    }, [broadcastAuthChange, user?.id]);
 
     // Load auth state on mount
     useEffect(() => {
         refreshAuth();
+    }, [refreshAuth]);
+
+    useEffect(() => {
+        const refreshFromAnotherContext = () => {
+            void refreshAuth();
+        };
+        const channel = typeof BroadcastChannel !== 'undefined'
+            ? new BroadcastChannel(AUTH_SYNC_CHANNEL)
+            : null;
+        channel?.addEventListener('message', refreshFromAnotherContext);
+        const onStorage = (event: StorageEvent) => {
+            if (event.key === AUTH_SYNC_STORAGE_KEY) refreshFromAnotherContext();
+        };
+        window.addEventListener('storage', onStorage);
+        window.addEventListener('focus', refreshFromAnotherContext);
+
+        return () => {
+            channel?.removeEventListener('message', refreshFromAnotherContext);
+            channel?.close();
+            window.removeEventListener('storage', onStorage);
+            window.removeEventListener('focus', refreshFromAnotherContext);
+        };
     }, [refreshAuth]);
 
     // Determine if unlock is required (has encrypted key but not unlocked)

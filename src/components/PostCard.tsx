@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { HeartIcon, RepeatIcon, MessageIcon, FlagIcon, TrashIcon } from '@/components/Icons';
-import { MoreHorizontal, UserX, VolumeX, Globe, Download, MessageCircle, Link2, Share } from 'lucide-react';
+import { MoreHorizontal, UserX, VolumeX, Globe, Download, MessageCircle, Link2, Share, TriangleAlert } from 'lucide-react';
 import { Post, LinkPreviewMediaItem } from '@/lib/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useToast } from '@/lib/contexts/ToastContext';
@@ -13,7 +13,7 @@ import { VideoEmbed } from '@/components/VideoEmbed';
 import BlurredImage from '@/components/BlurredImage';
 import BlurredVideo from '@/components/BlurredVideo';
 import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
-import { useDomain } from '@/lib/contexts/ConfigContext';
+import { useDomain, useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import { AvatarImage } from '@/components/AvatarImage';
@@ -24,6 +24,7 @@ import { dedupeReposters, setReposterInSummary } from '@/lib/posts/node-feed';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
 import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
 import { buildChatShareHref, type ChatRecipient } from '@/lib/chat/recipients';
+import { shouldHideSensitivePost } from '@/lib/nsfw/content-visibility';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -129,11 +130,21 @@ export function PostCard(props: PostCardProps) {
     return <AuthoredPostCard {...props} />;
 }
 
-function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId }: PostCardProps) {
+function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId }: PostCardProps) {
     const { user: currentUser, did, handle: currentUserHandle, isIdentityUnlocked } = useAuth();
     const { showToast } = useToast();
     const { showConfirm, showPrompt } = useAppDialog();
     const router = useRouter();
+    const [revealedPost, setRevealedPost] = useState<Post | null>(null);
+    const [revealedForViewerKey, setRevealedForViewerKey] = useState<string | null>(null);
+    const viewerSensitiveAccessKey = `${currentUser?.id ?? 'anonymous'}:${currentUser?.nsfwEnabled === true ? 'enabled' : 'disabled'}:${currentUser?.ageVerifiedAt ?? 'unverified'}`;
+    const revealBelongsToCurrentViewer = revealedForViewerKey === viewerSensitiveAccessKey;
+    const post = useMemo(
+        () => revealedPost && revealBelongsToCurrentViewer
+            ? { ...initialPost, ...revealedPost, author: revealedPost.author || initialPost.author }
+            : initialPost,
+        [initialPost, revealBelongsToCurrentViewer, revealedPost],
+    );
     const [liked, setLiked] = useState(post.isLiked || false);
     const [likesCount, setLikesCount] = useState(post.likesCount || 0);
     const [likePending, setLikePending] = useState(false);
@@ -153,7 +164,33 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
     const [showRecipientPicker, setShowRecipientPicker] = useState(false);
     const [downloading, setDownloading] = useState(false);
     const [hydratedPreview, setHydratedPreview] = useState<LinkPreviewData | null>(null);
+    const [sensitiveContentRevealed, setSensitiveContentRevealed] = useState(false);
+    const [revealingSensitiveContent, setRevealingSensitiveContent] = useState(false);
     const domain = useDomain();
+    const { config } = useRuntimeConfig();
+    const localNodeClassificationKnown = config?.classificationKnown === true;
+    const localNodeIsNsfw = localNodeClassificationKnown && config?.isNsfw === true;
+    const canRevealSensitiveContent = Boolean(currentUser?.ageVerifiedAt);
+    const isRemotePost = Boolean(
+        post.isSwarm
+        || post.author.isRemote
+        || post.author.handle.includes('@')
+        || (post.nodeDomain && post.nodeDomain !== domain)
+    );
+    const hideSensitiveContent = shouldHideSensitivePost({
+        sensitivity: {
+            postIsNsfw: post.isNsfw,
+            authorIsNsfw: post.author.isNsfw,
+            nodeIsNsfw: post.nodeIsNsfw
+                ?? post.author.nodeIsNsfw
+                ?? (isRemotePost
+                    ? undefined
+                    : localNodeClassificationKnown ? localNodeIsNsfw : true),
+            isRemote: isRemotePost,
+        },
+        viewer: currentUser,
+        localNodeIsNsfw,
+    }) && !(sensitiveContentRevealed && revealBelongsToCurrentViewer);
     const authorHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
     const isOwnPost = Boolean(
         currentUser && (
@@ -193,7 +230,19 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
     ]);
 
     useEffect(() => {
+        setRevealedPost(null);
+        setRevealedForViewerKey(null);
+        setSensitiveContentRevealed(false);
+    }, [initialPost.id, viewerSensitiveAccessKey]);
+
+    useEffect(() => {
         let cancelled = false;
+
+        if (hideSensitiveContent) {
+            setHydratedPreview(null);
+            return;
+        }
+
         const missingPreviewData = Boolean(
             post.linkPreviewUrl &&
             !post.linkPreviewTitle &&
@@ -232,6 +281,7 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
         post.linkPreviewVideoUrl,
         post.linkPreviewMedia,
         post,
+        hideSensitiveContent,
     ]);
 
     const formatTime = (dateStr: string | Date) => {
@@ -549,7 +599,9 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
         try {
             await navigator.share({
                 title: `${post.author.displayName || post.author.handle} on Synapsis`,
-                text: post.content || `Media from @${authorHandle}`,
+                text: hideSensitiveContent
+                    ? 'Sensitive post on Synapsis'
+                    : post.content || `Media from @${authorHandle}`,
                 url,
             });
         } catch (error) {
@@ -820,6 +872,88 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
         );
     };
 
+    const revealSensitiveContent = async () => {
+        if (!currentUser || revealingSensitiveContent) return;
+        if (!initialPost.sensitiveContentRestricted || initialPost.id.startsWith('swarm-repost:')) {
+            setRevealedForViewerKey(viewerSensitiveAccessKey);
+            setSensitiveContentRevealed(true);
+            return;
+        }
+
+        setRevealingSensitiveContent(true);
+        try {
+            const response = await fetch(
+                `/api/posts/${encodeURIComponent(initialPost.id)}?revealSensitive=1`,
+                { cache: 'no-store' },
+            );
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data.post) {
+                throw new Error(data.error || 'Sensitive post could not be loaded');
+            }
+            setRevealedPost(data.post as Post);
+            setRevealedForViewerKey(viewerSensitiveAccessKey);
+            setSensitiveContentRevealed(true);
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : 'Sensitive post could not be loaded', 'error');
+        } finally {
+            setRevealingSensitiveContent(false);
+        }
+    };
+
+    const sensitiveContentWarning = (
+        <div
+            role="note"
+            style={{
+                margin: '12px 16px',
+                padding: '18px',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--background-secondary)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '14px',
+            }}
+        >
+            <TriangleAlert size={24} style={{ color: 'var(--warning)', flexShrink: 0 }} aria-hidden="true" />
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, marginBottom: '3px' }}>Sensitive content</div>
+                <div style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.4 }}>
+                    This post was marked sensitive by its author or node.
+                </div>
+            </div>
+            {canRevealSensitiveContent ? (
+                <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={revealingSensitiveContent}
+                    onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void revealSensitiveContent();
+                    }}
+                >
+                    {revealingSensitiveContent ? 'Loading…' : 'Show'}
+                </button>
+            ) : currentUser ? (
+                <Link
+                    href="/settings/content"
+                    className="btn btn-sm"
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    Review settings
+                </Link>
+            ) : (
+                <Link
+                    href="/login"
+                    className="btn btn-sm"
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    Sign in to view
+                </Link>
+            )}
+        </div>
+    );
+
     // If this is a thread parent being rendered, just render the article
     if (isThreadParent) {
         return (
@@ -837,7 +971,7 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
                         <span className="post-time">{authorHandle}</span>
                     </div>
                 </div>
-                {post.content.trim() && (
+                {hideSensitiveContent ? sensitiveContentWarning : post.content.trim() && (
                     <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
                 )}
             </article>
@@ -861,7 +995,7 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
                         </span>
                     </div>
 
-                    {hasOwnContent && (
+                    {hideSensitiveContent ? sensitiveContentWarning : hasOwnContent && (
                         <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
                     )}
 
@@ -923,6 +1057,7 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
                                         seed={reposter.handle}
                                         nodeDomain={reposter.nodeDomain}
                                         isNsfw={reposter.isNsfw}
+                                        nodeIsNsfw={reposter.nodeIsNsfw}
                                         alt=""
                                         width={22}
                                         height={22}
@@ -1074,6 +1209,8 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
                     </div>
                 )}
 
+                {hideSensitiveContent ? sensitiveContentWarning : (
+                    <>
                 <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
 
                 {post.media && post.media.length > 0 && (
@@ -1106,6 +1243,8 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
                 )}
 
                 {renderLinkPreviewCard()}
+                    </>
+                )}
 
                 <div className="post-actions">
                     <div className="post-actions-primary">
@@ -1135,7 +1274,7 @@ function AuthoredPostCard({ post, onLike, onRepost, onComment, onDelete, onHide,
                         )}
                     </div>
                     <div className="post-actions-secondary">
-                        {post.media && post.media.length > 0 && (
+                        {!hideSensitiveContent && post.media && post.media.length > 0 && (
                             <button className="post-action" onClick={handleDownloadMedia} disabled={downloading} title="Download media" aria-label="Download media">
                                 <Download size={20} />
                             </button>

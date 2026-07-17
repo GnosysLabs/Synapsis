@@ -8,8 +8,13 @@ import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import {
     canCurrentViewerAccessSensitiveRemoteProfile,
+    getCurrentViewerSensitiveProfileAccess,
+    SENSITIVE_PROFILE_MESSAGE,
     SENSITIVE_REMOTE_PROFILE_MESSAGE,
 } from '@/lib/nsfw/remote-profile-access';
+import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
+import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
+import { signedFederationRead } from '@/lib/swarm/signed-read';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 type LikedPost = {
@@ -61,6 +66,17 @@ export async function GET(request: Request, context: RouteContext) {
         const { searchParams } = new URL(request.url);
         const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
         const remote = resolvedHandle.remote;
+        const viewerAccess = await getSensitiveContentViewerAccess();
+        const serializePosts = (postsToSerialize: LikedPost[]) => (
+            postsToSerialize.map((post) => redactSensitivePostForViewer(
+                post as unknown as Record<string, unknown>,
+                {
+                    canViewSensitive: viewerAccess.canViewSensitive,
+                    localNodeDomain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+                    localNodeIsNsfw: viewerAccess.localNodeIsNsfw,
+                },
+            ))
+        );
 
         const fetchRemoteLikesRoute = async () => {
             if (!remote) {
@@ -72,8 +88,10 @@ export async function GET(request: Request, context: RouteContext) {
                 return NextResponse.json({ posts: [], nextCursor: null });
             }
 
-            const profileRequiresNsfw = profileData.profile.isNsfw || profileData.profile.nodeIsNsfw;
-            if (!await canCurrentViewerAccessSensitiveRemoteProfile(profileRequiresNsfw)) {
+            if (!await canCurrentViewerAccessSensitiveRemoteProfile({
+                accountIsNsfw: profileData.profile.isNsfw,
+                nodeIsNsfw: profileData.profile.nodeIsNsfw,
+            })) {
                 return NextResponse.json(
                     { posts: [], nextCursor: null, restricted: true, error: SENSITIVE_REMOTE_PROFILE_MESSAGE },
                     { status: 403 },
@@ -81,16 +99,17 @@ export async function GET(request: Request, context: RouteContext) {
             }
 
             const baseUrl = getRemoteBaseUrl(remote.domain);
-            const res = await fetch(`${baseUrl}/api/users/${remote.handle}/likes?limit=${limit}`, {
+            const res = await signedFederationRead(`${baseUrl}/api/users/${encodeURIComponent(remote.handle)}/likes?limit=${limit}`, {
                 headers: { Accept: 'application/json' },
-                signal: AbortSignal.timeout(10000),
+                timeoutMs: 8_000,
+                maxResponseBytes: 1024 * 1024,
             });
 
-            if (!res.ok) {
+            if (res.status < 200 || res.status >= 300) {
                 return NextResponse.json({ posts: [], nextCursor: null });
             }
 
-            const data = await res.json() as { posts?: RemoteProfilePost[] };
+            const data = res.json() as { posts?: RemoteProfilePost[] };
             const { getSession } = await import('@/lib/auth');
             const session = await getSession();
             const viewer = session?.user;
@@ -106,10 +125,10 @@ export async function GET(request: Request, context: RouteContext) {
                 )
                 : new Set<string>();
             return NextResponse.json({
-                posts: mappedPosts.map((post) => ({
+                posts: serializePosts(mappedPosts.map((post) => ({
                     ...post,
                     isReposted: repostedIds.has(post.id),
-                })),
+                })) as LikedPost[]),
                 nextCursor: null,
             });
         };
@@ -158,6 +177,20 @@ export async function GET(request: Request, context: RouteContext) {
 
         if (!user) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
+        }
+
+        if (user.isSuspended) {
+            return NextResponse.json({ error: 'User not found' }, { status: 404 });
+        }
+
+        const profileAccess = await getCurrentViewerSensitiveProfileAccess({
+            accountIsNsfw: user.isNsfw,
+        });
+        if (!profileAccess.allowed) {
+            return NextResponse.json(
+                { posts: [], nextCursor: null, restricted: true, error: SENSITIVE_PROFILE_MESSAGE },
+                { status: 403 },
+            );
         }
 
         // Get user's liked posts
@@ -273,7 +306,7 @@ export async function GET(request: Request, context: RouteContext) {
         }
 
         return NextResponse.json({
-            posts: likedPosts,
+            posts: serializePosts(likedPosts),
             nextCursor: likedPosts.length === limit ? likedPosts[likedPosts.length - 1]?.id : null,
         });
     } catch (error) {

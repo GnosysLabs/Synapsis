@@ -31,16 +31,30 @@ describe('shouldIncludeNsfwFeed', () => {
 
     it('includes NSFW posts for authenticated members of an NSFW node', () => {
         expect(shouldIncludeNsfwFeed({
-            viewer: { nsfwEnabled: false },
+            viewer: { nsfwEnabled: false, ageVerifiedAt: '2026-07-17T00:00:00.000Z' },
             localNodeIsNsfw: true,
         })).toBe(true);
     });
 
+    it('does not treat authentication alone as age consent on an NSFW node', () => {
+        expect(shouldIncludeNsfwFeed({
+            viewer: { nsfwEnabled: true, ageVerifiedAt: null },
+            localNodeIsNsfw: true,
+        })).toBe(false);
+    });
+
     it('respects an enabled account preference on a general-purpose node', () => {
         expect(shouldIncludeNsfwFeed({
-            viewer: { nsfwEnabled: true },
+            viewer: { nsfwEnabled: true, ageVerifiedAt: '2026-07-17T00:00:00.000Z' },
             localNodeIsNsfw: false,
         })).toBe(true);
+    });
+
+    it('fails closed when the preference is enabled without an age-confirmation record', () => {
+        expect(shouldIncludeNsfwFeed({
+            viewer: { nsfwEnabled: true, ageVerifiedAt: null },
+            localNodeIsNsfw: false,
+        })).toBe(false);
     });
 
     it('filters NSFW posts when neither form of consent is present', () => {
@@ -71,7 +85,7 @@ describe('canAccessSensitiveRemoteProfile', () => {
     it('allows viewers who explicitly enabled NSFW content', () => {
         expect(canAccessSensitiveRemoteProfile({
             profileRequiresNsfw: true,
-            viewer: { nsfwEnabled: true },
+            viewer: { nsfwEnabled: true, ageVerifiedAt: '2026-07-17T00:00:00.000Z' },
             localNodeIsNsfw: false,
         })).toBe(true);
     });

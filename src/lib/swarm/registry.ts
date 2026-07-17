@@ -70,6 +70,10 @@ export async function upsertSwarmNode(
   });
 
   const capabilities = node.capabilities ? JSON.stringify(node.capabilities) : null;
+  const classificationIsAuthoritative = discoveredVia === 'announcement' || discoveredVia === 'direct';
+  const incomingClassificationKnown = classificationIsAuthoritative
+    && typeof node.isNsfw === 'boolean';
+  const incomingIsNsfw = incomingClassificationKnown ? node.isNsfw === true : false;
 
   if (!existing) {
     await db.insert(swarmNodes).values({
@@ -82,7 +86,8 @@ export async function upsertSwarmNode(
       userCount: node.userCount,
       postCount: node.postCount,
       mediaCount: node.mediaCount,
-      isNsfw: node.isNsfw ?? false,
+      isNsfw: incomingIsNsfw,
+      nsfwClassificationKnown: incomingClassificationKnown,
       discoveredVia,
       capabilities,
       lastSeenAt: node.lastSeenAt ? new Date(node.lastSeenAt) : new Date(),
@@ -101,7 +106,13 @@ export async function upsertSwarmNode(
       userCount: node.userCount ?? existing.userCount,
       postCount: node.postCount ?? existing.postCount,
       mediaCount: node.mediaCount ?? existing.mediaCount,
-      isNsfw: mergePermanentNodeNsfwClassification(existing.isNsfw, node.isNsfw),
+      isNsfw: incomingClassificationKnown
+        ? mergePermanentNodeNsfwClassification(existing.isNsfw, node.isNsfw)
+        : existing.isNsfw,
+      nsfwClassificationKnown: existing.nsfwClassificationKnown || incomingClassificationKnown,
+      discoveredVia: classificationIsAuthoritative
+        ? discoveredVia
+        : existing.discoveredVia,
       capabilities: capabilities ?? existing.capabilities,
       lastSeenAt: new Date(),
       consecutiveFailures: 0,
@@ -162,6 +173,41 @@ export async function getActiveSwarmNodes(limit?: number): Promise<SwarmNodeInfo
   });
 
   return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
+}
+
+/** Return the permanent classifier recorded for a peer, active or not. */
+export async function getKnownSwarmNodeNsfw(domain: string): Promise<boolean | undefined> {
+  if (!db) return undefined;
+  const normalizedDomain = domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const node = await db.query.swarmNodes.findFirst({ where: { domain: normalizedDomain } });
+  if (!node) return undefined;
+  if (node.isNsfw) return true;
+  return node.nsfwClassificationKnown ? false : undefined;
+}
+
+/** Return the pinned key only for directly established, healthy peers. */
+export async function getTrustedSwarmReadPeerPublicKey(domain: string): Promise<string | null> {
+  if (!db) return null;
+  const normalizedDomain = getPublicSwarmDomain(domain);
+  if (!normalizedDomain) return null;
+  const node = await db.query.swarmNodes.findFirst({ where: { domain: normalizedDomain } });
+  const directlyEstablished = node?.discoveredVia === 'direct'
+    || node?.discoveredVia === 'announcement';
+  if (!(
+    node
+    && node.isActive
+    && !node.isBlocked
+    && directlyEstablished
+    && node.nsfwClassificationKnown
+    && node.trustScore >= SWARM_CONFIG.defaultTrustScore
+    && node.publicKey
+  )) return null;
+  return node.publicKey;
+}
+
+/** Only established, healthy swarm peers may request unredacted federation reads. */
+export async function isTrustedSwarmReadPeer(domain: string): Promise<boolean> {
+  return Boolean(await getTrustedSwarmReadPeerPublicKey(domain));
 }
 
 /**
@@ -382,14 +428,18 @@ function nodeToInfo(node: typeof swarmNodes.$inferSelect): SwarmNodeInfo {
     domain: node.domain,
     name: node.name ?? undefined,
     description: node.description ?? undefined,
-    logoUrl: node.logoUrl ?? undefined,
+    logoUrl: node.nsfwClassificationKnown && !node.isNsfw
+      ? node.logoUrl ?? undefined
+      : undefined,
     publicKey: node.publicKey ?? undefined,
     softwareVersion: node.softwareVersion ?? undefined,
     userCount: node.userCount ?? undefined,
     postCount: node.postCount ?? undefined,
     mediaCount: node.mediaCount ?? undefined,
     capabilities: node.capabilities ? JSON.parse(node.capabilities) : undefined,
-    isNsfw: node.isNsfw,
+    isNsfw: node.isNsfw
+      ? true
+      : node.nsfwClassificationKnown ? false : undefined,
     lastSeenAt: node.lastSeenAt.toISOString(),
   };
 }

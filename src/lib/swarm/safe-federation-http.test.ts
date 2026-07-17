@@ -265,6 +265,30 @@ describe('E2EE federation HTTP behavior', () => {
     });
   });
 
+  it('supports bounded DELETE requests without following redirects', async () => {
+    const server = await startServer((incoming, response) => {
+      const chunks: Buffer[] = [];
+      incoming.on('data', (chunk: Buffer) => chunks.push(chunk));
+      incoming.on('end', () => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          method: incoming.method,
+          body: Buffer.concat(chunks).toString('utf8'),
+        }));
+      });
+    });
+    const request = createSafeFederationRequester({ development: true });
+    const body = JSON.stringify({ replyId: 'reply-1' });
+
+    const response = await request(`${server.baseUrl}/replies`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+
+    expect(response.json()).toEqual({ method: 'DELETE', body });
+  });
+
   it('returns redirects without following them', async () => {
     let destinationHits = 0;
     const server = await startServer((incoming, response) => {

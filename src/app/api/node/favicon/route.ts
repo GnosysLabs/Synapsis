@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/db';
+import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,10 @@ export async function GET() {
 
     // Check if we have favicon data
     if (!node?.faviconData) {
+      return NextResponse.json({ error: 'Favicon not found' }, { status: 404 });
+    }
+    const { canViewSensitive } = await getSensitiveContentViewerAccess();
+    if (node.isNsfw && !canViewSensitive) {
       return NextResponse.json({ error: 'Favicon not found' }, { status: 404 });
     }
 

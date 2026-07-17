@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
+import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 
 function getRequestBaseUrl(req: NextRequest, fallbackDomain: string): string {
     const forwardedHost = req.headers.get('x-forwarded-host');
@@ -28,10 +29,11 @@ export async function GET(req: NextRequest) {
         const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const node = await db.query.nodes.findFirst({
             where: { domain: domain },
-            columns: { faviconUrl: true },
+            columns: { faviconUrl: true, isNsfw: true },
         });
 
-        if (node?.faviconUrl) {
+        const { canViewSensitive } = await getSensitiveContentViewerAccess();
+        if (node?.faviconUrl && (!node.isNsfw || canViewSensitive)) {
             // Redirect to custom favicon
             const baseUrl = getRequestBaseUrl(req, domain);
             const target = node.faviconUrl.startsWith('/')

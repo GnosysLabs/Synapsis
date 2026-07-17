@@ -8,6 +8,8 @@ export interface HydratedUser {
     bio?: string | null;
     isRemote: boolean;
     nodeDomain?: string; // For remote users
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
 }
 
 /**
@@ -25,6 +27,8 @@ export async function hydrateSwarmUsers(
         avatarUrl?: string | null;
         bio?: string | null;
         isRemote: boolean;
+        isNsfw?: boolean;
+        nodeIsNsfw?: boolean;
     }[]
 ): Promise<HydratedUser[]> {
     const needsHydration = users.filter(u => u.isRemote);
@@ -64,6 +68,8 @@ export async function hydrateSwarmUsers(
                     avatarUrl: response.profile.avatarUrl,
                     bio: response.profile.bio,
                     nodeDomain: response.nodeDomain,
+                    isNsfw: response.profile.isNsfw,
+                    nodeIsNsfw: response.profile.nodeIsNsfw,
                 });
             }
         } catch (e) {

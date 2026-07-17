@@ -3,6 +3,9 @@ export interface ChatRecipient {
     displayName: string | null;
     avatarUrl: string | null;
     isRemote?: boolean;
+    nodeDomain?: string | null;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
 }
 
 function asRecipient(value: unknown): ChatRecipient | null {
@@ -14,6 +17,9 @@ function asRecipient(value: unknown): ChatRecipient | null {
         displayName: typeof candidate.displayName === 'string' ? candidate.displayName : null,
         avatarUrl: typeof candidate.avatarUrl === 'string' ? candidate.avatarUrl : null,
         isRemote: candidate.isRemote === true,
+        ...(typeof candidate.nodeDomain === 'string' ? { nodeDomain: candidate.nodeDomain } : {}),
+        ...(typeof candidate.isNsfw === 'boolean' ? { isNsfw: candidate.isNsfw } : {}),
+        ...(typeof candidate.nodeIsNsfw === 'boolean' ? { nodeIsNsfw: candidate.nodeIsNsfw } : {}),
     };
 }
 

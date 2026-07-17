@@ -9,8 +9,12 @@ import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 import {
     canCurrentViewerAccessSensitiveRemoteProfile,
+    getCurrentViewerSensitiveProfileAccess,
+    SENSITIVE_PROFILE_MESSAGE,
     SENSITIVE_REMOTE_PROFILE_MESSAGE,
 } from '@/lib/nsfw/remote-profile-access';
+import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
+import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 
 const embeddedPostRelations = {
     author: true,
@@ -66,7 +70,7 @@ function parseMediaJson(mediaJson: string | null) {
 
 function mapUserSwarmRepostToFeedPost(
     row: typeof userSwarmReposts.$inferSelect,
-    author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl'>
+    author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl' | 'isNsfw'>
 ): FeedPostWithChildren {
     const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
     const remoteAuthorHandle = row.authorHandle.includes('@')
@@ -87,6 +91,7 @@ function mapUserSwarmRepostToFeedPost(
             displayName: author.displayName,
             avatarUrl: author.avatarUrl,
             nodeDomain: localNodeDomain,
+            isNsfw: author.isNsfw,
         },
         repostOfId: remoteOriginalId,
         repostOf: {
@@ -99,6 +104,8 @@ function mapUserSwarmRepostToFeedPost(
             repliesCount: row.repliesCount,
             isSwarm: true,
             nodeDomain: row.nodeDomain,
+            isNsfw: undefined,
+            nodeIsNsfw: undefined,
             author: {
                 id: `swarm:${row.nodeDomain}:${row.authorHandle}`,
                 handle: remoteAuthorHandle,
@@ -106,6 +113,8 @@ function mapUserSwarmRepostToFeedPost(
                 avatarUrl: row.authorAvatarUrl,
                 isRemote: true,
                 nodeDomain: row.nodeDomain,
+                isNsfw: undefined,
+                nodeIsNsfw: undefined,
             },
             media: parseMediaJson(row.mediaJson),
             linkPreviewUrl: row.linkPreviewUrl,
@@ -231,6 +240,17 @@ export async function GET(request: Request, context: RouteContext) {
         const { searchParams } = new URL(request.url);
         const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
         const cursor = searchParams.get('cursor');
+        const viewerAccess = await getSensitiveContentViewerAccess();
+        const serializePosts = (postsToSerialize: FeedPostWithChildren[]) => (
+            postsToSerialize.map((post) => redactSensitivePostForViewer(
+                post as unknown as Record<string, unknown>,
+                {
+                    canViewSensitive: viewerAccess.canViewSensitive,
+                    localNodeDomain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+                    localNodeIsNsfw: viewerAccess.localNodeIsNsfw,
+                },
+            ))
+        );
 
         const remote = resolvedHandle.remote;
         const fetchRemotePostsRoute = async () => {
@@ -243,8 +263,10 @@ export async function GET(request: Request, context: RouteContext) {
                 return NextResponse.json({ posts: [], nextCursor: null });
             }
 
-            const profileRequiresNsfw = profileData.profile.isNsfw || profileData.profile.nodeIsNsfw;
-            if (!await canCurrentViewerAccessSensitiveRemoteProfile(profileRequiresNsfw)) {
+            if (!await canCurrentViewerAccessSensitiveRemoteProfile({
+                accountIsNsfw: profileData.profile.isNsfw,
+                nodeIsNsfw: profileData.profile.nodeIsNsfw,
+            })) {
                 return NextResponse.json(
                     { posts: [], nextCursor: null, restricted: true, error: SENSITIVE_REMOTE_PROFILE_MESSAGE },
                     { status: 403 },
@@ -255,7 +277,7 @@ export async function GET(request: Request, context: RouteContext) {
                 mapRemoteProfilePost(post as unknown as RemoteProfilePost, remote.domain) as unknown as FeedPostWithChildren
             ));
             return NextResponse.json({
-                posts: await populateViewerLikeState(mappedPosts),
+                posts: serializePosts(await populateViewerLikeState(mappedPosts)),
                 nextCursor: null,
             });
         };
@@ -306,6 +328,16 @@ export async function GET(request: Request, context: RouteContext) {
 
         if (user.isSuspended) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
+        }
+
+        const profileAccess = await getCurrentViewerSensitiveProfileAccess({
+            accountIsNsfw: user.isNsfw,
+        });
+        if (!profileAccess.allowed) {
+            return NextResponse.json(
+                { posts: [], nextCursor: null, restricted: true, error: SENSITIVE_PROFILE_MESSAGE },
+                { status: 403 },
+            );
         }
 
         // Get user's posts with cursor-based pagination
@@ -419,7 +451,7 @@ export async function GET(request: Request, context: RouteContext) {
         }
 
         return NextResponse.json({
-            posts: userPosts,
+            posts: serializePosts(userPosts),
             nextCursor: userPosts.length === limit ? userPosts[userPosts.length - 1]?.id : null,
         });
     } catch (error) {

@@ -8,7 +8,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { HomeIcon, SearchIcon, BellIcon, UserIcon, ShieldIcon, SettingsIcon } from './Icons';
 import { Check, ChevronDown, LogOut, Plus, Settings2 } from 'lucide-react';
-import { AuthScreen } from '@/app/login/page';
+import { AuthScreen } from '@/components/AuthScreen';
 import { AvatarImage } from './AvatarImage';
 import { ANONYMOUS_APP_DESTINATION } from '@/lib/posts/home-feed';
 // import { IdentityUnlockPrompt } from './IdentityUnlockPrompt'; // Moved to LayoutWrapper

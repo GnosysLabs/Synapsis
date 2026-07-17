@@ -50,6 +50,9 @@ export interface Post {
     likesCount: number;
     repostsCount: number;
     repliesCount: number;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
+    sensitiveContentRestricted?: boolean;
     author: User;
     media?: MediaItem[];
     linkPreviewUrl?: string | null;

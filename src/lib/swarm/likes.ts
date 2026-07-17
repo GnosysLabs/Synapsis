@@ -1,3 +1,5 @@
+import { signedFederationRead } from './signed-read';
+
 export interface SwarmLikeTarget {
   id: string;
   nodeDomain: string;
@@ -19,19 +21,20 @@ export async function getViewerSwarmLikedPostIds(
     targets.map(async (target) => {
       try {
         const protocol = target.nodeDomain.includes('localhost') ? 'http' : 'https';
-        const res = await fetch(
+        const res = await signedFederationRead(
           `${protocol}://${target.nodeDomain}/api/swarm/posts/${target.originalPostId}/likes?checkHandle=${encodeURIComponent(viewerHandle)}&checkDomain=${encodeURIComponent(viewerDomain)}`,
           {
             headers: { Accept: 'application/json' },
-            signal: AbortSignal.timeout(3000),
+            timeoutMs: 3_000,
+            maxResponseBytes: 32 * 1024,
           }
         );
 
-        if (!res.ok) {
+        if (res.status < 200 || res.status >= 300) {
           return;
         }
 
-        const data = await res.json();
+        const data = res.json() as { isLiked?: boolean };
         if (data.isLiked) {
           likedIds.add(target.id);
         }

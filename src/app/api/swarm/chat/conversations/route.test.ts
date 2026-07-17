@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth', () => ({ getSession: mocks.getSession }));
 
+vi.mock('@/lib/node/local-node', () => ({
+  requireLocalNodeNsfwClassification: vi.fn().mockResolvedValue(false),
+}));
+
 vi.mock('@/db', async () => {
   const schema = await vi.importActual<typeof import('@/db/schema')>('@/db/schema');
   return {

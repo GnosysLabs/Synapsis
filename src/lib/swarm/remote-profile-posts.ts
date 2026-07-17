@@ -18,6 +18,9 @@ export type RemoteProfilePost = {
     handle: string;
     displayName?: string | null;
     avatarUrl?: string | null;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
+    nodeDomain?: string | null;
   };
   nodeDomain?: string | null;
   isSwarm?: boolean;
@@ -29,6 +32,7 @@ export type RemoteProfilePost = {
     displayName?: string | null;
     avatarUrl?: string | null;
     isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
   }>;
   repostedByCount?: number;

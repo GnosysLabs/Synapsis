@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { users } from '@/db';
 import { desc, sql } from 'drizzle-orm';
+import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
+import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 
 export async function GET(request: NextRequest) {
     try {
@@ -11,6 +13,10 @@ export async function GET(request: NextRequest) {
 
         const searchParams = request.nextUrl.searchParams;
         const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
+        const { viewer, localNodeIsNsfw, canViewSensitive } = await getSensitiveContentViewerAccess();
+        if (localNodeIsNsfw && !viewer) {
+            return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+        }
 
         const userList = await db
             .select({
@@ -27,7 +33,13 @@ export async function GET(request: NextRequest) {
             .orderBy(desc(users.createdAt))
             .limit(limit);
 
-        return NextResponse.json({ users: userList });
+        return NextResponse.json({
+            users: userList.map((listedUser) => redactSensitiveUserSummary({
+                ...listedUser,
+                isRemote: false,
+                nodeIsNsfw: localNodeIsNsfw,
+            }, canViewSensitive)),
+        });
     } catch (error) {
         console.error('List users error:', error);
         return NextResponse.json({ users: [] });

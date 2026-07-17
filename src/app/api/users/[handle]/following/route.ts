@@ -3,9 +3,28 @@ import { db, follows, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import { hydrateSwarmUsers } from '@/lib/swarm/user-hydration';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
+import { fetchSwarmUserProfile } from '@/lib/swarm/interactions';
+import {
+    canCurrentViewerAccessSensitiveRemoteProfile,
+    getCurrentViewerSensitiveProfileAccess,
+    SENSITIVE_PROFILE_MESSAGE,
+    SENSITIVE_REMOTE_PROFILE_MESSAGE,
+} from '@/lib/nsfw/remote-profile-access';
+import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
+import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
+import { signedFederationRead } from '@/lib/swarm/signed-read';
 
 type RouteContext = { params: Promise<{ handle: string }> };
-type RemoteUserSummary = { handle: string; displayName?: string; avatarUrl?: string; bio?: string; isRemote?: boolean };
+type RemoteUserSummary = {
+    handle: string;
+    displayName?: string;
+    avatarUrl?: string;
+    bio?: string;
+    isRemote?: boolean;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
+    nodeDomain?: string;
+};
 
 /**
  * Fetch following list from a remote swarm node
@@ -14,12 +33,13 @@ const fetchSwarmFollowing = async (handle: string, domain: string, limit: number
     try {
         const protocol = domain.includes('localhost') ? 'http' : 'https';
         const url = `${protocol}://${domain}/api/swarm/users/${handle}/following?limit=${limit}`;
-        const res = await fetch(url, {
+        const res = await signedFederationRead(url, {
             headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(5000),
+            timeoutMs: 5_000,
+            maxResponseBytes: 256 * 1024,
         });
-        if (!res.ok) return null;
-        return await res.json() as { following?: RemoteUserSummary[] };
+        if (res.status < 200 || res.status >= 300) return null;
+        return res.json() as { following?: RemoteUserSummary[] };
     } catch {
         return null;
     }
@@ -37,6 +57,17 @@ export async function GET(request: Request, context: RouteContext) {
         const remote = resolvedHandle.remote;
 
         if (remote) {
+            const profileData = await fetchSwarmUserProfile(remote.handle, remote.domain, 0);
+            if (!await canCurrentViewerAccessSensitiveRemoteProfile({
+                accountIsNsfw: profileData?.profile.isNsfw,
+                nodeIsNsfw: profileData?.profile.nodeIsNsfw,
+            })) {
+                return NextResponse.json(
+                    { following: [], nextCursor: null, restricted: true, error: SENSITIVE_REMOTE_PROFILE_MESSAGE },
+                    { status: 403 },
+                );
+            }
+
             // Fetch from remote swarm node
             const swarmData = await fetchSwarmFollowing(remote.handle, remote.domain, limit);
             if (swarmData?.following) {
@@ -48,9 +79,18 @@ export async function GET(request: Request, context: RouteContext) {
                     avatarUrl: f.avatarUrl,
                     bio: f.bio,
                     isRemote: true,
+                    isNsfw: f.isNsfw,
+                    nodeIsNsfw: f.nodeIsNsfw,
+                    nodeDomain: f.nodeDomain || remote.domain,
                 }));
                 const hydratedFollowing = await hydrateSwarmUsers(following);
-                return NextResponse.json({ following: hydratedFollowing, nextCursor: null });
+                const { canViewSensitive } = await getSensitiveContentViewerAccess();
+                return NextResponse.json({
+                    following: hydratedFollowing.map((userSummary) => (
+                        redactSensitiveUserSummary(userSummary, canViewSensitive)
+                    )),
+                    nextCursor: null,
+                });
             }
             // If swarm fetch fails, return empty
             return NextResponse.json({ following: [], nextCursor: null });
@@ -73,6 +113,16 @@ export async function GET(request: Request, context: RouteContext) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
+        const profileAccess = await getCurrentViewerSensitiveProfileAccess({
+            accountIsNsfw: user.isNsfw,
+        });
+        if (!profileAccess.allowed) {
+            return NextResponse.json(
+                { following: [], nextCursor: null, restricted: true, error: SENSITIVE_PROFILE_MESSAGE },
+                { status: 403 },
+            );
+        }
+
         // Get local following
         const userFollowing = await db
             .select({
@@ -91,6 +141,8 @@ export async function GET(request: Request, context: RouteContext) {
             avatarUrl: f.following.avatarUrl,
             bio: f.following.bio,
             isRemote: false,
+            isNsfw: f.following.isNsfw,
+            nodeIsNsfw: profileAccess.nodeIsNsfw,
         }));
 
         // Get remote following
@@ -106,6 +158,7 @@ export async function GET(request: Request, context: RouteContext) {
             avatarUrl: f.avatarUrl,
             bio: f.bio,
             isRemote: true,
+            nodeDomain: f.targetHandle.split('@').pop(),
         }));
 
         // Merge and return
@@ -113,9 +166,12 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Hydrate remote users with fresh data from swarm
         const hydratedFollowing = await hydrateSwarmUsers(allFollowing);
+        const { canViewSensitive } = await getSensitiveContentViewerAccess();
 
         return NextResponse.json({
-            following: hydratedFollowing,
+            following: hydratedFollowing.map((userSummary) => (
+                redactSensitiveUserSummary(userSummary, canViewSensitive)
+            )),
             nextCursor: allFollowing.length === limit ? allFollowing[allFollowing.length - 1]?.id : null,
         });
     } catch (error) {

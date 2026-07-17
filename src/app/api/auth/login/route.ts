@@ -40,6 +40,9 @@ export async function POST(request: Request) {
                 did: user.did,
                 publicKey: user.publicKey,
                 privateKeyEncrypted: user.privateKeyEncrypted, // Client will decrypt with password
+                isNsfw: user.isNsfw,
+                nsfwEnabled: user.nsfwEnabled,
+                ageVerifiedAt: user.ageVerifiedAt?.toISOString() || null,
             },
         });
     } catch (error) {

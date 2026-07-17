@@ -59,17 +59,27 @@ const nextConfig: NextConfig = {
   },
 
   async headers() {
-    return [{
-      source: '/:path*',
-      headers: [
-        { key: 'Content-Security-Policy', value: contentSecurityPolicy },
-        { key: 'X-Content-Type-Options', value: 'nosniff' },
-        { key: 'X-Frame-Options', value: 'DENY' },
-        { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-        { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
-        { key: 'Cross-Origin-Opener-Policy', value: 'same-origin-allow-popups' },
-      ],
-    }];
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'Content-Security-Policy', value: contentSecurityPolicy },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin-allow-popups' },
+        ],
+      },
+      {
+        // API bodies vary by session, sensitive-content permission, and signed
+        // federation trust. Never let a reverse proxy reuse one viewer's body.
+        source: '/api/:path*',
+        headers: [
+          { key: 'Cache-Control', value: 'private, no-store, max-age=0' },
+        ],
+      },
+    ];
   },
 };
 

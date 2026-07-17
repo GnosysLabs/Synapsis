@@ -32,6 +32,9 @@ interface Conversation {
         displayName: string;
         avatarUrl: string | null;
         did?: string; // Add DID support
+        nodeDomain?: string | null;
+        isNsfw?: boolean;
+        nodeIsNsfw?: boolean;
     };
     lastMessageAt: string;
     lastMessagePreview: string;
@@ -47,6 +50,9 @@ interface ChatMessagePayload extends StoredChatMessage {
     senderHandle: string;
     senderDisplayName?: string;
     senderAvatarUrl?: string;
+    senderNodeDomain?: string | null;
+    senderIsNsfw?: boolean;
+    senderNodeIsNsfw?: boolean;
     senderDid?: string;
     isSentByMe: boolean;
     deliveredAt?: string;
@@ -725,7 +731,10 @@ export default function ChatPage() {
                             handle: data.user.handle,
                             displayName: data.user.displayName || data.user.handle,
                             avatarUrl: data.user.avatarUrl,
-                            did: data.user.did
+                            did: data.user.did,
+                            nodeDomain: data.user.nodeDomain,
+                            isNsfw: data.user.isNsfw,
+                            nodeIsNsfw: data.user.nodeIsNsfw,
                         },
                         lastMessageAt: new Date().toISOString(),
                         lastMessagePreview: 'New Conversation',
@@ -974,6 +983,9 @@ export default function ChatPage() {
                             <AvatarImage
                                 avatarUrl={selectedConversation.participant2.avatarUrl}
                                 seed={selectedConversation.participant2.handle}
+                                nodeDomain={selectedConversation.participant2.nodeDomain}
+                                isNsfw={selectedConversation.participant2.isNsfw}
+                                nodeIsNsfw={selectedConversation.participant2.nodeIsNsfw}
                                 alt={selectedConversation.participant2.displayName || selectedConversation.participant2.handle}
                             />
                         </div>
@@ -1078,6 +1090,9 @@ export default function ChatPage() {
                                             <AvatarImage
                                                 avatarUrl={msg.isSentByMe ? user.avatarUrl : msg.senderAvatarUrl}
                                                 seed={msg.isSentByMe ? user.handle : msg.senderHandle}
+                                                nodeDomain={msg.isSentByMe ? undefined : msg.senderNodeDomain}
+                                                isNsfw={msg.isSentByMe ? user.isNsfw : msg.senderIsNsfw}
+                                                nodeIsNsfw={msg.isSentByMe ? undefined : msg.senderNodeIsNsfw}
                                                 alt={msg.isSentByMe ? user.displayName : msg.senderDisplayName || msg.senderHandle}
                                             />
                                         </div>
@@ -1322,6 +1337,9 @@ export default function ChatPage() {
                                 <AvatarImage
                                     avatarUrl={conv.participant2.avatarUrl}
                                     seed={conv.participant2.handle}
+                                    nodeDomain={conv.participant2.nodeDomain}
+                                    isNsfw={conv.participant2.isNsfw}
+                                    nodeIsNsfw={conv.participant2.nodeIsNsfw}
                                     alt={conv.participant2.displayName || conv.participant2.handle}
                                 />
                             </div>

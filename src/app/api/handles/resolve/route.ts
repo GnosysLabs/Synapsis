@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/db';
 import { normalizeHandle, upsertHandleEntries } from '@/lib/federation/handles';
 import { z } from 'zod';
+import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 
 const handleParamSchema = z.string().min(3).max(40).regex(/^[a-zA-Z0-9_]+(@[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,})?$/, 'Invalid handle format');
 
@@ -59,13 +60,16 @@ export async function GET(request: Request) {
         const url = new URL('/.well-known/synapsis-handles', `https://${parsed.domain}`);
         url.searchParams.set('handle', parsed.handle);
 
-        const res = await fetch(url.toString());
-        if (!res.ok) {
+        const res = await safeFederationRequest(url.toString(), {
+            timeoutMs: 8_000,
+            maxResponseBytes: 256 * 1024,
+        });
+        if (res.status < 200 || res.status >= 300) {
             return NextResponse.json({ error: 'Handle not found' }, { status: 404 });
         }
 
-        const data = await res.json();
-        const entry = Array.isArray(data?.handles) ? data.handles[0] : null;
+        const data = res.json() as { handles?: unknown };
+        const entry = Array.isArray(data.handles) ? data.handles[0] : null;
 
         if (!entry) {
             return NextResponse.json({ error: 'Handle not found' }, { status: 404 });

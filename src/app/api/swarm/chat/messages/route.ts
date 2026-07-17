@@ -11,6 +11,9 @@ import { eq, and, isNull } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
 import { z } from 'zod';
 import { E2EE_CHAT_ACTION, E2EE_PROTOCOL_VERSION, e2eeMessageEnvelopeSchema } from '@/lib/e2ee/protocol';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
+import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 
 // Schema for query parameters
 const messagesQuerySchema = z.object({
@@ -37,6 +40,11 @@ export async function GET(request: NextRequest) {
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
+    const canViewSensitive = shouldIncludeNsfwFeed({
+      viewer: session.user,
+      localNodeIsNsfw,
+    });
 
     const { searchParams } = new URL(request.url);
     
@@ -112,6 +120,26 @@ export async function GET(request: NextRequest) {
 
       const displayName = user?.displayName || msg.senderDisplayName || msg.senderHandle;
       const avatarUrl = user?.avatarUrl || msg.senderAvatarUrl;
+      const senderDomain = msg.senderNodeDomain || (
+        msg.senderHandle.includes('@') ? msg.senderHandle.split('@').pop() || null : null
+      );
+      const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN || 'localhost:43821';
+      const senderIsRemote = Boolean(senderDomain && senderDomain !== localDomain);
+      // Imported and historical messages may outlive their sender row. Stored
+      // avatar snapshots have no trustworthy classifier, so fail closed unless
+      // this is the authenticated viewer's own message.
+      const senderClassifierMissing = !user && !isSentByMe;
+      const senderProfile = redactSensitiveUserSummary({
+        handle: msg.senderHandle,
+        displayName,
+        avatarUrl,
+        isRemote: senderIsRemote || senderClassifierMissing,
+        nodeDomain: senderDomain,
+        isNsfw: senderIsRemote
+          ? user?.isNsfw === true ? true : undefined
+          : user?.isNsfw ?? (isSentByMe ? session.user.isNsfw : undefined),
+        nodeIsNsfw: senderIsRemote || senderClassifierMissing ? undefined : localNodeIsNsfw,
+      }, canViewSensitive);
 
       let encryptedEnvelope = null;
       let signedAction = null;
@@ -138,8 +166,11 @@ export async function GET(request: NextRequest) {
       return {
         id: msg.id,
         senderHandle: msg.senderHandle,
-        senderDisplayName: displayName,
-        senderAvatarUrl: avatarUrl,
+        senderDisplayName: senderProfile.displayName,
+        senderAvatarUrl: senderProfile.avatarUrl,
+        senderNodeDomain: senderProfile.nodeDomain,
+        senderIsNsfw: senderProfile.isNsfw,
+        senderNodeIsNsfw: senderProfile.nodeIsNsfw,
         senderDid: msg.senderDid,
         content: msg.protocolVersion === 0 ? msg.content : null,
         protocolVersion: msg.protocolVersion,

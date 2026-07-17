@@ -1,7 +1,15 @@
 import { generateKeyPairSync, createHash, createSign, randomBytes, randomUUID } from 'node:crypto';
 
 import { NextRequest } from 'next/server';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const localNodeMocks = vi.hoisted(() => ({
+    requireClassification: vi.fn(),
+}));
+
+vi.mock('@/lib/node/local-node', () => ({
+    requireLocalNodeNsfwClassification: localNodeMocks.requireClassification,
+}));
 
 import { canonicalize } from '@/lib/crypto/user-signing';
 import { generateDID } from '@/lib/crypto/did-key';
@@ -254,6 +262,32 @@ function encryptedMessage(createdAtMs: number) {
 }
 
 describe('account import DM integrity', () => {
+    beforeEach(() => {
+        localNodeMocks.requireClassification.mockReset();
+        localNodeMocks.requireClassification.mockResolvedValue(false);
+    });
+
+    it('requires server-verified age confirmation on an adult-only node', async () => {
+        localNodeMocks.requireClassification.mockResolvedValue(true);
+        const response = await importResponse(signedV11Export(basePayload([])));
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+            requiresAgeConfirmation: true,
+        });
+    });
+
+    it('continues through validation after explicit adult-node age confirmation', async () => {
+        localNodeMocks.requireClassification.mockResolvedValue(true);
+        const response = await importResponse(
+            signedV11Export(basePayload([])),
+            { confirmAge: true },
+        );
+
+        expect(response.status).toBe(401);
+        await expect(response.json()).resolves.toMatchObject({ error: 'Invalid password' });
+    });
+
     it('requires a valid destination email before importing', async () => {
         const response = await importResponse(
             signedV11Export(basePayload([])),

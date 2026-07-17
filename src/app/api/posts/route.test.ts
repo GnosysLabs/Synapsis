@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GET, POST } from './route';
 import { getSession } from '@/lib/auth';
 import { requireSignedAction } from '@/lib/auth/verify-signature';
-import { isLocalNodeNsfw } from '@/lib/node/local-node';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 
 // Mock the dependencies
 vi.mock('@/lib/auth/verify-signature', () => ({
@@ -23,6 +23,7 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/node/local-node', () => ({
   isLocalNodeNsfw: vi.fn(),
+  requireLocalNodeNsfwClassification: vi.fn(),
 }));
 
 vi.mock('@/lib/mentions/delivery', () => ({
@@ -341,7 +342,7 @@ describe('GET /api/posts?type=local', () => {
   });
 
   it('rejects an anonymous request for an NSFW node feed', async () => {
-    vi.mocked(isLocalNodeNsfw).mockResolvedValue(true);
+    vi.mocked(requireLocalNodeNsfwClassification).mockResolvedValue(true);
     vi.mocked(getSession).mockResolvedValue(null);
 
     const response = await GET(new Request('http://localhost:43821/api/posts?type=local'));

@@ -1,10 +1,15 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+
+const NODE_CONFIG_SYNC_CHANNEL = 'synapsis-node-config';
+const NODE_CONFIG_STORAGE_KEY = 'synapsis:node-config-changed';
+const NODE_CONFIG_REFRESH_MS = 30_000;
 
 interface RuntimeConfig {
   domain: string;
   isNsfw: boolean;
+  classificationKnown: boolean;
 }
 
 interface ConfigContextType {
@@ -22,32 +27,102 @@ const ConfigContext = createContext<ConfigContextType>({
 export function ConfigProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<RuntimeConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const requestInFlightRef = useRef(false);
+  const requestGenerationRef = useRef(0);
+  const activeControllerRef = useRef<AbortController | null>(null);
+
+  const broadcastConfigChange = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const marker = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    if (typeof BroadcastChannel !== 'undefined') {
+      const channel = new BroadcastChannel(NODE_CONFIG_SYNC_CHANNEL);
+      channel.postMessage(marker);
+      channel.close();
+      return;
+    }
+    try {
+      window.localStorage.setItem(NODE_CONFIG_STORAGE_KEY, marker);
+    } catch {
+      // Focus and periodic refresh remain available when storage is blocked.
+    }
+  }, []);
 
   const setNodeNsfw = useCallback((isNsfw: boolean) => {
-    setConfig((current) => current ? { ...current, isNsfw } : current);
+    setConfig((current) => current
+      ? { ...current, isNsfw, classificationKnown: true }
+      : current);
+    broadcastConfigChange();
+  }, [broadcastConfigChange]);
+
+  const refreshConfig = useCallback(async (failClosedWhileRefreshing = false) => {
+    if (requestInFlightRef.current && !failClosedWhileRefreshing) return;
+    const generation = ++requestGenerationRef.current;
+    activeControllerRef.current?.abort();
+    if (failClosedWhileRefreshing) {
+      setConfig((current) => ({
+        domain: current?.domain || process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        isNsfw: true,
+        classificationKnown: false,
+      }));
+    }
+    const controller = new AbortController();
+    activeControllerRef.current = controller;
+    requestInFlightRef.current = true;
+    try {
+      const res = await fetch('/api/config', {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Runtime config returned ${res.status}`);
+      const data = await res.json();
+      if (generation !== requestGenerationRef.current) return;
+      setConfig({
+        domain: data.domain || 'localhost:43821',
+        isNsfw: data.isNsfw === true,
+        classificationKnown: data.classificationKnown === true,
+      });
+    } catch {
+      if (generation !== requestGenerationRef.current) return;
+      // A stale "safe" classification must never keep content exposed. Network
+      // or storage failures transition the client to the restricted state.
+      setConfig({
+        domain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        isNsfw: true,
+        classificationKnown: false,
+      });
+    } finally {
+      if (generation === requestGenerationRef.current) {
+        activeControllerRef.current = null;
+        requestInFlightRef.current = false;
+        setIsLoading(false);
+      }
+    }
   }, []);
 
   useEffect(() => {
-    // Fetch runtime config on mount
-    fetch('/api/config')
-      .then((res) => res.json())
-      .then((data) => {
-        setConfig({
-          domain: data.domain || 'localhost:43821',
-          isNsfw: data.isNsfw === true,
-        });
-      })
-      .catch(() => {
-        // Fallback to build-time value if fetch fails
-        setConfig({
-          domain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
-          isNsfw: false,
-        });
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
-  }, []);
+    void refreshConfig();
+    const periodicRefresh = () => void refreshConfig();
+    const secureRefresh = () => void refreshConfig(true);
+    const interval = window.setInterval(periodicRefresh, NODE_CONFIG_REFRESH_MS);
+    const channel = typeof BroadcastChannel !== 'undefined'
+      ? new BroadcastChannel(NODE_CONFIG_SYNC_CHANNEL)
+      : null;
+    channel?.addEventListener('message', secureRefresh);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === NODE_CONFIG_STORAGE_KEY) secureRefresh();
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', secureRefresh);
+
+    return () => {
+      window.clearInterval(interval);
+      activeControllerRef.current?.abort();
+      channel?.removeEventListener('message', secureRefresh);
+      channel?.close();
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', secureRefresh);
+    };
+  }, [refreshConfig]);
 
   return (
     <ConfigContext.Provider value={{ config, isLoading, setNodeNsfw }}>

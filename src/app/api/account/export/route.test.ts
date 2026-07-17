@@ -122,7 +122,7 @@ describe('account export manifest integrity', () => {
         mocks.findConversations.mockResolvedValue([]);
         mocks.findE2EEKeyBundle.mockResolvedValue(undefined);
         mocks.findUsers.mockResolvedValue(undefined);
-        mocks.findNodes.mockResolvedValue(undefined);
+        mocks.findNodes.mockResolvedValue({ isNsfw: false });
         mocks.safeFederationRequest.mockResolvedValue({ status: 204 });
         mocks.update.mockImplementation(() => ({
             set: () => ({
@@ -271,6 +271,13 @@ describe('account export manifest integrity', () => {
                 createdAt: storedCreatedAt,
             }],
         }]);
+        mocks.findRemoteFollows.mockResolvedValue([{
+            targetActorUrl: 'https://adult.remote/users/private-account',
+            targetHandle: 'private-account@adult.remote',
+            displayName: 'Remote account',
+            bio: 'PRIVATE REMOTE BIO',
+            avatarUrl: 'https://adult.remote/private-avatar.jpg',
+        }]);
         mocks.requireAuth.mockResolvedValue({
             id: 'user-1',
             did: ownerDid,
@@ -311,6 +318,16 @@ describe('account export manifest integrity', () => {
             publicKey: encryptionPublicKey,
             proofAction: continuityProof,
         });
+        expect(body.export.following).toContainEqual({
+            actorUrl: 'https://adult.remote/users/private-account',
+            handle: 'private-account@adult.remote',
+            isRemote: true,
+            displayName: 'Remote account',
+            bio: null,
+            avatarUrl: null,
+        });
+        expect(JSON.stringify(body.export.following)).not.toContain('PRIVATE REMOTE BIO');
+        expect(JSON.stringify(body.export.following)).not.toContain('private-avatar.jpg');
 
         const { signature, ...manifestData } = body.export.manifest;
         const verifier = createVerify('sha256');

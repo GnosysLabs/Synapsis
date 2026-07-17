@@ -19,7 +19,7 @@ const swarmRepostSchema = z.object({
     actorHandle: localHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
     actorAvatarUrl: z.string().url().optional(),
-    actorIsNsfw: z.boolean().optional().default(false),
+    actorIsNsfw: z.boolean(),
     actorNodeDomain: nodeDomainSchema,
     repostId: z.string().uuid(),
     interactionId: z.string().uuid(),

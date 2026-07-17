@@ -33,7 +33,9 @@ const announcementSchema = z.object({
   userCount: z.number().optional(),
   postCount: z.number().optional(),
   mediaCount: z.number().optional(),
-  isNsfw: z.boolean().optional(),
+  // A direct, signed announcement is authoritative. Classification is
+  // mandatory so old payloads cannot silently become `safe`.
+  isNsfw: z.boolean(),
   capabilities: z.array(z.enum(['handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1'])).optional(),
   timestamp: z.string().optional(),
 }).passthrough();

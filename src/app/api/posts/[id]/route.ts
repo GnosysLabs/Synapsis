@@ -2,8 +2,43 @@ import { NextResponse } from 'next/server';
 import { db, posts, users } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
-import { normalizeSameNodePostId } from '@/lib/swarm/post-id';
+import { normalizeSameNodePostId, parseSwarmPostId } from '@/lib/swarm/post-id';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
+import {
+    SENSITIVE_PROFILE_MESSAGE,
+} from '@/lib/nsfw/remote-profile-access';
+import { isPostSensitive, redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
+import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
+import { signedFederationRead } from '@/lib/swarm/signed-read';
+import { getKnownSwarmNodeNsfw } from '@/lib/swarm/registry';
+import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
+import { createSignedPayload } from '@/lib/swarm/signature';
+import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
+
+interface SwarmReplyDeletionPayload {
+    replyId: string;
+    nodeDomain: string;
+    authorHandle: string;
+}
+
+async function sendSignedSwarmReplyDeletion(
+    originDomain: string,
+    deletion: SwarmReplyDeletionPayload,
+) {
+    const protocol = originDomain.includes('localhost') ? 'http' : 'https';
+    const { payload, signature } = await createSignedPayload(deletion);
+    return safeFederationRequest(`${protocol}://${originDomain}/api/swarm/replies`, {
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Swarm-Source-Domain': deletion.nodeDomain,
+            'X-Swarm-Signature': signature,
+        },
+        body: JSON.stringify(payload),
+        timeoutMs: 5_000,
+        maxResponseBytes: 64 * 1024,
+    });
+}
 
 const embeddedPostRelations = {
     author: true,
@@ -40,10 +75,19 @@ type SwarmDetailPostInput = {
         displayName?: string | null;
         avatarUrl?: string | null;
         isNsfw?: boolean;
+        nodeIsNsfw?: boolean;
         nodeDomain?: string | null;
     }>;
     repostedByCount?: number;
-    author?: { handle: string; displayName?: string | null; avatarUrl?: string | null } | null;
+    author?: {
+        handle: string;
+        displayName?: string | null;
+        avatarUrl?: string | null;
+        isNsfw?: boolean;
+        nodeIsNsfw?: boolean;
+    } | null;
+    isNsfw?: boolean;
+    nodeIsNsfw?: boolean;
     media?: Array<{ id?: string; url: string; altText?: string | null }>;
     linkPreviewUrl?: string | null;
     linkPreviewTitle?: string | null;
@@ -68,6 +112,8 @@ function mapSwarmDetailPost(post: SwarmDetailPostInput, fallbackDomain: string):
         repliesCount: post.repliesCount || 0,
         isSwarm: true,
         nodeDomain: effectiveDomain,
+        isNsfw: post.isNsfw,
+        nodeIsNsfw: post.nodeIsNsfw,
         repostOfId: post.repostOf
             ? (post.repostOf.id?.startsWith('swarm:')
                 ? post.repostOf.id
@@ -100,6 +146,8 @@ function mapSwarmDetailPost(post: SwarmDetailPostInput, fallbackDomain: string):
             avatarUrl: post.author.avatarUrl,
             isSwarm: true,
             nodeDomain: effectiveDomain,
+            isNsfw: post.author.isNsfw,
+            nodeIsNsfw: post.author.nodeIsNsfw ?? post.nodeIsNsfw,
         } : null,
         media: post.media?.map((m, idx) => ({
             id: m.id || `swarm:${effectiveDomain}:${rawId}:media:${idx}`,
@@ -116,6 +164,43 @@ function mapSwarmDetailPost(post: SwarmDetailPostInput, fallbackDomain: string):
     };
 }
 
+function postRecordIsSensitive(
+    value: Record<string, unknown>,
+    localNodeDomain: string,
+    localNodeIsNsfw: boolean,
+): boolean {
+    const author = value.author && typeof value.author === 'object'
+        ? value.author as Record<string, unknown>
+        : null;
+    const nodeDomain = typeof value.nodeDomain === 'string' ? value.nodeDomain : null;
+    const authorHandle = typeof author?.handle === 'string' ? author.handle : '';
+    const isRemote = value.isSwarm === true
+        || value.isRemote === true
+        || author?.isRemote === true
+        || (author?.nodeId !== null && author?.nodeId !== undefined)
+        || authorHandle.includes('@')
+        || Boolean(nodeDomain && nodeDomain !== localNodeDomain);
+    const sensitive = isPostSensitive({
+        postIsNsfw: typeof value.isNsfw === 'boolean' ? value.isNsfw : undefined,
+        authorIsNsfw: typeof author?.isNsfw === 'boolean' ? author.isNsfw : undefined,
+        nodeIsNsfw: typeof value.nodeIsNsfw === 'boolean'
+            ? value.nodeIsNsfw
+            : typeof author?.nodeIsNsfw === 'boolean'
+                ? author.nodeIsNsfw
+                : isRemote ? undefined : localNodeIsNsfw,
+        isRemote,
+    });
+    if (sensitive) return true;
+
+    const repostOf = value.repostOf;
+    return Boolean(repostOf && typeof repostOf === 'object'
+        && postRecordIsSensitive(
+            repostOf as Record<string, unknown>,
+            localNodeDomain,
+            localNodeIsNsfw,
+        ));
+}
+
 export async function GET(
     request: Request,
     { params }: { params: Promise<{ id: string }> }
@@ -126,29 +211,62 @@ export async function GET(
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const id = normalizeSameNodePostId(decodeURIComponent(rawId), nodeDomain);
 
+        // Adult-only nodes are never browsable anonymously, including direct
+        // post URLs that bypass the node feed and profile pages.
+        const viewerAccess = await getSensitiveContentViewerAccess();
+        const revealSensitive = new URL(request.url).searchParams.get('revealSensitive') === '1';
+        const canRevealRequestedSensitivePost = Boolean(
+            viewerAccess.viewer
+            && revealSensitive
+            && viewerAccess.viewer.ageVerifiedAt,
+        );
+        if (viewerAccess.localNodeIsNsfw && !viewerAccess.viewer) {
+            return NextResponse.json(
+                { error: SENSITIVE_PROFILE_MESSAGE, restricted: true },
+                { status: 403 },
+            );
+        }
+
         let mainPost: Record<string, unknown> | null = null;
         let replyPosts: Array<Record<string, unknown>> = [];
 
         // Handle swarm post IDs (format: swarm:domain:uuid)
         if (id.startsWith('swarm:')) {
-            const lastColonIndex = id.lastIndexOf(':');
-            if (lastColonIndex > 6) {
-                const originDomain = id.substring(6, lastColonIndex);
-                const originalPostId = id.substring(lastColonIndex + 1);
+            const parsedSwarmId = parseSwarmPostId(id);
+            if (!parsedSwarmId) {
+                return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
+            }
+            const { domain: originDomain, originalPostId } = parsedSwarmId;
 
                 // Fetch from origin node in real-time
                 try {
                     const protocol = originDomain.includes('localhost') ? 'http' : 'https';
-                    const res = await fetch(`${protocol}://${originDomain}/api/swarm/posts/${originalPostId}`, {
+                    const res = await signedFederationRead(`${protocol}://${originDomain}/api/swarm/posts/${originalPostId}`, {
                         headers: { 'Accept': 'application/json' },
-                        signal: AbortSignal.timeout(10000),
+                        timeoutMs: 8_000,
+                        maxResponseBytes: 1024 * 1024,
                     });
 
-                    if (res.ok) {
-                        const data = await res.json() as { post: SwarmDetailPostInput; replies?: SwarmDetailPostInput[] };
+                    if (res.status >= 200 && res.status < 300) {
+                        const data = res.json() as { post: SwarmDetailPostInput; replies?: SwarmDetailPostInput[] };
+                        const knownAdultNode = await getKnownSwarmNodeNsfw(originDomain) === true;
+                        const classifyOriginPost = (post: SwarmDetailPostInput): SwarmDetailPostInput => knownAdultNode
+                            ? {
+                                ...post,
+                                isNsfw: true,
+                                nodeIsNsfw: true,
+                                author: post.author ? {
+                                    ...post.author,
+                                    isNsfw: true,
+                                    nodeIsNsfw: true,
+                                } : post.author,
+                                repostOf: post.repostOf ? classifyOriginPost(post.repostOf) : post.repostOf,
+                            }
+                            : post;
+                        const originPost = classifyOriginPost(data.post);
 
                         mainPost = mapSwarmDetailPost({
-                            ...data.post,
+                            ...originPost,
                             id,
                             originalPostId,
                             nodeDomain: originDomain,
@@ -156,7 +274,7 @@ export async function GET(
 
                         // Transform replies from the origin node
                         replyPosts = (data.replies || []).map((reply) => mapSwarmDetailPost({
-                            ...reply,
+                            ...classifyOriginPost(reply),
                             nodeDomain: originDomain,
                         }, originDomain));
 
@@ -168,13 +286,13 @@ export async function GET(
                             const { getViewerSwarmRepostedPostIds } = await import('@/lib/swarm/reposts');
                             const viewer = await requireAuth();
 
-                            const likeCheckRes = await fetch(
+                            const likeCheckRes = await signedFederationRead(
                                 `${protocol}://${originDomain}/api/swarm/posts/${originalPostId}/likes?checkHandle=${viewer.handle}&checkDomain=${nodeDomain}`,
-                                { signal: AbortSignal.timeout(3000) }
+                                { timeoutMs: 3_000, maxResponseBytes: 32 * 1024 }
                             );
 
-                            if (likeCheckRes.ok) {
-                                const likeData = await likeCheckRes.json() as { isLiked?: boolean };
+                            if (likeCheckRes.status >= 200 && likeCheckRes.status < 300) {
+                                const likeData = likeCheckRes.json() as { isLiked?: boolean };
                                 mainPost.isLiked = likeData.isLiked;
                             }
 
@@ -190,9 +308,30 @@ export async function GET(
                             // Not logged in or timeout
                         }
 
+                        if (!viewerAccess.viewer) {
+                            if (postRecordIsSensitive(mainPost, nodeDomain, viewerAccess.localNodeIsNsfw)) {
+                                return NextResponse.json(
+                                    { error: SENSITIVE_PROFILE_MESSAGE, restricted: true },
+                                    { status: 403 },
+                                );
+                            }
+                            replyPosts = replyPosts.filter((reply) => (
+                                !postRecordIsSensitive(reply, nodeDomain, viewerAccess.localNodeIsNsfw)
+                            ));
+                        }
+
                         return NextResponse.json({
-                            post: mainPost,
-                            replies: replyPosts,
+                            post: redactSensitivePostForViewer(mainPost, {
+                                canViewSensitive: viewerAccess.canViewSensitive,
+                                localNodeDomain: nodeDomain,
+                                localNodeIsNsfw: viewerAccess.localNodeIsNsfw,
+                                revealSensitiveRoot: canRevealRequestedSensitivePost,
+                            }),
+                            replies: replyPosts.map((reply) => redactSensitivePostForViewer(reply, {
+                                canViewSensitive: viewerAccess.canViewSensitive,
+                                localNodeDomain: nodeDomain,
+                                localNodeIsNsfw: viewerAccess.localNodeIsNsfw,
+                            })),
                         });
                     }
                 } catch (err) {
@@ -200,7 +339,6 @@ export async function GET(
                 }
 
                 return NextResponse.json({ error: 'Post not found' }, { status: 404 });
-            }
         }
 
         const post = await db.query.posts.findFirst({
@@ -302,9 +440,30 @@ export async function GET(
             return NextResponse.json({ error: 'Post not found' }, { status: 404 });
         }
 
+        if (!viewerAccess.viewer) {
+            if (postRecordIsSensitive(mainPost, nodeDomain, viewerAccess.localNodeIsNsfw)) {
+                return NextResponse.json(
+                    { error: SENSITIVE_PROFILE_MESSAGE, restricted: true },
+                    { status: 403 },
+                );
+            }
+            replyPosts = replyPosts.filter((reply) => (
+                !postRecordIsSensitive(reply, nodeDomain, viewerAccess.localNodeIsNsfw)
+            ));
+        }
+
         return NextResponse.json({
-            post: mainPost,
-            replies: replyPosts,
+            post: redactSensitivePostForViewer(mainPost, {
+                canViewSensitive: viewerAccess.canViewSensitive,
+                localNodeDomain: nodeDomain,
+                localNodeIsNsfw: viewerAccess.localNodeIsNsfw,
+                revealSensitiveRoot: canRevealRequestedSensitivePost,
+            }),
+            replies: replyPosts.map((reply) => redactSensitivePostForViewer(reply, {
+                canViewSensitive: viewerAccess.canViewSensitive,
+                localNodeDomain: nodeDomain,
+                localNodeIsNsfw: viewerAccess.localNodeIsNsfw,
+            })),
         });
     } catch (error) {
         console.error('Get post detail error:', error);
@@ -328,23 +487,33 @@ export async function DELETE(
 
         // Handle swarm post IDs (format: swarm:domain:uuid)
         if (id.startsWith('swarm:')) {
-            const lastColonIndex = id.lastIndexOf(':');
-            if (lastColonIndex > 6) {
-                const originDomain = id.substring(6, lastColonIndex);
-                const originalPostId = id.substring(lastColonIndex + 1);
+            const parsedSwarmId = parseSwarmPostId(id);
+            if (!parsedSwarmId) {
+                return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
+            }
+            const { domain: originDomain, originalPostId } = parsedSwarmId;
 
                 // We need to fetch the post from the remote node to check if the current user is the author
                 // The remote node should have the post with proper attribution
                 try {
                     const protocol = originDomain.includes('localhost') ? 'http' : 'https';
-                    const res = await fetch(`${protocol}://${originDomain}/api/swarm/posts/${originalPostId}`, {
+                    const res = await signedFederationRead(`${protocol}://${originDomain}/api/swarm/posts/${originalPostId}`, {
                         headers: { 'Accept': 'application/json' },
-                        signal: AbortSignal.timeout(5000),
+                        timeoutMs: 5_000,
+                        maxResponseBytes: 1024 * 1024,
                     });
 
-                    if (res.ok) {
-                        const data = await res.json();
+                    if (res.status >= 200 && res.status < 300) {
+                        const data = res.json() as {
+                            post?: {
+                                apId?: string | null;
+                                author?: { handle?: string };
+                            };
+                        };
                         const remotePost = data.post;
+                        if (!remotePost) {
+                            return NextResponse.json({ error: 'Post not found' }, { status: 404 });
+                        }
 
                         // Check authorship
                         // Format: handle or handle@domain
@@ -361,11 +530,9 @@ export async function DELETE(
                         // So we check if remotePost.author.handle starts with user.handle
                         // AND (remotePost.author.handle ends with @nodeDomain OR remotePost.nodeDomain == nodeDomain?)
 
-                        let isAuthor = false;
-                        if (remotePost.author.handle === user.handle ||
-                            remotePost.author.handle === `${user.handle}@${nodeDomain}`) {
-                            isAuthor = true;
-                        }
+                        const normalizedLocalDomain = normalizeNodeDomain(nodeDomain);
+                        const isAuthor = remotePost.author?.handle
+                            === `${user.handle}@${normalizedLocalDomain}`;
 
                         if (!isAuthor) {
                             return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
@@ -376,8 +543,6 @@ export async function DELETE(
                         // Ideally, the remote node preserves the apId we sent, which contains our original ID.
                         // But the remote node endpoint returns 'apId', let's use that if available.
 
-                        let replyIdToDelete = originalPostId; // Fallback to their ID if we can't find ours (unlikely to work for replies endpoint)
-
                         // If we are deleting a reply we sent
                         // The remote node has it stored. 
                         // We need to send DELETE /api/swarm/replies with { replyId: <OUR_ID> }
@@ -386,26 +551,24 @@ export async function DELETE(
                         // We need to extract <OUR_ID> from the remote post's apId
                         // remotePost.apId should be `swarm:ourDomain:ourId`
 
-                        if (remotePost.apId && remotePost.apId.startsWith(`swarm:${nodeDomain}:`)) {
-                            const parts = remotePost.apId.split(':');
-                            if (parts.length >= 3) {
-                                replyIdToDelete = parts[2];
-                            }
+                        const deliveredReplyId = remotePost.apId
+                            ? parseSwarmPostId(remotePost.apId)
+                            : null;
+                        if (!deliveredReplyId || deliveredReplyId.domain !== normalizedLocalDomain) {
+                            return NextResponse.json(
+                                { error: 'Remote reply ownership could not be verified' },
+                                { status: 409 },
+                            );
                         }
 
                         // Propagate deletion
-                        const deleteRes = await fetch(`${protocol}://${originDomain}/api/swarm/replies`, {
-                            method: 'DELETE',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                replyId: replyIdToDelete,
-                                nodeDomain,
-                                authorHandle: user.handle,
-                            }),
-                            signal: AbortSignal.timeout(5000),
+                        const deleteRes = await sendSignedSwarmReplyDeletion(originDomain, {
+                            replyId: deliveredReplyId.originalPostId,
+                            nodeDomain: normalizedLocalDomain,
+                            authorHandle: user.handle,
                         });
 
-                        if (deleteRes.ok) {
+                        if (deleteRes.status >= 200 && deleteRes.status < 300) {
                             return NextResponse.json({ success: true });
                         } else {
                             return NextResponse.json({ error: 'Failed to delete on remote node' }, { status: deleteRes.status });
@@ -417,7 +580,6 @@ export async function DELETE(
                     console.error('[Swarm] Error deleting remote post:', err);
                     return NextResponse.json({ error: 'Failed to communicate with remote node' }, { status: 502 });
                 }
-            }
         }
 
         const post = await db.query.posts.findFirst({ where: { id } });
@@ -458,26 +620,19 @@ export async function DELETE(
 
         // 2. If this is a reply to a swarm post, notify the origin node to delete it
         if (post.swarmReplyToId) {
-            // Correctly parse swarm:domain:postId where domain might contain port
-            const lastColonIndex = post.swarmReplyToId.lastIndexOf(':');
-            if (lastColonIndex > 6) { // 'swarm:'.length = 6
-                const originDomain = post.swarmReplyToId.substring(6, lastColonIndex);
+            const parsedParentId = parseSwarmPostId(post.swarmReplyToId);
+            if (parsedParentId) {
+                const originDomain = parsedParentId.domain;
 
                 // Propagate deletion to origin node
                 try {
-                    const protocol = originDomain.includes('localhost') ? 'http' : 'https';
-                    const res = await fetch(`${protocol}://${originDomain}/api/swarm/replies`, {
-                        method: 'DELETE',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            replyId: post.id,
-                            nodeDomain,
-                            authorHandle: user.handle,
-                        }),
-                        signal: AbortSignal.timeout(5000),
+                    const res = await sendSignedSwarmReplyDeletion(originDomain, {
+                        replyId: post.id,
+                        nodeDomain: normalizeNodeDomain(nodeDomain),
+                        authorHandle: user.handle,
                     });
 
-                    if (res.ok) {
+                    if (res.status >= 200 && res.status < 300) {
                         console.log(`[Swarm] Deletion propagated to ${originDomain}`);
                     } else {
                         console.error(`[Swarm] Failed to propagate deletion: ${res.status}`);

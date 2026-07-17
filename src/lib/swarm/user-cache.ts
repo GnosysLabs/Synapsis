@@ -8,6 +8,7 @@ export interface RemoteProfile {
     avatarUrl?: string | null;
     did: string;
     publicKey?: string;
+    isNsfw?: boolean;
 }
 
 function signingKeysEqual(left: string, right: string): boolean {
@@ -58,6 +59,7 @@ export async function upsertRemoteUser(profile: RemoteProfile): Promise<void> {
                     displayName: profile.displayName || existing.displayName,
                     avatarUrl: profile.avatarUrl || existing.avatarUrl,
                     publicKey: shouldUpdateKey ? profile.publicKey : existing.publicKey,
+                    isNsfw: profile.isNsfw ?? existing.isNsfw,
                     updatedAt: new Date(),
                 })
                 .where(eq(users.id, existing.id));
@@ -70,6 +72,9 @@ export async function upsertRemoteUser(profile: RemoteProfile): Promise<void> {
                 displayName: profile.displayName || profile.handle,
                 avatarUrl: profile.avatarUrl || null,
                 publicKey: profile.publicKey,
+                // Missing federation classification is never equivalent to
+                // explicitly safe. Later profile hydration can set this false.
+                isNsfw: profile.isNsfw ?? true,
                 // Note: nodeId is null for remote placeholders unless we specifically link it
             });
         }

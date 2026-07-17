@@ -6,6 +6,7 @@ export interface NodeFeedReposter {
     displayName: string | null;
     avatarUrl: string | null;
     isNsfw: boolean;
+    nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
 }
 

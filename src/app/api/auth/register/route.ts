@@ -4,6 +4,7 @@ import { db, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import { verifyTurnstileToken } from '@/lib/turnstile';
 import { z } from 'zod';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 
 const registerSchema = z.object({
     handle: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/),
@@ -11,6 +12,7 @@ const registerSchema = z.object({
     password: z.string().min(8),
     displayName: z.string().trim().max(50).optional(),
     turnstileToken: z.string().nullable().optional(),
+    confirmAge: z.boolean().optional(),
 });
 
 export async function POST(request: Request) {
@@ -35,6 +37,14 @@ export async function POST(request: Request) {
             }
         }
 
+        const nodeIsNsfw = await requireLocalNodeNsfwClassification();
+        if (nodeIsNsfw && data.confirmAge !== true) {
+            return NextResponse.json({
+                error: 'You must confirm that you are 18 or older to register on this adult-only node.',
+                requiresAgeConfirmation: true,
+            }, { status: 400 });
+        }
+
         const user = await registerUser(
             data.handle,
             data.email,
@@ -42,18 +52,14 @@ export async function POST(request: Request) {
             data.displayName
         );
 
-        // Check if this is an NSFW node and auto-enable NSFW settings
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
-        const node = await db.query.nodes.findFirst({
-            where: { domain: nodeDomain },
-        });
-
-        if (node?.isNsfw) {
+        const verifiedAt = nodeIsNsfw ? new Date() : user.ageVerifiedAt;
+        if (nodeIsNsfw) {
             // Auto-enable NSFW viewing and mark account as NSFW for users on NSFW nodes
             await db.update(users)
                 .set({
                     nsfwEnabled: true,
-                    isNsfw: true
+                    isNsfw: true,
+                    ageVerifiedAt: verifiedAt,
                 })
                 .where(eq(users.id, user.id));
         }
@@ -70,6 +76,9 @@ export async function POST(request: Request) {
                 did: user.did,
                 publicKey: user.publicKey,
                 privateKeyEncrypted: user.privateKeyEncrypted, // Client will decrypt with password
+                isNsfw: nodeIsNsfw ? true : user.isNsfw,
+                nsfwEnabled: nodeIsNsfw ? true : user.nsfwEnabled,
+                ageVerifiedAt: verifiedAt?.toISOString() || null,
             },
         });
     } catch (error) {

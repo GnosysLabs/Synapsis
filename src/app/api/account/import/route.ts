@@ -31,6 +31,7 @@ import {
 import { encryptionKeyIdFromPublicKey } from '@/lib/e2ee/bundle-proof';
 import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 
 const isoTimestampSchema = z.iso.datetime({ offset: true });
 const didSchema = z.string().min(8).max(2_048).regex(/^did:/);
@@ -554,7 +555,7 @@ export async function POST(req: NextRequest) {
         if (!isRecord(body)) {
             return NextResponse.json({ error: 'Invalid import request' }, { status: 400 });
         }
-        const { exportData, password, newHandle, destinationEmail, acceptedCompliance } = body;
+        const { exportData, password, newHandle, destinationEmail, acceptedCompliance, confirmAge } = body;
 
         // Validate required fields
         if (!isRecord(exportData)
@@ -575,6 +576,14 @@ export async function POST(req: NextRequest) {
         if (acceptedCompliance !== true) {
             return NextResponse.json({
                 error: 'You must accept the content compliance agreement'
+            }, { status: 400 });
+        }
+
+        const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
+        if (localNodeIsNsfw && confirmAge !== true) {
+            return NextResponse.json({
+                error: 'You must confirm that you are 18 or older to import an account onto this adult-only node.',
+                requiresAgeConfirmation: true,
             }, { status: 400 });
         }
 
@@ -768,6 +777,9 @@ export async function POST(req: NextRequest) {
                 publicKey: manifest.publicKey,
                 privateKeyEncrypted: privateKeyEncryptedForStorage,
                 passwordHash: importedPasswordHash,
+                isNsfw: localNodeIsNsfw,
+                nsfwEnabled: localNodeIsNsfw,
+                ageVerifiedAt: localNodeIsNsfw ? new Date() : null,
                 movedFrom: oldActorUrl,
                 migratedAt: new Date(),
                 postsCount: importPosts.length,
@@ -788,20 +800,6 @@ export async function POST(req: NextRequest) {
 
             return createdUser;
         });
-
-        // Check if this is an NSFW node and auto-enable NSFW settings
-        const node = await db.query.nodes.findFirst({
-            where: { domain: nodeDomain },
-        });
-
-        if (node?.isNsfw) {
-            await db.update(users)
-                .set({
-                    nsfwEnabled: true,
-                    isNsfw: true
-                })
-                .where(eq(users.id, newUser.id));
-        }
 
         // Import posts
         let importedPosts = 0;
@@ -965,6 +963,9 @@ export async function POST(req: NextRequest) {
                 displayName: newUser.displayName,
                 publicKey: newUser.publicKey,
                 privateKeyEncrypted: newUser.privateKeyEncrypted,
+                isNsfw: newUser.isNsfw,
+                nsfwEnabled: newUser.nsfwEnabled,
+                ageVerifiedAt: newUser.ageVerifiedAt?.toISOString() || null,
             },
             stats: {
                 postsImported: importedPosts,

@@ -15,7 +15,7 @@ interface NsfwSettings {
 }
 
 export default function ContentSettingsPage() {
-    const { isIdentityUnlocked, signUserAction, setShowUnlockPrompt } = useAuth();
+    const { isIdentityUnlocked, signUserAction, setShowUnlockPrompt, updateUserProfile } = useAuth();
     const { config, isLoading: configLoading } = useRuntimeConfig();
     const [settings, setSettings] = useState<NsfwSettings | null>(null);
     const [loading, setLoading] = useState(true);
@@ -23,6 +23,7 @@ export default function ContentSettingsPage() {
     const [showAgeModal, setShowAgeModal] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
+    const sensitiveViewingActive = Boolean(settings?.nsfwEnabled && settings.ageVerifiedAt);
 
     useEffect(() => {
         fetchSettings();
@@ -52,7 +53,7 @@ export default function ContentSettingsPage() {
         }
 
         // If enabling and not verified, show age modal
-        if (!settings.nsfwEnabled && !settings.ageVerifiedAt) {
+        if (!settings.ageVerifiedAt) {
             setShowAgeModal(true);
             return;
         }
@@ -73,6 +74,7 @@ export default function ContentSettingsPage() {
             if (res.ok) {
                 const data = await res.json();
                 setSettings(prev => prev ? { ...prev, nsfwEnabled: data.nsfwEnabled } : null);
+                updateUserProfile({ nsfwEnabled: data.nsfwEnabled });
                 setSuccess(data.nsfwEnabled ? 'NSFW content enabled' : 'NSFW content disabled');
                 setTimeout(() => setSuccess(null), 3000);
             } else {
@@ -114,6 +116,7 @@ export default function ContentSettingsPage() {
                     nsfwEnabled: true,
                     ageVerifiedAt: data.ageVerifiedAt,
                 } : null);
+                updateUserProfile({ nsfwEnabled: true, ageVerifiedAt: data.ageVerifiedAt });
                 setShowAgeModal(false);
                 setSuccess('NSFW content enabled');
                 setTimeout(() => setSuccess(null), 3000);
@@ -152,6 +155,7 @@ export default function ContentSettingsPage() {
             if (res.ok) {
                 const data = await res.json();
                 setSettings(prev => prev ? { ...prev, isNsfw: data.isNsfw } : null);
+                updateUserProfile({ isNsfw: data.isNsfw });
                 setSuccess(data.isNsfw ? 'Account marked as NSFW' : 'Account unmarked as NSFW');
                 setTimeout(() => setSuccess(null), 3000);
             } else {
@@ -175,7 +179,8 @@ export default function ContentSettingsPage() {
         );
     }
 
-    if (!shouldExposeAccountNsfwSettings(config?.isNsfw ?? false)) {
+    if (!shouldExposeAccountNsfwSettings(config?.isNsfw ?? false)
+        && settings?.ageVerifiedAt) {
         return (
             <div style={{ maxWidth: '600px', margin: '0 auto', padding: '24px 16px 64px' }}>
                 <header style={{
@@ -197,10 +202,10 @@ export default function ContentSettingsPage() {
 
                 <div className="card" style={{ padding: '20px' }}>
                     <div style={{ fontWeight: 600, marginBottom: '8px' }}>
-                        NSFW content is enabled on this node
+                        Adult-node access confirmed
                     </div>
                     <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.6 }}>
-                        This node is designated NSFW, so NSFW viewing and account sensitivity are handled at the node level. There’s nothing to configure for this account.
+                        This node is permanently designated adult-only. Your age confirmation is on file, so sensitive content is available while you are signed in.
                     </div>
                 </div>
             </div>
@@ -273,13 +278,15 @@ export default function ContentSettingsPage() {
                                 alignItems: 'center',
                                 gap: '8px',
                             }}>
-                                {settings?.nsfwEnabled ? <Eye size={18} /> : <EyeOff size={18} />}
+                                {sensitiveViewingActive ? <Eye size={18} /> : <EyeOff size={18} />}
                                 Show NSFW Content
                             </div>
                             <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px' }}>
-                                {settings?.nsfwEnabled
+                                {sensitiveViewingActive
                                     ? 'You can see posts marked as sensitive or from NSFW accounts/nodes.'
-                                    : 'NSFW content is hidden from your feeds and search results.'}
+                                    : settings?.nsfwEnabled && !settings.ageVerifiedAt
+                                        ? 'Age confirmation is required before sensitive content can be shown.'
+                                        : 'NSFW content is hidden from your feeds and search results.'}
                             </div>
                             {settings?.ageVerifiedAt && (
                                 <div style={{
@@ -294,15 +301,15 @@ export default function ContentSettingsPage() {
                         <button
                             onClick={handleToggleNsfw}
                             disabled={saving}
-                            className={`btn btn-sm ${settings?.nsfwEnabled ? 'btn-ghost' : 'btn-primary'}`}
+                            className={`btn btn-sm ${sensitiveViewingActive ? 'btn-ghost' : 'btn-primary'}`}
                         >
-                            {settings?.nsfwEnabled ? 'Disable' : 'Enable'}
+                            {sensitiveViewingActive ? 'Disable' : settings?.nsfwEnabled ? 'Verify age' : 'Enable'}
                         </button>
                     </div>
                 </div>
 
                 {/* Mark Account as NSFW - only show if NSFW viewing is enabled */}
-                {settings?.nsfwEnabled && (
+                {sensitiveViewingActive && (
                     <div className="card" style={{ padding: '20px' }}>
                         <div style={{
                             display: 'flex',
