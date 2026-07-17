@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { nodes } from '@/db';
+import { nodes, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import { requireAdmin } from '@/lib/auth/admin';
 import { resolveNodeNsfwTransition } from '@/lib/node/nsfw-classification';
@@ -91,6 +91,11 @@ export async function PATCH(req: NextRequest) {
                 .set(updateData)
                 .where(eq(nodes.id, node.id))
                 .returning();
+        }
+
+        if (node.isNsfw) {
+            await db.update(users)
+                .set({ nsfwEnabled: true, updatedAt: new Date() });
         }
 
         return NextResponse.json({ node });

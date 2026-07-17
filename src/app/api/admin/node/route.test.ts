@@ -20,6 +20,7 @@ vi.mock('@/db', () => ({
         update: mocks.update,
     },
     nodes: { id: 'id' },
+    users: { id: 'user-id' },
 }));
 
 vi.mock('@/lib/auth/admin', () => ({
@@ -95,6 +96,7 @@ describe('PATCH /api/admin/node adult-only classification', () => {
             node: { isNsfw: true },
         });
         expect(update.set).toHaveBeenCalledWith(expect.objectContaining({ isNsfw: true }));
+        expect(update.set).toHaveBeenCalledWith(expect.objectContaining({ nsfwEnabled: true }));
     });
 
     it('preserves adult-only status during unrelated settings updates', async () => {

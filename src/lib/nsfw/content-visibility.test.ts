@@ -86,12 +86,12 @@ describe('sensitive content visibility', () => {
         })).toBe(false);
     });
 
-    it('keeps adult-node content hidden until age consent is persisted', () => {
+    it('does not require the hidden account toggle or a legacy age field on an adult node', () => {
         expect(shouldHideSensitivePost({
             sensitivity: { postIsNsfw: true, authorIsNsfw: true, nodeIsNsfw: true, isRemote: false },
-            viewer: { nsfwEnabled: true, ageVerifiedAt: null },
+            viewer: { nsfwEnabled: false, ageVerifiedAt: null },
             localNodeIsNsfw: true,
-        })).toBe(true);
+        })).toBe(false);
     });
 
     it('removes every raw sensitive field from a restricted response, including nested posts', () => {

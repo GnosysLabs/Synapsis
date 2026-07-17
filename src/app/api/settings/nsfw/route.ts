@@ -11,6 +11,7 @@ import { eq } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth'; // kept for GET
 import { requireSignedAction, SignedActionError } from '@/lib/auth/verify-signature';
 import { z } from 'zod';
+import { isLocalNodeNsfw } from '@/lib/node/local-node';
 
 const updateSchema = z.object({
   nsfwEnabled: z.boolean(),
@@ -25,9 +26,10 @@ const updateSchema = z.object({
 export async function GET() {
   try {
     const user = await requireAuth();
+    const localNodeIsNsfw = await isLocalNodeNsfw();
 
     return NextResponse.json({
-      nsfwEnabled: user.nsfwEnabled,
+      nsfwEnabled: localNodeIsNsfw || user.nsfwEnabled,
       ageVerifiedAt: user.ageVerifiedAt?.toISOString() || null,
       isNsfw: user.isNsfw, // Whether their account is marked NSFW
     });
@@ -58,6 +60,23 @@ export async function POST(request: NextRequest) {
 
     if (!db) {
       return NextResponse.json({ error: 'Database not available' }, { status: 500 });
+    }
+
+    // Adult-only nodes do not offer an account-level opt-out. Keep the stored
+    // preference aligned even if an old client calls this endpoint directly.
+    if (await isLocalNodeNsfw()) {
+      await db.update(users)
+        .set({
+          nsfwEnabled: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, user.id));
+
+      return NextResponse.json({
+        success: true,
+        nsfwEnabled: true,
+        ageVerifiedAt: user.ageVerifiedAt?.toISOString() || null,
+      });
     }
 
     // If enabling NSFW and not already verified, require age confirmation

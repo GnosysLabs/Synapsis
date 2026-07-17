@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { authenticateUser, createSession } from '@/lib/auth';
+import { isLocalNodeNsfw } from '@/lib/node/local-node';
 import { verifyTurnstileToken } from '@/lib/turnstile';
 import { z } from 'zod';
 
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
         }
 
         const user = await authenticateUser(data.email, data.password);
+        const localNodeIsNsfw = await isLocalNodeNsfw();
 
         // Create session
         await createSession(user.id);
@@ -41,7 +43,7 @@ export async function POST(request: Request) {
                 publicKey: user.publicKey,
                 privateKeyEncrypted: user.privateKeyEncrypted, // Client will decrypt with password
                 isNsfw: user.isNsfw,
-                nsfwEnabled: user.nsfwEnabled,
+                nsfwEnabled: localNodeIsNsfw || user.nsfwEnabled,
                 ageVerifiedAt: user.ageVerifiedAt?.toISOString() || null,
             },
         });

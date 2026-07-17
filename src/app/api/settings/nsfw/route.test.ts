@@ -4,7 +4,15 @@ import { POST as updateAccountPreference } from '../account-nsfw/route';
 import { requireSignedAction, SignedActionError } from '@/lib/auth/verify-signature';
 import { db } from '@/db';
 
+const nodeMocks = vi.hoisted(() => ({
+  isLocalNodeNsfw: vi.fn(),
+}));
+
 vi.mock('@/lib/auth', () => ({ requireAuth: vi.fn() }));
+
+vi.mock('@/lib/node/local-node', () => ({
+  isLocalNodeNsfw: nodeMocks.isLocalNodeNsfw,
+}));
 
 vi.mock('@/lib/auth/verify-signature', () => {
   class MockSignedActionError extends Error {}
@@ -47,6 +55,7 @@ const request = (body: unknown) => new Request('http://localhost/api/settings/ns
 describe('NSFW settings mutations', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    nodeMocks.isLocalNodeNsfw.mockResolvedValue(false);
     vi.mocked(requireSignedAction).mockResolvedValue({
       id: 'user-id',
       ageVerifiedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -60,6 +69,16 @@ describe('NSFW settings mutations', () => {
     expect(response.status).toBe(200);
     expect(requireSignedAction).toHaveBeenCalledWith(payload);
     expect(db?.update).toHaveBeenCalled();
+  });
+
+  it('keeps viewing enabled on an adult node even if an old client submits false', async () => {
+    nodeMocks.isLocalNodeNsfw.mockResolvedValue(true);
+    const payload = signedAction('update_nsfw_settings', { nsfwEnabled: false });
+
+    const response = await updateViewingPreference(request(payload) as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ nsfwEnabled: true });
   });
 
   it('lets an unverified legacy account persist age confirmation', async () => {

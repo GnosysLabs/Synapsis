@@ -179,8 +179,7 @@ export default function ContentSettingsPage() {
         );
     }
 
-    if (!shouldExposeAccountNsfwSettings(config?.isNsfw ?? false)
-        && settings?.ageVerifiedAt) {
+    if (!shouldExposeAccountNsfwSettings(config?.isNsfw ?? false)) {
         return (
             <div style={{ maxWidth: '600px', margin: '0 auto', padding: '24px 16px 64px' }}>
                 <header style={{
@@ -202,10 +201,10 @@ export default function ContentSettingsPage() {
 
                 <div className="card" style={{ padding: '20px' }}>
                     <div style={{ fontWeight: 600, marginBottom: '8px' }}>
-                        Adult-node access confirmed
+                        Sensitive content enabled
                     </div>
                     <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.6 }}>
-                        This node is permanently designated adult-only. Your age confirmation is on file, so sensitive content is available while you are signed in.
+                        This node is permanently designated adult-only, so sensitive content is enabled by default for every signed-in account.
                     </div>
                 </div>
             </div>

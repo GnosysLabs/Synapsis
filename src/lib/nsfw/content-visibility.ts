@@ -367,10 +367,12 @@ export function shouldHideSensitivePost({
     if (!isPostSensitive(sensitivity)) return false;
     if (!viewer) return true;
 
+    // Authentication on a permanently adult-only local node is the viewing
+    // opt-in; there is intentionally no per-account toggle on those nodes.
+    if (localNodeIsNsfw) return false;
+
     if (!viewer.ageVerifiedAt) return true;
-    // On adult-only nodes the viewing preference is implied only after age
-    // confirmation. General-purpose nodes still require the explicit setting.
-    return !localNodeIsNsfw && viewer.nsfwEnabled !== true;
+    return viewer.nsfwEnabled !== true;
 }
 
 export function isRemoteAvatarSensitivityUnknown({

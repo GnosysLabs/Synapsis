@@ -36,11 +36,11 @@ describe('shouldIncludeNsfwFeed', () => {
         })).toBe(true);
     });
 
-    it('does not treat authentication alone as age consent on an NSFW node', () => {
+    it('defaults authenticated adult-node members to sensitive viewing', () => {
         expect(shouldIncludeNsfwFeed({
-            viewer: { nsfwEnabled: true, ageVerifiedAt: null },
+            viewer: { nsfwEnabled: false, ageVerifiedAt: null },
             localNodeIsNsfw: true,
-        })).toBe(false);
+        })).toBe(true);
     });
 
     it('respects an enabled account preference on a general-purpose node', () => {

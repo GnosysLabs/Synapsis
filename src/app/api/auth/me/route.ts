@@ -4,6 +4,7 @@ import { db, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
+import { isLocalNodeNsfw } from '@/lib/node/local-node';
 
 const updateProfileSchema = z.object({
     displayName: z.string().min(1).max(50).optional(),
@@ -28,6 +29,8 @@ export async function GET() {
             return NextResponse.json({ user: null, accounts: [] });
         }
 
+        const localNodeIsNsfw = await isLocalNodeNsfw();
+
         return NextResponse.json({
             user: {
                 id: session.user.id,
@@ -41,10 +44,13 @@ export async function GET() {
                 publicKey: session.user.publicKey,
                 privateKeyEncrypted: session.user.privateKeyEncrypted,
                 isNsfw: session.user.isNsfw,
-                nsfwEnabled: session.user.nsfwEnabled,
+                nsfwEnabled: localNodeIsNsfw || session.user.nsfwEnabled,
                 ageVerifiedAt: session.user.ageVerifiedAt?.toISOString() || null,
             },
-            accounts,
+            accounts: accounts.map((account) => ({
+                ...account,
+                nsfwEnabled: localNodeIsNsfw || account.nsfwEnabled,
+            })),
         });
     } catch (error) {
         console.error('Session check error:', error);

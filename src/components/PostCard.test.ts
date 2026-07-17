@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+    nodeIsNsfw: false,
     user: null as null | {
         id: string;
         handle: string;
@@ -37,7 +38,7 @@ vi.mock('@/lib/contexts/ConfigContext', () => ({
     useRuntimeConfig: () => ({
         config: {
             domain: 'local.example',
-            isNsfw: false,
+            isNsfw: mocks.nodeIsNsfw,
             classificationKnown: true,
         },
     }),
@@ -79,6 +80,7 @@ const sensitivePost: Post = {
 
 describe('PostCard', () => {
     beforeEach(() => {
+        mocks.nodeIsNsfw = false;
         mocks.user = null;
     });
 
@@ -153,6 +155,24 @@ describe('PostCard', () => {
 
         expect(html).not.toContain('Sign in to view');
         expect(html).not.toContain('Review settings');
+        expect(html).toContain('PRIVATE SENSITIVE BODY');
+        expect(html).toContain('private-video.mp4');
+    });
+
+    it('shows sensitive content by default to a signed-in member of an adult node', () => {
+        mocks.nodeIsNsfw = true;
+        mocks.user = {
+            id: 'viewer-1',
+            handle: 'viewer',
+            displayName: 'Viewer',
+            nsfwEnabled: false,
+            ageVerifiedAt: null,
+        };
+
+        const html = renderToStaticMarkup(createElement(PostCard, { post: sensitivePost }));
+
+        expect(html).not.toContain('Review settings');
+        expect(html).not.toContain('Sensitive content');
         expect(html).toContain('PRIVATE SENSITIVE BODY');
         expect(html).toContain('private-video.mp4');
     });

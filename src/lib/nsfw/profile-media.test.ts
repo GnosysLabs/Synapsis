@@ -19,13 +19,13 @@ describe('shouldBlurProfileMedia', () => {
         })).toBe(false);
     });
 
-    it('does not treat an adult-node session as age verification', () => {
+    it('defaults authenticated adult-node members to visible profile media', () => {
         expect(shouldBlurProfileMedia({
             accountIsNsfw: true,
             nodeIsNsfw: true,
             localNodeIsNsfw: true,
-            viewer: { nsfwEnabled: true, ageVerifiedAt: null },
-        })).toBe(true);
+            viewer: { nsfwEnabled: false, ageVerifiedAt: null },
+        })).toBe(false);
     });
 
     it('shows sensitive profile media when the viewer has enabled NSFW', () => {
