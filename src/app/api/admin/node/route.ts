@@ -39,6 +39,10 @@ export async function PATCH(req: NextRequest) {
             );
         }
 
+        const nsfwActivatedAt = !wasNsfw && nsfwTransition.isNsfw
+            ? new Date()
+            : node?.nsfwActivatedAt ?? null;
+
         if (!node) {
             [node] = await db.insert(nodes).values({
                 domain,
@@ -53,6 +57,7 @@ export async function PATCH(req: NextRequest) {
                 faviconData: data.faviconData,
                 accentColor: data.accentColor,
                 isNsfw: nsfwTransition.isNsfw,
+                nsfwActivatedAt,
                 turnstileSiteKey: data.turnstileSiteKey,
                 turnstileSecretKey: data.turnstileSecretKey,
             }).returning();
@@ -67,6 +72,7 @@ export async function PATCH(req: NextRequest) {
                 faviconUrl: data.faviconUrl,
                 accentColor: data.accentColor,
                 isNsfw: nsfwTransition.isNsfw,
+                nsfwActivatedAt,
                 turnstileSiteKey: data.turnstileSiteKey !== undefined ? data.turnstileSiteKey : node.turnstileSiteKey,
                 turnstileSecretKey: data.turnstileSecretKey !== undefined ? data.turnstileSecretKey : node.turnstileSecretKey,
                 // Fix domain drift: ensure the DB matches the current environment

@@ -20,7 +20,7 @@ vi.mock('@/db', () => ({
         update: mocks.update,
     },
     nodes: { id: 'id' },
-    users: { id: 'user-id' },
+    users: { id: 'user-id', ageVerifiedAt: 'age-verified-at' },
 }));
 
 vi.mock('@/lib/auth/admin', () => ({
@@ -97,18 +97,30 @@ describe('PATCH /api/admin/node adult-only classification', () => {
             node: { isNsfw: true },
         });
         expect(update.set).toHaveBeenCalledWith(expect.objectContaining({ isNsfw: true }));
+        expect(update.set).toHaveBeenCalledWith(expect.objectContaining({
+            nsfwActivatedAt: expect.any(Date),
+        }));
         expect(update.set).toHaveBeenCalledWith(expect.objectContaining({ nsfwEnabled: false }));
         expect(update.where).toHaveBeenCalledWith('age-not-verified');
     });
 
     it('preserves adult-only status during unrelated settings updates', async () => {
-        const currentNode = { id: 'node-1', domain: 'node.example', isNsfw: true };
+        const activatedAt = new Date('2026-07-17T20:00:00.000Z');
+        const currentNode = {
+            id: 'node-1',
+            domain: 'node.example',
+            isNsfw: true,
+            nsfwActivatedAt: activatedAt,
+        };
         mocks.findFirst.mockResolvedValue(currentNode);
         const update = mockNodeUpdate({ ...currentNode, name: 'Renamed node' });
 
         const response = await PATCH(createRequest({ name: 'Renamed node' }) as never);
 
         expect(response.status).toBe(200);
-        expect(update.set).toHaveBeenCalledWith(expect.objectContaining({ isNsfw: true }));
+        expect(update.set).toHaveBeenCalledWith(expect.objectContaining({
+            isNsfw: true,
+            nsfwActivatedAt: activatedAt,
+        }));
     });
 });
