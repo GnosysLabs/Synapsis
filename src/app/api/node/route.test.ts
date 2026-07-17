@@ -59,7 +59,7 @@ describe('GET /api/node public response', () => {
     });
   });
 
-  it('omits private fields, keeps adult node identity public, and hides only the banner', async () => {
+  it('omits private fields and exposes the node banner for the signed-out blurred preview', async () => {
     mocks.findFirst.mockResolvedValue({
       id: 'internal-node-id',
       domain: 'adult.example',
@@ -67,7 +67,7 @@ describe('GET /api/node public response', () => {
       description: 'Description',
       longDescription: 'Long description',
       rules: 'Rules',
-      bannerUrl: 'https://adult.example/private-banner.jpg',
+      bannerUrl: 'https://adult.example/node-banner.jpg',
       logoUrl: 'https://adult.example/old-logo.jpg',
       faviconUrl: 'https://adult.example/old-favicon.ico',
       logoData: 'RAW SECRET LOGO DATA',
@@ -92,7 +92,7 @@ describe('GET /api/node public response', () => {
       description: 'Description',
       longDescription: 'Long description',
       rules: 'Rules',
-      bannerUrl: null,
+      bannerUrl: 'https://adult.example/node-banner.jpg',
       logoUrl: '/api/node/logo?v=1',
       faviconUrl: '/api/node/favicon?v=1',
       accentColor: '#123456',
@@ -111,7 +111,6 @@ describe('GET /api/node public response', () => {
       'PRIVATE KEY MATERIAL',
       'TURNSTILE SECRET',
       'internal-node-id',
-      'private-banner.jpg',
     ]) {
       expect(serialized).not.toContain(secret);
     }

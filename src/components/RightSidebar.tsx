@@ -141,7 +141,7 @@ export function RightSidebar() {
                 {nodeInfo.bannerUrl && (
                     <ProfileBanner
                         url={nodeInfo.bannerUrl}
-                        nodeIsNsfw={localNodeIsNsfw}
+                        nodeIsNsfw={nodeInfo.isNsfw || localNodeIsNsfw}
                         showBlurredSourceToSignedOutViewers
                         height={140}
                         borderBottom="1px solid var(--border)"

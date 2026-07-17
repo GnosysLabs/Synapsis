@@ -75,8 +75,6 @@ export async function GET() {
             ? getVersionedNodeAssetUrl('/api/node/favicon', node.updatedAt)
             : node.faviconUrl;
 
-        const hideSensitiveBanner = node.isNsfw && !canViewSensitive;
-
         // Keep this response as an explicit public DTO. Spreading the database row here
         // would expose raw image data and any future private columns by default.
         return NextResponse.json({
@@ -85,7 +83,10 @@ export async function GET() {
             description: node.description,
             longDescription: node.longDescription,
             rules: node.rules,
-            bannerUrl: hideSensitiveBanner ? null : node.bannerUrl,
+            // The node-owned banner remains public so signed-out clients can render
+            // the deliberately blurred NSFW-node preview. User profile media still
+            // follows the stricter sensitive-content redaction path.
+            bannerUrl: node.bannerUrl,
             logoUrl,
             faviconUrl,
             accentColor: node.accentColor,
