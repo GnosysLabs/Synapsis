@@ -9,11 +9,28 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { GET, POST } from './route';
 import { getSession } from '@/lib/auth';
 import { requireSignedAction } from '@/lib/auth/verify-signature';
+import { requireCliSignedAction } from '@/lib/auth/cli-credentials';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 
 // Mock the dependencies
 vi.mock('@/lib/auth/verify-signature', () => ({
   requireSignedAction: vi.fn(),
+  SignedActionError: class MockSignedActionError extends Error {
+    readonly code: string;
+
+    constructor(code: string) {
+      super(code);
+      this.code = code;
+    }
+  },
+}));
+
+vi.mock('@/lib/auth/cli-credentials', () => ({
+  isCliSignedAction: (value: unknown) => Boolean(
+    value && typeof value === 'object' && 'credentialId' in value,
+  ),
+  requireCliSignedAction: vi.fn(),
+  signedActionErrorStatus: vi.fn(() => 403),
 }));
 
 vi.mock('@/lib/auth', () => ({
@@ -125,7 +142,42 @@ describe('POST /api/posts', () => {
     expect(data.post.content).toBe('Test post content');
 
     // Verify requireSignedAction was called
-    expect(requireSignedAction).toHaveBeenCalledWith(signedAction);
+    expect(requireSignedAction).toHaveBeenCalledWith(signedAction, 'post');
+  });
+
+  it('accepts a delegated CLI action with post scope', async () => {
+    const mockUser = {
+      id: 'test-user-id',
+      did: 'did:synapsis:test123',
+      handle: 'testuser',
+      publicKey: 'test-public-key',
+      isSuspended: false,
+      isSilenced: false,
+      isNsfw: false,
+      postsCount: 0,
+    };
+    vi.mocked(requireCliSignedAction).mockResolvedValue({
+      user: mockUser,
+      credential: { id: 'credential-1' },
+    } as Awaited<ReturnType<typeof requireCliSignedAction>>);
+    const cliAction = {
+      action: 'post',
+      data: { content: 'Posted from the CLI', mediaIds: [], isNsfw: false },
+      credentialId: '00000000-0000-4000-8000-000000000001',
+      ts: Date.now(),
+      nonce: 'cli-nonce',
+      sig: 'cli-signature',
+    };
+
+    const response = await POST(new Request('http://localhost:43821/api/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cliAction),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(requireCliSignedAction).toHaveBeenCalledWith(cliAction, 'post', 'posts:write');
+    expect(requireSignedAction).not.toHaveBeenCalled();
   });
 
   it('should return 403 for invalid signature', async () => {

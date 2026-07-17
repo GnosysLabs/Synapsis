@@ -48,18 +48,24 @@ export interface SignedAction<TData = Record<string, string>> {
 }
 
 export class SignedActionError extends Error {
-  constructor(message: string) {
+  readonly code: string;
+
+  constructor(code: string, message = code) {
     super(message);
     this.name = 'SignedActionError';
+    this.code = code;
   }
 }
 
 /**
- * Verify a signed action against a specific public key
+ * Verify any canonical signed payload against a specific public key.
  */
-export async function verifyActionSignature(signedAction: SignedAction<unknown>, publicKeyStr: string): Promise<boolean> {
+export async function verifyCanonicalSignature<T extends object & { sig: string }>(
+  signedPayload: T,
+  publicKeyStr: string,
+): Promise<boolean> {
   try {
-    const { sig, ...payload } = signedAction;
+    const { sig, ...payload } = signedPayload;
     const canonicalString = canonicalize(payload);
     const encoder = new TextEncoder();
     const dataBytes = encoder.encode(canonicalString);
@@ -84,6 +90,64 @@ export async function verifyActionSignature(signedAction: SignedAction<unknown>,
     console.error('[Verify] Crypto exception:', error);
     return false;
   }
+}
+
+/**
+ * Verify a signed account action against a specific public key.
+ */
+export async function verifyActionSignature(
+  signedAction: SignedAction<unknown>,
+  publicKeyStr: string,
+): Promise<boolean> {
+  return verifyCanonicalSignature(signedAction, publicKeyStr);
+}
+
+/**
+ * Apply shared replay protection and rate limiting after a signature and
+ * identity have already been authenticated.
+ */
+export async function recordVerifiedAction(input: {
+  canonicalPayload: unknown;
+  identity: string;
+  rateLimitKey: string;
+  nonce: string;
+  ts: number;
+  maxRequests: number;
+}): Promise<string | null> {
+  const now = Date.now();
+  await pruneExpiredSignedActions(now);
+
+  const canonicalString = canonicalize(input.canonicalPayload);
+  const actionIdHash = crypto.createHash('sha256').update(canonicalString).digest('hex');
+  const existingReplay = await db
+    .select({ actionId: signedActionDedupe.actionId })
+    .from(signedActionDedupe)
+    .where(eq(signedActionDedupe.actionId, actionIdHash))
+    .limit(1);
+
+  if (existingReplay.length > 0) return 'REPLAYED_NONCE';
+  if (isRateLimited(input.rateLimitKey, input.maxRequests, 60 * 1000)) return 'RATE_LIMITED';
+
+  try {
+    await db.insert(signedActionDedupe).values({
+      actionId: actionIdHash,
+      did: input.identity,
+      nonce: input.nonce,
+      ts: input.ts,
+    });
+  } catch (err: unknown) {
+    const errorCode = typeof err === 'object' && err !== null && 'code' in err
+      ? (err as { code?: unknown }).code
+      : undefined;
+    const errorMessage = err instanceof Error ? err.message : '';
+    if (errorCode === '23505' || /unique|constraint/i.test(errorMessage)) {
+      return 'REPLAYED_NONCE';
+    }
+    console.error('[Verify] Dedupe error:', err);
+    throw err;
+  }
+
+  return null;
 }
 
 /**
@@ -140,55 +204,16 @@ export async function verifyUserAction(signedAction: SignedAction<unknown>): Pro
     return { valid: false, error: 'INVALID_SIGNATURE' };
   }
 
-  await pruneExpiredSignedActions(now);
-
-  // 4. ACTION ID HASH COMPUTATION
-  const canonicalString = canonicalize(payload);
-  const actionIdHash = crypto.createHash('sha256').update(canonicalString).digest('hex');
-
-  // 5. EXISTING REPLAY CHECK. Avoid charging the authenticated account bucket
-  // for an action already recorded in durable replay storage. The unique
-  // insert below remains the authoritative guard for concurrent requests.
-  const existingReplay = await db
-    .select({ actionId: signedActionDedupe.actionId })
-    .from(signedActionDedupe)
-    .where(eq(signedActionDedupe.actionId, actionIdHash))
-    .limit(1);
-
-  if (existingReplay.length > 0) {
-    return { valid: false, error: 'REPLAYED_NONCE' };
-  }
-
-  // 6. AUTHENTICATED RATE LIMIT. Charge quota before creating durable replay
-  // state so a fresh, unique action rejected for excess volume leaves no row.
-  // Invalid signatures and attacker-controlled public DIDs never create
-  // per-account limiter entries or consume quota.
   const requestsPerMinute = payload.action === 'chat_e2ee' ? 120 : 5;
-  if (isRateLimited(`${user.id}:${payload.action}`, requestsPerMinute, 60 * 1000)) {
-    return { valid: false, error: 'RATE_LIMITED' };
-  }
-
-  // 7. AUTHORITATIVE REPLAY INSERT. Another request can race the read above,
-  // so rely on the primary-key constraint to reject concurrent duplicates.
-  try {
-    await db.insert(signedActionDedupe).values({
-      actionId: actionIdHash,
-      did: payload.did,
-      nonce: payload.nonce,
-      ts: payload.ts,
-    });
-  } catch (err: unknown) {
-    // Check for unique constraint violation (duplicate key)
-    const errorCode = typeof err === 'object' && err !== null && 'code' in err
-      ? (err as { code?: unknown }).code
-      : undefined;
-    const errorMessage = err instanceof Error ? err.message : '';
-    if (errorCode === '23505' || /unique|constraint/i.test(errorMessage)) {
-      return { valid: false, error: 'REPLAYED_NONCE' };
-    }
-    console.error('[Verify] Dedupe error:', err);
-    throw err; // Internal error
-  }
+  const acceptanceError = await recordVerifiedAction({
+    canonicalPayload: payload,
+    identity: payload.did,
+    rateLimitKey: `${user.id}:${payload.action}`,
+    nonce: payload.nonce,
+    ts: payload.ts,
+    maxRequests: requestsPerMinute,
+  });
+  if (acceptanceError) return { valid: false, error: acceptanceError };
 
   return { valid: true, user };
 }
@@ -197,11 +222,18 @@ export async function verifyUserAction(signedAction: SignedAction<unknown>): Pro
  * Middleware to require a signed action
  * Throws an error if signature is invalid
  */
-export async function requireSignedAction(signedAction: SignedAction<unknown>): Promise<typeof users.$inferSelect> {
+export async function requireSignedAction(
+  signedAction: SignedAction<unknown>,
+  expectedAction?: string,
+): Promise<typeof users.$inferSelect> {
+  if (expectedAction && signedAction.action !== expectedAction) {
+    throw new SignedActionError('INVALID_ACTION');
+  }
+
   const result = await verifyUserAction(signedAction);
 
   if (!result.valid) {
-    throw new SignedActionError(result.error || 'Invalid signature');
+    throw new SignedActionError(result.error || 'INVALID_SIGNATURE');
   }
 
   return result.user!;

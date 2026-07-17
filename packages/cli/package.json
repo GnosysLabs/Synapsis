@@ -1,0 +1,35 @@
+{
+  "name": "@gnosyslabs/synapsis-cli",
+  "version": "0.1.0",
+  "description": "Secure command-line posting client for Synapsis",
+  "type": "module",
+  "bin": {
+    "synapsis": "./src/cli.js"
+  },
+  "files": [
+    "src",
+    "skill",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "synapsis",
+    "cli",
+    "social",
+    "agents"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://githop.xyz/GnosysLabs/Synapsis.git",
+    "directory": "packages/cli"
+  },
+  "license": "Apache-2.0"
+}

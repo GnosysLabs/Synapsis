@@ -107,6 +107,57 @@ export const stuffboxConnections = sqliteTable('stuffbox_connections', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 });
 
+// ============================================
+// CLI CREDENTIALS
+// ============================================
+
+/**
+ * Revocable device keys delegated by a user to the Synapsis CLI. The private
+ * key is generated and retained by the CLI; the node stores only this public
+ * authorization record.
+ */
+export const cliCredentials = sqliteTable('cli_credentials', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  publicKey: text('public_key').notNull(),
+  publicKeyFingerprint: text('public_key_fingerprint').notNull(),
+  scopes: text('scopes').notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  lastUsedAt: integer('last_used_at', { mode: 'timestamp' }),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  index('cli_credentials_user_idx').on(table.userId),
+  index('cli_credentials_expires_idx').on(table.expiresAt),
+  index('cli_credentials_fingerprint_idx').on(table.publicKeyFingerprint),
+]);
+
+/**
+ * Short-lived browser pairing requests. The high-entropy device code is
+ * stored only as a digest so a database reader cannot poll and claim a newly
+ * approved authorization.
+ */
+export const cliAuthorizationRequests = sqliteTable('cli_authorization_requests', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  deviceCodeHash: text('device_code_hash').notNull().unique(),
+  name: text('name').notNull(),
+  publicKey: text('public_key').notNull(),
+  publicKeyFingerprint: text('public_key_fingerprint').notNull(),
+  scopes: text('scopes').notNull(),
+  credentialLifetimeDays: integer('credential_lifetime_days').notNull(),
+  status: text('status').default('pending').notNull(),
+  credentialId: text('credential_id').references(() => cliCredentials.id, { onDelete: 'set null' }),
+  approvedByUserId: text('approved_by_user_id').references(() => users.id, { onDelete: 'cascade' }),
+  approvedAt: integer('approved_at', { mode: 'timestamp' }),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('cli_authorization_requests_device_code_unique').on(table.deviceCodeHash),
+  index('cli_authorization_requests_expires_idx').on(table.expiresAt),
+  index('cli_authorization_requests_status_idx').on(table.status),
+]);
+
 
 // ============================================
 // POSTS

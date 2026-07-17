@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "next dev --turbopack",
     "dev:dev": "dotenv -e .env.dev -- next dev --turbopack -p 3050",
@@ -17,8 +20,10 @@
     "db:studio": "drizzle-kit studio",
     "db:studio:dev": "dotenv -e .env.dev -- drizzle-kit studio",
     "type-check": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run && npm test --workspace @gnosyslabs/synapsis-cli",
+    "test:watch": "vitest",
+    "cli:test": "npm test --workspace @gnosyslabs/synapsis-cli",
+    "cli:pack": "npm pack --workspace @gnosyslabs/synapsis-cli"
   },
   "dependencies": {
     "@tursodatabase/database": "0.7.0",

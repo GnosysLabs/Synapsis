@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { Rocket, Shield, Bell, Eye, UserX, HardDrive } from 'lucide-react';
+import { Rocket, Shield, Bell, Eye, UserX, HardDrive, Terminal } from 'lucide-react';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { shouldExposeAccountNsfwSettings } from '@/lib/nsfw/settings-visibility';
 
@@ -45,6 +45,22 @@ export default function SettingsPage() {
                         </div>
                         <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px' }}>
                             Connect and manage Stuffbox
+                        </div>
+                    </Link>
+
+                    <Link href="/settings/cli" className="card" style={{
+                        display: 'block',
+                        padding: '20px',
+                        textDecoration: 'none',
+                        color: 'var(--foreground)',
+                        transition: 'border-color 0.15s ease',
+                    }}>
+                        <div style={{ fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Terminal size={18} />
+                            CLI & Agents
+                        </div>
+                        <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px' }}>
+                            Approve and revoke command-line posting access
                         </div>
                     </Link>
 

@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireAuth } from '@/lib/auth';
+import {
+  isCliSignedAction,
+  requireCliSignedAction,
+  signedActionErrorStatus,
+} from '@/lib/auth/cli-credentials';
+import { SignedActionError } from '@/lib/auth/verify-signature';
 import { createUpload, StuffboxApiError } from '@/lib/stuffbox/client';
 import { getStuffboxAccess } from '@/lib/stuffbox/tokens';
 import { ALLOWED_MEDIA_TYPES, MAX_IMAGE_SIZE, MAX_AUDIO_SIZE, MAX_VIDEO_SIZE } from '@/lib/media/upload-policy';
@@ -18,14 +24,23 @@ const uploadSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const user = await requireAuth();
-    const input = uploadSchema.parse(await request.json());
+    const requestBody: unknown = await request.json();
+    const cliAuthorization = isCliSignedAction(requestBody)
+      ? await requireCliSignedAction(requestBody, 'media_upload_start', 'media:write')
+      : null;
+    const user = cliAuthorization?.user ?? await requireAuth();
+    const input = uploadSchema.parse(isCliSignedAction(requestBody) ? requestBody.data : requestBody);
     const { baseUrl, accessToken } = await getStuffboxAccess(user.id);
     const upload = await createUpload(baseUrl, accessToken, input);
     return NextResponse.json(upload, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid upload', details: error.issues }, { status: 400 });
+    }
+    if (error instanceof SignedActionError) {
+      return NextResponse.json({ error: 'Signed upload action rejected', code: error.code }, {
+        status: signedActionErrorStatus(error),
+      });
     }
     if (error instanceof Error && error.message === 'Authentication required') {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });

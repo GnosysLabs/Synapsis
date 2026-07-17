@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 import { db, posts, users, media, follows, mutes, blocks, remotePosts, remoteReposts, userSwarmReposts, notifications } from '@/db';
 import { getSession, requireAuth } from '@/lib/auth';
-import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
+import { requireSignedAction, SignedActionError, type SignedAction } from '@/lib/auth/verify-signature';
+import {
+    isCliSignedAction,
+    requireCliSignedAction,
+    signedActionErrorStatus,
+} from '@/lib/auth/cli-credentials';
 import { eq, and, desc, inArray, isNull, lt, ne, notLike, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
@@ -430,11 +435,16 @@ function isSignedActionPayload(payload: unknown): payload is SignedAction {
 export async function POST(request: Request) {
     try {
         const requestBody = await request.json();
-        const user = isSignedActionPayload(requestBody)
-            ? await requireSignedAction(requestBody)
-            : await requireAuth();
+        const cliAuthorization = isCliSignedAction(requestBody)
+            ? await requireCliSignedAction(requestBody, 'post', 'posts:write')
+            : null;
+        const user = cliAuthorization?.user ?? (isSignedActionPayload(requestBody)
+            ? await requireSignedAction(requestBody, 'post')
+            : await requireAuth());
         const data = createPostSchema.parse(
-            isSignedActionPayload(requestBody) ? requestBody.data : requestBody
+            isCliSignedAction(requestBody) || isSignedActionPayload(requestBody)
+                ? requestBody.data
+                : requestBody
         );
 
         if (user.isSuspended || user.isSilenced) {
@@ -667,6 +677,13 @@ export async function POST(request: Request) {
             return NextResponse.json(
                 { error: 'Invalid input', details: error.issues },
                 { status: 400 }
+            );
+        }
+
+        if (error instanceof SignedActionError) {
+            return NextResponse.json(
+                { error: 'Signed action rejected', code: error.code },
+                { status: signedActionErrorStatus(error) },
             );
         }
 

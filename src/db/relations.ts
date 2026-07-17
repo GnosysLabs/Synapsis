@@ -9,6 +9,10 @@ export const relations = defineRelations(schema, (r) => ({
       from: r.users.id,
       to: r.stuffboxConnections.userId,
     }),
+    cliCredentials: r.many.cliCredentials({
+      from: r.users.id,
+      to: r.cliCredentials.userId,
+    }),
     followersRelation: r.many.follows({
       from: r.users.id,
       to: r.follows.followingId,
@@ -56,6 +60,27 @@ export const relations = defineRelations(schema, (r) => ({
       from: r.stuffboxConnections.userId,
       to: r.users.id,
       optional: false,
+    }),
+  },
+  cliCredentials: {
+    user: r.one.users({
+      from: r.cliCredentials.userId,
+      to: r.users.id,
+      optional: false,
+    }),
+    authorizationRequests: r.many.cliAuthorizationRequests({
+      from: r.cliCredentials.id,
+      to: r.cliAuthorizationRequests.credentialId,
+    }),
+  },
+  cliAuthorizationRequests: {
+    credential: r.one.cliCredentials({
+      from: r.cliAuthorizationRequests.credentialId,
+      to: r.cliCredentials.id,
+    }),
+    approvedBy: r.one.users({
+      from: r.cliAuthorizationRequests.approvedByUserId,
+      to: r.users.id,
     }),
   },
   follows: {

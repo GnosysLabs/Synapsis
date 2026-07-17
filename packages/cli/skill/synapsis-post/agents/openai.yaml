@@ -1,0 +1,4 @@
+interface:
+  display_name: "Post to Synapsis"
+  short_description: "Publish Synapsis posts with optional media"
+  default_prompt: "Use $synapsis-post to publish a text or media post to my connected Synapsis account."
