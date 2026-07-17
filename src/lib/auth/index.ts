@@ -13,6 +13,7 @@ import { cookies } from 'next/headers';
 import { upsertHandleEntries } from '@/lib/federation/handles';
 import { registrationDisplayName } from '@/lib/auth/display-name';
 import { configuredAdminEmails } from '@/lib/auth/admin-config';
+import { resolveSessionTokens } from '@/lib/auth/session-cookie';
 
 const ACTIVE_SESSION_COOKIE_NAME = 'synapsis_session';
 const SESSION_COOKIE_NAME = 'synapsis_sessions';
@@ -50,10 +51,19 @@ function parseSessionCookie(value: string | undefined): string[] {
 
 async function readSessionState() {
     const cookieStore = await cookies();
+    const activeToken = cookieStore.get(ACTIVE_SESSION_COOKIE_NAME)?.value ?? null;
+    const listedTokens = parseSessionCookie(cookieStore.get(SESSION_COOKIE_NAME)?.value);
+
+    // The active-session cookie is sufficient proof of possession on its own.
+    // Keep it in the lookup set even when an older client, proxy, or browser has
+    // dropped/staled the companion multi-account cookie. Otherwise a successful
+    // login can be immediately treated as anonymous on the next /auth/me call.
+    const tokens = resolveSessionTokens(activeToken, listedTokens);
+
     return {
         cookieStore,
-        activeToken: cookieStore.get(ACTIVE_SESSION_COOKIE_NAME)?.value ?? null,
-        tokens: parseSessionCookie(cookieStore.get(SESSION_COOKIE_NAME)?.value),
+        activeToken,
+        tokens,
     };
 }
 

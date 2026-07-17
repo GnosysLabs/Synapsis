@@ -59,7 +59,7 @@ describe('GET /api/node public response', () => {
     });
   });
 
-  it('omits raw branding and private database fields and hides adult branding', async () => {
+  it('omits private fields, keeps adult node identity public, and hides only the banner', async () => {
     mocks.findFirst.mockResolvedValue({
       id: 'internal-node-id',
       domain: 'adult.example',
@@ -93,8 +93,8 @@ describe('GET /api/node public response', () => {
       longDescription: 'Long description',
       rules: 'Rules',
       bannerUrl: null,
-      logoUrl: null,
-      faviconUrl: null,
+      logoUrl: '/api/node/logo?v=1',
+      faviconUrl: '/api/node/favicon?v=1',
       accentColor: '#123456',
       publicKey: 'PUBLIC KEY',
       isNsfw: true,

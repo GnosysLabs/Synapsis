@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/db';
-import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,11 +28,6 @@ export async function GET() {
     if (!node?.logoData) {
       return NextResponse.json({ error: 'Logo not found' }, { status: 404 });
     }
-    const { canViewSensitive } = await getSensitiveContentViewerAccess();
-    if (node.isNsfw && !canViewSensitive) {
-      return NextResponse.json({ error: 'Logo not found' }, { status: 404 });
-    }
-
     // Parse the data URL to extract MIME type and base64 data
     const dataUrl = node.logoData;
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);

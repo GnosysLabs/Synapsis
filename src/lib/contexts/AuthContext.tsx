@@ -80,6 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [loading, setLoading] = useState(true);
     const [showUnlockPrompt, setShowUnlockPrompt] = useState(false);
     const authGenerationRef = useRef(0);
+    const signInInProgressRef = useRef(false);
 
     // Integrate useUserIdentity hook with persistence
     const {
@@ -123,6 +124,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, [checkAdmin, clearIdentity, initializeIdentity]);
 
     const refreshAuth = useCallback(async () => {
+        // A focus/storage event must not invalidate the ordered sign-in
+        // operation while it is initializing the account and E2EE identity.
+        if (signInInProgressRef.current) return;
         const generation = ++authGenerationRef.current;
         setLoading(true);
         try {
@@ -203,12 +207,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
      * the login screen is allowed to navigate away.
      */
     const login = useCallback(async (userData: User, password: string) => {
+        signInInProgressRef.current = true;
         const generation = ++authGenerationRef.current;
         setLoading(true);
-        // The server session has already changed by the time login is called.
-        // Invalidate every other tab before identity/E2EE initialization can wait
-        // or fail so stale authorized content is removed immediately.
-        broadcastAuthChange();
         try {
             await applyAuthState({
                 user: userData,
@@ -221,7 +222,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (generation !== authGenerationRef.current) {
                 throw new Error('Active account changed while signing in');
             }
+            // Notify other tabs only after this tab has completed the ordered
+            // sign-in. Broadcasting earlier lets their refreshes race setup.
+            broadcastAuthChange();
         } finally {
+            signInInProgressRef.current = false;
             if (generation === authGenerationRef.current) setLoading(false);
         }
     }, [applyAuthState, broadcastAuthChange, unlockIdentity]);
@@ -296,13 +301,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (event.key === AUTH_SYNC_STORAGE_KEY) refreshFromAnotherContext();
         };
         window.addEventListener('storage', onStorage);
-        window.addEventListener('focus', refreshFromAnotherContext);
 
         return () => {
             channel?.removeEventListener('message', refreshFromAnotherContext);
             channel?.close();
             window.removeEventListener('storage', onStorage);
-            window.removeEventListener('focus', refreshFromAnotherContext);
         };
     }, [refreshAuth]);
 

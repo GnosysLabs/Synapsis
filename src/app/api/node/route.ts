@@ -75,7 +75,7 @@ export async function GET() {
             ? getVersionedNodeAssetUrl('/api/node/favicon', node.updatedAt)
             : node.faviconUrl;
 
-        const hideSensitiveBranding = node.isNsfw && !canViewSensitive;
+        const hideSensitiveBanner = node.isNsfw && !canViewSensitive;
 
         // Keep this response as an explicit public DTO. Spreading the database row here
         // would expose raw image data and any future private columns by default.
@@ -85,9 +85,9 @@ export async function GET() {
             description: node.description,
             longDescription: node.longDescription,
             rules: node.rules,
-            bannerUrl: hideSensitiveBranding ? null : node.bannerUrl,
-            logoUrl: hideSensitiveBranding ? null : logoUrl,
-            faviconUrl: hideSensitiveBranding ? null : faviconUrl,
+            bannerUrl: hideSensitiveBanner ? null : node.bannerUrl,
+            logoUrl,
+            faviconUrl,
             accentColor: node.accentColor,
             publicKey,
             isNsfw: node.isNsfw,

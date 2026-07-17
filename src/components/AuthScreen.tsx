@@ -45,6 +45,19 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
     const turnstileRef = useRef<HTMLDivElement>(null);
     const turnstileWidgetId = useRef<string | null>(null);
 
+    const resetTurnstile = () => {
+        const widgetId = turnstileWidgetId.current;
+        if (!widgetId || !window.turnstile) return;
+        try {
+            window.turnstile.reset(widgetId);
+        } catch {
+            // The widget may already have been removed during a mode change or
+            // React cleanup. A stale widget must never break authentication.
+            turnstileWidgetId.current = null;
+        }
+        setTurnstileToken(null);
+    };
+
     const { login } = useAuth();
 
     const [importFile, setImportFile] = useState<File | null>(null);
@@ -83,15 +96,26 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
     useEffect(() => {
         if (!nodeInfo.turnstileSiteKey) return;
 
-        const script = document.createElement('script');
-        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
-        script.async = true;
-        script.defer = true;
-        script.onload = () => setTurnstileLoaded(true);
-        document.head.appendChild(script);
+        if (window.turnstile) {
+            setTurnstileLoaded(true);
+            return;
+        }
+
+        const source = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+        let script = document.querySelector<HTMLScriptElement>(`script[src="${source}"]`);
+        const handleLoad = () => setTurnstileLoaded(true);
+
+        if (!script) {
+            script = document.createElement('script');
+            script.src = source;
+            script.async = true;
+            script.defer = true;
+            document.head.appendChild(script);
+        }
+        script.addEventListener('load', handleLoad);
 
         return () => {
-            document.head.removeChild(script);
+            script?.removeEventListener('load', handleLoad);
         };
     }, [nodeInfo.turnstileSiteKey]);
 
@@ -106,6 +130,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             } catch {
                 // Ignore errors
             }
+            turnstileWidgetId.current = null;
         }
 
         // Render new widget
@@ -125,11 +150,15 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
         }
 
         return () => {
-            if (turnstileWidgetId.current && window.turnstile) {
+            const widgetId = turnstileWidgetId.current;
+            if (widgetId && window.turnstile) {
                 try {
-                    window.turnstile.remove(turnstileWidgetId.current);
+                    window.turnstile.remove(widgetId);
                 } catch {
                     // Ignore errors
+                }
+                if (turnstileWidgetId.current === widgetId) {
+                    turnstileWidgetId.current = null;
                 }
             }
         };
@@ -273,6 +302,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
                 body: JSON.stringify(body),
             });
 
@@ -288,6 +318,18 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             // user just supplied unlocks their signing identity and creates or
             // unlocks encrypted messaging in one pass. It is never persisted.
             await login(data.user, password);
+
+            // Do not navigate on the strength of the login response alone.
+            // Confirm the browser retained the server session first so a cookie
+            // handoff failure cannot masquerade as a successful sign-in/reload.
+            const sessionResponse = await fetch('/api/auth/me', {
+                cache: 'no-store',
+                credentials: 'same-origin',
+            });
+            const sessionData = await sessionResponse.json();
+            if (!sessionResponse.ok || sessionData.user?.id !== data.user.id) {
+                throw new Error('Your sign-in session could not be saved. Please try again.');
+            }
             setPassword('');
             setConfirmPassword('');
 
@@ -303,10 +345,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
             // Reset Turnstile on error
-            if (turnstileWidgetId.current && window.turnstile) {
-                window.turnstile.reset(turnstileWidgetId.current);
-                setTurnstileToken(null);
-            }
+            resetTurnstile();
         } finally {
             setLoading(false);
         }
