@@ -37,6 +37,7 @@ function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
         <div className="link-preview-image">
             <Image
                 unoptimized
+                referrerPolicy="no-referrer"
                 src={src}
                 alt={alt}
                 width={640}
@@ -96,7 +97,7 @@ function LinkPreviewGallery({
         <div className={`link-preview-gallery ${compact ? 'compact' : ''}`}>
             {visibleMedia.map((item, index) => (
                 <div className="link-preview-gallery-item" key={`${item.url}-${index}`}>
-                    <Image unoptimized src={item.url} alt={alt} width={640} height={480} loading="lazy" />
+                    <Image unoptimized referrerPolicy="no-referrer" src={item.url} alt={alt} width={640} height={480} loading="lazy" />
                     {index === visibleMedia.length - 1 && media.length > visibleMedia.length && (
                         <span className="link-preview-gallery-more">+{media.length - visibleMedia.length}</span>
                     )}

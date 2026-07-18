@@ -10,43 +10,47 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { processGossip } from '@/lib/swarm/gossip';
 import { markNodeSuccess } from '@/lib/swarm/registry';
-import { verifySwarmRequest } from '@/lib/swarm/signature';
+import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
 import type { SwarmGossipPayload } from '@/lib/swarm/types';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { isRateLimited } from '@/lib/rate-limit';
+import { federationMediaUrlSchema } from '@/lib/utils/federation';
 
-const handleSchema = z.object({
-  handle: z.string(),
-  did: z.string(),
-  nodeDomain: z.string(),
-  updatedAt: z.string().optional(),
+const handleSchema = z.strictObject({
+  handle: z.string().min(3).max(640),
+  did: z.string().min(1).max(1_024),
+  nodeDomain: z.string().min(1).max(253),
+  updatedAt: z.string().datetime().optional(),
 });
 
-const nodeInfoSchema = z.object({
-  domain: z.string(),
-  name: z.string().optional(),
-  description: z.string().optional(),
-  logoUrl: z.string().optional(),
-  publicKey: z.string().optional(),
-  softwareVersion: z.string().optional(),
-  userCount: z.number().optional(),
-  postCount: z.number().optional(),
-  mediaCount: z.number().optional(),
+const boundedCount = z.number().int().nonnegative().max(1_000_000_000);
+const nodeInfoSchema = z.strictObject({
+  domain: z.string().min(1).max(253),
+  name: z.string().max(100).optional(),
+  description: z.string().max(1_000).optional(),
+  logoUrl: federationMediaUrlSchema.optional(),
+  publicKey: z.string().max(16_384).optional(),
+  softwareVersion: z.string().max(100).optional(),
+  userCount: boundedCount.optional(),
+  postCount: boundedCount.optional(),
+  mediaCount: boundedCount.optional(),
   isNsfw: z.boolean().optional(),
-  capabilities: z.array(z.enum(['handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1'])).optional(),
-  lastSeenAt: z.string().optional(),
-}).passthrough();
+  capabilities: z.array(z.enum(['handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1'])).max(6).optional(),
+  lastSeenAt: z.string().datetime().optional(),
+});
 
-const gossipPayloadSchema = z.object({
-  sender: z.string().min(1),
-  nodes: z.array(nodeInfoSchema),
-  handles: z.array(handleSchema).optional(),
-  timestamp: z.string(),
-  since: z.string().optional(),
-}).passthrough();
+const gossipPayloadSchema = z.strictObject({
+  sender: z.string().min(1).max(253),
+  nodes: z.array(nodeInfoSchema).max(100),
+  handles: z.array(handleSchema).max(500).optional(),
+  timestamp: z.string().datetime(),
+  since: z.string().datetime().optional(),
+});
 
 // Schema including signature for verification
 const signedGossipSchema = gossipPayloadSchema.extend({
-  signature: z.string(),
+  signature: z.string().min(1).max(16_384),
 });
 
 /**
@@ -59,8 +63,15 @@ const signedGossipSchema = gossipPayloadSchema.extend({
  */
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const body = await readLimitedJson(request);
     const data = signedGossipSchema.parse(body);
+    if (!isFreshFederationTimestamp(data.timestamp)) {
+      return NextResponse.json({ error: 'Stale gossip payload' }, { status: 400 });
+    }
+    if (isRateLimited('swarm-gossip-global', 120, 60 * 1_000)
+      || isRateLimited(`swarm-gossip-node:${getPublicSwarmDomain(data.sender) || data.sender}`, 30, 60 * 1_000)) {
+      return NextResponse.json({ error: 'Too many gossip requests' }, { status: 429 });
+    }
     
     const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
 
@@ -112,6 +123,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json(response);
   } catch (error) {
+    if (error instanceof FederationRequestBodyError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: 'Invalid gossip payload', details: error.issues },

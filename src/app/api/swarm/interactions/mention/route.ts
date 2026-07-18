@@ -9,25 +9,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, notifications } from '@/db';
 import { z } from 'zod';
-import { verifySwarmRequest } from '@/lib/swarm/signature';
-import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
+import {
+  federationMediaUrlSchema,
+  localHandleSchema,
+  nodeDomainSchema,
+} from '@/lib/utils/federation';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { claimInboundFederationAction } from '@/lib/swarm/replay';
 
 const swarmMentionSchema = z.object({
   mentionedHandle: localHandleSchema,
   mention: z.object({
     actorHandle: localHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
-    actorAvatarUrl: z.string().url().optional(),
+    actorAvatarUrl: federationMediaUrlSchema.optional(),
     actorNodeDomain: nodeDomainSchema,
     actorDid: z.string().min(1).max(500).optional(),
-    actorPublicKey: z.string().min(1).max(5000).optional(),
+    actorPublicKey: z.string().min(1).max(16_384).optional(),
     postId: z.string().uuid(),
-    postContent: z.string().max(10000),
+    postContent: z.string().max(600),
     interactionId: z.string().uuid(),
     timestamp: z.string().datetime(),
   }),
-  signature: z.string(),
+  signature: z.string().min(1).max(16_384),
 });
 
 async function acceptsRemoteMention(
@@ -71,8 +77,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
 
-    const body = await request.json();
+    const body = await readLimitedJson(request);
     const data = swarmMentionSchema.parse(body);
+    if (!isFreshFederationTimestamp(data.mention.timestamp)) {
+      return NextResponse.json({ error: 'Stale interaction' }, { status: 400 });
+    }
 
     // SECURITY: Verify the signature
     const { signature, ...payload } = data;
@@ -81,6 +90,13 @@ export async function POST(request: NextRequest) {
     if (!isValid) {
       console.warn(`[Swarm] Invalid signature for mention from ${data.mention.actorHandle}@${data.mention.actorNodeDomain}`);
       return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
+    }
+    if (!await claimInboundFederationAction(
+      data.mention.actorNodeDomain,
+      'mention',
+      data.mention.interactionId,
+    )) {
+      return NextResponse.json({ success: true, message: 'Interaction already processed' });
     }
 
     // Find the mentioned user (local user)
@@ -132,6 +148,9 @@ export async function POST(request: NextRequest) {
       message: 'Mention received',
     });
   } catch (error) {
+    if (error instanceof FederationRequestBodyError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid request', details: error.issues }, { status: 400 });
     }

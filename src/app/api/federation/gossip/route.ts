@@ -37,7 +37,9 @@ export async function POST(request: Request) {
 
                 const payload = res.json() as { handles?: unknown };
                 const handles = Array.isArray(payload.handles) ? payload.handles : [];
-                const merged = await upsertHandleEntries(handles);
+                const merged = await upsertHandleEntries(handles, {
+                    authoritativeDomain: new URL(baseUrl).host,
+                });
 
                 results.push({
                     node,

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   safeFederationRequest: vi.fn(),
+  getPinnedSwarmNodePublicKey: vi.fn(),
+  pinSwarmNodePublicKey: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
@@ -23,6 +25,10 @@ vi.mock('./node-domain', () => ({
 vi.mock('./safe-federation-http', () => ({
   safeFederationRequest: mocks.safeFederationRequest,
 }));
+vi.mock('./registry', () => ({
+  getPinnedSwarmNodePublicKey: mocks.getPinnedSwarmNodePublicKey,
+  pinSwarmNodePublicKey: mocks.pinSwarmNodePublicKey,
+}));
 
 import { getNodePublicKey } from './signature';
 
@@ -33,6 +39,15 @@ function response(status: number, body: unknown) {
 describe('node public key discovery', () => {
   beforeEach(() => {
     mocks.safeFederationRequest.mockReset();
+    mocks.getPinnedSwarmNodePublicKey.mockReset().mockResolvedValue(null);
+    mocks.pinSwarmNodePublicKey.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('uses a directly pinned key without following a remote key change', async () => {
+    mocks.getPinnedSwarmNodePublicKey.mockResolvedValue('pinned-node-key');
+
+    await expect(getNodePublicKey('pinned.example')).resolves.toBe('pinned-node-key');
+    expect(mocks.safeFederationRequest).not.toHaveBeenCalled();
   });
 
   it('uses the bounded key-only endpoint', async () => {
@@ -44,6 +59,7 @@ describe('node public key discovery', () => {
       'https://small.example/api/node/key',
       expect.objectContaining({ maxResponseBytes: 16 * 1024 }),
     );
+    expect(mocks.pinSwarmNodePublicKey).toHaveBeenCalledWith('small.example', 'node-key');
   });
 
   it('supports legacy nodes whose node document contains embedded branding', async () => {

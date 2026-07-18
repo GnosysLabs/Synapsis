@@ -26,7 +26,8 @@ async function sendSignedSwarmReplyDeletion(
     deletion: SwarmReplyDeletionPayload,
 ) {
     const protocol = originDomain.includes('localhost') ? 'http' : 'https';
-    const { payload, signature } = await createSignedPayload(deletion);
+    const signedDeletion = { ...deletion, timestamp: new Date().toISOString() };
+    const { payload, signature } = await createSignedPayload(signedDeletion);
     return safeFederationRequest(`${protocol}://${originDomain}/api/swarm/replies`, {
         method: 'DELETE',
         headers: {

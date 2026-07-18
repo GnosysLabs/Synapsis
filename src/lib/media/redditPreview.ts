@@ -1,4 +1,5 @@
 import type { LinkPreviewData } from './linkPreview';
+import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 
 interface RedditOEmbedResponse {
   title?: string;
@@ -26,23 +27,24 @@ function extractSubredditFromHtml(html?: string): string | null {
 export async function fetchRedditRichPreview(url: string): Promise<LinkPreviewData | null> {
   try {
     const oembedUrl = `https://www.reddit.com/oembed?url=${encodeURIComponent(url)}`;
-    const response = await fetch(oembedUrl, {
+    const response = await safeFederationRequest(oembedUrl, {
       headers: {
         Accept: 'application/json',
         'User-Agent': 'Synapsis Link Preview/1.0',
       },
-      signal: AbortSignal.timeout(5000),
+      timeoutMs: 5_000,
+      maxResponseBytes: 128 * 1024,
     });
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return null;
     }
 
-    const data = await response.json() as RedditOEmbedResponse;
-    const title = data.title || extractTitleFromHtml(data.html) || 'Reddit';
+    const data = response.json() as RedditOEmbedResponse;
+    const title = (data.title || extractTitleFromHtml(data.html) || 'Reddit').slice(0, 300);
     const subreddit = extractSubredditFromHtml(data.html);
     const description = data.author_name
-      ? `Posted by ${data.author_name}${subreddit ? ` in r/${subreddit}` : ''}`
+      ? `Posted by ${data.author_name.slice(0, 100)}${subreddit ? ` in r/${subreddit}` : ''}`
       : subreddit
         ? `r/${subreddit}`
         : (data.provider_name || 'Reddit');

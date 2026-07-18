@@ -21,9 +21,14 @@ import {
 } from '@/lib/e2ee/protocol';
 import { enqueueMessagePushDeliveries } from '@/lib/push/messages';
 import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
-import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
+import {
+  E2EE_FEDERATION_MAX_REQUEST_BYTES,
+  safeFederationRequest,
+} from '@/lib/swarm/safe-federation-http';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
 import { isRateLimited } from '@/lib/rate-limit';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { federationMediaUrlSchema } from '@/lib/utils/federation';
 
 const federatedEnvelopeSchema = z.strictObject({
   userAction: signedUserActionSchema,
@@ -41,7 +46,7 @@ const remoteProfileResponseSchema = z.object({
     did: z.string(),
     publicKey: z.string(),
     displayName: z.string().nullish(),
-    avatarUrl: z.string().nullish(),
+    avatarUrl: federationMediaUrlSchema.nullish(),
     isNsfw: z.boolean().optional(),
     nodeIsNsfw: z.boolean().optional(),
   }).passthrough(),
@@ -68,7 +73,10 @@ export async function POST(request: NextRequest) {
       }, { status: 426 });
     }
 
-    const body = federatedEnvelopeSchema.parse(await request.json());
+    const body = federatedEnvelopeSchema.parse(await readLimitedJson(
+      request,
+      E2EE_FEDERATION_MAX_REQUEST_BYTES,
+    ));
     const sourceDomain = normalizeNodeDomain(sourceDomainHeader);
     if (normalizeNodeDomain(body.sourceDomain) !== sourceDomain) {
       return NextResponse.json({ error: 'Source node mismatch' }, { status: 403 });
@@ -349,6 +357,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, messageId: envelope.messageId });
   } catch (error) {
+    if (error instanceof FederationRequestBodyError) {
+      return NextResponse.json({
+        error: error.message,
+        code: error.status === 413 ? 'E2EE_MESSAGE_TOO_LARGE' : 'E2EE_REQUIRED',
+      }, { status: error.status });
+    }
     if (error instanceof z.ZodError) {
       return NextResponse.json({
         error: 'This node only accepts encrypted message envelopes',

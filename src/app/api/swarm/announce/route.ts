@@ -10,9 +10,12 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { upsertSwarmNode } from '@/lib/swarm/registry';
 import { buildAnnouncement } from '@/lib/swarm/discovery';
-import { verifySwarmRequest } from '@/lib/swarm/signature';
+import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
 import type { SwarmNodeInfo } from '@/lib/swarm/types';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { isRateLimited } from '@/lib/rate-limit';
+import { federationMediaUrlSchema } from '@/lib/utils/federation';
 
 const optionalUrlSchema = z.preprocess((value) => {
   if (typeof value !== 'string') {
@@ -21,28 +24,29 @@ const optionalUrlSchema = z.preprocess((value) => {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}, z.string().url().optional());
+}, federationMediaUrlSchema.optional());
 
-const announcementSchema = z.object({
-  domain: z.string().min(1),
-  name: z.string().optional(),
-  description: z.string().optional(),
+const boundedCount = z.number().int().nonnegative().max(1_000_000_000);
+const announcementSchema = z.strictObject({
+  domain: z.string().min(1).max(253),
+  name: z.string().min(1).max(100),
+  description: z.string().max(1_000).optional(),
   logoUrl: optionalUrlSchema,
-  publicKey: z.string().optional(),
-  softwareVersion: z.string().optional(),
-  userCount: z.number().optional(),
-  postCount: z.number().optional(),
-  mediaCount: z.number().optional(),
+  publicKey: z.string().min(1).max(16_384),
+  softwareVersion: z.string().min(1).max(100),
+  userCount: boundedCount,
+  postCount: boundedCount,
+  mediaCount: boundedCount,
   // A direct, signed announcement is authoritative. Classification is
   // mandatory so old payloads cannot silently become `safe`.
   isNsfw: z.boolean(),
-  capabilities: z.array(z.enum(['handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1'])).optional(),
-  timestamp: z.string().optional(),
-}).passthrough();
+  capabilities: z.array(z.enum(['handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1'])).max(6),
+  timestamp: z.string().datetime(),
+});
 
 // Schema including signature for verification
 const signedAnnouncementSchema = announcementSchema.extend({
-  signature: z.string(),
+  signature: z.string().min(1).max(16_384),
 });
 
 /**
@@ -55,8 +59,15 @@ const signedAnnouncementSchema = announcementSchema.extend({
  */
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const body = await readLimitedJson(request);
     const data = signedAnnouncementSchema.parse(body);
+    if (!isFreshFederationTimestamp(data.timestamp)) {
+      return NextResponse.json({ error: 'Stale announcement payload' }, { status: 400 });
+    }
+    if (isRateLimited('swarm-announce-global', 120, 60 * 1_000)
+      || isRateLimited(`swarm-announce-node:${getPublicSwarmDomain(data.domain) || data.domain}`, 20, 60 * 1_000)) {
+      return NextResponse.json({ error: 'Too many announcement requests' }, { status: 429 });
+    }
     
     const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
 
@@ -132,6 +143,9 @@ export async function POST(request: Request) {
       lastSeenAt: new Date().toISOString(),
     });
   } catch (error) {
+    if (error instanceof FederationRequestBodyError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: 'Invalid announcement payload', details: error.issues },

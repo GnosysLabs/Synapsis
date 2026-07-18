@@ -17,6 +17,7 @@ import {
 } from './node-domain';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { safeFederationRequest } from './safe-federation-http';
+import { parseDirectNodeInfo } from './node-payload';
 
 const PUBLIC_SWARM_DOMAIN_ERROR = 'Public swarm participation requires a real ICANN domain';
 
@@ -134,10 +135,7 @@ export async function announceToNode(targetDomain: string): Promise<{ success: b
     }
 
     // The remote node should respond with their info
-    const remoteInfo = response.json() as SwarmNodeInfo;
-    if (getPublicSwarmDomain(remoteInfo.domain) !== publicTargetDomain) {
-      return { success: false, error: 'Remote node returned a different domain identity' };
-    }
+    const remoteInfo = parseDirectNodeInfo(response.json(), publicTargetDomain);
     
     // Add/update the remote node in our registry
     await upsertSwarmNode(remoteInfo, 'direct');
@@ -215,24 +213,7 @@ export async function fetchNodeInfo(domain: string): Promise<SwarmNodeInfo | nul
       return null;
     }
 
-    const data = response.json() as Partial<SwarmNodeInfo>;
-    
-    const returnedDomain = getPublicSwarmDomain(data.domain || publicDomain);
-    if (returnedDomain !== publicDomain) return null;
-
-    return {
-      domain: returnedDomain,
-      name: data.name,
-      description: data.description,
-      logoUrl: data.logoUrl,
-      publicKey: data.publicKey,
-      softwareVersion: data.softwareVersion,
-      userCount: data.userCount,
-      postCount: data.postCount,
-      mediaCount: data.mediaCount,
-      capabilities: data.capabilities,
-      isNsfw: data.isNsfw,
-    };
+    return parseDirectNodeInfo(response.json(), publicDomain);
   } catch {
     return null;
   }

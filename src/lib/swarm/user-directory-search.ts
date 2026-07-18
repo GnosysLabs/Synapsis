@@ -60,10 +60,15 @@ export async function searchKnownSwarmUsers(
     const candidates = registryRows.flatMap<SwarmDirectoryUser>((row) => {
         const domain = normalizeNodeDomain(row.nodeDomain);
         const node = activeNodeByDomain.get(domain);
-        const canonicalHandle = `${row.handle.toLowerCase()}@${domain}`;
+        const normalizedStoredHandle = row.handle.toLowerCase().replace(/^@/, '');
+        const storedParts = normalizedStoredHandle.split('@');
+        const bareHandle = storedParts[0];
+        const canonicalHandle = `${bareHandle}@${domain}`;
         if (
             !domain
             || domain === localDomain
+            || storedParts.length !== 2
+            || normalizeNodeDomain(storedParts[1]) !== domain
             || !node
             || options.excludedDomains?.has(domain)
             || seen.has(canonicalHandle)

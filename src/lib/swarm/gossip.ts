@@ -12,6 +12,7 @@ import {
   getNodesForGossip,
   getActiveSwarmNodes,
   getNodesSince,
+  getSwarmDiscoveryCandidates,
   upsertSwarmNode,
   upsertSwarmNodes,
   markNodeSuccess,
@@ -19,9 +20,27 @@ import {
   logSync,
 } from './registry';
 import { upsertHandleEntries } from '@/lib/federation/handles';
-import { buildAnnouncement } from './discovery';
+import { buildAnnouncement, discoverNode } from './discovery';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
 import { safeFederationRequest } from './safe-federation-http';
+import { z } from 'zod';
+import { swarmNodeInfoSchema } from './node-payload';
+
+const gossipHandleSchema = z.object({
+  handle: z.string().min(3).max(640),
+  did: z.string().min(1).max(1_024),
+  nodeDomain: z.string().min(1).max(253),
+  updatedAt: z.string().datetime().optional(),
+});
+
+const gossipResponseSchema = z.object({
+  nodes: z.array(swarmNodeInfoSchema).max(SWARM_CONFIG.maxNodesPerGossip),
+  handles: z.array(gossipHandleSchema).max(SWARM_CONFIG.maxHandlesPerGossip).optional(),
+  received: z.object({
+    nodes: z.number().int().nonnegative().max(SWARM_CONFIG.maxNodesPerGossip),
+    handles: z.number().int().nonnegative().max(SWARM_CONFIG.maxHandlesPerGossip),
+  }),
+});
 
 /**
  * A successful gossip exchange is a direct peer handshake: incoming gossip is
@@ -84,7 +103,12 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
   if (db) {
     const sinceDate = since ? new Date(since) : undefined;
     const handleEntries = await db.query.handleRegistry.findMany({
-      where: sinceDate ? { updatedAt: { gt: sinceDate } } : undefined,
+      where: {
+        AND: [
+          { nodeDomain: ourDomain },
+          ...(sinceDate ? [{ updatedAt: { gt: sinceDate } }] : []),
+        ],
+      },
       orderBy: (handleRegistry, { desc }) => [desc(handleRegistry.updatedAt)],
       limit: SWARM_CONFIG.maxHandlesPerGossip,
     });
@@ -99,7 +123,12 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
 
   return {
     sender: ourDomain,
-    nodes: isPublicSwarmDomain(ourDomain) ? [selfNode, ...nodes] : nodes,
+    nodes: (isPublicSwarmDomain(ourDomain) ? [selfNode, ...nodes] : nodes).map((node) => {
+      // Trust is a local observation, never federation metadata.
+      const publicNode = { ...node };
+      delete publicNode.trustScore;
+      return publicNode;
+    }),
     handles: handles.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)),
     timestamp: new Date().toISOString(),
     since,
@@ -121,10 +150,12 @@ export async function processGossip(
   const nodeResult = await upsertSwarmNodes(payload.nodes, payload.sender);
 
   // Process incoming handles
-  let handlesResult = { added: 0, updated: 0 };
+  let handlesResult = { added: 0, updated: 0, rejected: 0 };
   const publicHandles = payload.handles?.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)) ?? [];
   if (publicHandles.length > 0) {
-    handlesResult = await upsertHandleEntries(publicHandles);
+    handlesResult = await upsertHandleEntries(publicHandles, {
+      authoritativeDomain: payload.sender,
+    });
   }
 
   // Build our response with nodes/handles to share back
@@ -216,7 +247,7 @@ export async function gossipToNode(
       };
     }
 
-    const gossipResponse = response.json() as SwarmGossipResponse;
+    const gossipResponse = gossipResponseSchema.parse(response.json()) as SwarmGossipResponse;
 
     // The response came from the exact HTTPS origin we contacted, so its own
     // complete self-description establishes the target as a direct peer.
@@ -225,10 +256,12 @@ export async function gossipToNode(
     // Process the response (nodes and handles they sent back)
     const nodeResult = await upsertSwarmNodes(gossipResponse.nodes, publicTargetDomain);
 
-    let handlesResult = { added: 0, updated: 0 };
+    let handlesResult = { added: 0, updated: 0, rejected: 0 };
     const publicHandles = gossipResponse.handles?.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)) ?? [];
     if (publicHandles.length > 0) {
-      handlesResult = await upsertHandleEntries(publicHandles);
+      handlesResult = await upsertHandleEntries(publicHandles, {
+        authoritativeDomain: publicTargetDomain,
+      });
     }
 
     await markNodeSuccess(publicTargetDomain);
@@ -276,6 +309,13 @@ export async function runGossipRound(): Promise<{
 }> {
   if (!isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN)) {
     return { contacted: 0, successful: 0, totalNodesReceived: 0, totalHandlesReceived: 0 };
+  }
+
+  // Gossip is a hint, not authority. Probe only a fixed number of candidates
+  // directly before they can become active participants.
+  const discoveryCandidates = await getSwarmDiscoveryCandidates(SWARM_CONFIG.discoveryProbeFanout);
+  for (const candidate of discoveryCandidates) {
+    await discoverNode(candidate.domain);
   }
 
   // Get random nodes to gossip with

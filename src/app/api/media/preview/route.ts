@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import { fetchRedditRichPreview } from '@/lib/media/redditPreview';
 import { fetchGenericLinkPreview } from '@/lib/media/genericPreview';
+import { isRateLimited } from '@/lib/rate-limit';
+import { z } from 'zod';
+
+const previewUrlSchema = z.string().trim().min(1).max(2_048);
 
 function isRedditUrl(url: string): boolean {
     try {
@@ -27,14 +31,32 @@ function buildBasicPreview(url: string, title?: string | null, description?: str
 export async function GET(req: NextRequest) {
     try {
         const { searchParams } = new URL(req.url);
-        let url = searchParams.get('url');
+        const rawUrl = searchParams.get('url');
 
-        if (!url) {
+        if (!rawUrl) {
             return NextResponse.json({ error: 'No URL provided' }, { status: 400 });
         }
 
+        let url = previewUrlSchema.parse(rawUrl);
         if (!url.startsWith('http://') && !url.startsWith('https://')) {
             url = 'https://' + url;
+        }
+
+        const parsedUrl = new URL(url);
+        const developmentLoopback = process.env.NODE_ENV === 'development'
+            && parsedUrl.protocol === 'http:'
+            && ['localhost', '127.0.0.1', '[::1]'].includes(parsedUrl.hostname);
+        if (parsedUrl.protocol !== 'https:' && !developmentLoopback) {
+            return NextResponse.json({ error: 'Preview URLs must use HTTPS' }, { status: 400 });
+        }
+
+        const clientAddress = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+            || req.headers.get('x-real-ip')?.trim()
+            || 'unknown';
+        if (isRateLimited(`link-preview-client:${clientAddress}`, 60, 60 * 1_000)
+            || isRateLimited(`link-preview-target:${parsedUrl.hostname}`, 120, 60 * 1_000)
+            || isRateLimited('link-preview-global', 600, 60 * 1_000)) {
+            return NextResponse.json({ error: 'Too many preview requests' }, { status: 429 });
         }
 
         if (isRedditUrl(url)) {
@@ -58,6 +80,9 @@ export async function GET(req: NextRequest) {
             preview.image?.trim() || null,
         ));
     } catch (error) {
+        if (error instanceof z.ZodError || error instanceof TypeError) {
+            return NextResponse.json({ error: 'Invalid preview URL' }, { status: 400 });
+        }
         console.error('Link preview error:', error);
         return NextResponse.json({ error: 'Failed to fetch preview' }, { status: 500 });
     }

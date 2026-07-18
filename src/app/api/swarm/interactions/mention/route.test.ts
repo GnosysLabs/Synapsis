@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/swarm/signature', () => ({
   verifySwarmRequest: mocks.verifySwarmRequest,
+  isFreshFederationTimestamp: vi.fn(() => true),
+}));
+vi.mock('@/lib/swarm/replay', () => ({
+  claimInboundFederationAction: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock('@/db', () => ({

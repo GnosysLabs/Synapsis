@@ -666,7 +666,6 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
 
   // Trust/reputation (for future spam prevention)
   trustScore: integer('trust_score').default(50).notNull(), // 0-100
-
   // Admin moderation
   isBlocked: integer('is_blocked', { mode: 'boolean' }).default(false).notNull(),
   blockReason: text('block_reason'),
@@ -684,6 +683,19 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
   index('swarm_nodes_trust_idx').on(table.trustScore),
   index('swarm_nodes_nsfw_idx').on(table.isNsfw),
   index('swarm_nodes_blocked_idx').on(table.isBlocked),
+]);
+
+/** Durable replay ledger for signed, state-changing federation requests. */
+export const swarmInboundActions = sqliteTable('swarm_inbound_actions', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  sourceDomain: text('source_domain').notNull(),
+  action: text('action').notNull(),
+  interactionId: text('interaction_id').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('swarm_inbound_actions_replay_unique_idx')
+    .on(table.sourceDomain, table.action, table.interactionId),
+  index('swarm_inbound_actions_created_idx').on(table.createdAt),
 ]);
 
 /**

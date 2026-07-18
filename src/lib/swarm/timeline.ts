@@ -11,6 +11,33 @@ import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import { feedActivityDate, getSourceContinuationDate } from '@/lib/posts/feed-pagination';
 import { isPostSensitive } from '@/lib/nsfw/content-visibility';
 import { signedFederationRead } from './signed-read';
+import { parseRemoteTimelineResponse } from './remote-timeline-payload';
+
+const MAX_FEDERATION_NODES_PER_TIMELINE = 24;
+const MAX_CONCURRENT_TIMELINE_FETCHES = 6;
+const MAX_PREVIEW_ENRICHMENTS = 20;
+const MAX_CONCURRENT_PREVIEW_FETCHES = 4;
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index], index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
 
 interface TimelineResult {
   posts: SwarmPost[];
@@ -109,7 +136,8 @@ async function fetchLinkPreview(url: string): Promise<LinkPreviewData | null> {
  * Enrich swarm posts with link previews if they have URLs but no preview data
  */
 async function enrichPostsWithPreviews(posts: SwarmPost[]): Promise<SwarmPost[]> {
-  const enrichmentPromises = posts.map(async (post) => {
+  let remainingEnrichments = MAX_PREVIEW_ENRICHMENTS;
+  return mapWithConcurrency(posts, MAX_CONCURRENT_PREVIEW_FETCHES, async (post) => {
     // Skip if already has link preview data
     if (post.linkPreviewUrl) return post;
 
@@ -119,6 +147,9 @@ async function enrichPostsWithPreviews(posts: SwarmPost[]): Promise<SwarmPost[]>
 
     // Skip video URLs (handled by VideoEmbed component)
     if (url.match(/(youtube\.com|youtu\.be|vimeo\.com)/)) return post;
+
+    if (remainingEnrichments <= 0) return post;
+    remainingEnrichments -= 1;
 
     // Fetch preview
     const preview = await fetchLinkPreview(url);
@@ -135,8 +166,6 @@ async function enrichPostsWithPreviews(posts: SwarmPost[]): Promise<SwarmPost[]>
       linkPreviewMedia: preview.media || undefined,
     };
   });
-
-  return Promise.all(enrichmentPromises);
 }
 
 /**
@@ -175,8 +204,7 @@ async function fetchNodeTimeline(
       return { posts: [], error: `HTTP ${response.status}` };
     }
 
-    const data = response.json() as { posts?: SwarmPost[]; nodeIsNsfw?: boolean };
-    return { posts: data.posts || [], nodeIsNsfw: data.nodeIsNsfw };
+    return parseRemoteTimelineResponse(response.json(), normalizedDomain);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return { posts: [], error: message };
@@ -195,9 +223,14 @@ export async function fetchSwarmTimeline(
   options: TimelineOptions = {}
 ): Promise<TimelineResult> {
   const { includeNsfw = false, cursor, query, excludeDomains } = options;
+  const effectiveMaxNodes = Math.max(1, Math.min(
+    maxNodes ?? MAX_FEDERATION_NODES_PER_TIMELINE,
+    MAX_FEDERATION_NODES_PER_TIMELINE,
+  ));
+  const effectivePostsPerNode = Math.max(1, Math.min(postsPerNode, 50));
 
   // Get active nodes to query
-  const nodes = await getActiveSwarmNodes(maxNodes);
+  const nodes = await getActiveSwarmNodes(effectiveMaxNodes);
 
   // Always include our own posts
   const ourDomain = normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost');
@@ -211,7 +244,7 @@ export async function fetchSwarmTimeline(
     ...nodes.map(n => n.domain).filter(d => d !== ourDomain)
   ].filter((domain) => !normalizedExcludedDomains.has(normalizeNodeDomain(domain)));
   const allowedDomains = await filterBlockedDomains(candidateDomains);
-  const nodesToQuery = maxNodes === undefined ? allowedDomains : allowedDomains.slice(0, maxNodes);
+  const nodesToQuery = allowedDomains.slice(0, effectiveMaxNodes);
   const knownNsfwByDomain = new Map(
     nodes.map((node) => [normalizeNodeDomain(node.domain), node.isNsfw]),
   );
@@ -220,15 +253,17 @@ export async function fetchSwarmTimeline(
   console.log(`[Swarm Timeline] includeNsfw: ${includeNsfw}, cursor: ${cursor || 'none'}`);
 
   // Fetch from all nodes in parallel
-  const results = await Promise.all(
-    nodesToQuery.map(async (domain) => {
-      const result = await fetchNodeTimeline(domain, postsPerNode, cursor, query);
+  const results = await mapWithConcurrency(
+    nodesToQuery,
+    MAX_CONCURRENT_TIMELINE_FETCHES,
+    async (domain) => {
+      const result = await fetchNodeTimeline(domain, effectivePostsPerNode, cursor, query);
       return {
         domain,
         knownNodeIsNsfw: knownNsfwByDomain.get(normalizeNodeDomain(domain)),
         ...result,
       };
-    })
+    },
   );
 
   // Collect all posts and track sources
@@ -288,6 +323,6 @@ export async function fetchSwarmTimeline(
     posts: enrichedPosts,
     sources,
     fetchedAt: new Date().toISOString(),
-    continuationDate: getSourceContinuationDate(results, postsPerNode)?.toISOString() || null,
+    continuationDate: getSourceContinuationDate(results, effectivePostsPerNode)?.toISOString() || null,
   };
 }

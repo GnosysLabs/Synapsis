@@ -11,16 +11,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, chatConversations } from '@/db';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { verifyUserInteraction } from '@/lib/swarm/signature';
+import { isFreshFederationTimestamp, verifyUserInteraction } from '@/lib/swarm/signature';
 import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 
 const deletionSchema = z.object({
-  senderHandle: z.string(),
-  senderNodeDomain: z.string(),
-  recipientHandle: z.string(),
-  conversationId: z.string().optional(),
-  timestamp: z.string(),
-  signature: z.string(),
+  senderHandle: z.string().min(3).max(30),
+  senderNodeDomain: z.string().min(1).max(253),
+  recipientHandle: z.string().min(3).max(30),
+  conversationId: z.string().uuid().optional(),
+  timestamp: z.string().datetime(),
+  signature: z.string().min(1).max(16_384),
 });
 
 export async function POST(request: NextRequest) {
@@ -29,8 +30,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
 
-    const body = await request.json();
+    const body = await readLimitedJson(request);
     const data = deletionSchema.parse(body);
+    if (!isFreshFederationTimestamp(data.timestamp)) {
+      return NextResponse.json({ error: 'Stale deletion request' }, { status: 400 });
+    }
     const senderNodeDomain = normalizeNodeDomain(data.senderNodeDomain);
 
     if (await isNodeBlocked(senderNodeDomain)) {
@@ -92,6 +96,9 @@ export async function POST(request: NextRequest) {
       message: 'Conversation deleted',
     });
   } catch (error) {
+    if (error instanceof FederationRequestBodyError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid payload', details: error.issues }, { status: 400 });
     }

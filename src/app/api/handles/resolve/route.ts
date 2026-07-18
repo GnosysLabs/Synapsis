@@ -3,6 +3,7 @@ import { db } from '@/db';
 import { normalizeHandle, upsertHandleEntries } from '@/lib/federation/handles';
 import { z } from 'zod';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
+import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
 
 const handleParamSchema = z.string().min(3).max(40).regex(/^[a-zA-Z0-9_]+(@[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,})?$/, 'Invalid handle format');
 
@@ -39,12 +40,22 @@ export async function GET(request: Request) {
         const handleParam = handleValidation.data;
 
         const parsed = parseHandleWithDomain(handleParam);
-        const lookupHandle = parsed ? parsed.handle : normalizeHandle(handleParam);
+        const canonicalDomain = parsed ? getPublicSwarmDomain(parsed.domain) : null;
+        if (parsed && !canonicalDomain) {
+            return NextResponse.json({ error: 'Handle node is invalid' }, { status: 400 });
+        }
+        const lookupHandle = parsed
+            ? `${parsed.handle}@${canonicalDomain}`
+            : normalizeHandle(handleParam);
+        const localDomain = normalizeNodeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
         const localEntry = await db.query.handleRegistry.findFirst({
             where: { handle: lookupHandle },
         });
 
-        if (localEntry) {
+        if (localEntry && normalizeNodeDomain(localEntry.nodeDomain)
+            === (canonicalDomain || localDomain)) {
             return NextResponse.json({
                 handle: localEntry.handle,
                 did: localEntry.did,
@@ -57,7 +68,7 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Handle not found' }, { status: 404 });
         }
 
-        const url = new URL('/.well-known/synapsis-handles', `https://${parsed.domain}`);
+        const url = new URL('/.well-known/synapsis-handles', `https://${canonicalDomain}`);
         url.searchParams.set('handle', parsed.handle);
 
         const res = await safeFederationRequest(url.toString(), {
@@ -69,15 +80,28 @@ export async function GET(request: Request) {
         }
 
         const data = res.json() as { handles?: unknown };
-        const entry = Array.isArray(data.handles) ? data.handles[0] : null;
+        const rawEntry = Array.isArray(data.handles) ? data.handles[0] : null;
 
-        if (!entry) {
+        const entrySchema = z.object({
+            handle: z.string().min(3).max(30),
+            did: z.string().min(1).max(1_024),
+            nodeDomain: z.string().min(1).max(253),
+            updatedAt: z.string().datetime().optional(),
+        });
+        const parsedEntry = entrySchema.safeParse(rawEntry);
+        if (!parsedEntry.success
+            || normalizeHandle(parsedEntry.data.handle) !== parsed.handle
+            || getPublicSwarmDomain(parsedEntry.data.nodeDomain) !== canonicalDomain) {
             return NextResponse.json({ error: 'Handle not found' }, { status: 404 });
         }
 
-        await upsertHandleEntries([entry]);
+        await upsertHandleEntries([parsedEntry.data], { authoritativeDomain: canonicalDomain! });
 
-        return NextResponse.json(entry);
+        return NextResponse.json({
+            ...parsedEntry.data,
+            handle: `${parsed.handle}@${canonicalDomain}`,
+            nodeDomain: canonicalDomain,
+        });
     } catch (error) {
         if (error instanceof z.ZodError) {
             return NextResponse.json(

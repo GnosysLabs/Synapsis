@@ -63,13 +63,13 @@ describe('fetchSwarmTimeline post search', () => {
     });
   });
 
-  it('queries every known active peer with the content query and no node ceiling', async () => {
+  it('queries known active peers with the content query under the node ceiling', async () => {
     const result = await fetchSwarmTimeline(undefined, 20, {
       query: 'Yolked',
       excludeDomains: new Set(['local.social']),
     });
 
-    expect(mocks.getActiveSwarmNodes).toHaveBeenCalledWith(undefined);
+    expect(mocks.getActiveSwarmNodes).toHaveBeenCalledWith(24);
     expect(mocks.signedFederationRead).toHaveBeenCalledTimes(2);
     for (const [url] of mocks.signedFederationRead.mock.calls) {
       const parsedUrl = new URL(url as string);

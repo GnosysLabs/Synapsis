@@ -17,6 +17,8 @@ export interface SwarmNodeInfo {
   capabilities?: SwarmCapability[];
   isNsfw?: boolean;
   lastSeenAt?: string;
+  /** Local reputation only. Never accept this value from a remote node. */
+  trustScore?: number;
 }
 
 export type SwarmCapability = 'handles' | 'gossip' | 'relay' | 'search' | 'interactions' | 'e2ee_dm_v1';
@@ -109,9 +111,16 @@ export const SWARM_CONFIG = {
   
   // How many nodes to gossip with per round
   gossipFanout: 3,
+
+  // Fixed-cost direct verification of nodes learned only through gossip.
+  discoveryProbeFanout: 2,
   
   // Max nodes to include in a single gossip message
   maxNodesPerGossip: 100,
+
+  // Relayed nodes are cheap hints, but their local storage and probing are bounded.
+  maxDiscoveryHintsPerGossip: 20,
+  maxStoredDiscoveryHints: 5_000,
   
   // Max handles to include in a single gossip message
   maxHandlesPerGossip: 500,
@@ -127,5 +136,7 @@ export const SWARM_CONFIG = {
   trustScoreOnFailure: -5,
   minTrustScore: 0,
   maxTrustScore: 100,
+  // Directly contacted peers remain quarantined until repeated successful exchanges.
+  quarantineTrustScore: 25,
   defaultTrustScore: 50,
 } as const;

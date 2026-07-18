@@ -13,11 +13,12 @@ export async function GET(request: Request) {
         const handleParam = searchParams.get('handle');
         const sinceParam = searchParams.get('since');
         const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 500);
+        const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
 
         if (handleParam) {
             const cleanHandle = normalizeHandle(handleParam);
             const entry = await db.query.handleRegistry.findFirst({
-                where: { handle: cleanHandle },
+                where: { AND: [{ handle: cleanHandle }, { nodeDomain: localDomain }] },
             });
 
             if (!entry) {
@@ -36,7 +37,12 @@ export async function GET(request: Request) {
 
         const sinceDate = sinceParam ? new Date(sinceParam) : null;
         const entries = await db.query.handleRegistry.findMany({
-            where: sinceDate ? { updatedAt: { gt: sinceDate } } : undefined,
+            where: {
+                AND: [
+                    { nodeDomain: localDomain },
+                    ...(sinceDate ? [{ updatedAt: { gt: sinceDate } }] : []),
+                ],
+            },
             orderBy: () => [desc(handleRegistry.updatedAt)],
             limit,
         });

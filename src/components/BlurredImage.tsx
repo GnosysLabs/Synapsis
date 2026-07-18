@@ -8,6 +8,7 @@ export default function BlurredImage({ src, alt }: BlurredImageProps) {
         <div className="blurred-image-container">
             <Image
                 unoptimized
+                referrerPolicy="no-referrer"
                 src={src}
                 alt=""
                 width={1200}
@@ -18,6 +19,7 @@ export default function BlurredImage({ src, alt }: BlurredImageProps) {
             />
             <Image
                 unoptimized
+                referrerPolicy="no-referrer"
                 src={src}
                 alt={alt}
                 width={1200}

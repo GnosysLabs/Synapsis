@@ -10,22 +10,28 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, posts, notifications, remoteReposts } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { verifySwarmRequest } from '@/lib/swarm/signature';
-import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
+import {
+  federationMediaUrlSchema,
+  localHandleSchema,
+  nodeDomainSchema,
+} from '@/lib/utils/federation';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { claimInboundFederationAction } from '@/lib/swarm/replay';
 
 const swarmRepostSchema = z.object({
   postId: z.string().uuid(),
   repost: z.object({
     actorHandle: localHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
-    actorAvatarUrl: z.string().url().optional(),
+    actorAvatarUrl: federationMediaUrlSchema.optional(),
     actorIsNsfw: z.boolean(),
     actorNodeDomain: nodeDomainSchema,
     repostId: z.string().uuid(),
     interactionId: z.string().uuid(),
     timestamp: z.string().datetime(),
   }),
-  signature: z.string().min(1),
+  signature: z.string().min(1).max(16_384),
 });
 
 /**
@@ -39,8 +45,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
 
-    const body = await request.json();
+    const body = await readLimitedJson(request);
     const data = swarmRepostSchema.parse(body);
+    if (!isFreshFederationTimestamp(data.repost.timestamp)) {
+      return NextResponse.json({ error: 'Stale interaction' }, { status: 400 });
+    }
 
     // SECURITY: Verify the signature
     const { signature, ...payload } = data;
@@ -49,6 +58,13 @@ export async function POST(request: NextRequest) {
     if (!isValid) {
       console.warn(`[Swarm] Invalid signature for repost from ${data.repost.actorHandle}@${data.repost.actorNodeDomain}`);
       return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
+    }
+    if (!await claimInboundFederationAction(
+      data.repost.actorNodeDomain,
+      'repost',
+      data.repost.interactionId,
+    )) {
+      return NextResponse.json({ success: true, message: 'Interaction already processed' });
     }
 
     // Find the target post
@@ -121,6 +137,9 @@ export async function POST(request: NextRequest) {
       message: 'Repost received',
     });
   } catch (error) {
+    if (error instanceof FederationRequestBodyError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid request', details: error.issues }, { status: 400 });
     }

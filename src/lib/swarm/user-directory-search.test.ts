@@ -55,7 +55,7 @@ describe('searchKnownSwarmUsers', () => {
         vi.clearAllMocks();
         mocks.select
             .mockReturnValueOnce(registryQuery([
-                { handle: 'theredpillgod', nodeDomain: 'rprh.link' },
+                { handle: 'theredpillgod@rprh.link', nodeDomain: 'rprh.link' },
             ]))
             .mockReturnValueOnce(registryQuery([{
                 domain: 'rprh.link',

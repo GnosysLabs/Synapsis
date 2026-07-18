@@ -9,32 +9,38 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, posts, users, media, notifications } from '@/db';
 import { eq, desc, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { verifySwarmRequest } from '@/lib/swarm/signature';
+import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
 import { isPostSensitive, redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 import { upsertRemoteUser } from '@/lib/swarm/user-cache';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { parseSwarmPostId } from '@/lib/swarm/post-id';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import {
+  federationMediaUrlSchema,
+  localHandleSchema,
+  nodeDomainSchema,
+} from '@/lib/utils/federation';
 
 // Schema for incoming swarm reply
-const swarmReplySchema = z.object({
+const swarmReplySchema = z.strictObject({
   postId: z.string().uuid(), // The local post being replied to
-  reply: z.object({
-    id: z.string(), // Original reply ID on the sender's node
-    content: z.string(),
-    createdAt: z.string(),
-    author: z.object({
-      handle: z.string(),
-      displayName: z.string().optional().nullable(),
-      avatarUrl: z.string().optional(),
-      did: z.string().optional(),
-      publicKey: z.string().optional(),
+  reply: z.strictObject({
+    id: z.string().uuid(), // Original reply ID on the sender's node
+    content: z.string().max(600),
+    createdAt: z.string().datetime(),
+    author: z.strictObject({
+      handle: localHandleSchema,
+      displayName: z.string().max(50).optional().nullable(),
+      avatarUrl: federationMediaUrlSchema.optional(),
+      did: z.string().min(1).max(1_024).optional(),
+      publicKey: z.string().min(1).max(16_384).optional(),
       isNsfw: z.boolean().optional(),
     }),
-    nodeDomain: z.string(),
+    nodeDomain: nodeDomainSchema,
     nodeIsNsfw: z.boolean().optional(),
     isNsfw: z.boolean().optional(),
-    mediaUrls: z.array(z.string()).optional(),
+    mediaUrls: z.array(federationMediaUrlSchema).max(4).optional(),
   }),
 });
 
@@ -42,6 +48,7 @@ const swarmReplyDeletionSchema = z.object({
   replyId: z.string().uuid(),
   nodeDomain: z.string().min(1).max(253),
   authorHandle: z.string().min(1).max(64),
+  timestamp: z.string().datetime(),
 }).strict();
 
 const swarmReplyPostIdSchema = z.string().uuid();
@@ -72,17 +79,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
 
-    const body = await request.json();
+    const body = await readLimitedJson(request);
     const validation = swarmReplySchema.safeParse(body);
     if (!validation.success) {
       return NextResponse.json({ error: 'Invalid request', details: validation.error.issues }, { status: 400 });
     }
 
     const signature = request.headers.get('X-Swarm-Signature');
-    const sourceDomain = request.headers.get('X-Swarm-Source-Domain');
+    const sourceDomainHeader = request.headers.get('X-Swarm-Source-Domain');
 
-    if (!signature || !sourceDomain) {
+    if (!signature || !sourceDomainHeader) {
       return NextResponse.json({ error: 'Missing swarm signature headers' }, { status: 401 });
+    }
+    const sourceDomain = normalizeNodeDomain(sourceDomainHeader);
+    if (!isFreshFederationTimestamp(validation.data.reply.createdAt, 24 * 60 * 60 * 1_000)) {
+      return NextResponse.json({ error: 'Reply timestamp is stale' }, { status: 400 });
     }
 
     const isValid = await verifySwarmRequest(validation.data, signature, sourceDomain);
@@ -180,6 +191,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, message: 'Reply received' });
   } catch (error) {
+    if (error instanceof FederationRequestBodyError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[Swarm] Receive reply error:', error);
     return NextResponse.json({ error: 'Failed to receive reply' }, { status: 500 });
   }
@@ -197,7 +211,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
 
-    const validation = swarmReplyDeletionSchema.safeParse(await request.json());
+    const validation = swarmReplyDeletionSchema.safeParse(await readLimitedJson(request));
     if (!validation.success) {
       return NextResponse.json(
         { error: 'Invalid request', details: validation.error.issues },
@@ -214,6 +228,9 @@ export async function DELETE(request: NextRequest) {
     const { replyId, nodeDomain } = validation.data;
     if (nodeDomain !== sourceDomain) {
       return NextResponse.json({ error: 'Source domain mismatch' }, { status: 400 });
+    }
+    if (!isFreshFederationTimestamp(validation.data.timestamp)) {
+      return NextResponse.json({ error: 'Stale deletion request' }, { status: 400 });
     }
     if (!await verifySwarmRequest(validation.data, signature, sourceDomain)) {
       return NextResponse.json({ error: 'Invalid node signature' }, { status: 403 });
@@ -243,6 +260,9 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof FederationRequestBodyError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[Swarm] Delete reply error:', error);
     return NextResponse.json({ error: 'Failed to delete reply' }, { status: 500 });
   }

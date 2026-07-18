@@ -5,7 +5,7 @@
  */
 
 import { db, media, posts, swarmNodes, swarmSeeds, swarmSyncLog, users } from '@/db';
-import { eq, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { SwarmNodeInfo, SwarmSyncResult } from './types';
 import { SWARM_CONFIG, DEFAULT_SEED_NODES } from './types';
 import {
@@ -69,39 +69,69 @@ export async function upsertSwarmNode(
     where: { domain: normalizedDomain },
   });
 
-  const capabilities = node.capabilities ? JSON.stringify(node.capabilities) : null;
   const classificationIsAuthoritative = discoveredVia === 'announcement' || discoveredVia === 'direct';
+  const incomingKey = node.publicKey?.trim();
+  if (classificationIsAuthoritative && (!incomingKey || typeof node.isNsfw !== 'boolean')) {
+    throw new Error(`Direct node identity is incomplete for ${normalizedDomain}`);
+  }
+
+  const capabilities = node.capabilities ? JSON.stringify(node.capabilities) : null;
   const incomingClassificationKnown = classificationIsAuthoritative
     && typeof node.isNsfw === 'boolean';
   const incomingIsNsfw = incomingClassificationKnown ? node.isNsfw === true : false;
 
   if (!existing) {
+    // Gossip is only a discovery hint. It must not make a Sybil node active or
+    // allow a third party to assign that node's metadata or signing key.
     await db.insert(swarmNodes).values({
       domain: normalizedDomain,
-      name: node.name,
-      description: node.description,
-      logoUrl: node.logoUrl,
-      publicKey: node.publicKey,
-      softwareVersion: node.softwareVersion,
-      userCount: node.userCount,
-      postCount: node.postCount,
-      mediaCount: node.mediaCount,
+      name: classificationIsAuthoritative ? node.name : undefined,
+      description: classificationIsAuthoritative ? node.description : undefined,
+      logoUrl: classificationIsAuthoritative ? node.logoUrl : undefined,
+      publicKey: classificationIsAuthoritative ? incomingKey : undefined,
+      softwareVersion: classificationIsAuthoritative ? node.softwareVersion : undefined,
+      userCount: classificationIsAuthoritative ? node.userCount : undefined,
+      postCount: classificationIsAuthoritative ? node.postCount : undefined,
+      mediaCount: classificationIsAuthoritative ? node.mediaCount : undefined,
       isNsfw: incomingIsNsfw,
       nsfwClassificationKnown: incomingClassificationKnown,
       discoveredVia,
-      capabilities,
-      lastSeenAt: node.lastSeenAt ? new Date(node.lastSeenAt) : new Date(),
+      capabilities: classificationIsAuthoritative ? capabilities : null,
+      lastSeenAt: new Date(),
+      isActive: classificationIsAuthoritative,
+      trustScore: classificationIsAuthoritative
+        ? SWARM_CONFIG.quarantineTrustScore
+        : SWARM_CONFIG.minTrustScore,
     });
     return { isNew: true };
   }
 
-  // Update existing node
+  if (!classificationIsAuthoritative) {
+    // Preserve the discovery path for a gossip-only placeholder, but never
+    // allow a relay to mutate authoritative node state.
+    if (!existing.discoveredVia) {
+      await db.update(swarmNodes)
+        .set({ discoveredVia, updatedAt: new Date() })
+        .where(eq(swarmNodes.domain, normalizedDomain));
+    }
+    return { isNew: false };
+  }
+
+  const existingKeyIsPinned = (existing.discoveredVia === 'direct'
+    || existing.discoveredVia === 'announcement'
+    || existing.discoveredVia === 'key') && Boolean(existing.publicKey);
+  if (existingKeyIsPinned && existing.publicKey !== incomingKey) {
+    throw new Error(`Node signing key changed for ${normalizedDomain}`);
+  }
+
+  // Direct HTTPS contact is authoritative for this node's mutable metadata.
+  // Keep local trust/block state and make the adult classification permanent.
   await db.update(swarmNodes)
     .set({
       name: node.name ?? existing.name,
       description: node.description ?? existing.description,
       logoUrl: node.logoUrl ?? existing.logoUrl,
-      publicKey: node.publicKey ?? existing.publicKey,
+      publicKey: existingKeyIsPinned ? existing.publicKey : incomingKey,
       softwareVersion: node.softwareVersion ?? existing.softwareVersion,
       userCount: node.userCount ?? existing.userCount,
       postCount: node.postCount ?? existing.postCount,
@@ -110,9 +140,7 @@ export async function upsertSwarmNode(
         ? mergePermanentNodeNsfwClassification(existing.isNsfw, node.isNsfw)
         : existing.isNsfw,
       nsfwClassificationKnown: existing.nsfwClassificationKnown || incomingClassificationKnown,
-      discoveredVia: classificationIsAuthoritative
-        ? discoveredVia
-        : existing.discoveredVia,
+      discoveredVia,
       capabilities: capabilities ?? existing.capabilities,
       lastSeenAt: new Date(),
       consecutiveFailures: 0,
@@ -142,9 +170,27 @@ export async function upsertSwarmNodes(
   const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
   const filteredNodes = nodes.filter(n => n.domain !== ourDomain);
   const normalizedOurDomain = getPublicSwarmDomain(ourDomain);
-  const safeNodes = filteredNodes.filter(n =>
+  let safeNodes = filteredNodes.filter(n =>
     isPublicSwarmDomain(n.domain) && getPublicSwarmDomain(n.domain) !== normalizedOurDomain
   );
+
+  const authoritativeBatch = discoveredVia === 'direct' || discoveredVia === 'announcement';
+  if (!authoritativeBatch) {
+    const [{ count: storedHintCount }] = await db.select({
+      count: sql<number>`count(*)`,
+    }).from(swarmNodes).where(and(
+      eq(swarmNodes.isActive, false),
+      eq(swarmNodes.trustScore, SWARM_CONFIG.minTrustScore),
+    ));
+    const remainingHintSlots = Math.max(
+      0,
+      SWARM_CONFIG.maxStoredDiscoveryHints - Number(storedHintCount || 0),
+    );
+    safeNodes = safeNodes.slice(0, Math.min(
+      SWARM_CONFIG.maxDiscoveryHintsPerGossip,
+      remainingHintSlots,
+    ));
+  }
 
   for (const node of safeNodes) {
     const result = await upsertSwarmNode(node, discoveredVia);
@@ -205,6 +251,62 @@ export async function getTrustedSwarmReadPeerPublicKey(domain: string): Promise<
   return node.publicKey;
 }
 
+/** Return a directly learned key regardless of reputation, for continuity checks. */
+export async function getPinnedSwarmNodePublicKey(domain: string): Promise<string | null> {
+  if (!db) return null;
+  const normalizedDomain = getPublicSwarmDomain(domain);
+  if (!normalizedDomain) return null;
+  const node = await db.query.swarmNodes.findFirst({ where: { domain: normalizedDomain } });
+  const directlyEstablished = node?.discoveredVia === 'direct'
+    || node?.discoveredVia === 'announcement'
+    || node?.discoveredVia === 'key';
+  return node && directlyEstablished && !node.isBlocked && node.publicKey
+    ? node.publicKey
+    : null;
+}
+
+/** Persist the first key fetched from an exact node origin before interactions are accepted. */
+export async function pinSwarmNodePublicKey(domain: string, publicKey: string): Promise<void> {
+  if (!db) return;
+  const normalizedDomain = getPublicSwarmDomain(domain);
+  const normalizedKey = publicKey.trim();
+  if (!normalizedDomain || !normalizedKey) throw new Error('Cannot pin an invalid node identity');
+
+  const existing = await db.query.swarmNodes.findFirst({ where: { domain: normalizedDomain } });
+  if (existing?.publicKey && existing.publicKey !== normalizedKey) {
+    throw new Error(`Node signing key changed for ${normalizedDomain}`);
+  }
+  if (existing?.publicKey) return;
+
+  if (existing) {
+    await db.update(swarmNodes).set({
+      publicKey: normalizedKey,
+      discoveredVia: 'key',
+      isActive: false,
+      trustScore: SWARM_CONFIG.minTrustScore,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(swarmNodes.domain, normalizedDomain),
+      isNull(swarmNodes.publicKey),
+    ));
+  } else {
+    await db.insert(swarmNodes).values({
+      domain: normalizedDomain,
+      publicKey: normalizedKey,
+      discoveredVia: 'key',
+      isActive: false,
+      trustScore: SWARM_CONFIG.minTrustScore,
+      isNsfw: false,
+      nsfwClassificationKnown: false,
+    }).onConflictDoNothing();
+  }
+
+  const pinned = await db.query.swarmNodes.findFirst({ where: { domain: normalizedDomain } });
+  if (pinned?.publicKey !== normalizedKey) {
+    throw new Error(`Node signing key changed for ${normalizedDomain}`);
+  }
+}
+
 /** Only established, healthy swarm peers may request unredacted federation reads. */
 export async function isTrustedSwarmReadPeer(domain: string): Promise<boolean> {
   return Boolean(await getTrustedSwarmReadPeerPublicKey(domain));
@@ -237,11 +339,32 @@ export async function getNodesSince(since: Date, limit = 100): Promise<SwarmNode
   }
 
   const nodes = await db.query.swarmNodes.findMany({
-    where: { AND: [{ updatedAt: { gt: since } }, { isBlocked: false }] },
+    // Never amplify unverified gossip placeholders to additional peers.
+    where: { AND: [
+      { updatedAt: { gt: since } },
+      { isActive: true },
+      { isBlocked: false },
+      { trustScore: { gt: 20 } },
+    ] },
     orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.updatedAt)],
     limit,
   });
 
+  return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
+}
+
+/** Fixed-cost candidates that still require direct origin verification. */
+export async function getSwarmDiscoveryCandidates(count: number): Promise<SwarmNodeInfo[]> {
+  if (!db) return [];
+  const nodes = await db.query.swarmNodes.findMany({
+    where: { AND: [
+      { isActive: false },
+      { isBlocked: false },
+      { trustScore: SWARM_CONFIG.minTrustScore },
+    ] },
+    orderBy: () => sql`RANDOM()`,
+    limit: Math.max(0, Math.min(count, SWARM_CONFIG.discoveryProbeFanout)),
+  });
   return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
 }
 
@@ -296,9 +419,12 @@ export async function markNodeSuccess(domain: string): Promise<void> {
 
     if (!node) return;
 
+    const now = new Date();
+    const lastTrustIncrease = node.lastSyncAt?.getTime() ?? 0;
+    const mayIncreaseTrust = now.getTime() - lastTrustIncrease >= SWARM_CONFIG.gossipIntervalMs;
     const newTrust = Math.min(
       SWARM_CONFIG.maxTrustScore,
-      node.trustScore + SWARM_CONFIG.trustScoreOnSuccess
+      node.trustScore + (mayIncreaseTrust ? SWARM_CONFIG.trustScoreOnSuccess : 0)
     );
 
     await db.update(swarmNodes)
@@ -306,9 +432,9 @@ export async function markNodeSuccess(domain: string): Promise<void> {
         consecutiveFailures: 0,
         trustScore: newTrust,
         isActive: node.isBlocked ? false : true,
-        lastSeenAt: new Date(),
-        lastSyncAt: new Date(),
-        updatedAt: new Date(),
+        lastSeenAt: now,
+        lastSyncAt: now,
+        updatedAt: now,
       })
       .where(eq(swarmNodes.domain, domain));
   } catch (error) {
@@ -441,5 +567,6 @@ function nodeToInfo(node: typeof swarmNodes.$inferSelect): SwarmNodeInfo {
       ? true
       : node.nsfwClassificationKnown ? false : undefined,
     lastSeenAt: node.lastSeenAt.toISOString(),
+    trustScore: node.trustScore,
   };
 }

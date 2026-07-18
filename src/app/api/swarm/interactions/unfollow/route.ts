@@ -10,8 +10,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, users, remoteFollowers } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { verifySwarmRequest } from '@/lib/swarm/signature';
+import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { claimInboundFederationAction } from '@/lib/swarm/replay';
 
 const swarmUnfollowSchema = z.object({
   targetHandle: localHandleSchema,
@@ -21,7 +23,7 @@ const swarmUnfollowSchema = z.object({
     interactionId: z.string().uuid(),
     timestamp: z.string().datetime(),
   }),
-  signature: z.string(),
+  signature: z.string().min(1).max(16_384),
 });
 
 /**
@@ -35,8 +37,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
 
-    const body = await request.json();
+    const body = await readLimitedJson(request);
     const data = swarmUnfollowSchema.parse(body);
+    if (!isFreshFederationTimestamp(data.unfollow.timestamp)) {
+      return NextResponse.json({ error: 'Stale interaction' }, { status: 400 });
+    }
 
     // SECURITY: Verify the signature
     const { signature, ...payload } = data;
@@ -45,6 +50,13 @@ export async function POST(request: NextRequest) {
     if (!isValid) {
       console.warn(`[Swarm] Invalid signature for unfollow from ${data.unfollow.followerHandle}@${data.unfollow.followerNodeDomain}`);
       return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
+    }
+    if (!await claimInboundFederationAction(
+      data.unfollow.followerNodeDomain,
+      'unfollow',
+      data.unfollow.interactionId,
+    )) {
+      return NextResponse.json({ success: true, message: 'Interaction already processed' });
     }
 
     // Find the target user
@@ -85,6 +97,9 @@ export async function POST(request: NextRequest) {
       message: 'Unfollow received',
     });
   } catch (error) {
+    if (error instanceof FederationRequestBodyError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid request', details: error.issues }, { status: 400 });
     }

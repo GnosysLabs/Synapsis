@@ -73,6 +73,7 @@ export function AvatarImage({ avatarUrl, seed, isNsfw, nodeIsNsfw, nodeDomain, a
     return (
         <Image
             unoptimized
+            referrerPolicy="no-referrer"
             {...props}
             src={src}
             alt={alt}

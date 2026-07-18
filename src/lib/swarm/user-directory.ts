@@ -5,12 +5,13 @@ import { isSwarmNode } from '@/lib/swarm/interactions';
 import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { getKnownSwarmNodeNsfw } from '@/lib/swarm/registry';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
+import { federationMediaUrlSchema } from '@/lib/utils/federation';
 
 const remoteDirectorySchema = z.object({
     users: z.array(z.object({
         handle: z.string().min(1).max(30).regex(/^[a-zA-Z0-9_]+$/),
         displayName: z.string().max(100).nullable(),
-        avatarUrl: z.string().url().nullable(),
+        avatarUrl: federationMediaUrlSchema.nullable(),
         isNsfw: z.boolean().optional(),
         nodeIsNsfw: z.boolean().optional(),
     })).max(12),

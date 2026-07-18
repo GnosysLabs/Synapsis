@@ -13,6 +13,8 @@ import { canonicalize } from '@/lib/crypto/user-signing';
 import { isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
 import { getPublicSwarmDomain } from './node-domain';
 import { safeFederationRequest } from './safe-federation-http';
+import { isRateLimited } from '@/lib/rate-limit';
+import { getPinnedSwarmNodePublicKey, pinSwarmNodePublicKey } from './registry';
 
 const NODE_PUBLIC_KEY_CACHE_TTL_MS = 60_000;
 const MAX_NODE_PUBLIC_KEY_CACHE_ENTRIES = 1_000;
@@ -23,6 +25,16 @@ const NODE_PUBLIC_KEY_MAX_RESPONSE_BYTES = 16 * 1024;
 const LEGACY_NODE_INFO_MAX_RESPONSE_BYTES = 256 * 1024;
 const nodePublicKeyCache = new Map<string, { publicKey: string; expiresAt: number }>();
 const pendingNodePublicKeyRequests = new Map<string, Promise<string | null>>();
+const MAX_CONCURRENT_SWARM_VERIFICATIONS = 32;
+let activeSwarmVerifications = 0;
+
+export function isFreshFederationTimestamp(
+  value: string | number | Date,
+  maximumAgeMs = 5 * 60 * 1_000,
+): boolean {
+  const timestamp = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(timestamp) && Math.abs(Date.now() - timestamp) <= maximumAgeMs;
+}
 
 function cacheNodePublicKey(domain: string, publicKey: string): void {
   if (!nodePublicKeyCache.has(domain)
@@ -102,6 +114,11 @@ export async function getNodePublicKey(domain: string): Promise<string | null> {
       return null;
     }
 
+    // Once directly learned, a node key is an identity pin. Do not silently
+    // follow a different key later merely because the same origin serves it.
+    const pinnedPublicKey = await getPinnedSwarmNodePublicKey(normalizedDomain);
+    if (pinnedPublicKey) return pinnedPublicKey;
+
     const cached = nodePublicKeyCache.get(normalizedDomain);
     if (cached && cached.expiresAt > Date.now()) {
       nodePublicKeyCache.delete(normalizedDomain);
@@ -135,7 +152,10 @@ export async function getNodePublicKey(domain: string): Promise<string | null> {
 
       const data = response.json() as { publicKey?: unknown };
       const publicKey = typeof data.publicKey === 'string' ? data.publicKey : null;
-      if (publicKey) cacheNodePublicKey(normalizedDomain, publicKey);
+      if (publicKey) {
+        await pinSwarmNodePublicKey(normalizedDomain, publicKey);
+        cacheNodePublicKey(normalizedDomain, publicKey);
+      }
       return publicKey;
     })();
     pendingNodePublicKeyRequests.set(normalizedDomain, keyRequest);
@@ -174,16 +194,27 @@ export async function verifySwarmRequest(
     return false;
   }
 
-  // Get the sender node's public key
-  const publicKey = await getNodePublicKey(normalizedDomain);
-  
-  if (!publicKey) {
-    console.error(`[Signature] Could not get public key for ${senderDomain}`);
+  if (isRateLimited('swarm-signature-preauth-global', 1_200, 60 * 1_000)
+    || isRateLimited(`swarm-signature-node:${normalizedDomain}`, 600, 60 * 1_000)
+    || activeSwarmVerifications >= MAX_CONCURRENT_SWARM_VERIFICATIONS) {
+    console.warn(`[Signature] Verification capacity exceeded for ${normalizedDomain}`);
     return false;
   }
 
-  // Verify the signature
-  return verifySignature(payload, signature, publicKey);
+  activeSwarmVerifications += 1;
+  try {
+    // Get the sender node's public key. Concurrent requests for the same node
+    // share one bounded fetch through pendingNodePublicKeyRequests.
+    const publicKey = await getNodePublicKey(normalizedDomain);
+    if (!publicKey) {
+      console.error(`[Signature] Could not get public key for ${senderDomain}`);
+      return false;
+    }
+
+    return verifySignature(payload, signature, publicKey);
+  } finally {
+    activeSwarmVerifications -= 1;
+  }
 }
 
 /**
@@ -214,18 +245,26 @@ export async function verifyUserInteraction(
       console.warn(`[Signature] Rejected user interaction from blocked node ${normalizedDomain}`);
       return false;
     }
+    if (isRateLimited('swarm-user-signature-preauth-global', 600, 60 * 1_000)
+      || isRateLimited(`swarm-user-signature-node:${normalizedDomain}`, 300, 60 * 1_000)
+      || activeSwarmVerifications >= MAX_CONCURRENT_SWARM_VERIFICATIONS) {
+      console.warn(`[Signature] User verification capacity exceeded for ${normalizedDomain}`);
+      return false;
+    }
 
-    // Try to get cached user
-    const fullHandle = `${userHandle}@${normalizedDomain}`;
-    const user = await db?.query.users.findFirst({
-      where: { handle: fullHandle },
-    });
+    activeSwarmVerifications += 1;
+    try {
+      // Try to get cached user
+      const fullHandle = `${userHandle}@${normalizedDomain}`;
+      const user = await db?.query.users.findFirst({
+        where: { handle: fullHandle },
+      });
 
-    let publicKey: string | null = null;
+      let publicKey: string | null = null;
 
-    if (user?.publicKey) {
-      publicKey = user.publicKey;
-    } else {
+      if (user?.publicKey) {
+        publicKey = user.publicKey;
+      } else {
       // Fetch from remote node
       const response = await safeFederationRequest(`${target.protocol}://${normalizedDomain}/api/users/${encodeURIComponent(userHandle)}`, {
         headers: { 'Accept': 'application/json' },
@@ -265,15 +304,18 @@ export async function verifyUserInteraction(
           .set({ publicKey })
           .where(eq(users.id, user.id));
       }
-    }
+      }
 
-    if (!publicKey) {
-      console.error(`[Signature] No public key found for ${fullHandle}`);
-      return false;
-    }
+      if (!publicKey) {
+        console.error(`[Signature] No public key found for ${fullHandle}`);
+        return false;
+      }
 
-    // Verify the signature
-    return verifySignature(payload, signature, publicKey);
+      // Verify the signature
+      return verifySignature(payload, signature, publicKey);
+    } finally {
+      activeSwarmVerifications -= 1;
+    }
   } catch (error) {
     console.error(`[Signature] Error verifying user interaction:`, error);
     return false;

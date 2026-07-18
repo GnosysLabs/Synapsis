@@ -60,6 +60,7 @@ vi.mock('drizzle-orm', () => ({
 
 vi.mock('@/lib/swarm/signature', () => ({
   verifySwarmRequest: mocks.verifySwarmRequest,
+  isFreshFederationTimestamp: vi.fn(() => true),
 }));
 vi.mock('@/lib/swarm/signed-read', () => ({
   isTrustedFederationRead: mocks.isTrustedFederationRead,
@@ -73,12 +74,13 @@ import { DELETE, GET } from './route';
 
 const replyId = '15f11861-693a-4f70-8480-5d82bb8d14a7';
 const parentId = '25f11861-693a-4f70-8480-5d82bb8d14a7';
+const deletionTimestamp = new Date().toISOString();
 
 function deleteRequest(headers: Record<string, string> = {}, nodeDomain = 'source.social') {
   return new Request('https://target.social/api/swarm/replies', {
     method: 'DELETE',
     headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify({ replyId, nodeDomain, authorHandle: 'alice' }),
+    body: JSON.stringify({ replyId, nodeDomain, authorHandle: 'alice', timestamp: deletionTimestamp }),
   });
 }
 
@@ -139,7 +141,7 @@ describe('swarm reply authorization and sensitivity', () => {
 
     expect(response.status).toBe(200);
     expect(mocks.verifySwarmRequest).toHaveBeenCalledWith(
-      { replyId, nodeDomain: 'source.social', authorHandle: 'alice' },
+      { replyId, nodeDomain: 'source.social', authorHandle: 'alice', timestamp: deletionTimestamp },
       'signed',
       'source.social',
     );
