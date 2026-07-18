@@ -69,6 +69,16 @@ New one-to-one text DMs use client-side end-to-end encryption with a separate PI
 
 V1 is intentionally limited and experimental: metadata remains visible, legacy DMs remain plaintext, and it does not provide forward secrecy or protection from a malicious home node that serves modified client code. See [the E2EE DM security and operations contract](docs/e2ee-dms.md) before enabling or describing the feature.
 
+## Native iOS notifications
+
+Compatible Synapsis nodes participate automatically; there is no operator opt-in,
+allowlist, Apple credential, or extra worker process to install. The normal Synapsis
+server process keeps a durable delivery outbox only for local users who enable iOS
+notifications. It sends constrained, privacy-safe events to the central
+`https://push.synapsis.social` relay. Raw APNs device tokens and Apple private keys
+exist only at that separately deployed relay. See `services/push-relay/README.md` for
+the relay protocol and central deployment contract.
+
 ## Development
 
 ```bash
