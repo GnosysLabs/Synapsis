@@ -38,11 +38,13 @@ function successJitter(targetHandle: string): number {
   return crypto.createHash('sha256').update(targetHandle).digest().readUInt32BE(0) % 120_000;
 }
 
-async function seedFollowSyncStates(): Promise<void> {
-  await db.run(sql`
+export async function seedFollowSyncStates(
+  database: Pick<typeof db, 'run'> = db,
+): Promise<void> {
+  await database.run(sql`
     insert into ${remoteFollowSyncStates} (
-      ${remoteFollowSyncStates.targetHandle},
-      ${remoteFollowSyncStates.nodeDomain}
+      ${sql.identifier('target_handle')},
+      ${sql.identifier('node_domain')}
     )
     select
       lower(target_handle),
@@ -51,10 +53,10 @@ async function seedFollowSyncStates(): Promise<void> {
     where instr(target_handle, '@') > 1
       and instr(target_handle, '@') < length(target_handle)
     group by lower(target_handle)
-    on conflict (${remoteFollowSyncStates.targetHandle}) do update set
-      ${remoteFollowSyncStates.nodeDomain} = excluded.node_domain
+    on conflict (${sql.identifier('target_handle')}) do update set
+      ${sql.identifier('node_domain')} = excluded.node_domain
   `);
-  await db.run(sql`
+  await database.run(sql`
     delete from ${remoteFollowSyncStates}
     where not exists (
       select 1 from remote_follows

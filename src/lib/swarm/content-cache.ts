@@ -146,15 +146,17 @@ function applyAuthoritativeNodeClassification(
 }
 
 /** Insert scheduling rows in one indexed statement; existing leases survive. */
-export async function seedSwarmContentSyncStates(): Promise<void> {
-  await db.run(sql`
-    insert into ${swarmContentSyncStates} (${swarmContentSyncStates.domain})
+export async function seedSwarmContentSyncStates(
+  database: Pick<typeof db, 'run'> = db,
+): Promise<void> {
+  await database.run(sql`
+    insert into ${swarmContentSyncStates} (${sql.identifier('domain')})
     select ${swarmNodes.domain}
     from ${swarmNodes}
     where ${swarmNodes.isActive} = 1
       and ${swarmNodes.isBlocked} = 0
       and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore}
-    on conflict (${swarmContentSyncStates.domain}) do nothing
+    on conflict (${sql.identifier('domain')}) do nothing
   `);
 }
 

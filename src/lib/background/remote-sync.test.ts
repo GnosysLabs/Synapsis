@@ -40,6 +40,7 @@ vi.mock('@/db', () => {
 vi.mock('drizzle-orm', () => {
   const expression = (...values: unknown[]) => values;
   const sql = (strings: TemplateStringsArray, ...values: unknown[]) => ({ strings, values });
+  sql.identifier = (name: string) => ({ identifier: name });
   return { and: expression, asc: expression, eq: expression, isNull: expression, lte: expression, or: expression, sql };
 });
 
