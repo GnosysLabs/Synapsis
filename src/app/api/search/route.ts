@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db, mutedNodes, users, posts } from '@/db';
 import { like, or, and, eq, isNull, notLike } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
-import { discoverNode } from '@/lib/swarm/discovery';
+import { probeTransientNode } from '@/lib/swarm/transient-node-probe';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import type { SwarmDirectoryUser } from '@/lib/swarm/user-directory';
 import { searchKnownSwarmUsers } from '@/lib/swarm/user-directory-search';
@@ -246,8 +246,9 @@ export async function GET(request: Request) {
                 // Only lookup on swarm nodes
                 let isSwarm = await isSwarmNode(parsedRemote.domain);
                 if (!isSwarm) {
-                    const discovery = await discoverNode(parsedRemote.domain);
-                    isSwarm = discovery.success;
+                    // User-supplied search targets are transient probes, not
+                    // authority to add a node to every feed and gossip pool.
+                    isSwarm = Boolean(await probeTransientNode(parsedRemote.domain));
                 }
 
                 if (isSwarm) {

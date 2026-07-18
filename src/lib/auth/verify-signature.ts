@@ -11,7 +11,7 @@
 import { db } from '@/db';
 import { users, signedActionDedupe } from '@/db/schema';
 import { eq, lt } from 'drizzle-orm';
-import { canonicalize, importPublicKey, base64UrlToBase64 } from '@/lib/crypto/user-signing';
+import { canonicalize, importPublicKey } from '@/lib/crypto/user-signing';
 // Note: user-signing helpers are isomorphic (work in Node via webcrypto polyfill/availability)
 import crypto from 'crypto';
 import { isRateLimited } from '@/lib/rate-limit';
@@ -20,7 +20,23 @@ import { isRateLimited } from '@/lib/rate-limit';
 const cryptoSubtle = globalThis.crypto?.subtle || crypto.webcrypto.subtle;
 const DEDUPE_RETENTION_MS = 10 * 60 * 1000;
 const DEDUPE_CLEANUP_INTERVAL_MS = 60 * 1000;
+const P256_SIGNATURE_BYTES = 64;
 let nextDedupeCleanupAt = 0;
+
+function parseCanonicalP256Signature(sig: string): Buffer | null {
+  // Node's base64url decoder accepts padding, ignored characters, and
+  // non-zero trailing pad bits. Require the one canonical, unpadded spelling
+  // so the same signature bytes cannot have multiple wire representations.
+  if (typeof sig !== 'string' || !/^[A-Za-z0-9_-]+$/.test(sig)) return null;
+
+  const decoded = Buffer.from(sig, 'base64url');
+  if (decoded.length !== P256_SIGNATURE_BYTES) return null;
+  if (decoded.toString('base64url') !== sig) return null;
+
+  // Do not require low-S yet. WebCrypto P-256 signers used by current clients
+  // emit both low- and high-S signatures, so that needs a versioned migration.
+  return decoded;
+}
 
 async function pruneExpiredSignedActions(now: number): Promise<void> {
   if (now < nextDedupeCleanupAt) return;
@@ -70,9 +86,9 @@ export async function verifyCanonicalSignature<T extends object & { sig: string 
     const encoder = new TextEncoder();
     const dataBytes = encoder.encode(canonicalString);
 
-    // Convert signature from Base64Url to buffer
-    const sigBase64 = base64UrlToBase64(sig);
-    const sigBuffer = Buffer.from(sigBase64, 'base64');
+    const sigBuffer = parseCanonicalP256Signature(sig);
+    if (!sigBuffer) return false;
+    const signatureBytes = Uint8Array.from(sigBuffer);
 
     // Import public key (stored as SPKI Base64)
     const publicKey = await importPublicKey(publicKeyStr);
@@ -83,7 +99,7 @@ export async function verifyCanonicalSignature<T extends object & { sig: string 
         hash: { name: 'SHA-256' },
       },
       publicKey,
-      sigBuffer,
+      signatureBytes,
       dataBytes
     );
   } catch (error) {

@@ -25,7 +25,10 @@ const LEGACY_NODE_INFO_MAX_RESPONSE_BYTES = 256 * 1024;
 const nodePublicKeyCache = new Map<string, { publicKey: string; expiresAt: number }>();
 const pendingNodePublicKeyRequests = new Map<string, Promise<string | null>>();
 const MAX_CONCURRENT_SWARM_VERIFICATIONS = 32;
+const MAX_CONCURRENT_FIRST_CONTACT_VERIFICATIONS = 4;
+const MAX_PREAUTH_SWARM_VERIFICATIONS_PER_MINUTE = 1_200;
 let activeSwarmVerifications = 0;
+let activeFirstContactVerifications = 0;
 
 export function isFreshFederationTimestamp(
   value: string | number | Date,
@@ -187,25 +190,46 @@ export async function verifySwarmRequest(
     return false;
   }
   const normalizedDomain = target.domain;
+
+  // The claimed domain is not authenticated until its signature verifies.
+  // Bound all such work under one origin-independent key so an attacker cannot
+  // bypass admission merely by naming an already-pinned peer. Per-node limits
+  // remain post-verification so spoofed claims cannot poison a real peer's
+  // authenticated bucket.
+  if (isRateLimited(
+    'swarm-signature-preauth-global',
+    MAX_PREAUTH_SWARM_VERIFICATIONS_PER_MINUTE,
+    60 * 1_000,
+  )) {
+    console.warn('[Signature] Global pre-authentication capacity exceeded');
+    return false;
+  }
   if (await isNodeBlocked(normalizedDomain)) {
     console.warn(`[Signature] Rejected blocked node ${normalizedDomain}`);
     return false;
   }
 
-  // The claimed domain is unauthenticated at this point. Charging its bucket
-  // here would let anyone spoof a victim domain until that real peer is rate
-  // limited. Keep only origin-independent capacity guards before verification.
-  if (isRateLimited('swarm-signature-preauth-global', 1_200, 60 * 1_000)
-    || activeSwarmVerifications >= MAX_CONCURRENT_SWARM_VERIFICATIONS) {
+  const pinnedPublicKey = await getPinnedSwarmNodePublicKey(normalizedDomain);
+  const isFirstContact = !pinnedPublicKey;
+
+  // First contact can require DNS and HTTPS key discovery, so hostile unknown
+  // domains get a small isolated pool. Established peers retain reserved
+  // verification capacity and cannot be denied by exhausting that pool.
+  if (activeSwarmVerifications >= MAX_CONCURRENT_SWARM_VERIFICATIONS
+    || (isFirstContact && (
+      activeFirstContactVerifications >= MAX_CONCURRENT_FIRST_CONTACT_VERIFICATIONS
+      || isRateLimited('swarm-signature-first-contact-global', 120, 60 * 1_000)
+    ))) {
     console.warn(`[Signature] Verification capacity exceeded for ${normalizedDomain}`);
     return false;
   }
 
   activeSwarmVerifications += 1;
+  if (isFirstContact) activeFirstContactVerifications += 1;
   try {
     // Get the sender node's public key. Concurrent requests for the same node
     // share one bounded fetch through pendingNodePublicKeyRequests.
-    const publicKey = await getNodePublicKey(normalizedDomain);
+    const publicKey = pinnedPublicKey ?? await getNodePublicKey(normalizedDomain);
     if (!publicKey) {
       console.error(`[Signature] Could not get public key for ${senderDomain}`);
       return false;
@@ -231,6 +255,7 @@ export async function verifySwarmRequest(
     return true;
   } finally {
     activeSwarmVerifications -= 1;
+    if (isFirstContact) activeFirstContactVerifications -= 1;
   }
 }
 

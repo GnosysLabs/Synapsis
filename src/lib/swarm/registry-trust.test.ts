@@ -55,6 +55,7 @@ describe('trusted swarm read peers', () => {
     { discoveredVia: 'key' },
     { isBlocked: true },
     { isActive: false },
+    { trustScore: 25 },
     { publicKey: null },
   ])('rejects an unestablished or unhealthy peer: %o', async (override) => {
     mocks.findFirst.mockResolvedValue({ ...establishedPeer, ...override });

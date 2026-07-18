@@ -217,7 +217,14 @@ export async function getActiveSwarmNodes(limit?: number): Promise<SwarmNodeInfo
   }
 
   const nodes = await db.query.swarmNodes.findMany({
-    where: { AND: [{ isActive: true }, { isBlocked: false }] },
+    // Exact-origin contact establishes identity, not good behavior. Keep a
+    // newly contacted node out of feeds and public discovery until at least
+    // one later successful exchange advances it beyond quarantine.
+    where: { AND: [
+      { isActive: true },
+      { isBlocked: false },
+      { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
+    ] },
     orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.lastSeenAt)],
     ...(limit === undefined ? {} : { limit }),
   });
@@ -247,6 +254,7 @@ export async function getTrustedSwarmReadPeerPublicKey(domain: string): Promise<
     node
     && node.isActive
     && !node.isBlocked
+    && node.trustScore > SWARM_CONFIG.quarantineTrustScore
     && directlyEstablished
     && node.nsfwClassificationKnown
     && node.publicKey
@@ -356,7 +364,7 @@ export async function getNodesSince(since: Date, limit = 100): Promise<SwarmNode
       { updatedAt: { gt: since } },
       { isActive: true },
       { isBlocked: false },
-      { trustScore: { gt: 20 } },
+      { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
     ] },
     orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.updatedAt)],
     limit,

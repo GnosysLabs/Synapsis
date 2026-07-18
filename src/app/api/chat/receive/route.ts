@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, lt, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import {
   chatConversations,
+  chatConversationIngressQuotaBuckets,
   chatMessages,
   db,
   e2eeMessageReceipts,
@@ -34,6 +35,17 @@ import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request
 import { localHandleSchema } from '@/lib/utils/federation';
 
 const PATH = '/api/chat/receive' as const;
+const CHAT_INGRESS_QUOTA_WINDOW_MS = 24 * 60 * 60 * 1_000;
+const MAX_NEW_CONVERSATIONS_PER_SOURCE_RECIPIENT_DAY = 50;
+const MAX_MESSAGES_PER_SOURCE_RECIPIENT_DAY = 5_000;
+const MAX_CIPHERTEXT_BYTES_PER_SOURCE_RECIPIENT_DAY = 64 * 1024 * 1024;
+
+class ChatIngressQuotaExceededError extends Error {
+  constructor(readonly resetAt: number) {
+    super('This source node has exhausted its daily encrypted-message budget for this recipient');
+    this.name = 'ChatIngressQuotaExceededError';
+  }
+}
 
 const federatedEnvelopeSchema = z.strictObject({
   federation: federationActionContextSchema,
@@ -105,9 +117,10 @@ export async function POST(request: NextRequest) {
     if (senderHandle !== `${verified.actorHandle}@${verified.sourceDomain}`) {
       return NextResponse.json({ error: 'Federated sender handle mismatch' }, { status: 403 });
     }
+    const ciphertextBytes = Buffer.from(envelope.ciphertext, 'base64url').length;
     if (Buffer.from(envelope.nonce, 'base64url').length !== 24
-      || Buffer.from(envelope.ciphertext, 'base64url').length < 17
-      || Buffer.from(envelope.ciphertext, 'base64url').length > E2EE_MAX_MESSAGE_CIPHERTEXT_BYTES
+      || ciphertextBytes < 17
+      || ciphertextBytes > E2EE_MAX_MESSAGE_CIPHERTEXT_BYTES
       || Buffer.from(envelope.keyCommitment, 'base64url').length !== 32
       || envelope.keyEnvelopes.some((item) => Buffer.from(item.sealedKey, 'base64url').length !== 112)) {
       return NextResponse.json({ error: 'Invalid encrypted message sizes' }, { status: 400 });
@@ -223,6 +236,7 @@ export async function POST(request: NextRequest) {
         eq(chatConversations.participant1Id, recipient.id),
         eq(chatConversations.participant2Handle, senderHandle),
       )).limit(1);
+      let createdConversation = false;
       if (!conversation) {
         [conversation] = await tx.insert(chatConversations).values({
           participant1Id: recipient.id,
@@ -231,8 +245,92 @@ export async function POST(request: NextRequest) {
           lastMessagePreview: 'Encrypted message',
           encryptionMode: 'e2ee',
           e2eeActivatedAt: createdAt,
-        }).returning();
-      } else {
+        }).onConflictDoNothing().returning();
+
+        if (conversation) {
+          createdConversation = true;
+        } else {
+          // Another request may have created the same conversation while this
+          // transaction was waiting for the SQLite writer. Existing
+          // conversations never consume the first-contact admission budget.
+          [conversation] = await tx.select().from(chatConversations).where(and(
+            eq(chatConversations.participant1Id, recipient.id),
+            eq(chatConversations.participant2Handle, senderHandle),
+          )).limit(1);
+        }
+      }
+      if (!conversation) throw new Error('Failed to create encrypted conversation');
+
+      const quotaNow = Date.now();
+      const bucketStartMs = Math.floor(
+        quotaNow / CHAT_INGRESS_QUOTA_WINDOW_MS,
+      ) * CHAT_INGRESS_QUOTA_WINDOW_MS;
+      const quotaResetAt = bucketStartMs + CHAT_INGRESS_QUOTA_WINDOW_MS;
+      const conversationIncrement = createdConversation ? 1 : 0;
+      const [consumedQuota] = await tx.insert(chatConversationIngressQuotaBuckets).values({
+        recipientUserId: recipient.id,
+        sourceDomain,
+        bucketStartMs,
+        conversationCount: conversationIncrement,
+        messageCount: 1,
+        ciphertextBytes,
+        updatedAt: new Date(quotaNow),
+      }).onConflictDoUpdate({
+        target: [
+          chatConversationIngressQuotaBuckets.recipientUserId,
+          chatConversationIngressQuotaBuckets.sourceDomain,
+        ],
+        set: {
+          bucketStartMs: sql`CASE
+            WHEN ${chatConversationIngressQuotaBuckets.bucketStartMs} < ${bucketStartMs}
+              THEN ${bucketStartMs}
+            ELSE ${chatConversationIngressQuotaBuckets.bucketStartMs}
+          END`,
+          conversationCount: sql`CASE
+            WHEN ${chatConversationIngressQuotaBuckets.bucketStartMs} < ${bucketStartMs}
+              THEN ${conversationIncrement}
+            ELSE ${chatConversationIngressQuotaBuckets.conversationCount} + ${conversationIncrement}
+          END`,
+          messageCount: sql`CASE
+            WHEN ${chatConversationIngressQuotaBuckets.bucketStartMs} < ${bucketStartMs}
+              THEN 1
+            ELSE ${chatConversationIngressQuotaBuckets.messageCount} + 1
+          END`,
+          ciphertextBytes: sql`CASE
+            WHEN ${chatConversationIngressQuotaBuckets.bucketStartMs} < ${bucketStartMs}
+              THEN ${ciphertextBytes}
+            ELSE ${chatConversationIngressQuotaBuckets.ciphertextBytes} + ${ciphertextBytes}
+          END`,
+          updatedAt: new Date(quotaNow),
+        },
+        setWhere: or(
+          lt(chatConversationIngressQuotaBuckets.bucketStartMs, bucketStartMs),
+          and(
+            eq(chatConversationIngressQuotaBuckets.bucketStartMs, bucketStartMs),
+            lt(
+              chatConversationIngressQuotaBuckets.messageCount,
+              MAX_MESSAGES_PER_SOURCE_RECIPIENT_DAY,
+            ),
+            lte(
+              chatConversationIngressQuotaBuckets.ciphertextBytes,
+              MAX_CIPHERTEXT_BYTES_PER_SOURCE_RECIPIENT_DAY - ciphertextBytes,
+            ),
+            createdConversation
+              ? lt(
+                  chatConversationIngressQuotaBuckets.conversationCount,
+                  MAX_NEW_CONVERSATIONS_PER_SOURCE_RECIPIENT_DAY,
+                )
+              : sql`1 = 1`,
+          ),
+        ),
+      }).returning({
+        messageCount: chatConversationIngressQuotaBuckets.messageCount,
+      });
+      if (!consumedQuota) {
+        throw new ChatIngressQuotaExceededError(quotaResetAt);
+      }
+
+      if (!createdConversation) {
         await tx.update(chatConversations).set({
           lastMessageAt: conversation.lastMessageAt && conversation.lastMessageAt > createdAt
             ? conversation.lastMessageAt
@@ -243,8 +341,6 @@ export async function POST(request: NextRequest) {
           updatedAt: new Date(),
         }).where(eq(chatConversations.id, conversation.id));
       }
-      if (!conversation) throw new Error('Failed to create encrypted conversation');
-
       const [message] = await tx.insert(chatMessages).values({
         conversationId: conversation.id,
         senderHandle,
@@ -286,6 +382,17 @@ export async function POST(request: NextRequest) {
         error: error.message,
         code: 'E2EE_IDENTITY_KEY_CHANGED',
       }, { status: 409 });
+    }
+    if (error instanceof ChatIngressQuotaExceededError) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((error.resetAt - Date.now()) / 1_000));
+      return NextResponse.json({
+        error: error.message,
+        code: 'E2EE_DAILY_INGRESS_LIMIT',
+        resetAt: new Date(error.resetAt).toISOString(),
+      }, {
+        status: 429,
+        headers: { 'Retry-After': String(retryAfterSeconds) },
+      });
     }
     console.error('[E2EE Chat] Federated receive failed:', error);
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Receive failed' }, { status: 500 });

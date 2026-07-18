@@ -3,10 +3,12 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   upsertSwarmNode: vi.fn(),
   upsertSwarmNodes: vi.fn().mockResolvedValue({ added: 0, updated: 0 }),
-  upsertHandleEntries: vi.fn().mockResolvedValue({ added: 0, updated: 0 }),
+  upsertRemoteHandleHints: vi.fn().mockResolvedValue({ added: 0, updated: 0, rejected: 0 }),
+  pruneExpiredRemoteHandleHints: vi.fn().mockResolvedValue(false),
   getActiveSwarmNodes: vi.fn().mockResolvedValue([]),
   getNodesSince: vi.fn().mockResolvedValue([]),
   getNodesForGossip: vi.fn().mockResolvedValue([]),
+  getSwarmDiscoveryCandidates: vi.fn().mockResolvedValue([]),
   markNodeSuccess: vi.fn(),
   markNodeFailure: vi.fn(),
   logSync: vi.fn(),
@@ -23,6 +25,7 @@ const mocks = vi.hoisted(() => ({
     timestamp: '2026-07-18T00:00:00.000Z',
   }),
   safeFederationRequest: vi.fn(),
+  discoverNode: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
@@ -35,6 +38,7 @@ vi.mock('@/db', () => ({
 
 vi.mock('./registry', () => ({
   getNodesForGossip: mocks.getNodesForGossip,
+  getSwarmDiscoveryCandidates: mocks.getSwarmDiscoveryCandidates,
   getActiveSwarmNodes: mocks.getActiveSwarmNodes,
   getNodesSince: mocks.getNodesSince,
   upsertSwarmNode: mocks.upsertSwarmNode,
@@ -45,11 +49,13 @@ vi.mock('./registry', () => ({
 }));
 
 vi.mock('@/lib/federation/handles', () => ({
-  upsertHandleEntries: mocks.upsertHandleEntries,
+  upsertRemoteHandleHints: mocks.upsertRemoteHandleHints,
+  pruneExpiredRemoteHandleHints: mocks.pruneExpiredRemoteHandleHints,
 }));
 
 vi.mock('./discovery', () => ({
   buildAnnouncement: mocks.buildAnnouncement,
+  discoverNode: mocks.discoverNode,
 }));
 
 vi.mock('./safe-federation-http', () => ({
@@ -65,6 +71,7 @@ import {
   establishDirectGossipPeer,
   gossipToNode,
   processGossip,
+  runGossipRound,
 } from './gossip';
 import type { SwarmGossipPayload, SwarmNodeInfo } from './types';
 
@@ -80,7 +87,7 @@ describe('direct peer trust through authenticated gossip', () => {
     vi.clearAllMocks();
     vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'local.social');
     mocks.upsertSwarmNodes.mockResolvedValue({ added: 0, updated: 0 });
-    mocks.upsertHandleEntries.mockResolvedValue({ added: 0, updated: 0 });
+    mocks.upsertRemoteHandleHints.mockResolvedValue({ added: 0, updated: 0, rejected: 0 });
   });
 
   afterAll(() => {
@@ -114,6 +121,7 @@ describe('direct peer trust through authenticated gossip', () => {
 
     expect(mocks.upsertSwarmNode).toHaveBeenCalledWith(peer, 'direct');
     expect(mocks.upsertSwarmNodes).toHaveBeenCalledWith(payload.nodes, 'peer.social');
+    expect(mocks.upsertRemoteHandleHints).toHaveBeenCalledWith([], 'peer.social');
   });
 
   it('establishes the target after a successful direct HTTPS gossip response', async () => {
@@ -129,5 +137,15 @@ describe('direct peer trust through authenticated gossip', () => {
     await expect(gossipToNode('peer.social')).resolves.toMatchObject({ success: true });
 
     expect(mocks.upsertSwarmNode).toHaveBeenCalledWith(peer, 'direct');
+    expect(mocks.upsertRemoteHandleHints).toHaveBeenCalledWith([], 'peer.social');
+  });
+
+  it('runs bounded handle-hint maintenance even without gossip targets', async () => {
+    mocks.getSwarmDiscoveryCandidates.mockResolvedValue([]);
+    mocks.getNodesForGossip.mockResolvedValue([]);
+
+    await expect(runGossipRound()).resolves.toMatchObject({ contacted: 0 });
+
+    expect(mocks.pruneExpiredRemoteHandleHints).toHaveBeenCalledOnce();
   });
 });

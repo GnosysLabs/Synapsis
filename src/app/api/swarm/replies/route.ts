@@ -23,6 +23,7 @@ import {
 } from '@/lib/swarm/federated-action';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { parseSwarmPostId } from '@/lib/swarm/post-id';
+import { shouldSuppressRemoteInteraction } from '@/lib/swarm/remote-interaction-policy';
 import {
   createRelayedReplyProvenance,
   federatedReplyEnvelopeSchema,
@@ -51,6 +52,15 @@ const deleteReplyActionDataSchema = z.strictObject({
 });
 
 const swarmReplyPostIdSchema = z.string().uuid();
+const MAX_REPLY_REQUEST_BYTES = 64 * 1024;
+const MAX_STORED_REPLY_PROVENANCE_BYTES = 32 * 1024;
+
+class FederatedReplyConflictError extends Error {
+  constructor() {
+    super('Reply ID conflicts with an existing reply');
+    this.name = 'FederatedReplyConflictError';
+  }
+}
 
 async function syncParentReplyCount(postId: string) {
   const [{ count }] = await db
@@ -84,7 +94,10 @@ function parseStoredReplyProvenance(value: string | null) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const validation = swarmReplySchema.safeParse(await readLimitedJson(request));
+    const validation = swarmReplySchema.safeParse(await readLimitedJson(
+      request,
+      MAX_REPLY_REQUEST_BYTES,
+    ));
     if (!validation.success) {
       return NextResponse.json({ error: 'Invalid request', details: validation.error.issues }, { status: 400 });
     }
@@ -129,6 +142,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Reply is not user-authorized' }, { status: 403 });
     }
 
+    const federationReplyProvenanceJson = JSON.stringify(
+      createRelayedReplyProvenance(data, signature),
+    );
+    if (Buffer.byteLength(federationReplyProvenanceJson, 'utf8')
+      > MAX_STORED_REPLY_PROVENANCE_BYTES) {
+      return NextResponse.json({ error: 'Reply authorization proof is too large' }, { status: 413 });
+    }
+
     const parentPost = await db.query.posts.findFirst({
       where: { AND: [{ id: data.postId }, { isRemoved: false }] },
       with: {
@@ -139,19 +160,24 @@ export async function POST(request: NextRequest) {
     if (!parentPost || !hasStrictLocalUserOrigin(parentPost.author)) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
-    const nodeMute = await db.query.mutedNodes.findFirst({
-      where: { AND: [{ userId: parentPost.userId }, { nodeDomain: sourceDomain }] },
-      columns: { id: true },
+    const replyApId = `swarm:${sourceDomain}:${data.reply.id}`;
+    const conflictingReply = await db.query.posts.findFirst({
+      where: { apId: replyApId },
+      with: { author: true },
     });
-    if (nodeMute) {
+    if (conflictingReply && (
+      conflictingReply.author.did !== verified.userAction.did
+      || conflictingReply.content !== data.reply.content
+    )) {
+      return NextResponse.json({ error: 'Reply ID conflicts with an existing reply' }, { status: 409 });
+    }
+    if (await shouldSuppressRemoteInteraction(parentPost.userId, {
+      did: verified.userAction.did,
+      handle: verified.actorHandle,
+      domain: sourceDomain,
+    })) {
       return NextResponse.json({ success: true, message: 'Reply received' });
     }
-
-    await pinVerifiedFederatedActorIdentity({
-      sourceDomain,
-      actorHandle: verified.actorHandle,
-      did: verified.userAction.did,
-    });
 
     const remoteHandle = `${verified.actorHandle}@${sourceDomain}`;
     const signingPublicKey = signingPublicKeyFromDid(verified.userAction.did);
@@ -159,28 +185,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Reply author DID is not self-certifying' }, { status: 403 });
     }
 
-    await upsertRemoteUser({
-      handle: remoteHandle,
-      displayName: verified.actorHandle,
-      avatarUrl: null,
-      did: verified.userAction.did,
-      publicKey: signingPublicKey,
-      isNsfw: actionData.data.isNsfw ?? true,
-    }, { identityVerified: true });
-
-    const remoteUser = await db.query.users.findFirst({
-      where: { did: verified.userAction.did },
-    });
-
-    if (!remoteUser) {
-      return NextResponse.json({ error: 'Failed to resolve remote author' }, { status: 500 });
-    }
-
-    const replyApId = `swarm:${sourceDomain}:${data.reply.id}`;
     const createdAt = new Date(verified.userAction.ts);
-    const federationReplyProvenanceJson = JSON.stringify(
-      createRelayedReplyProvenance(data, signature),
-    );
     const outcome = await db.transaction(async (tx) => {
       const [claim] = await tx.insert(swarmInboundActions).values({
         sourceDomain,
@@ -188,17 +193,40 @@ export async function POST(request: NextRequest) {
         interactionId: verified.replayId,
       }).onConflictDoNothing().returning({ id: swarmInboundActions.id });
 
-      const existingReply = await tx.query.posts.findFirst({ where: { apId: replyApId } });
+      const existingReply = await tx.query.posts.findFirst({
+        where: { apId: replyApId },
+        with: { author: true },
+      });
       if (existingReply) {
-        if (existingReply.userId !== remoteUser.id
+        if (existingReply.author.did !== verified.userAction.did
           || existingReply.content !== data.reply.content) {
-          return 'conflict' as const;
+          throw new FederatedReplyConflictError();
         }
         await tx.update(posts).set({ federationReplyProvenanceJson })
           .where(eq(posts.id, existingReply.id));
         return claim ? 'unchanged' as const : 'replay' as const;
       }
       if (!claim) return 'replay' as const;
+
+      await pinVerifiedFederatedActorIdentity({
+        sourceDomain,
+        actorHandle: verified.actorHandle,
+        did: verified.userAction.did,
+      }, tx);
+      await upsertRemoteUser({
+        handle: remoteHandle,
+        displayName: verified.actorHandle,
+        avatarUrl: null,
+        did: verified.userAction.did,
+        publicKey: signingPublicKey,
+        isNsfw: actionData.data.isNsfw ?? true,
+      }, { identityVerified: true }, tx);
+      const remoteUser = await tx.query.users.findFirst({
+        where: { did: verified.userAction.did },
+      });
+      if (!remoteUser) {
+        throw new Error('Failed to resolve remote author');
+      }
 
       const [createdReply] = await tx.insert(posts).values({
         userId: remoteUser.id,
@@ -240,16 +268,15 @@ export async function POST(request: NextRequest) {
       return 'created' as const;
     });
 
-    if (outcome === 'conflict') {
-      return NextResponse.json({ error: 'Reply ID conflicts with an existing reply' }, { status: 409 });
-    }
-
     await syncParentReplyCount(data.postId);
     return NextResponse.json({
       success: true,
       message: outcome === 'replay' ? 'Reply already received' : 'Reply received',
     });
   } catch (error) {
+    if (error instanceof FederatedReplyConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     if (error instanceof FederatedIdentityContinuityError) {
       return NextResponse.json({ error: 'Federated identity changed' }, { status: 409 });
     }
@@ -269,7 +296,10 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const validation = swarmReplyDeletionSchema.safeParse(await readLimitedJson(request));
+    const validation = swarmReplyDeletionSchema.safeParse(await readLimitedJson(
+      request,
+      MAX_REPLY_REQUEST_BYTES,
+    ));
     if (!validation.success) {
       return NextResponse.json(
         { error: 'Invalid request', details: validation.error.issues },

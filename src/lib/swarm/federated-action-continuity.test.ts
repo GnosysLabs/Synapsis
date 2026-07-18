@@ -6,7 +6,12 @@ import { drizzle } from 'drizzle-orm/tursodatabase/database';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { relations } from '@/db/relations';
-import { upsertHandleEntries } from '@/lib/federation/handles';
+import { handleRegistry } from '@/db/schema';
+import {
+  liveHandleRegistryEntryWhere,
+  pruneExpiredRemoteHandleHints,
+  upsertHandleEntries,
+} from '@/lib/federation/handles';
 import {
   FederatedIdentityContinuityError,
   pinVerifiedFederatedActorIdentity,
@@ -239,6 +244,65 @@ describe('verified federated actor continuity', () => {
       { handle: 'alice@remote.social', identityVerified: 0 },
       { handle: 'owner', identityVerified: 1 },
     ]);
+  });
+
+  it('expires unverified hints at read time while preserving verified identities', async () => {
+    await applyIdentityMigration(client);
+    const now = Date.now();
+    const staleSeconds = Math.floor((now - 8 * 24 * 60 * 60 * 1_000) / 1_000);
+    const freshSeconds = Math.floor((now - 60_000) / 1_000);
+    await client.exec(`
+      INSERT INTO handle_registry
+        (handle, did, node_domain, identity_verified, updated_at)
+      VALUES
+        ('verified@remote.social', 'did:key:verified', 'remote.social', 1, ${staleSeconds}),
+        ('stale@remote.social', 'did:key:stale', 'remote.social', 0, ${staleSeconds}),
+        ('fresh@remote.social', 'did:key:fresh', 'remote.social', 0, ${freshSeconds})
+    `);
+
+    const visible = await database.select({ handle: handleRegistry.handle })
+      .from(handleRegistry)
+      .where(liveHandleRegistryEntryWhere(now));
+
+    expect(visible.map((entry) => entry.handle).sort()).toEqual([
+      'fresh@remote.social',
+      'verified@remote.social',
+    ]);
+  });
+
+  it('prunes expired hints in bounded batches without deleting verified rows', async () => {
+    await applyIdentityMigration(client);
+    const now = Date.now();
+    const staleSeconds = Math.floor((now - 8 * 24 * 60 * 60 * 1_000) / 1_000);
+    const staleRows = Array.from({ length: 101 }, (_, index) => (
+      `('stale-${index}@remote.social','did:key:stale-${index}','remote.social',0,${staleSeconds})`
+    ));
+    await client.exec(`
+      INSERT INTO handle_registry
+        (handle, did, node_domain, identity_verified, updated_at)
+      VALUES
+        ${staleRows.join(',')},
+        ('verified@remote.social','did:key:verified','remote.social',1,${staleSeconds})
+    `);
+
+    await pruneExpiredRemoteHandleHints({ database, now, force: true });
+    expect(await client.get(`
+      SELECT count(*) AS count
+      FROM handle_registry
+      WHERE identity_verified = 0
+    `)).toEqual({ count: 1 });
+    expect(await client.get(`
+      SELECT count(*) AS count
+      FROM handle_registry
+      WHERE handle = 'verified@remote.social'
+    `)).toEqual({ count: 1 });
+
+    await pruneExpiredRemoteHandleHints({ database, now, force: true });
+    expect(await client.get(`
+      SELECT count(*) AS count
+      FROM handle_registry
+      WHERE identity_verified = 0
+    `)).toEqual({ count: 0 });
   });
 
   it('does not let a later unverified hint overwrite a verified identity', async () => {

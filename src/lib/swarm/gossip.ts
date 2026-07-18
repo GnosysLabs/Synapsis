@@ -19,7 +19,10 @@ import {
   markNodeFailure,
   logSync,
 } from './registry';
-import { upsertHandleEntries } from '@/lib/federation/handles';
+import {
+  pruneExpiredRemoteHandleHints,
+  upsertRemoteHandleHints,
+} from '@/lib/federation/handles';
 import { buildAnnouncement, discoverNode } from './discovery';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
 import { safeFederationRequest } from './safe-federation-http';
@@ -155,13 +158,8 @@ export async function processGossip(
   const nodeResult = await upsertSwarmNodes(payload.nodes, payload.sender);
 
   // Process incoming handles
-  let handlesResult = { added: 0, updated: 0, rejected: 0 };
   const publicHandles = payload.handles?.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)) ?? [];
-  if (publicHandles.length > 0) {
-    handlesResult = await upsertHandleEntries(publicHandles, {
-      authoritativeDomain: payload.sender,
-    });
-  }
+  const handlesResult = await upsertRemoteHandleHints(publicHandles, payload.sender);
 
   // Build our response with nodes/handles to share back
   const responsePayload = await buildGossipPayload(payload.since);
@@ -263,13 +261,8 @@ export async function gossipToNode(
     // Process the response (nodes and handles they sent back)
     const nodeResult = await upsertSwarmNodes(gossipResponse.nodes, publicTargetDomain);
 
-    let handlesResult = { added: 0, updated: 0, rejected: 0 };
     const publicHandles = gossipResponse.handles?.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)) ?? [];
-    if (publicHandles.length > 0) {
-      handlesResult = await upsertHandleEntries(publicHandles, {
-        authoritativeDomain: publicTargetDomain,
-      });
-    }
+    const handlesResult = await upsertRemoteHandleHints(publicHandles, publicTargetDomain);
 
     await markNodeSuccess(publicTargetDomain);
 
@@ -314,6 +307,9 @@ export async function runGossipRound(): Promise<{
   totalNodesReceived: number;
   totalHandlesReceived: number;
 }> {
+  // Maintenance is periodic and bounded even when every peer returns an empty
+  // handle set or there are currently no gossip targets.
+  await pruneExpiredRemoteHandleHints();
   if (!isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN)) {
     return { contacted: 0, successful: 0, totalNodesReceived: 0, totalHandlesReceived: 0 };
   }

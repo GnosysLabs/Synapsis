@@ -114,9 +114,9 @@ export async function signedFederationRead(
   });
 }
 
-/** True only for a fresh GET signed by another node for this exact route. */
-export async function isTrustedFederationRead(request: Request): Promise<boolean> {
-  if (request.method !== 'GET') return false;
+/** Return the authenticated source for a fresh GET signed for this exact route. */
+export async function getTrustedFederationReadSource(request: Request): Promise<string | null> {
+  if (request.method !== 'GET') return null;
   const sourceDomain = federationIdentity(request.headers.get(SOURCE_HEADER));
   const targetDomain = federationIdentity(request.headers.get(TARGET_HEADER));
   const signature = request.headers.get(SIGNATURE_HEADER);
@@ -126,12 +126,12 @@ export async function isTrustedFederationRead(request: Request): Promise<boolean
   if (!sourceDomain || !targetDomain || !expectedTarget || targetDomain !== expectedTarget
     || !signature || !timestampValue || !nonce
     || !/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) {
-    return false;
+    return null;
   }
 
   const timestamp = Number(timestampValue);
   if (!Number.isSafeInteger(timestamp) || Math.abs(Date.now() - timestamp) > READ_SIGNATURE_MAX_AGE_MS) {
-    return false;
+    return null;
   }
   const url = new URL(request.url);
   const payload = signedReadPayload(url, sourceDomain, targetDomain, timestamp, nonce);
@@ -146,5 +146,12 @@ export async function isTrustedFederationRead(request: Request): Promise<boolean
       && verifySignature(payload, signature, pinnedPublicKey),
     );
   }
-  return validSignature && consumeReadNonce(sourceDomain, nonce, Date.now());
+  return validSignature && consumeReadNonce(sourceDomain, nonce, Date.now())
+    ? sourceDomain
+    : null;
+}
+
+/** True only for a fresh GET signed by another node for this exact route. */
+export async function isTrustedFederationRead(request: Request): Promise<boolean> {
+  return Boolean(await getTrustedFederationReadSource(request));
 }

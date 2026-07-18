@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, like } from 'drizzle-orm';
 
 import { db, handleRegistry, swarmNodes } from '@/db';
+import { liveHandleRegistryEntryWhere } from '@/lib/federation/handles';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import {
     fetchSwarmUserDirectory,
@@ -26,7 +27,10 @@ export async function searchKnownSwarmUsers(
         nodeDomain: handleRegistry.nodeDomain,
     })
         .from(handleRegistry)
-        .where(like(handleRegistry.handle, `${normalizedQuery}%`))
+        .where(and(
+            like(handleRegistry.handle, `${normalizedQuery}%`),
+            liveHandleRegistryEntryWhere(),
+        ))
         .orderBy(asc(handleRegistry.handle))
         .limit(Math.min(MAX_DIRECTORY_CANDIDATES, Math.max(options.limit * 4, options.limit)));
     const candidateDomains = [...new Set(

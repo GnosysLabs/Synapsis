@@ -326,4 +326,16 @@ describe('federated user action verification', () => {
     expect(otherPath.replayId).not.toBe(sameRoute.replayId);
     expect(otherMethod.replayId).not.toBe(sameRoute.replayId);
   });
+
+  it('does not let signature representation change replay identity', async () => {
+    const original = await verifyFederatedUserAction(verificationInput());
+    const remalleated = await verifyFederatedUserAction(verificationInput(
+      payload({}, { sig: 'different_signature_value_456' }),
+    ));
+
+    if (!original.ok || !remalleated.ok) {
+      throw new Error('Expected both signed representations to verify');
+    }
+    expect(remalleated.replayId).toBe(original.replayId);
+  });
 });

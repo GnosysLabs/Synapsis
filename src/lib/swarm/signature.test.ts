@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   safeFederationRequest: vi.fn(),
   getPinnedSwarmNodePublicKey: vi.fn(),
   pinSwarmNodePublicKey: vi.fn(),
+  isRateLimited: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
@@ -29,6 +30,9 @@ vi.mock('./registry', () => ({
   getPinnedSwarmNodePublicKey: mocks.getPinnedSwarmNodePublicKey,
   pinSwarmNodePublicKey: mocks.pinSwarmNodePublicKey,
 }));
+vi.mock('@/lib/rate-limit', () => ({
+  isRateLimited: mocks.isRateLimited,
+}));
 
 import crypto from 'node:crypto';
 import { getNodePublicKey, signPayload, verifySwarmRequest } from './signature';
@@ -48,6 +52,7 @@ describe('node public key discovery', () => {
     mocks.safeFederationRequest.mockReset();
     mocks.getPinnedSwarmNodePublicKey.mockReset().mockResolvedValue(null);
     mocks.pinSwarmNodePublicKey.mockReset().mockResolvedValue(undefined);
+    mocks.isRateLimited.mockReset().mockReturnValue(false);
   });
 
   it('uses a directly pinned key without following a remote key change', async () => {
@@ -92,6 +97,22 @@ describe('node public key discovery', () => {
       'verified.example',
     )).resolves.toBe(true);
     expect(mocks.pinSwarmNodePublicKey).toHaveBeenCalledWith('verified.example', publicKey.trim());
+  });
+
+  it('applies the global pre-authentication bound to pinned-domain claims', async () => {
+    mocks.getPinnedSwarmNodePublicKey.mockResolvedValue(publicKey.trim());
+    mocks.isRateLimited.mockImplementation((key: string) => (
+      key === 'swarm-signature-preauth-global'
+    ));
+    const payload = { hello: 'world' };
+
+    await expect(verifySwarmRequest(
+      payload,
+      signPayload(payload, privateKey),
+      'pinned.example',
+    )).resolves.toBe(false);
+    expect(mocks.getPinnedSwarmNodePublicKey).not.toHaveBeenCalled();
+    expect(mocks.safeFederationRequest).not.toHaveBeenCalled();
   });
 
   it('rejects unsupported key algorithms without persisting them', async () => {

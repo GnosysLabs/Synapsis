@@ -45,6 +45,18 @@ export const federatedActionAuthorizationSchema = z.strictObject({
 export type FederationActionContext = z.infer<typeof federationActionContextSchema>;
 export type FederatedUserAction = z.infer<typeof signedUserActionSchema>;
 
+/** Exact payload covered by a federated user's signature, without its encoding. */
+export function unsignedFederatedUserAction(action: FederatedUserAction) {
+  return {
+    action: action.action,
+    data: action.data,
+    did: action.did,
+    handle: action.handle,
+    ts: action.ts,
+    nonce: action.nonce,
+  };
+}
+
 export interface FederatedActionVerificationSuccess {
   ok: true;
   actorHandle: string;
@@ -340,7 +352,7 @@ export async function verifyFederatedUserAction(input: {
     destinationDomain: localDomain,
     method: input.expectedMethod,
     path: input.expectedPath,
-    userAction: action,
+    userAction: unsignedFederatedUserAction(action),
     binding: input.replayBinding,
   })).digest('hex');
 

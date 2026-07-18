@@ -9,6 +9,7 @@ import { normalizeNodeDomain } from './node-domain';
 const MAX_REMOTE_POSTS = 50;
 const boundedCount = z.number().int().nonnegative().max(1_000_000_000);
 const timestamp = z.string().datetime();
+const localHandle = z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/);
 
 const mediaSchema = z.object({
   url: federationMediaUrlSchema,
@@ -24,7 +25,7 @@ const previewMediaSchema = z.object({
 });
 
 const authorSchema = z.object({
-  handle: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
+  handle: localHandle,
   displayName: z.string().min(1).max(50),
   avatarUrl: federationMediaUrlSchema.optional(),
   isNsfw: z.boolean().optional(),
@@ -96,6 +97,40 @@ function validatePostOriginAndTime(
   }
 }
 
+function normalizeReposters(
+  repostedBy: z.infer<typeof reposterSchema>[] | undefined,
+  sourceDomain: string,
+): z.infer<typeof reposterSchema>[] | undefined {
+  return repostedBy?.flatMap((reposter) => {
+    const normalizedHandle = reposter.handle.trim().replace(/^@/, '').toLowerCase();
+    const atIndex = normalizedHandle.lastIndexOf('@');
+    const bareHandle = atIndex === -1
+      ? normalizedHandle
+      : normalizedHandle.slice(0, atIndex);
+    const claimedDomain = atIndex === -1
+      ? sourceDomain
+      : normalizeNodeDomain(normalizedHandle.slice(atIndex + 1));
+
+    if (!localHandle.safeParse(bareHandle).success
+      || claimedDomain !== sourceDomain
+      || (reposter.nodeDomain
+        && normalizeNodeDomain(reposter.nodeDomain) !== sourceDomain)) {
+      return [];
+    }
+
+    return [{
+      ...reposter,
+      id: `swarm:${sourceDomain}:${bareHandle}`,
+      handle: bareHandle,
+      nodeDomain: sourceDomain,
+      isNsfw: reposter.isNsfw ?? true,
+      nodeIsNsfw: reposter.nodeIsNsfw ?? true,
+      isRemote: true,
+      isSwarm: true,
+    }];
+  });
+}
+
 export function parseRemoteTimelineResponse(
   value: unknown,
   sourceDomainInput: string,
@@ -115,8 +150,21 @@ export function parseRemoteTimelineResponse(
     if (post.repostOf) validatePostOriginAndTime(post.repostOf, sourceDomain);
   }
 
+  const posts = parsed.data.posts.map((post) => ({
+    ...post,
+    nodeDomain: sourceDomain,
+    repostedBy: normalizeReposters(post.repostedBy, sourceDomain),
+    repostOf: post.repostOf
+      ? {
+        ...post.repostOf,
+        nodeDomain: sourceDomain,
+        repostedBy: normalizeReposters(post.repostOf.repostedBy, sourceDomain),
+      }
+      : post.repostOf,
+  })) as SwarmPost[];
+
   return {
-    posts: parsed.data.posts as SwarmPost[],
+    posts,
     nodeIsNsfw: parsed.data.nodeIsNsfw,
   };
 }

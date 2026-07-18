@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
   const authSecret = process.env.AUTH_SECRET;
   
-  if (authSecret && authHeader !== `Bearer ${authSecret}`) {
+  if (!authSecret || authHeader !== `Bearer ${authSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

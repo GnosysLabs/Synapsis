@@ -844,6 +844,28 @@ export const chatConversations = sqliteTable('chat_conversations', {
   uniqueIndex('chat_conversations_unique').on(table.participant1Id, table.participant2Handle),
 ]);
 
+/**
+ * Durable admission budget for federated DM conversations, messages, and bytes.
+ *
+ * There is one row per local recipient/source-node pair. Reusing the row when
+ * the UTC-day bucket changes keeps storage bounded while the conditional
+ * upsert in the receiver provides a cross-process concurrency boundary.
+ */
+export const chatConversationIngressQuotaBuckets = sqliteTable('chat_conversation_ingress_quota_buckets', {
+  recipientUserId: text('recipient_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  sourceDomain: text('source_domain').notNull(),
+  bucketStartMs: integer('bucket_start_ms').notNull(),
+  conversationCount: integer('conversation_count').default(0).notNull(),
+  messageCount: integer('message_count').default(0).notNull(),
+  ciphertextBytes: integer('ciphertext_bytes').default(0).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  primaryKey({
+    name: 'chat_conversation_ingress_quota_buckets_pk',
+    columns: [table.recipientUserId, table.sourceDomain],
+  }),
+]);
+
 
 /**
  * Individual chat messages within conversations.

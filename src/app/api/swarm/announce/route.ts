@@ -64,10 +64,6 @@ export async function POST(request: Request) {
     if (!isFreshFederationTimestamp(data.timestamp)) {
       return NextResponse.json({ error: 'Stale announcement payload' }, { status: 400 });
     }
-    if (isRateLimited('swarm-announce-global', 120, 60 * 1_000)) {
-      return NextResponse.json({ error: 'Too many announcement requests' }, { status: 429 });
-    }
-    
     const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
 
     if (!isPublicSwarmDomain(ourDomain)) {
@@ -102,6 +98,9 @@ export async function POST(request: Request) {
         { error: 'Invalid signature' },
         { status: 403 }
       );
+    }
+    if (isRateLimited('swarm-announce-authenticated-global', 600, 60 * 1_000)) {
+      return NextResponse.json({ error: 'Too many announcement requests' }, { status: 429 });
     }
     if (isRateLimited(`swarm-announce-node:${getPublicSwarmDomain(data.domain)}`, 20, 60 * 1_000)) {
       return NextResponse.json({ error: 'Too many announcement requests' }, { status: 429 });

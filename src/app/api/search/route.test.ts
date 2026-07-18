@@ -71,7 +71,7 @@ vi.mock('@/lib/swarm/interactions', () => ({
     fetchSwarmUserProfile: vi.fn(),
     isSwarmNode: vi.fn(),
 }));
-vi.mock('@/lib/swarm/discovery', () => ({ discoverNode: vi.fn() }));
+vi.mock('@/lib/swarm/transient-node-probe', () => ({ probeTransientNode: vi.fn() }));
 
 import { GET } from './route';
 

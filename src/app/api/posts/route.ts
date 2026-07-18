@@ -702,36 +702,8 @@ export async function POST(request: Request) {
             console.error('[Posts] Context:', { postId: post.id, userId: user.id, content: postContent.slice(0, 100) });
         }
 
-        // Federate the post to remote followers (non-blocking)
-        (async () => {
-            try {
-                // SWARM-FIRST: Deliver to swarm followers directly
-                const { deliverPostToSwarmFollowers } = await import('@/lib/swarm/interactions');
-
-                const swarmResult = await deliverPostToSwarmFollowers(
-                    user.id,
-                    post,
-                    {
-                        handle: user.handle,
-                        displayName: user.displayName,
-                        avatarUrl: user.avatarUrl,
-                        isNsfw: user.isNsfw,
-                    },
-                    attachedMedia,
-                    nodeDomain
-                );
-
-                if (swarmResult.delivered > 0) {
-                    console.log(`[Swarm] Post ${post.id} delivered to ${swarmResult.delivered} swarm nodes (${swarmResult.failed} failed)`);
-                }
-            } catch (err) {
-                // Log error with context but don't fail the request - swarm delivery is best-effort
-                console.error('[Posts] Error delivering post to swarm followers:', err);
-                console.error('[Posts] Context:', { postId: post.id, userId: user.id, nodeDomain });
-            }
-        })();
-
-
+        // Swarm post federation is pull-based. Do not fan new posts out to the
+        // retired /api/swarm/inbox endpoint on every active node.
         return NextResponse.json({ success: true, post: { ...post, media: attachedMedia } });
     } catch (error) {
         console.error('Create post error:', error);

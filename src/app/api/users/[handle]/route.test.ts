@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   findUser: vi.fn(),
   fetchSwarmUserProfile: vi.fn(),
   isSwarmNode: vi.fn(),
-  discoverNode: vi.fn(),
+  fetchNodeInfo: vi.fn(),
   getSession: vi.fn(),
   isLocalNodeNsfw: vi.fn(),
   upsertRemoteUser: vi.fn(),
@@ -40,8 +40,8 @@ vi.mock('@/lib/swarm/interactions', () => ({
   isSwarmNode: mocks.isSwarmNode,
 }));
 
-vi.mock('@/lib/swarm/discovery', () => ({
-  discoverNode: mocks.discoverNode,
+vi.mock('@/lib/swarm/transient-node-probe', () => ({
+  probeTransientNode: mocks.fetchNodeInfo,
 }));
 
 import { GET } from './route';
@@ -74,7 +74,7 @@ describe('user profile route', () => {
     mocks.findUser.mockReset().mockResolvedValue(localUser);
     mocks.fetchSwarmUserProfile.mockReset();
     mocks.isSwarmNode.mockReset();
-    mocks.discoverNode.mockReset();
+    mocks.fetchNodeInfo.mockReset();
     mocks.getSession.mockReset().mockResolvedValue(null);
     mocks.isLocalNodeNsfw.mockReset().mockResolvedValue(false);
     mocks.upsertRemoteUser.mockReset().mockResolvedValue(undefined);
@@ -103,7 +103,7 @@ describe('user profile route', () => {
     });
     expect(mocks.findUser).toHaveBeenCalledWith({ where: { handle: 'wpb8erboy' } });
     expect(mocks.isSwarmNode).not.toHaveBeenCalled();
-    expect(mocks.discoverNode).not.toHaveBeenCalled();
+    expect(mocks.fetchNodeInfo).not.toHaveBeenCalled();
     expect(mocks.fetchSwarmUserProfile).not.toHaveBeenCalled();
   });
 

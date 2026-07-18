@@ -68,10 +68,6 @@ export async function POST(request: Request) {
     if (!isFreshFederationTimestamp(data.timestamp)) {
       return NextResponse.json({ error: 'Stale gossip payload' }, { status: 400 });
     }
-    if (isRateLimited('swarm-gossip-global', 120, 60 * 1_000)) {
-      return NextResponse.json({ error: 'Too many gossip requests' }, { status: 429 });
-    }
-    
     const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
 
     if (!isPublicSwarmDomain(ourDomain)) {
@@ -106,6 +102,9 @@ export async function POST(request: Request) {
         { error: 'Invalid signature' },
         { status: 403 }
       );
+    }
+    if (isRateLimited('swarm-gossip-authenticated-global', 600, 60 * 1_000)) {
+      return NextResponse.json({ error: 'Too many gossip requests' }, { status: 429 });
     }
     if (isRateLimited(`swarm-gossip-node:${getPublicSwarmDomain(data.sender)}`, 30, 60 * 1_000)) {
       return NextResponse.json({ error: 'Too many gossip requests' }, { status: 429 });
