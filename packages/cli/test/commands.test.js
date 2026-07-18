@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -31,6 +31,45 @@ test('associates alt text with the preceding repeated media option', () => {
       { path: '/two.mp4', alt: null },
     ],
   });
+});
+
+test('installs the bundled skill for Codex, Agent Skills, and Claude by default', async () => {
+  const homeDirectory = await mkdtemp(join(tmpdir(), 'synapsis-cli-skills-'));
+  const stdout = output();
+  const stderr = output();
+
+  await run(['skill', 'install'], {
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+  }, { homeDirectory });
+
+  for (const agentDirectory of ['.codex', '.agents', '.claude']) {
+    const skillPath = join(homeDirectory, agentDirectory, 'skills', 'synapsis-post', 'SKILL.md');
+    await access(skillPath);
+    assert.match(await readFile(skillPath, 'utf8'), /^---\nname: synapsis-post/m);
+    assert.match(stdout.value(), new RegExp(`${agentDirectory.replace('.', '\\.')}/skills/synapsis-post`));
+  }
+  assert.equal(stderr.value(), '');
+});
+
+test('does not let an existing default target block the other agent installs', async () => {
+  const homeDirectory = await mkdtemp(join(tmpdir(), 'synapsis-cli-skills-'));
+  const existing = join(homeDirectory, '.codex', 'skills', 'synapsis-post');
+  await mkdir(existing, { recursive: true });
+  await writeFile(join(existing, 'custom.txt'), 'keep me');
+  const stdout = output();
+  const stderr = output();
+
+  await run(['skill', 'install'], {
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+  }, { homeDirectory });
+
+  assert.equal(await readFile(join(existing, 'custom.txt'), 'utf8'), 'keep me');
+  await access(join(homeDirectory, '.agents', 'skills', 'synapsis-post', 'SKILL.md'));
+  await access(join(homeDirectory, '.claude', 'skills', 'synapsis-post', 'SKILL.md'));
+  assert.match(stdout.value(), /Skipped existing Synapsis posting skill/);
+  assert.equal(stderr.value(), '');
 });
 
 test('connects through browser pairing and stores only the delegated private key locally', async () => {

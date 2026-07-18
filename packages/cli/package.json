@@ -1,10 +1,10 @@
 {
   "name": "@gnosyslabs/synapsis-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Secure command-line posting client for Synapsis",
   "type": "module",
   "bin": {
-    "synapsis": "./src/cli.js"
+    "synapsis": "src/cli.js"
   },
   "files": [
     "src",

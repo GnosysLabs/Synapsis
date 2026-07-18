@@ -14,7 +14,7 @@ import { normalizeNodeUrl, requestJson, signedRequest, sleep } from './http.js';
 import { uploadMediaFile } from './media.js';
 import { generateCredentialKeyPair } from './signing.js';
 
-export const CLI_VERSION = '0.1.0';
+export const CLI_VERSION = '0.1.1';
 
 const HELP = `Synapsis CLI ${CLI_VERSION}
 
@@ -294,24 +294,38 @@ async function createPost(args, io, dependencies) {
   write(io.stdout, options.json ? JSON.stringify(output) : `Published ${postUrl}`);
 }
 
-async function skillInstall(args, io) {
+async function skillInstall(args, io, dependencies) {
   unknownFlags(args, ['--path'], ['--force']);
-  const skillsRoot = valueFlag(args, '--path') || join(homedir(), '.codex', 'skills');
+  const requestedSkillsRoot = valueFlag(args, '--path');
+  const userHome = dependencies.homeDirectory || homedir();
+  const skillsRoots = requestedSkillsRoot ? [requestedSkillsRoot] : [
+    join(userHome, '.codex', 'skills'),
+    join(userHome, '.agents', 'skills'),
+    join(userHome, '.claude', 'skills'),
+  ];
   const source = fileURLToPath(new URL('../skill/synapsis-post', import.meta.url));
-  const destination = join(skillsRoot, 'synapsis-post');
-  let exists = false;
-  try {
-    await lstat(destination);
-    exists = true;
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
+  const force = booleanFlag(args, '--force');
+
+  for (const skillsRoot of skillsRoots) {
+    const destination = join(skillsRoot, 'synapsis-post');
+    let exists = false;
+    try {
+      await lstat(destination);
+      exists = true;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    if (exists && !force) {
+      if (requestedSkillsRoot) {
+        throw new Error(`${destination} already exists; pass --force to replace it`);
+      }
+      write(io.stdout, `Skipped existing Synapsis posting skill at ${destination}; pass --force to replace it`);
+      continue;
+    }
+    if (exists) await rm(destination, { recursive: true, force: true });
+    await cp(source, destination, { recursive: true });
+    write(io.stdout, `Installed the Synapsis posting skill at ${destination}`);
   }
-  if (exists && !booleanFlag(args, '--force')) {
-    throw new Error(`${destination} already exists; pass --force to replace it`);
-  }
-  if (exists) await rm(destination, { recursive: true, force: true });
-  await cp(source, destination, { recursive: true });
-  write(io.stdout, `Installed the Synapsis posting skill at ${destination}`);
 }
 
 export async function run(argv, io = process, dependencies = {}) {
@@ -320,6 +334,7 @@ export async function run(argv, io = process, dependencies = {}) {
     environment: dependencies.environment || process.env,
     openUrl: dependencies.openUrl,
     sleep: dependencies.sleep,
+    homeDirectory: dependencies.homeDirectory,
   };
   const [group, command, ...args] = argv;
   if (!group || group === 'help' || group === '--help' || group === '-h') {
@@ -335,6 +350,6 @@ export async function run(argv, io = process, dependencies = {}) {
   if (group === 'auth' && command === 'use') return authUse(args, io, runtime);
   if (group === 'auth' && command === 'disconnect') return disconnect(args, io, runtime);
   if (group === 'post' && command === 'create') return createPost(args, io, runtime);
-  if (group === 'skill' && command === 'install') return skillInstall(args, io);
+  if (group === 'skill' && command === 'install') return skillInstall(args, io, runtime);
   throw new Error(`Unknown command: ${[group, command].filter(Boolean).join(' ')}\n\n${HELP}`);
 }
