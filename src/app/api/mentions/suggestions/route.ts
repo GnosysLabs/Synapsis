@@ -8,12 +8,16 @@ import { discoverNode } from '@/lib/swarm/discovery';
 import { isSwarmNode } from '@/lib/swarm/interactions';
 import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
-import { getKnownSwarmNodeNsfw } from '@/lib/swarm/registry';
+import { getActiveSwarmNodes, getKnownSwarmNodeNsfw } from '@/lib/swarm/registry';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { isValidNodeDomain } from '@/lib/utils/federation';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
+import {
+  mergeMentionSuggestions,
+  type MentionSuggestion,
+} from '@/lib/mentions/suggestions';
 
 const querySchema = z.object({
   q: z.string().max(280),
@@ -30,15 +34,9 @@ const remoteDirectorySchema = z.object({
   })).max(12),
 });
 
-export interface MentionSuggestion {
-  handle: string;
-  displayName: string | null;
-  avatarUrl: string | null;
-  isRemote: boolean;
-  nodeDomain: string | null;
-  isNsfw?: boolean;
-  nodeIsNsfw?: boolean;
-}
+const MENTION_SWARM_NODE_LIMIT = 12;
+const MENTION_SWARM_RESULTS_PER_NODE = 4;
+const MENTION_SWARM_TIMEOUT_MS = 1_500;
 
 async function excludedLocalUserIds(viewerId: string): Promise<Set<string>> {
   const [blockRows, muteRows] = await Promise.all([
@@ -110,8 +108,13 @@ async function fetchRemoteSuggestions(
   handleQuery: string,
   domain: string,
   limit: number,
+  options: {
+    knownNode?: boolean;
+    nodeIsNsfw?: boolean;
+    timeoutMs?: number;
+  } = {},
 ): Promise<MentionSuggestion[]> {
-  let known = await isSwarmNode(domain);
+  let known = options.knownNode === true || await isSwarmNode(domain);
   if (!known) known = (await discoverNode(domain)).success;
   if (!known) return [];
 
@@ -127,13 +130,15 @@ async function fetchRemoteSuggestions(
   const response = await signedFederationRead(url.toString(), {
     headers: { Accept: 'application/json' },
     maxResponseBytes: 64 * 1024,
-    timeoutMs: 4_000,
+    timeoutMs: options.timeoutMs ?? 4_000,
   });
   if (response.status < 200 || response.status >= 300) return [];
 
   const parsed = remoteDirectorySchema.safeParse(response.json());
   if (!parsed.success) return [];
-  const registryNodeIsNsfw = await getKnownSwarmNodeNsfw(domain);
+  const registryNodeIsNsfw = typeof options.nodeIsNsfw === 'boolean'
+    ? options.nodeIsNsfw
+    : await getKnownSwarmNodeNsfw(domain);
   return parsed.data.users.map((user) => ({
     ...user,
     handle: `${user.handle.toLowerCase()}@${domain}`,
@@ -141,6 +146,24 @@ async function fetchRemoteSuggestions(
     nodeDomain: domain,
     nodeIsNsfw: registryNodeIsNsfw === true ? true : user.nodeIsNsfw,
   }));
+}
+
+async function excludeBlockedRemoteSuggestions(
+  suggestions: MentionSuggestion[],
+  excludedIds: ReadonlySet<string>,
+): Promise<MentionSuggestion[]> {
+  if (suggestions.length === 0 || excludedIds.size === 0) return suggestions;
+
+  const uniqueHandles = [...new Set(suggestions.map((suggestion) => suggestion.handle.toLowerCase()))];
+  const cachedRemoteUsers = await db.select({ id: users.id, handle: users.handle })
+    .from(users)
+    .where(or(...uniqueHandles.map((handle) => eq(users.handle, handle))));
+  const excludedHandles = new Set(
+    cachedRemoteUsers
+      .filter((user) => excludedIds.has(user.id))
+      .map((user) => user.handle.toLowerCase()),
+  );
+  return suggestions.filter((suggestion) => !excludedHandles.has(suggestion.handle.toLowerCase()));
 }
 
 export async function GET(request: NextRequest) {
@@ -193,44 +216,35 @@ export async function GET(request: NextRequest) {
       }
 
       const suggestions = await fetchRemoteSuggestions(handleQuery, domain, parsed.data.limit);
-      const cachedRemoteUsers = suggestions.length
-        ? await db.select({ id: users.id, handle: users.handle })
-          .from(users)
-          .where(or(...suggestions.map((suggestion) => eq(users.handle, suggestion.handle))))
-        : [];
-      const excludedHandles = new Set(
-        cachedRemoteUsers.filter((user) => excludedIds.has(user.id)).map((user) => user.handle.toLowerCase()),
-      );
       return NextResponse.json({
         suggestions: redactSuggestions(
-          suggestions.filter((suggestion) => !excludedHandles.has(suggestion.handle.toLowerCase())),
+          await excludeBlockedRemoteSuggestions(suggestions, excludedIds),
         ),
       });
     }
 
     const local = await localSuggestions(query, parsed.data.limit, excludedIds, localNodeIsNsfw);
-    if (local.length >= parsed.data.limit) {
-      return NextResponse.json({ suggestions: redactSuggestions(local) });
-    }
-
-    const mutedDomains = await mutedNodeDomains(viewer.id);
-    const knownRemote = await db.select({
+    const [mutedDomains, knownRemote, activeNodes] = await Promise.all([
+      mutedNodeDomains(viewer.id),
+      db.select({
       handle: remoteFollows.targetHandle,
       displayName: remoteFollows.displayName,
       avatarUrl: remoteFollows.avatarUrl,
-    })
-      .from(remoteFollows)
-      .where(and(
-        eq(remoteFollows.followerId, viewer.id),
-        or(
-          like(remoteFollows.targetHandle, `${query}%`),
-          like(remoteFollows.displayName, `${query}%`),
-        ),
-      ))
-      .limit(parsed.data.limit);
+      })
+        .from(remoteFollows)
+        .where(and(
+          eq(remoteFollows.followerId, viewer.id),
+          or(
+            like(remoteFollows.targetHandle, `${query}%`),
+            like(remoteFollows.displayName, `${query}%`),
+          ),
+        ))
+        .limit(parsed.data.limit),
+      getActiveSwarmNodes(MENTION_SWARM_NODE_LIMIT),
+    ]);
 
     const seen = new Set(local.map((item) => item.handle.toLowerCase()));
-    const remote = knownRemote.flatMap<MentionSuggestion>((row) => {
+    const followedRemote = knownRemote.flatMap<MentionSuggestion>((row) => {
       const parts = row.handle.toLowerCase().split('@');
       if (parts.length !== 2 || !parts[0] || !parts[1] || mutedDomains.has(normalizeNodeDomain(parts[1]))) return [];
       if (seen.has(row.handle.toLowerCase())) return [];
@@ -244,8 +258,32 @@ export async function GET(request: NextRequest) {
       }];
     });
 
+    const localDomain = normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || '');
+    const searchableNodes = activeNodes.filter((node) => {
+      const domain = normalizeNodeDomain(node.domain);
+      return domain !== localDomain && !mutedDomains.has(domain);
+    });
+    const discoveredRemote = (await Promise.all(searchableNodes.map((node) => (
+      fetchRemoteSuggestions(
+        query,
+        normalizeNodeDomain(node.domain),
+        Math.min(parsed.data.limit, MENTION_SWARM_RESULTS_PER_NODE),
+        {
+          knownNode: true,
+          nodeIsNsfw: node.isNsfw,
+          timeoutMs: MENTION_SWARM_TIMEOUT_MS,
+        },
+      ).catch(() => [])
+    )))).flat();
+    const remote = await excludeBlockedRemoteSuggestions(
+      [...followedRemote, ...discoveredRemote],
+      excludedIds,
+    );
+
     return NextResponse.json({
-      suggestions: redactSuggestions([...local, ...remote].slice(0, parsed.data.limit)),
+      suggestions: redactSuggestions(
+        mergeMentionSuggestions(local, remote, parsed.data.limit),
+      ),
     });
   } catch (error) {
     if (error instanceof Error && ['Unauthorized', 'Authentication required'].includes(error.message)) {

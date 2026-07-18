@@ -20,6 +20,7 @@ vi.mock('drizzle-orm', () => ({
   isNull: mocks.isNull,
   like: vi.fn((column: unknown, pattern: string) => ({ operator: 'like', column, pattern })),
   notLike: mocks.notLike,
+  or: vi.fn((...conditions: unknown[]) => ({ operator: 'or', conditions })),
 }));
 
 vi.mock('@/db', () => ({

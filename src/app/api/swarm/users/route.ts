@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, asc, eq, isNull, like, notLike } from 'drizzle-orm';
+import { and, asc, eq, isNull, like, notLike, or } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db, users } from '@/db';
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   })
     .from(users)
     .where(and(
-      like(users.handle, `${query}%`),
+      or(like(users.handle, `${query}%`), like(users.displayName, `${query}%`)),
       isNull(users.nodeId),
       notLike(users.handle, '%@%'),
       eq(users.isSuspended, false),
