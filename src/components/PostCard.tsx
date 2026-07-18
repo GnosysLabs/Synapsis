@@ -4,8 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { HeartIcon, RepeatIcon, MessageIcon, FlagIcon, TrashIcon } from '@/components/Icons';
-import { MoreHorizontal, UserX, VolumeX, Globe, Download, MessageCircle, Link2, Share, TriangleAlert } from 'lucide-react';
+import { HeartIcon, RepeatIcon, MessageIcon, TrashIcon } from '@/components/Icons';
+import { MoreHorizontal, Download, MessageCircle, Link2, Share, TriangleAlert } from 'lucide-react';
 import { Post, LinkPreviewMediaItem } from '@/lib/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useToast } from '@/lib/contexts/ToastContext';
@@ -25,6 +25,7 @@ import { useAppDialog } from '@/lib/contexts/DialogContext';
 import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
 import { buildChatShareHref, type ChatRecipient } from '@/lib/chat/recipients';
 import { shouldHideSensitivePost } from '@/lib/nsfw/content-visibility';
+import { PostOverflowMenu } from '@/components/PostOverflowMenu';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -408,6 +409,12 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         e.preventDefault();
         e.stopPropagation();
         if (reporting) return;
+        setShowMenu(false);
+        if (!currentUser || !isIdentityUnlocked || !did || !currentUserHandle) {
+            showToast('Your session expired. Please sign in again.', 'error');
+            router.push('/login');
+            return;
+        }
         const reason = await showPrompt({
             title: 'Report post',
             message: 'Tell the moderation team what is wrong with this post.',
@@ -416,21 +423,28 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
             confirmLabel: 'Submit report',
             required: true,
         });
-        if (!reason?.trim() || !did || !currentUserHandle) return;
+        const trimmedReason = reason?.trim() || '';
+        if (!trimmedReason) return;
+        if (trimmedReason.length < 3) {
+            showToast('Please enter at least 3 characters for the report reason.', 'error');
+            return;
+        }
         setReporting(true);
         try {
             const res = await signedAPI.report(
                 'post',
                 post.id,
-                reason.trim(),
+                trimmedReason,
                 did,
                 currentUserHandle
             );
             if (!res.ok) {
                 if (res.status === 401) {
-                    showToast('Please log in to report.', 'error');
+                    showToast('Your session expired. Please sign in again.', 'error');
+                    router.push('/login');
                 } else {
-                    showToast('Report failed. Please try again.', 'error');
+                    const data = await res.json().catch(() => null);
+                    showToast(data?.error || 'Report failed. Please try again.', 'error');
                 }
             } else {
                 showToast('Report submitted. Thank you.', 'success');
@@ -1097,7 +1111,11 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     {currentUser && !isOwnPost && (
                         <div style={{ position: 'relative', marginLeft: 'auto' }}>
                             <button
+                                type="button"
                                 className="post-menu-btn"
+                                aria-label="Post options"
+                                aria-haspopup="menu"
+                                aria-expanded={showMenu}
                                 onClick={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
@@ -1131,83 +1149,14 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                                             setShowMenu(false);
                                         }}
                                     />
-                                    <div
-                                        className="post-menu-dropdown"
-                                        style={{
-                                            position: 'absolute',
-                                            right: 0,
-                                            top: '100%',
-                                            marginTop: '4px',
-                                            background: 'var(--background-secondary)',
-                                            border: '1px solid var(--border)',
-                                            borderRadius: 'var(--radius-md)',
-                                            minWidth: '180px',
-                                            zIndex: 100,
-                                            overflow: 'hidden',
-                                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                                        }}
-                                    >
-                                        <button
-                                            onClick={handleMuteUser}
-                                            style={{
-                                                width: '100%',
-                                                padding: '10px 14px',
-                                                background: 'none',
-                                                border: 'none',
-                                                textAlign: 'left',
-                                                cursor: 'pointer',
-                                                color: 'var(--foreground)',
-                                                fontSize: '14px',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '10px',
-                                            }}
-                                        >
-                                            <VolumeX size={16} />
-                                            Mute
-                                        </button>
-                                        <button
-                                            onClick={handleBlockUser}
-                                            style={{
-                                                width: '100%',
-                                                padding: '10px 14px',
-                                                background: 'none',
-                                                border: 'none',
-                                                textAlign: 'left',
-                                                cursor: 'pointer',
-                                                color: 'var(--foreground)',
-                                                fontSize: '14px',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '10px',
-                                            }}
-                                        >
-                                            <UserX size={16} />
-                                            Block
-                                        </button>
-                                        {(post.nodeDomain || post.author.handle.includes('@')) && (
-                                            <button
-                                                onClick={handleMuteNode}
-                                                style={{
-                                                    width: '100%',
-                                                    padding: '10px 14px',
-                                                    background: 'none',
-                                                    border: 'none',
-                                                    textAlign: 'left',
-                                                    cursor: 'pointer',
-                                                    color: 'var(--foreground)',
-                                                    fontSize: '14px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '10px',
-                                                    borderTop: '1px solid var(--border)',
-                                                }}
-                                            >
-                                                <Globe size={16} />
-                                                Mute node
-                                            </button>
-                                        )}
-                                    </div>
+                                    <PostOverflowMenu
+                                        onMuteUser={handleMuteUser}
+                                        onBlockUser={handleBlockUser}
+                                        onMuteNode={handleMuteNode}
+                                        onReport={handleReport}
+                                        showMuteNode={Boolean(post.nodeDomain || post.author.handle.includes('@'))}
+                                        reporting={reporting}
+                                    />
                                 </>
                             )}
                         </div>
@@ -1271,12 +1220,6 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                             <HeartIcon filled={liked} />
                             <span>{likesCount || ''}</span>
                         </button>
-                        {!isOwnPost && (
-                            <button className="post-action" onClick={handleReport} disabled={reporting} title="Report post">
-                                <FlagIcon />
-                                <span>{reporting ? '...' : ''}</span>
-                            </button>
-                        )}
                         {canDeletePost && (
                             <button className="post-action delete-action" onClick={handleDelete} disabled={deleting} title="Delete post">
                                 <TrashIcon />
