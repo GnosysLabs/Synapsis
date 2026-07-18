@@ -16,6 +16,7 @@ import {
   signedUserActionSchema,
   validateMessageBindings,
 } from '@/lib/e2ee/protocol';
+import { enqueueMessagePushDeliveries } from '@/lib/push/messages';
 import { createSignedPayload } from '@/lib/swarm/signature';
 import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
@@ -227,29 +228,30 @@ export async function POST(request: NextRequest) {
         if (!recipientConversation || !senderConversation) {
           throw new Error('Failed to create encrypted conversations');
         }
-        await tx.insert(chatMessages).values([
-          messageValues({
-            conversationId: recipientConversation.id,
-            senderHandle: user.handle,
-            senderDisplayName: user.displayName,
-            senderAvatarUrl: user.avatarUrl,
-            senderDid: user.did,
-            envelope,
-            signedAction,
-            createdAt,
-          }),
-          messageValues({
-            conversationId: senderConversation.id,
-            senderHandle: user.handle,
-            senderDisplayName: user.displayName,
-            senderAvatarUrl: user.avatarUrl,
-            senderDid: user.did,
-            envelope,
-            signedAction,
-            createdAt,
-            readAt: new Date(),
-          }),
-        ]);
+        const [recipientMessage] = await tx.insert(chatMessages).values(messageValues({
+          conversationId: recipientConversation.id,
+          senderHandle: user.handle,
+          senderDisplayName: user.displayName,
+          senderAvatarUrl: user.avatarUrl,
+          senderDid: user.did,
+          envelope,
+          signedAction,
+          createdAt,
+        })).returning({ id: chatMessages.id });
+        if (!recipientMessage) throw new Error('Failed to store the recipient message');
+
+        await tx.insert(chatMessages).values(messageValues({
+          conversationId: senderConversation.id,
+          senderHandle: user.handle,
+          senderDisplayName: user.displayName,
+          senderAvatarUrl: user.avatarUrl,
+          senderDid: user.did,
+          envelope,
+          signedAction,
+          createdAt,
+          readAt: new Date(),
+        }));
+        await enqueueMessagePushDeliveries(tx, recipientUser.id, recipientMessage.id);
       });
 
       return NextResponse.json({ success: true, messageId: envelope.messageId });

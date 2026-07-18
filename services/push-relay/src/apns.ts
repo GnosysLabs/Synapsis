@@ -5,14 +5,24 @@ import { importPKCS8, SignJWT } from 'jose';
 import type { ApnsEnvironment } from './database';
 import type { PushRelayConfiguration } from './config';
 
-export interface PushEvent {
+interface PushEventBase {
   eventId: string;
-  notificationId: string;
-  type: 'follow' | 'reply' | 'mention' | 'like' | 'repost';
   actorName: string;
-  postId?: string;
   subscriptionId?: string;
 }
+
+export interface NotificationPushEvent extends PushEventBase {
+  notificationId: string;
+  type: 'follow' | 'reply' | 'mention' | 'like' | 'repost';
+  postId?: string;
+}
+
+export interface MessagePushEvent extends PushEventBase {
+  messageId: string;
+  type: 'message';
+}
+
+export type PushEvent = NotificationPushEvent | MessagePushEvent;
 
 export interface ApnsResponse {
   status: number;
@@ -37,24 +47,32 @@ export function notificationTitle(event: PushEvent): string {
     case 'mention': return `${actor} mentioned you`;
     case 'like': return `${actor} liked your post`;
     case 'repost': return `${actor} reposted your post`;
+    case 'message': return `${actor} sent you a message`;
   }
 }
 
 export function buildApnsPayload(event: PushEvent): string {
+  const routing = event.type === 'message'
+    ? { messageId: event.messageId }
+    : {
+        notificationId: event.notificationId,
+        ...(event.postId ? { postId: event.postId } : {}),
+      };
   return JSON.stringify({
     aps: {
       alert: {
         title: notificationTitle(event),
-        body: 'Open Synapsis to view the notification.',
+        body: event.type === 'message'
+          ? 'Open Synapsis to read it.'
+          : 'Open Synapsis to view the notification.',
       },
       sound: 'default',
       badge: 1,
-      'thread-id': 'notifications',
+      'thread-id': event.type === 'message' ? 'messages' : 'notifications',
     },
     synapsis: {
-      notificationId: event.notificationId,
       type: event.type,
-      ...(event.postId ? { postId: event.postId } : {}),
+      ...routing,
       ...(event.subscriptionId ? { subscriptionId: event.subscriptionId } : {}),
     },
   });

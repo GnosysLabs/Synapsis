@@ -28,4 +28,27 @@ describe('APNs payload', () => {
     expect(notificationTitle({ ...event, actorName: 'Alice\nInjected', type: 'follow' }))
       .toBe('Alice Injected followed you');
   });
+
+  it('routes encrypted DMs to Messages without creating notification metadata', () => {
+    const messageEvent: PushEvent = {
+      eventId: '00000000-0000-4000-8000-000000000004',
+      messageId: '00000000-0000-4000-8000-000000000005',
+      type: 'message',
+      actorName: 'Charlie',
+      subscriptionId: '00000000-0000-4000-8000-000000000003',
+    };
+    const payload = JSON.parse(buildApnsPayload(messageEvent));
+
+    expect(payload.aps.alert).toEqual({
+      title: 'Charlie sent you a message',
+      body: 'Open Synapsis to read it.',
+    });
+    expect(payload.aps['thread-id']).toBe('messages');
+    expect(payload.synapsis).toEqual({
+      type: 'message',
+      messageId: messageEvent.messageId,
+      subscriptionId: messageEvent.subscriptionId,
+    });
+    expect(payload.synapsis).not.toHaveProperty('notificationId');
+  });
 });

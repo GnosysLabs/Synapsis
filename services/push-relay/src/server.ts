@@ -23,13 +23,25 @@ const registrationSchema = z.object({
   appVersion: z.string().min(1).max(64),
 }).strict();
 
-const eventSchema = z.object({
+const notificationEventSchema = z.object({
   eventId: z.uuid(),
   notificationId: z.uuid(),
   type: z.enum(['follow', 'reply', 'mention', 'like', 'repost']),
   actorName: z.string().min(1).max(160),
   postId: z.string().min(1).max(256).optional(),
 }).strict();
+
+const messageEventSchema = z.object({
+  eventId: z.uuid(),
+  messageId: z.string().min(1).max(256),
+  type: z.literal('message'),
+  actorName: z.string().min(1).max(160),
+}).strict();
+
+const eventSchema = z.discriminatedUnion('type', [
+  notificationEventSchema,
+  messageEventSchema,
+]);
 
 type Registration = z.infer<typeof registrationSchema>;
 

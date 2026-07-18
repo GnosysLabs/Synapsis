@@ -1,6 +1,11 @@
 import { and, eq, lte, or } from 'drizzle-orm';
 
-import { db, pushDeliveries, pushSubscriptions } from '@/db';
+import {
+  db,
+  pushDeliveries,
+  pushMessageDeliveries,
+  pushSubscriptions,
+} from '@/db';
 import { openPushDeliveryToken } from '@/lib/push/credentials';
 
 const DEFAULT_RELAY_URL = 'https://push.synapsis.social';
@@ -41,6 +46,38 @@ function preferenceAllows(
   }
 }
 
+async function sendRelayEvent(
+  subscription: typeof pushSubscriptions.$inferSelect,
+  event: Record<string, unknown>,
+): Promise<Response> {
+  const token = openPushDeliveryToken(
+    subscription.relayDeliveryTokenEncrypted,
+    subscription.userId,
+    subscription.installationId,
+  );
+  const endpoint = new URL(
+    `/v1/subscriptions/${encodeURIComponent(subscription.relaySubscriptionId)}/deliver`,
+    relayURL(),
+  );
+  return fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(event),
+    signal: AbortSignal.timeout(15_000),
+  });
+}
+
+async function disableSubscription(subscriptionId: string): Promise<void> {
+  await db.update(pushSubscriptions).set({
+    disabledAt: new Date(),
+    updatedAt: new Date(),
+  }).where(eq(pushSubscriptions.id, subscriptionId));
+}
+
 async function updateFailure(
   delivery: typeof pushDeliveries.$inferSelect,
   message: string,
@@ -74,30 +111,12 @@ async function deliverOne(
     return updateFailure(delivery, 'Notification type is disabled for this device', false);
   }
 
-  const token = openPushDeliveryToken(
-    subscription.relayDeliveryTokenEncrypted,
-    subscription.userId,
-    subscription.installationId,
-  );
-  const endpoint = new URL(
-    `/v1/subscriptions/${encodeURIComponent(subscription.relaySubscriptionId)}/deliver`,
-    relayURL(),
-  );
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      eventId: delivery.id,
-      notificationId: notification.id,
-      type: notification.type,
-      actorName: notification.actorDisplayName || notification.actorHandle,
-      postId: notification.postId || notification.remotePostId || undefined,
-    }),
-    signal: AbortSignal.timeout(15_000),
+  const response = await sendRelayEvent(subscription, {
+    eventId: delivery.id,
+    notificationId: notification.id,
+    type: notification.type,
+    actorName: notification.actorDisplayName || notification.actorHandle,
+    postId: notification.postId || notification.remotePostId || undefined,
   });
 
   if (response.ok) {
@@ -115,12 +134,67 @@ async function deliverOne(
   const body = (await response.text()).slice(0, 800);
   const permanentlyInvalid = [401, 404, 410].includes(response.status);
   if (permanentlyInvalid) {
-    await db.update(pushSubscriptions).set({
-      disabledAt: new Date(),
-      updatedAt: new Date(),
-    }).where(eq(pushSubscriptions.id, subscription.id));
+    await disableSubscription(subscription.id);
   }
   return updateFailure(
+    delivery,
+    `Relay returned ${response.status}${body ? `: ${body}` : ''}`,
+    !permanentlyInvalid && (response.status === 408 || response.status === 429 || response.status >= 500),
+  );
+}
+
+async function updateMessageFailure(
+  delivery: typeof pushMessageDeliveries.$inferSelect,
+  message: string,
+  retryable: boolean,
+): Promise<'retry' | 'dead'> {
+  const attempts = delivery.attempts + 1;
+  const dead = !retryable || attempts >= MAX_DELIVERY_ATTEMPTS;
+  const now = new Date();
+  await db.update(pushMessageDeliveries).set({
+    status: dead ? 'dead' : 'retry',
+    attempts,
+    nextAttemptAt: dead ? now : new Date(now.getTime() + retryDelayMs(attempts)),
+    lastError: message.slice(0, 1000),
+    updatedAt: now,
+  }).where(eq(pushMessageDeliveries.id, delivery.id));
+  return dead ? 'dead' : 'retry';
+}
+
+async function deliverMessage(
+  delivery: typeof pushMessageDeliveries.$inferSelect,
+): Promise<'delivered' | 'retry' | 'dead'> {
+  const [subscription, message] = await Promise.all([
+    db.query.pushSubscriptions.findFirst({ where: { id: delivery.subscriptionId } }),
+    db.query.chatMessages.findFirst({ where: { id: delivery.messageId } }),
+  ]);
+
+  if (!subscription || !message || subscription.disabledAt) {
+    return updateMessageFailure(delivery, 'Subscription or message no longer exists', false);
+  }
+
+  const response = await sendRelayEvent(subscription, {
+    eventId: delivery.id,
+    messageId: message.clientMessageId || message.id,
+    type: 'message',
+    actorName: message.senderDisplayName || message.senderHandle,
+  });
+  if (response.ok) {
+    const now = new Date();
+    await db.update(pushMessageDeliveries).set({
+      status: 'delivered',
+      attempts: delivery.attempts + 1,
+      deliveredAt: now,
+      lastError: null,
+      updatedAt: now,
+    }).where(eq(pushMessageDeliveries.id, delivery.id));
+    return 'delivered';
+  }
+
+  const body = (await response.text()).slice(0, 800);
+  const permanentlyInvalid = [401, 404, 410].includes(response.status);
+  if (permanentlyInvalid) await disableSubscription(subscription.id);
+  return updateMessageFailure(
     delivery,
     `Relay returned ${response.status}${body ? `: ${body}` : ''}`,
     !permanentlyInvalid && (response.status === 408 || response.status === 429 || response.status >= 500),
@@ -159,6 +233,47 @@ async function runPushDeliveryOutbox(limit: number): Promise<PushOutboxResult> {
       result[state === 'retry' ? 'retried' : state] += 1;
     } catch (error) {
       const state = await updateFailure(
+        delivery,
+        error instanceof Error ? error.message : String(error),
+        true,
+      );
+      result[state === 'dead' ? 'dead' : 'retried'] += 1;
+    }
+  }
+
+  await db.update(pushMessageDeliveries).set({ status: 'retry', nextAttemptAt: now, updatedAt: now })
+    .where(and(
+      eq(pushMessageDeliveries.status, 'processing'),
+      lte(pushMessageDeliveries.lastAttemptAt, staleBefore),
+    ));
+
+  const dueMessages = await db.select().from(pushMessageDeliveries).where(and(
+    or(
+      eq(pushMessageDeliveries.status, 'pending'),
+      eq(pushMessageDeliveries.status, 'retry'),
+    ),
+    lte(pushMessageDeliveries.nextAttemptAt, now),
+  )).limit(Math.max(1, Math.min(limit, 100)));
+
+  for (const delivery of dueMessages) {
+    const claimed = await db.update(pushMessageDeliveries).set({
+      status: 'processing',
+      lastAttemptAt: new Date(),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(pushMessageDeliveries.id, delivery.id),
+      or(
+        eq(pushMessageDeliveries.status, 'pending'),
+        eq(pushMessageDeliveries.status, 'retry'),
+      ),
+    )).returning({ id: pushMessageDeliveries.id });
+    if (claimed.length === 0) continue;
+
+    try {
+      const state = await deliverMessage(delivery);
+      result[state === 'retry' ? 'retried' : state] += 1;
+    } catch (error) {
+      const state = await updateMessageFailure(
         delivery,
         error instanceof Error ? error.message : String(error),
         true,

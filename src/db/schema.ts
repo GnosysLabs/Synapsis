@@ -822,6 +822,29 @@ export const chatMessages = sqliteTable('chat_messages', {
   uniqueIndex('chat_messages_conversation_client_id_unique').on(table.conversationId, table.clientMessageId),
 ]);
 
+/**
+ * Durable, push-only work for encrypted direct messages. These rows are
+ * deliberately separate from `notifications`, so a DM can wake the native
+ * app without creating a redundant entry in the Alerts tab.
+ */
+export const pushMessageDeliveries = sqliteTable('push_message_deliveries', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  messageId: text('message_id').notNull().references(() => chatMessages.id, { onDelete: 'cascade' }),
+  subscriptionId: text('subscription_id').notNull().references(() => pushSubscriptions.id, { onDelete: 'cascade' }),
+  status: text('status').default('pending').notNull(), // pending | processing | retry | delivered | dead
+  attempts: integer('attempts').default(0).notNull(),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  lastAttemptAt: integer('last_attempt_at', { mode: 'timestamp' }),
+  deliveredAt: integer('delivered_at', { mode: 'timestamp' }),
+  lastError: text('last_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('push_message_deliveries_message_subscription_unique_idx')
+    .on(table.messageId, table.subscriptionId),
+  index('push_message_deliveries_due_idx').on(table.status, table.nextAttemptAt),
+]);
+
 
 
 

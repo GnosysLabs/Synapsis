@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Database } from '@tursodatabase/database';
+import { drizzle } from 'drizzle-orm/tursodatabase/database';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { enqueueMessagePushDeliveries } from './messages';
 
 describe('native push notification outbox migration', () => {
   let database: Database;
@@ -18,12 +21,21 @@ describe('native push notification outbox migration', () => {
         type TEXT NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       );
+      CREATE TABLE chat_messages (
+        id TEXT PRIMARY KEY NOT NULL,
+        sender_handle TEXT NOT NULL
+      );
     `);
-    const migration = readFileSync(
+    const notificationMigration = readFileSync(
       resolve('drizzle/20260718090000_native_ios_push/migration.sql'),
       'utf8',
     ).replaceAll('--> statement-breakpoint', '');
-    await database.exec(migration);
+    const messageMigration = readFileSync(
+      resolve('drizzle/20260718160000_dm_push_notifications/migration.sql'),
+      'utf8',
+    ).replaceAll('--> statement-breakpoint', '');
+    await database.exec(notificationMigration);
+    await database.exec(messageMigration);
     await database.run('INSERT INTO users (id) VALUES (?)', 'user-1');
     await database.run(
       `INSERT INTO push_subscriptions (
@@ -72,5 +84,25 @@ describe('native push notification outbox migration', () => {
       subscription_id: 'subscription-1',
       status: 'pending',
     }]);
+  });
+
+  it('queues DMs in the push-only outbox without adding an Alerts notification', async () => {
+    await database.run(
+      'INSERT INTO chat_messages (id, sender_handle) VALUES (?, ?)',
+      'message-1',
+      'alice',
+    );
+    const writer = drizzle({ client: database });
+
+    expect(await enqueueMessagePushDeliveries(writer, 'user-1', 'message-1')).toBe(1);
+    const deliveries = await database.all(
+      'SELECT message_id, subscription_id, status FROM push_message_deliveries',
+    );
+    expect(deliveries).toEqual([{
+      message_id: 'message-1',
+      subscription_id: 'subscription-1',
+      status: 'pending',
+    }]);
+    expect(await database.get('SELECT COUNT(*) AS count FROM notifications')).toEqual({ count: 0 });
   });
 });

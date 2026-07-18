@@ -19,6 +19,7 @@ import {
   signedUserActionSchema,
   validateMessageBindings,
 } from '@/lib/e2ee/protocol';
+import { enqueueMessagePushDeliveries } from '@/lib/push/messages';
 import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 import { verifySwarmRequest } from '@/lib/swarm/signature';
@@ -325,7 +326,7 @@ export async function POST(request: NextRequest) {
       }
       if (!conversation) throw new Error('Failed to create encrypted conversation');
 
-      await tx.insert(chatMessages).values({
+      const [message] = await tx.insert(chatMessages).values({
         conversationId: conversation.id,
         senderHandle,
         senderDisplayName,
@@ -341,7 +342,9 @@ export async function POST(request: NextRequest) {
         e2eeActionTs: signedAction.ts,
         deliveredAt: new Date(),
         createdAt,
-      });
+      }).returning({ id: chatMessages.id });
+      if (!message) throw new Error('Failed to store the recipient message');
+      await enqueueMessagePushDeliveries(tx, recipient.id, message.id);
     });
 
     return NextResponse.json({ success: true, messageId: envelope.messageId });

@@ -107,6 +107,29 @@ describe('push relay protocol', () => {
     expect(apns.calls[0]).toMatchObject({ environment: 'sandbox', deviceToken: apnsToken });
     expect(apns.calls[0]?.event.subscriptionId).toBe(credentials.subscriptionId);
 
+    const messageEvent = {
+      eventId: crypto.randomUUID(),
+      messageId: crypto.randomUUID(),
+      type: 'message',
+      actorName: 'Charlie',
+    };
+    const messageDelivery = await fetch(
+      `${baseURL}/v1/subscriptions/${credentials.subscriptionId}/deliver`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${credentials.deliveryToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(messageEvent),
+      },
+    );
+    expect(messageDelivery.status).toBe(202);
+    expect(apns.calls[1]?.event).toMatchObject({
+      ...messageEvent,
+      subscriptionId: credentials.subscriptionId,
+    });
+
     const unauthorized = await fetch(
       `${baseURL}/v1/subscriptions/${credentials.subscriptionId}/deliver`,
       {
