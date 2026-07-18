@@ -60,6 +60,16 @@ export async function GET(request: Request) {
             liveHandleRegistryEntryWhere(),
         )).limit(1);
 
+        const [deletedEntry] = await db.select({
+            deletedAt: handleRegistry.deletedAt,
+        }).from(handleRegistry).where(and(
+            eq(handleRegistry.handle, lookupHandle),
+            eq(handleRegistry.nodeDomain, canonicalDomain || localDomain),
+        )).limit(1);
+        if (deletedEntry?.deletedAt) {
+            return NextResponse.json({ error: 'Handle was deleted' }, { status: 410 });
+        }
+
         if (localEntry && normalizeNodeDomain(localEntry.nodeDomain)
             === (canonicalDomain || localDomain)) {
             return NextResponse.json({

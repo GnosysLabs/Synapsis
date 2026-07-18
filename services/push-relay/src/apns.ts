@@ -86,6 +86,7 @@ interface CachedSigningKey {
 
 export class ApplePushNotificationService implements ApnsSender {
   private readonly signingKeys = new Map<ApnsEnvironment, CachedSigningKey>();
+  private readonly clients = new Map<ApnsEnvironment, http2.ClientHttp2Session>();
 
   constructor(private readonly config: PushRelayConfiguration) {}
 
@@ -98,28 +99,24 @@ export class ApplePushNotificationService implements ApnsSender {
     if (Buffer.byteLength(payload) > 4096) throw new Error('APNs payload exceeds 4 KB');
 
     return await new Promise<ApnsResponse>((resolve, reject) => {
-      const client = http2.connect(authority);
+      const client = this.client(environment, authority);
       let settled = false;
       let responseStatus = 0;
       let responseApnsId: string | undefined;
       const chunks: Buffer[] = [];
+      let timeout: NodeJS.Timeout | undefined;
 
       const finish = (result?: ApnsResponse, error?: Error) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timeout);
-        client.close();
+        if (timeout) clearTimeout(timeout);
         if (error) reject(error);
         else resolve(result!);
       };
 
-      const timeout = setTimeout(() => {
-        client.destroy();
-        finish(undefined, new Error('APNs request timed out'));
-      }, 15_000);
-
-      client.once('error', (error) => finish(undefined, error));
-      const request = client.request({
+      let request: http2.ClientHttp2Stream;
+      try {
+        request = client.request({
         ':method': 'POST',
         ':path': `/3/device/${deviceToken}`,
         authorization: `bearer ${jwt}`,
@@ -127,7 +124,16 @@ export class ApplePushNotificationService implements ApnsSender {
         'apns-push-type': 'alert',
         'apns-priority': '10',
         'apns-expiration': String(Math.floor(Date.now() / 1000) + 3600),
-      });
+        'apns-collapse-id': event.eventId.slice(0, 64),
+        });
+      } catch (error) {
+        finish(undefined, error instanceof Error ? error : new Error('Could not open APNs stream'));
+        return;
+      }
+      timeout = setTimeout(() => {
+        request.close(http2.constants.NGHTTP2_CANCEL);
+        finish(undefined, new Error('APNs request timed out'));
+      }, 15_000);
       request.setEncoding('utf8');
       request.on('response', (headers) => {
         responseStatus = Number(headers[':status'] || 0);
@@ -146,6 +152,29 @@ export class ApplePushNotificationService implements ApnsSender {
       });
       request.end(payload);
     });
+  }
+
+  close(): void {
+    for (const client of this.clients.values()) client.close();
+    this.clients.clear();
+  }
+
+  private client(environment: ApnsEnvironment, authority: string): http2.ClientHttp2Session {
+    const existing = this.clients.get(environment);
+    if (existing && !existing.closed && !existing.destroyed) return existing;
+
+    const client = http2.connect(authority);
+    this.clients.set(environment, client);
+    const discard = () => {
+      if (this.clients.get(environment) === client) this.clients.delete(environment);
+    };
+    client.once('error', discard);
+    client.once('close', discard);
+    client.once('goaway', () => {
+      discard();
+      client.close();
+    });
+    return client;
   }
 
   private async jwt(environment: ApnsEnvironment): Promise<string> {

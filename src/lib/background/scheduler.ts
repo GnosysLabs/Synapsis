@@ -14,6 +14,9 @@ import { syncRemoteFollowsPosts } from '@/lib/background/remote-sync';
 import { isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { processMentionDeliveryOutbox } from '@/lib/mentions/delivery';
 import { processPushDeliveryOutbox } from '@/lib/push/delivery';
+import { syncSwarmContentBatch } from '@/lib/swarm/content-cache';
+import { markBackgroundStarted, markBackgroundTask } from '@/lib/background/health';
+import { reconcilePostSearchIndex } from '@/lib/search/post-index';
 
 const GOSSIP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const REMOTE_SYNC_INTERVAL_MS = 60 * 1000; // 1 minute - keep feeds fresh
@@ -35,10 +38,12 @@ function log(category: string, message: string, data?: unknown) {
 async function runMentionDeliveries() {
   try {
     const result = await processMentionDeliveryOutbox();
+    markBackgroundTask('mentions', { success: true });
     if (result.delivered > 0 || result.retried > 0 || result.dead > 0) {
       log('MENTIONS', `Delivered ${result.delivered}, retrying ${result.retried}, dead-lettered ${result.dead}`);
     }
   } catch (error) {
+    markBackgroundTask('mentions', { success: false, error });
     log('MENTIONS', `Outbox error: ${error}`);
   }
 }
@@ -46,10 +51,12 @@ async function runMentionDeliveries() {
 async function runPushDeliveries() {
   try {
     const result = await processPushDeliveryOutbox();
+    markBackgroundTask('push', { success: true });
     if (result.delivered > 0 || result.retried > 0 || result.dead > 0) {
       log('PUSH', `Delivered ${result.delivered}, retrying ${result.retried}, dead-lettered ${result.dead}`);
     }
   } catch (error) {
+    markBackgroundTask('push', { success: false, error });
     log('PUSH', `Outbox error: ${error}`);
   }
 }
@@ -67,12 +74,14 @@ async function runSwarmGossip() {
     }
 
     const result = await runGossipRound();
+    markBackgroundTask('gossip', { success: true });
     if (result.contacted > 0) {
       log('SWARM', `Gossip: contacted ${result.contacted}, successful ${result.successful}, received ${result.totalNodesReceived} nodes`);
     } else if (stats.activeNodes === 0) {
       log('SWARM', 'No active swarm peers yet');
     }
   } catch (error) {
+    markBackgroundTask('gossip', { success: false, error });
     log('SWARM', `Gossip error: ${error}`);
   }
 }
@@ -92,6 +101,7 @@ async function announceToSwarm() {
 async function runRemoteSync(origin: string) {
   try {
     const result = await syncRemoteFollowsPosts(origin);
+    markBackgroundTask('followSync', { success: true });
     if (result.synced > 0 || result.errors > 0) {
       log('REMOTE_SYNC', `Synced ${result.synced} users, skipped ${result.skipped}, errors ${result.errors}`);
       if (result.details.length > 0) {
@@ -102,7 +112,22 @@ async function runRemoteSync(origin: string) {
       }
     }
   } catch (error) {
+    markBackgroundTask('followSync', { success: false, error });
     log('REMOTE_SYNC', `Error: ${error}`);
+  }
+}
+
+async function runSwarmContentSync() {
+  try {
+    const result = await syncSwarmContentBatch();
+    await reconcilePostSearchIndex();
+    markBackgroundTask('contentSync', { success: true });
+    if (result.claimed > 0) {
+      log('SWARM_CONTENT', `Synced ${result.synced}/${result.claimed} peers, cached ${result.cached} snapshots, failures ${result.failed}`);
+    }
+  } catch (error) {
+    markBackgroundTask('contentSync', { success: false, error });
+    log('SWARM_CONTENT', `Error: ${error}`);
   }
 }
 
@@ -110,6 +135,7 @@ export function startBackgroundTasks(origin?: string) {
   // Prevent double-start (Next.js can call register() multiple times in dev)
   if (isStarted) return;
   isStarted = true;
+  markBackgroundStarted();
 
   // Default origin for remote sync (can be overridden)
   const syncOrigin = origin || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:43821';
@@ -134,12 +160,16 @@ export function startBackgroundTasks(origin?: string) {
     
     // Run initial remote sync (after 15s to let server stabilize)
     setTimeout(() => runRemoteSync(syncOrigin), 15 * 1000);
+    if (publicSwarmEnabled) {
+      setTimeout(runSwarmContentSync, 20 * 1000);
+    }
     
     // Schedule recurring tasks
     setInterval(runMentionDeliveries, MENTION_DELIVERY_INTERVAL_MS);
     setInterval(runPushDeliveries, PUSH_DELIVERY_INTERVAL_MS);
     if (publicSwarmEnabled) {
       setInterval(runSwarmGossip, GOSSIP_INTERVAL_MS);
+      setInterval(runSwarmContentSync, REMOTE_SYNC_INTERVAL_MS);
     }
     setInterval(() => runRemoteSync(syncOrigin), REMOTE_SYNC_INTERVAL_MS);
     

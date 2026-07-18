@@ -44,6 +44,7 @@ async function applyIdentityMigration(client: Database): Promise<void> {
   const migration = readFileSync(migrationPath, 'utf8')
     .replaceAll('--> statement-breakpoint', '');
   await client.exec(migration);
+  await client.exec('ALTER TABLE handle_registry ADD deleted_at integer');
 }
 
 describe('verified federated actor continuity', () => {

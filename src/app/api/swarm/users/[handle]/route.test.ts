@@ -22,12 +22,14 @@ vi.mock('@/db', () => ({
       posts: { findMany: mocks.findPosts },
       remoteReposts: { findMany: vi.fn().mockResolvedValue([]) },
       userSwarmReposts: { findMany: vi.fn().mockResolvedValue([]) },
+      swarmAccountTombstones: { findFirst: vi.fn().mockResolvedValue(undefined) },
     },
   },
   media: {},
   posts: {},
   users: {},
   userSwarmReposts: {},
+  swarmAccountTombstones: {},
 }));
 
 import { GET } from './route';

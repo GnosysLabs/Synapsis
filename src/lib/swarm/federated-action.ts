@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db, handleRegistry } from '@/db';
@@ -14,7 +14,7 @@ import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import { isRateLimited } from '@/lib/rate-limit';
 import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 import { getPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
-import { verifySwarmRequest } from './signature';
+import { verifySwarmRequestDetailed } from './signature';
 import { scheduleInboundFederationReplayCleanup } from './replay';
 import {
   consumeFederationNodeActionQuota,
@@ -130,7 +130,10 @@ export async function pinVerifiedFederatedActorIdentity(
 
   const qualifiedHandle = `${parsedHandle.data}@${sourceDomain}`;
   const [existingDidOwner] = await withSqliteLockRetry(() => (
-    database.select({ handle: handleRegistry.handle })
+    database.select({
+      handle: handleRegistry.handle,
+      deletedAt: handleRegistry.deletedAt,
+    })
       .from(handleRegistry)
       .where(and(
         eq(handleRegistry.nodeDomain, sourceDomain),
@@ -139,7 +142,7 @@ export async function pinVerifiedFederatedActorIdentity(
       ))
       .limit(1)
   ));
-  if (existingDidOwner && existingDidOwner.handle !== qualifiedHandle) {
+  if (existingDidOwner?.deletedAt || (existingDidOwner && existingDidOwner.handle !== qualifiedHandle)) {
     throw new FederatedIdentityContinuityError();
   }
 
@@ -147,6 +150,7 @@ export async function pinVerifiedFederatedActorIdentity(
     did: string;
     nodeDomain: string;
     identityVerified: boolean;
+    deletedAt: Date | null;
   } | undefined;
   try {
     [pinned] = await withSqliteLockRetry(() => (
@@ -163,11 +167,15 @@ export async function pinVerifiedFederatedActorIdentity(
           identityVerified: true,
           updatedAt: new Date(),
         },
-        setWhere: eq(handleRegistry.identityVerified, false),
+        setWhere: and(
+          eq(handleRegistry.identityVerified, false),
+          isNull(handleRegistry.deletedAt),
+        ),
       }).returning({
         did: handleRegistry.did,
         nodeDomain: handleRegistry.nodeDomain,
         identityVerified: handleRegistry.identityVerified,
+        deletedAt: handleRegistry.deletedAt,
       })
     ));
   } catch (error) {
@@ -183,9 +191,11 @@ export async function pinVerifiedFederatedActorIdentity(
       did: handleRegistry.did,
       nodeDomain: handleRegistry.nodeDomain,
       identityVerified: handleRegistry.identityVerified,
+      deletedAt: handleRegistry.deletedAt,
     }).from(handleRegistry).where(eq(handleRegistry.handle, qualifiedHandle)).limit(1)
   ));
   if (!identity
+    || identity.deletedAt
     || !identity.identityVerified
     || identity.did !== input.did
     || federationActionDomain(identity.nodeDomain) !== sourceDomain) {
@@ -229,6 +239,17 @@ function fail(
   error: string,
 ): FederatedActionVerificationFailure {
   return { ok: false, status, error };
+}
+
+export function federatedActionFailureInit(
+  failure: FederatedActionVerificationFailure,
+): ResponseInit {
+  return {
+    status: failure.status,
+    headers: failure.status === 429 || failure.status === 503
+      ? { 'Retry-After': failure.status === 429 ? '60' : '1' }
+      : undefined,
+  };
 }
 
 /**
@@ -288,7 +309,21 @@ export async function verifyFederatedUserAction(input: {
     return fail(400, 'Federation envelope is stale');
   }
 
-  if (!await verifySwarmRequest(input.payload, input.nodeSignature, sourceDomain)) {
+  const nodeVerification = await verifySwarmRequestDetailed(
+    input.payload,
+    input.nodeSignature,
+    sourceDomain,
+  );
+  if (!nodeVerification.ok) {
+    if (nodeVerification.reason === 'overloaded') {
+      return fail(
+        nodeVerification.status === 429 ? 429 : 503,
+        'Node signature verification is temporarily overloaded',
+      );
+    }
+    if (nodeVerification.reason === 'identity-unavailable') {
+      return fail(503, 'Source node identity is temporarily unavailable');
+    }
     return fail(403, 'Invalid node signature');
   }
 

@@ -23,10 +23,13 @@ vi.mock('@/db', () => {
     follows: columns('follows'),
     mutes: columns('mutes'),
     blocks: columns('blocks'),
+    mutedNodes: columns('mutedNodes'),
     remotePosts: columns('remotePosts'),
     remoteReposts: columns('remoteReposts'),
     userSwarmReposts: columns('userSwarmReposts'),
     notifications: columns('notifications'),
+    feedStories: columns('feedStories'),
+    remoteFeedStories: columns('remoteFeedStories'),
   };
 });
 
@@ -75,6 +78,10 @@ vi.mock('@/lib/mentions/delivery', () => ({
   registerPostMentions: vi.fn(),
 }));
 
+vi.mock('@/lib/swarm/node-blocklist', () => ({
+  getBlockedNodeDomains: vi.fn().mockResolvedValue(new Set()),
+}));
+
 import { GET } from './route';
 
 function emptySelectBuilder() {
@@ -95,15 +102,14 @@ describe('GET /api/posts local node origin boundary', () => {
     mocks.select.mockImplementation(() => emptySelectBuilder());
   });
 
-  it('requires local activity authors in both node-story source queries', async () => {
+  it('requires local activity authors in the materialized node-story query', async () => {
     const response = await GET(
       new Request('https://local.example/api/posts?type=local'),
     );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ posts: [] });
-    expect(mocks.notLike).toHaveBeenCalledTimes(2);
+    expect(mocks.notLike).toHaveBeenCalledTimes(1);
     expect(mocks.notLike).toHaveBeenNthCalledWith(1, 'users.handle', '%@%');
-    expect(mocks.notLike).toHaveBeenNthCalledWith(2, 'users.handle', '%@%');
   });
 });

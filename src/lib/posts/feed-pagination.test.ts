@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   decodeFeedCursor,
+  decodeFeedCursorPosition,
   encodeFeedCursor,
   getSourceContinuationDate,
   newestDate,
@@ -20,6 +21,17 @@ describe('feed pagination cursors', () => {
     expect(decodeFeedCursor('swarm:example.com:post-id')).toBeNull();
     expect(decodeFeedCursor('feed:not-a-number')).toBeNull();
     expect(encodeFeedCursor('not-a-date')).toBeNull();
+  });
+
+  it('round-trips a stable timestamp and ID tie-breaker', () => {
+    const cursor = encodeFeedCursor({
+      at: '2026-07-15T08:30:12.345Z',
+      id: 'swarm:rprh.link:post:1',
+    });
+    expect(decodeFeedCursorPosition(cursor)).toEqual({
+      at: new Date('2026-07-15T08:30:12.345Z'),
+      id: 'swarm:rprh.link:post:1',
+    });
   });
 
   it('selects a chronological activity window before any relevance reordering', () => {

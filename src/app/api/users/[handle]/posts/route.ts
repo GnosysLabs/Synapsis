@@ -215,8 +215,7 @@ async function populateViewerLikeState(
 
         const likedIds = await getViewerSwarmLikedPostIds(
             swarmTargets,
-            viewer.handle,
-            nodeDomain
+            viewer.id,
         );
         const repostedIds = await getViewerSwarmRepostedPostIds(
             swarmTargets,
@@ -433,8 +432,7 @@ export async function GET(request: Request, context: RouteContext) {
                             nodeDomain: post.nodeDomain,
                             originalPostId: post.originalPostId,
                         })),
-                        viewer.handle,
-                        nodeDomain
+                        viewer.id,
                     );
                     likedIds.forEach((id) => likedPostIds.add(id));
 

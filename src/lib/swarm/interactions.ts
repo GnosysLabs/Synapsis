@@ -12,15 +12,14 @@
  * - Mentions: Direct mention notifications
  */
 
-import { getActiveSwarmNodes, getKnownSwarmNodeNsfw } from './registry';
+import { getActiveSwarmNode, getKnownSwarmNodeNsfw } from './registry';
 import type { SwarmNodeInfo } from './types';
-import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
+import { isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
 import { getPublicSwarmDomain } from './node-domain';
 import { signedFederationRead } from './signed-read';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 import { parseMentions } from '@/lib/mentions/parser';
 import { safeFederationRequest } from './safe-federation-http';
-import { mapWithConcurrency } from '@/lib/async/concurrency';
 import type { FederatedUserAction } from './federated-action';
 import { createFederationActionContext } from './federated-action';
 import {
@@ -30,9 +29,8 @@ import {
   type RemoteSwarmProfile,
   type RemoteSwarmProfileResponse,
 } from './remote-post-payload';
-
-const MAX_POST_DELIVERY_DESTINATIONS = 24;
-const MAX_CONCURRENT_POST_DELIVERIES = 6;
+import type { SwarmPost } from '@/app/api/swarm/timeline/route';
+import { indexRemotePostContent } from '@/lib/search/post-index';
 
 // ============================================
 // TYPES
@@ -176,8 +174,7 @@ export async function isSwarmNode(domain: string): Promise<boolean> {
   if (await isNodeBlocked(normalizedDomain)) {
     return false;
   }
-  const nodes = await getActiveSwarmNodes(500);
-  return nodes.some(n => n.domain === normalizedDomain);
+  return Boolean(await getActiveSwarmNode(normalizedDomain));
 }
 
 /**
@@ -188,8 +185,7 @@ export async function getSwarmNodeInfo(domain: string): Promise<SwarmNodeInfo | 
   if (await isNodeBlocked(normalizedDomain)) {
     return null;
   }
-  const nodes = await getActiveSwarmNodes(500);
-  return nodes.find(n => n.domain === normalizedDomain) || null;
+  return getActiveSwarmNode(normalizedDomain);
 }
 
 /**
@@ -465,18 +461,18 @@ export async function cacheSwarmUserPosts(
   domain: string,
   fullHandle: string, // e.g., "user@domain.com"
   limit: number = 20
-): Promise<{ cached: number; skipped: number }> {
+): Promise<{ cached: number; skipped: number; success: boolean }> {
   try {
     const profileData = await fetchSwarmUserProfile(handle, domain, limit);
 
     if (!profileData || !profileData.posts) {
-      return { cached: 0, skipped: 0 };
+      return { cached: 0, skipped: 0, success: false };
     }
 
     const { db, remotePosts } = await import('@/db');
 
     if (!db) {
-      return { cached: 0, skipped: 0 };
+      return { cached: 0, skipped: 0, success: false };
     }
 
     let cached = 0;
@@ -485,30 +481,77 @@ export async function cacheSwarmUserPosts(
     const actorUrl = `swarm://${domain}/${handle}`;
     const profile = profileData.profile;
 
+    const toTimelinePost = (post: RemoteSwarmPost): SwarmPost => ({
+      id: post.id,
+      content: post.content,
+      createdAt: post.createdAt,
+      feedActivityAt: post.feedActivityAt,
+      isReply: Boolean(post.isReply || post.replyToId || post.swarmReplyToId),
+      replyToId: post.replyToId,
+      swarmReplyToId: post.swarmReplyToId,
+      repostOfId: post.repostOfId,
+      repostOf: post.repostOf ? toTimelinePost(post.repostOf) : post.repostOf,
+      repostedBy: post.repostedBy?.map((reposter) => ({
+        id: reposter.id || `swarm:${domain}:${reposter.handle}`,
+        handle: reposter.handle,
+        displayName: reposter.displayName || reposter.handle,
+        avatarUrl: reposter.avatarUrl || null,
+        isNsfw: reposter.isNsfw ?? true,
+        nodeIsNsfw: reposter.nodeIsNsfw ?? true,
+        nodeDomain: domain,
+        isRemote: true,
+        isSwarm: true,
+      })),
+      repostedByCount: post.repostedByCount,
+      author: {
+        handle: post.author.handle,
+        displayName: post.author.displayName || post.author.handle,
+        avatarUrl: post.author.avatarUrl || undefined,
+        isNsfw: post.author.isNsfw ?? profile.isNsfw,
+      },
+      nodeDomain: normalizeNodeDomain(domain),
+      nodeIsNsfw: post.nodeIsNsfw ?? profile.nodeIsNsfw,
+      isNsfw: post.isNsfw ?? true,
+      likeCount: post.likesCount ?? post.likeCount ?? 0,
+      repostCount: post.repostsCount ?? post.repostCount ?? 0,
+      replyCount: post.repliesCount ?? post.replyCount ?? 0,
+      media: post.media?.map((item) => ({
+        url: item.url,
+        mimeType: item.mimeType || undefined,
+        altText: item.altText || undefined,
+      })),
+      linkPreviewUrl: post.linkPreviewUrl || undefined,
+      linkPreviewTitle: post.linkPreviewTitle || undefined,
+      linkPreviewDescription: post.linkPreviewDescription || undefined,
+      linkPreviewImage: post.linkPreviewImage || undefined,
+      linkPreviewType: post.linkPreviewType || undefined,
+      linkPreviewVideoUrl: post.linkPreviewVideoUrl || undefined,
+      linkPreviewMedia: post.linkPreviewMedia || undefined,
+    });
+
     for (const post of profileData.posts) {
       const canonicalDomain = normalizeNodeDomain(domain);
       const apId = `swarm:${canonicalDomain}:${post.id}`;
-      const legacyApId = `swarm://${canonicalDomain}/posts/${post.id}`;
-
-      // Check if we already have this post
-      const existing = await db.query.remotePosts.findFirst({
-        where: { OR: [{ apId }, { apId: legacyApId }] },
-      });
-
-      if (existing) {
-        skipped++;
-        continue;
-      }
-
-      // Cache the post
-      await db.insert(remotePosts).values({
+      const snapshot = toTimelinePost(post);
+      const values = {
         apId,
+        nodeDomain: canonicalDomain,
+        originalPostId: post.id,
+        postJson: JSON.stringify(snapshot),
         authorHandle: fullHandle,
         authorActorUrl: actorUrl,
         authorDisplayName: profile.displayName || handle,
         authorAvatarUrl: profile.avatarUrl || null,
         content: post.content,
         publishedAt: new Date(post.createdAt),
+        feedActivityAt: new Date(post.feedActivityAt || post.createdAt),
+        isReply: Boolean(post.isReply || post.replyToId || post.swarmReplyToId),
+        isNsfw: post.isNsfw ?? true,
+        authorIsNsfw: post.author.isNsfw ?? profile.isNsfw,
+        nodeIsNsfw: post.nodeIsNsfw ?? profile.nodeIsNsfw,
+        likesCount: post.likesCount ?? post.likeCount ?? 0,
+        repostsCount: post.repostsCount ?? post.repostCount ?? 0,
+        repliesCount: post.repliesCount ?? post.replyCount ?? 0,
         linkPreviewUrl: post.linkPreviewUrl || null,
         linkPreviewTitle: post.linkPreviewTitle || null,
         linkPreviewDescription: post.linkPreviewDescription || null,
@@ -517,15 +560,21 @@ export async function cacheSwarmUserPosts(
         linkPreviewVideoUrl: post.linkPreviewVideoUrl || null,
         linkPreviewMediaJson: serializeLinkPreviewMedia(post.linkPreviewMedia),
         mediaJson: post.media ? JSON.stringify(post.media) : null,
-      });
+        fetchedAt: new Date(),
+      };
+      const [cachedRow] = await db.insert(remotePosts).values(values).onConflictDoUpdate({
+        target: [remotePosts.nodeDomain, remotePosts.originalPostId],
+        set: values,
+      }).returning({ id: remotePosts.id });
+      if (cachedRow) await indexRemotePostContent(cachedRow.id, post.content);
 
       cached++;
     }
 
-    return { cached, skipped };
+    return { cached, skipped, success: true };
   } catch (error) {
     console.error(`[Swarm] Error caching posts for ${fullHandle}:`, error);
-    return { cached: 0, skipped: 0 };
+    return { cached: 0, skipped: 0, success: false };
   }
 }
 
@@ -581,164 +630,4 @@ export async function fetchSwarmPost(
  */
 export function extractMentions(content: string): { handle: string; domain: string | null }[] {
   return parseMentions(content).map(({ handle, domain }) => ({ handle, domain }));
-}
-
-// ============================================
-// POST DELIVERY TO SWARM FOLLOWERS
-// ============================================
-
-export interface SwarmPostDeliveryPayload {
-  post: {
-    id: string;
-    content: string;
-    createdAt: string;
-    isNsfw: boolean;
-    replyToId?: string;
-    repostOfId?: string;
-    media?: { url: string; mimeType?: string; altText?: string }[];
-    linkPreviewUrl?: string;
-    linkPreviewTitle?: string;
-    linkPreviewDescription?: string;
-    linkPreviewImage?: string;
-    linkPreviewType?: 'card' | 'image' | 'gallery' | 'video';
-    linkPreviewVideoUrl?: string;
-    linkPreviewMedia?: Array<{ url: string; width?: number | null; height?: number | null; mimeType?: string | null }>;
-  };
-  author: {
-    handle: string;
-    displayName: string;
-    avatarUrl?: string;
-    isNsfw: boolean;
-  };
-  nodeDomain: string;
-  timestamp: string;
-}
-
-/**
- * Deliver a new post to a swarm node's inbox
- * This is used to push posts to followers on other swarm nodes
- */
-export async function deliverSwarmPost(
-  targetDomain: string,
-  payload: SwarmPostDeliveryPayload
-): Promise<SwarmInteractionResponse> {
-  return deliverSwarmInteraction(targetDomain, '/api/swarm/inbox', payload);
-}
-
-/**
- * Get swarm follower domains from remote followers
- * Returns domains of swarm nodes that have followers for this user
- */
-export async function getSwarmFollowerDomains(userId: string): Promise<string[]> {
-  try {
-    const { db } = await import('@/db');
-
-    if (!db) return [];
-
-    const followers = await db.query.remoteFollowers.findMany({
-      where: { userId: userId },
-    });
-
-    // Filter for swarm followers (actorUrl starts with swarm://)
-    const swarmFollowers = followers.filter(f => f.actorUrl.startsWith('swarm://'));
-
-    // Extract unique domains
-    const domains = swarmFollowers.map(f => {
-      const match = f.actorUrl.match(/^swarm:\/\/([^\/]+)/);
-      return match ? match[1] : null;
-    }).filter((d): d is string => d !== null);
-
-    return await filterBlockedDomains([...new Set(domains)]);
-  } catch (error) {
-    console.error('[Swarm] Error getting swarm follower domains:', error);
-    return [];
-  }
-}
-
-/**
- * Deliver a post to all swarm followers
- */
-export async function deliverPostToSwarmFollowers(
-  userId: string,
-  post: {
-    id: string;
-    content: string;
-    createdAt: Date;
-    isNsfw: boolean;
-    replyToId?: string | null;
-    repostOfId?: string | null;
-    linkPreviewUrl?: string | null;
-    linkPreviewTitle?: string | null;
-    linkPreviewDescription?: string | null;
-    linkPreviewImage?: string | null;
-    linkPreviewType?: string | null;
-    linkPreviewVideoUrl?: string | null;
-    linkPreviewMedia?: Array<{ url: string; width?: number | null; height?: number | null; mimeType?: string | null }> | null;
-  },
-  author: {
-    handle: string;
-    displayName: string | null;
-    avatarUrl: string | null;
-    isNsfw: boolean;
-  },
-  media: { url: string; mimeType: string | null; altText: string | null }[],
-  nodeDomain: string
-): Promise<{ delivered: number; failed: number }> {
-  const swarmDomains = await getSwarmFollowerDomains(userId);
-
-  if (swarmDomains.length === 0) {
-    return { delivered: 0, failed: 0 };
-  }
-
-  const payload: SwarmPostDeliveryPayload = {
-    post: {
-      id: post.id,
-      content: post.content,
-      createdAt: post.createdAt.toISOString(),
-      isNsfw: post.isNsfw,
-      replyToId: post.replyToId || undefined,
-      repostOfId: post.repostOfId || undefined,
-      media: media.length > 0 ? media.map(m => ({
-        url: m.url,
-        mimeType: m.mimeType || undefined,
-        altText: m.altText || undefined,
-      })) : undefined,
-      linkPreviewUrl: post.linkPreviewUrl || undefined,
-      linkPreviewTitle: post.linkPreviewTitle || undefined,
-      linkPreviewDescription: post.linkPreviewDescription || undefined,
-      linkPreviewImage: post.linkPreviewImage || undefined,
-      linkPreviewType: (post.linkPreviewType as SwarmPostDeliveryPayload['post']['linkPreviewType']) || undefined,
-      linkPreviewVideoUrl: post.linkPreviewVideoUrl || undefined,
-      linkPreviewMedia: post.linkPreviewMedia || undefined,
-    },
-    author: {
-      handle: author.handle,
-      displayName: author.displayName || author.handle,
-      avatarUrl: author.avatarUrl || undefined,
-      isNsfw: author.isNsfw,
-    },
-    nodeDomain,
-    timestamp: new Date().toISOString(),
-  };
-
-  const targetDomains = swarmDomains.slice(0, MAX_POST_DELIVERY_DESTINATIONS);
-  let delivered = 0;
-  // Federation feeds are pull-based. Legacy push is a bounded best effort and
-  // must never turn a popular account into unbounded synchronous fan-out.
-  let failed = swarmDomains.length - targetDomains.length;
-  const results = await mapWithConcurrency(
-    targetDomains,
-    MAX_CONCURRENT_POST_DELIVERIES,
-    domain => deliverSwarmPost(domain, payload),
-  );
-
-  for (const result of results) {
-    if (result.success) {
-      delivered++;
-    } else {
-      failed++;
-    }
-  }
-
-  return { delivered, failed };
 }

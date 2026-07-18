@@ -287,7 +287,9 @@ export async function DELETE(request: Request, context: RouteContext) {
 
             if (!result.success) {
                 console.warn(`[Swarm] Unfollow delivery failed: ${result.error}`);
-                // Continue anyway - remove local record
+                return NextResponse.json({
+                    error: 'The remote node could not confirm the unfollow. Nothing was changed locally.',
+                }, { status: 502 });
             }
 
             // Remove the follow record

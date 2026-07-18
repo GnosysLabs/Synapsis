@@ -1,24 +1,16 @@
-/**
- * Remote Follows Sync
- *
- * Periodically syncs posts from remote users that local users follow.
- * Swarm-only implementation.
- */
-
-import { db } from '@/db';
+/** Durable, fair refresh scheduling for accounts followed by local users. */
+import crypto from 'node:crypto';
+import { db, remoteFollowSyncStates } from '@/db';
+import { and, asc, eq, isNull, lte, or, sql } from 'drizzle-orm';
+import { mapWithConcurrency } from '@/lib/async/concurrency';
 import { cacheSwarmUserPosts, isSwarmNode } from '@/lib/swarm/interactions';
 
-const MIN_SYNC_INTERVAL_MS = 60 * 1_000;
-const RETRY_BACKOFF_BASE_MS = 5 * 60 * 1_000;
-const RETRY_BACKOFF_MAX_MS = 60 * 60 * 1_000;
+const MIN_SYNC_INTERVAL_MS = 5 * 60_000;
+const RETRY_BACKOFF_BASE_MS = 60_000;
+const RETRY_BACKOFF_MAX_MS = 60 * 60_000;
 const MAX_SYNC_TARGETS_PER_RUN = 20;
-const REMOTE_FOLLOW_SCAN_LIMIT = MAX_SYNC_TARGETS_PER_RUN * 4;
-const MAX_SYNC_RUN_MS = 45 * 1_000;
-
-interface TargetSyncState {
-  failures: number;
-  nextAttemptAt: number;
-}
+const MAX_CONCURRENT_PROFILE_SYNCS = 4;
+const SYNC_LEASE_MS = 45_000;
 
 interface SyncResult {
   synced: number;
@@ -27,8 +19,12 @@ interface SyncResult {
   details: Array<{ handle: string; cached: number; error?: string }>;
 }
 
-const targetSyncStates = new Map<string, TargetSyncState>();
-let remoteFollowOffset = 0;
+interface ClaimedTarget {
+  targetHandle: string;
+  nodeDomain: string;
+  leaseOwner: string;
+}
+
 let activeSync: Promise<SyncResult> | null = null;
 
 function retryDelay(failures: number): number {
@@ -38,160 +34,151 @@ function retryDelay(failures: number): number {
   );
 }
 
-function reserveTarget(targetHandle: string, now: number): void {
-  const existing = targetSyncStates.get(targetHandle);
-  targetSyncStates.set(targetHandle, {
-    failures: existing?.failures ?? 0,
-    // Reserve before any remote I/O so a second caller cannot duplicate the request.
-    nextAttemptAt: now + MIN_SYNC_INTERVAL_MS,
-  });
+function successJitter(targetHandle: string): number {
+  return crypto.createHash('sha256').update(targetHandle).digest().readUInt32BE(0) % 120_000;
 }
 
-function scheduleRetry(targetHandle: string, now: number): void {
-  const failures = (targetSyncStates.get(targetHandle)?.failures ?? 0) + 1;
-  targetSyncStates.set(targetHandle, {
+async function seedFollowSyncStates(): Promise<void> {
+  await db.run(sql`
+    insert into ${remoteFollowSyncStates} (
+      ${remoteFollowSyncStates.targetHandle},
+      ${remoteFollowSyncStates.nodeDomain}
+    )
+    select
+      lower(target_handle),
+      lower(substr(target_handle, instr(target_handle, '@') + 1))
+    from remote_follows
+    where instr(target_handle, '@') > 1
+      and instr(target_handle, '@') < length(target_handle)
+    group by lower(target_handle)
+    on conflict (${remoteFollowSyncStates.targetHandle}) do update set
+      ${remoteFollowSyncStates.nodeDomain} = excluded.node_domain
+  `);
+  await db.run(sql`
+    delete from ${remoteFollowSyncStates}
+    where not exists (
+      select 1 from remote_follows
+      where lower(remote_follows.target_handle) = ${remoteFollowSyncStates.targetHandle}
+    )
+  `);
+}
+
+async function claimTargets(): Promise<ClaimedTarget[]> {
+  await seedFollowSyncStates();
+  const now = new Date();
+  const candidates = await db.select({
+    targetHandle: remoteFollowSyncStates.targetHandle,
+    nodeDomain: remoteFollowSyncStates.nodeDomain,
+  }).from(remoteFollowSyncStates).where(and(
+    lte(remoteFollowSyncStates.nextAttemptAt, now),
+    or(
+      isNull(remoteFollowSyncStates.leaseExpiresAt),
+      lte(remoteFollowSyncStates.leaseExpiresAt, now),
+    ),
+  )).orderBy(
+    asc(remoteFollowSyncStates.lastSuccessAt),
+    asc(remoteFollowSyncStates.nextAttemptAt),
+    asc(remoteFollowSyncStates.targetHandle),
+  ).limit(MAX_SYNC_TARGETS_PER_RUN * 3);
+
+  const claimed: ClaimedTarget[] = [];
+  for (const candidate of candidates) {
+    if (claimed.length >= MAX_SYNC_TARGETS_PER_RUN) break;
+    const leaseOwner = crypto.randomUUID();
+    const [updated] = await db.update(remoteFollowSyncStates).set({
+      leaseOwner,
+      leaseExpiresAt: new Date(Date.now() + SYNC_LEASE_MS),
+      lastAttemptAt: now,
+      updatedAt: now,
+    }).where(and(
+      eq(remoteFollowSyncStates.targetHandle, candidate.targetHandle),
+      lte(remoteFollowSyncStates.nextAttemptAt, now),
+      or(
+        isNull(remoteFollowSyncStates.leaseExpiresAt),
+        lte(remoteFollowSyncStates.leaseExpiresAt, now),
+      ),
+    )).returning({ targetHandle: remoteFollowSyncStates.targetHandle });
+    if (updated) claimed.push({ ...candidate, leaseOwner });
+  }
+  return claimed;
+}
+
+async function finishTarget(
+  target: ClaimedTarget,
+  outcome: { success: true } | { success: false; error: string },
+): Promise<void> {
+  const state = await db.query.remoteFollowSyncStates.findFirst({
+    where: { AND: [
+      { targetHandle: target.targetHandle },
+      { leaseOwner: target.leaseOwner },
+    ] },
+  });
+  if (!state) return;
+  const failures = outcome.success ? 0 : state.failures + 1;
+  const now = new Date();
+  await db.update(remoteFollowSyncStates).set({
     failures,
-    nextAttemptAt: now + retryDelay(failures),
-  });
+    nextAttemptAt: new Date(Date.now() + (outcome.success
+      ? MIN_SYNC_INTERVAL_MS + successJitter(target.targetHandle)
+      : retryDelay(failures))),
+    lastSuccessAt: outcome.success ? now : state.lastSuccessAt,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    lastError: outcome.success ? null : outcome.error.slice(0, 1_000),
+    updatedAt: now,
+  }).where(and(
+    eq(remoteFollowSyncStates.targetHandle, target.targetHandle),
+    eq(remoteFollowSyncStates.leaseOwner, target.leaseOwner),
+  ));
 }
 
-function scheduleNextSync(targetHandle: string, now: number): void {
-  targetSyncStates.set(targetHandle, {
-    failures: 0,
-    nextAttemptAt: now + MIN_SYNC_INTERVAL_MS,
-  });
-}
-
-async function loadRemoteFollowBatch(): Promise<string[]> {
-  const queryBatch = async (offset: number) => db.query.remoteFollows.findMany({
-    columns: { targetHandle: true },
-    orderBy: (remoteFollows, { asc }) => [
-      asc(remoteFollows.targetHandle),
-      asc(remoteFollows.id),
-    ],
-    limit: REMOTE_FOLLOW_SCAN_LIMIT,
-    offset,
-  });
-
-  let rows = await queryBatch(remoteFollowOffset);
-  if (rows.length === 0 && remoteFollowOffset > 0) {
-    remoteFollowOffset = 0;
-    rows = await queryBatch(0);
+async function syncTarget(target: ClaimedTarget): Promise<{ handle: string; cached: number; error?: string }> {
+  try {
+    const atIndex = target.targetHandle.lastIndexOf('@');
+    const handle = target.targetHandle.slice(0, atIndex);
+    if (atIndex <= 0 || !await isSwarmNode(target.nodeDomain)) {
+      throw new Error('Target node is not an active trusted swarm peer');
+    }
+    const result = await cacheSwarmUserPosts(
+      handle,
+      target.nodeDomain,
+      target.targetHandle,
+      20,
+    );
+    if (!result.success) throw new Error('Remote profile refresh failed');
+    await finishTarget(target, { success: true });
+    return { handle: target.targetHandle, cached: result.cached };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    await finishTarget(target, { success: false, error: message });
+    return { handle: target.targetHandle, cached: 0, error: message };
   }
-
-  const targetHandles = new Set<string>();
-  let consumedRows = 0;
-  for (const follow of rows) {
-    consumedRows += 1;
-    targetHandles.add(follow.targetHandle);
-    if (targetHandles.size >= MAX_SYNC_TARGETS_PER_RUN) break;
-  }
-
-  // Advance only past rows represented by this batch. Advancing past the
-  // entire scan would permanently skip unsliced handles when fewer than the
-  // scan limit exist, and would defer extra unique handles until a full wrap.
-  remoteFollowOffset += consumedRows;
-
-  return [...targetHandles];
 }
 
 async function runRemoteFollowsSync(origin: string): Promise<SyncResult> {
   void origin;
-  const result: SyncResult = { synced: 0, skipped: 0, errors: 0, details: [] };
-  const deadlineAt = Date.now() + MAX_SYNC_RUN_MS;
-
-  try {
-    const targetHandles = await loadRemoteFollowBatch();
-
-    for (const [index, targetHandle] of targetHandles.entries()) {
-      const now = Date.now();
-      if (now >= deadlineAt) {
-        result.skipped += targetHandles.length - index;
-        break;
-      }
-
-      const syncState = targetSyncStates.get(targetHandle);
-      if (syncState && now < syncState.nextAttemptAt) {
-        result.skipped++;
-        continue;
-      }
-
-      const atIndex = targetHandle.lastIndexOf('@');
-      if (atIndex <= 0 || atIndex === targetHandle.length - 1) {
-        result.skipped++;
-        scheduleRetry(targetHandle, now);
-        continue;
-      }
-
-      const handle = targetHandle.slice(0, atIndex);
-      const domain = targetHandle.slice(atIndex + 1);
-      reserveTarget(targetHandle, now);
-
-      try {
-        if (!await isSwarmNode(domain)) {
-          result.skipped++;
-          scheduleRetry(targetHandle, Date.now());
-          continue;
-        }
-
-        const swarmResult = await cacheSwarmUserPosts(handle, domain, targetHandle, 20);
-        const cached = swarmResult.cached;
-
-        if (cached > 0 || swarmResult.skipped > 0) {
-          scheduleNextSync(targetHandle, Date.now());
-        } else {
-          // The cache API intentionally coalesces fetch failures and empty responses.
-          // Backing both off keeps an unavailable node from consuming every round.
-          scheduleRetry(targetHandle, Date.now());
-        }
-
-        if (cached > 0) {
-          result.synced++;
-          result.details.push({ handle: targetHandle, cached });
-        } else {
-          result.skipped++;
-        }
-      } catch (error) {
-        scheduleRetry(targetHandle, Date.now());
-        result.errors++;
-        result.details.push({
-          handle: targetHandle,
-          cached: 0,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
-    }
-  } catch (error) {
-    console.error('[RemoteSync] Error syncing remote follows:', error);
-    result.errors++;
-  }
-
-  return result;
+  const targets = await claimTargets();
+  const details = await mapWithConcurrency(targets, MAX_CONCURRENT_PROFILE_SYNCS, syncTarget);
+  return {
+    synced: details.filter((detail) => !detail.error).length,
+    skipped: Math.max(0, MAX_SYNC_TARGETS_PER_RUN - targets.length),
+    errors: details.filter((detail) => Boolean(detail.error)).length,
+    details,
+  };
 }
 
-/**
- * Sync a bounded batch of remote follows. Concurrent invocations share one run.
- */
+/** Sync a bounded batch. Concurrent invocations in one process share a run. */
 export function syncRemoteFollowsPosts(origin: string): Promise<SyncResult> {
   if (activeSync) return activeSync;
-
   const operation = runRemoteFollowsSync(origin);
   activeSync = operation;
-  void operation.then(
-    () => {
-      if (activeSync === operation) activeSync = null;
-    },
-    () => {
-      if (activeSync === operation) activeSync = null;
-    },
-  );
+  void operation.finally(() => {
+    if (activeSync === operation) activeSync = null;
+  });
   return operation;
 }
 
-/**
- * Clear the sync cache (useful for testing or forcing a full resync).
- */
+/** Test hook; durable scheduling state intentionally remains in the database. */
 export function clearSyncCache(): void {
-  targetSyncStates.clear();
-  remoteFollowOffset = 0;
+  activeSync = null;
 }

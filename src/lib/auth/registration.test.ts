@@ -35,6 +35,7 @@ vi.mock('@/db', () => ({
                 findFirst: mocks.findFirst,
                 findMany: mocks.findMany,
             },
+            swarmAccountTombstones: { findFirst: vi.fn().mockResolvedValue(undefined) },
         },
         transaction: mocks.transaction,
     },

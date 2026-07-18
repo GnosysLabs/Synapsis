@@ -24,6 +24,8 @@ const NODE_PUBLIC_KEY_MAX_RESPONSE_BYTES = 16 * 1024;
 const LEGACY_NODE_INFO_MAX_RESPONSE_BYTES = 256 * 1024;
 const nodePublicKeyCache = new Map<string, { publicKey: string; expiresAt: number }>();
 const pendingNodePublicKeyRequests = new Map<string, Promise<string | null>>();
+const parsedPublicKeyCache = new Map<string, crypto.KeyObject>();
+let parsedPrivateKeyCache: { source: string; key: crypto.KeyObject } | null = null;
 const MAX_CONCURRENT_SWARM_VERIFICATIONS = 32;
 const MAX_CONCURRENT_FIRST_CONTACT_VERIFICATIONS = 4;
 const MAX_PREAUTH_SWARM_VERIFICATIONS_PER_MINUTE = 1_200;
@@ -68,20 +70,33 @@ export function signPayload(payload: unknown, privateKey: string): string {
   const sign = crypto.createSign('SHA256');
   sign.update(canonicalPayload);
   sign.end();
-  return sign.sign(privateKey, 'base64');
+  if (!parsedPrivateKeyCache || parsedPrivateKeyCache.source !== privateKey) {
+    parsedPrivateKeyCache = { source: privateKey, key: crypto.createPrivateKey(privateKey) };
+  }
+  return sign.sign(parsedPrivateKeyCache.key, 'base64');
 }
 
-function normalizePublicKey(publicKey: string): crypto.KeyObject | string {
-  if (publicKey.includes('BEGIN PUBLIC KEY')) {
-    return publicKey;
+function normalizePublicKey(publicKey: string): crypto.KeyObject {
+  const cached = parsedPublicKeyCache.get(publicKey);
+  if (cached) {
+    parsedPublicKeyCache.delete(publicKey);
+    parsedPublicKeyCache.set(publicKey, cached);
+    return cached;
   }
 
-  const cleanKey = publicKey.replace(/[\s\n\r]/g, '');
-  return crypto.createPublicKey({
-    key: Buffer.from(cleanKey, 'base64'),
-    format: 'der',
-    type: 'spki',
-  });
+  const key = publicKey.includes('BEGIN PUBLIC KEY')
+    ? crypto.createPublicKey(publicKey)
+    : crypto.createPublicKey({
+        key: Buffer.from(publicKey.replace(/[\s\n\r]/g, ''), 'base64'),
+        format: 'der',
+        type: 'spki',
+      });
+  if (parsedPublicKeyCache.size >= MAX_NODE_PUBLIC_KEY_CACHE_ENTRIES) {
+    const oldest = parsedPublicKeyCache.keys().next().value as string | undefined;
+    if (oldest) parsedPublicKeyCache.delete(oldest);
+  }
+  parsedPublicKeyCache.set(publicKey, key);
+  return key;
 }
 
 /**
@@ -171,23 +186,39 @@ export async function getNodePublicKey(domain: string): Promise<string | null> {
   }
 }
 
-/**
- * Verify a swarm request signature
- * 
- * @param payload - The request payload (without signature field)
- * @param signature - The signature to verify
- * @param senderDomain - The domain of the sender node
- * @returns true if signature is valid, false otherwise
- */
-export async function verifySwarmRequest(
+export type SwarmVerificationFailureReason =
+  | 'invalid'
+  | 'blocked'
+  | 'overloaded'
+  | 'identity-unavailable';
+
+export type SwarmVerificationResult =
+  | { ok: true; domain: string }
+  | {
+      ok: false;
+      reason: SwarmVerificationFailureReason;
+      status: 403 | 429 | 503;
+      retryAfterSeconds?: number;
+    };
+
+function verificationFailure(
+  reason: SwarmVerificationFailureReason,
+  status: 403 | 429 | 503,
+  retryAfterSeconds?: number,
+): SwarmVerificationResult {
+  return { ok: false, reason, status, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
+}
+
+/** Verify a swarm signature while distinguishing rejection from capacity loss. */
+export async function verifySwarmRequestDetailed(
   payload: unknown,
   signature: string,
   senderDomain: string
-): Promise<boolean> {
+): Promise<SwarmVerificationResult> {
   const target = resolveFederationDomain(senderDomain);
   if (!target) {
     console.warn(`[Signature] Rejected non-public swarm node ${senderDomain}`);
-    return false;
+    return verificationFailure('invalid', 403);
   }
   const normalizedDomain = target.domain;
 
@@ -202,11 +233,11 @@ export async function verifySwarmRequest(
     60 * 1_000,
   )) {
     console.warn('[Signature] Global pre-authentication capacity exceeded');
-    return false;
+    return verificationFailure('overloaded', 429, 60);
   }
   if (await isNodeBlocked(normalizedDomain)) {
     console.warn(`[Signature] Rejected blocked node ${normalizedDomain}`);
-    return false;
+    return verificationFailure('blocked', 403);
   }
 
   const pinnedPublicKey = await getPinnedSwarmNodePublicKey(normalizedDomain);
@@ -221,7 +252,7 @@ export async function verifySwarmRequest(
       || isRateLimited('swarm-signature-first-contact-global', 120, 60 * 1_000)
     ))) {
     console.warn(`[Signature] Verification capacity exceeded for ${normalizedDomain}`);
-    return false;
+    return verificationFailure('overloaded', 503, 1);
   }
 
   activeSwarmVerifications += 1;
@@ -232,16 +263,18 @@ export async function verifySwarmRequest(
     const publicKey = pinnedPublicKey ?? await getNodePublicKey(normalizedDomain);
     if (!publicKey) {
       console.error(`[Signature] Could not get public key for ${senderDomain}`);
-      return false;
+      return verificationFailure('identity-unavailable', 503, 5);
     }
 
-    if (!verifySignature(payload, signature, publicKey)) return false;
+    if (!verifySignature(payload, signature, publicKey)) {
+      return verificationFailure('invalid', 403);
+    }
 
     // The signature has now authenticated normalizedDomain, so this bucket
     // cannot be poisoned by a request merely claiming to come from that peer.
     if (isRateLimited(`swarm-signature-node:${normalizedDomain}`, 600, 60 * 1_000)) {
       console.warn(`[Signature] Verification capacity exceeded for ${normalizedDomain}`);
-      return false;
+      return verificationFailure('overloaded', 429, 60);
     }
 
     // First-contact material remains ephemeral until it has successfully
@@ -250,13 +283,22 @@ export async function verifySwarmRequest(
       await pinSwarmNodePublicKey(normalizedDomain, publicKey);
     } catch (error) {
       console.warn(`[Signature] Could not pin verified node identity for ${normalizedDomain}`, error);
-      return false;
+      return verificationFailure('invalid', 403);
     }
-    return true;
+    return { ok: true, domain: normalizedDomain };
   } finally {
     activeSwarmVerifications -= 1;
     if (isFirstContact) activeFirstContactVerifications -= 1;
   }
+}
+
+/** Compatibility wrapper for callers that only need a boolean decision. */
+export async function verifySwarmRequest(
+  payload: unknown,
+  signature: string,
+  senderDomain: string,
+): Promise<boolean> {
+  return (await verifySwarmRequestDetailed(payload, signature, senderDomain)).ok;
 }
 
 /**

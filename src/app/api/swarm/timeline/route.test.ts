@@ -4,7 +4,9 @@ const mocks = vi.hoisted(() => ({
   select: vi.fn(),
   and: vi.fn((...conditions: unknown[]) => ({ operator: 'and', conditions })),
   notLike: vi.fn((column: unknown, pattern: string) => ({ operator: 'notLike', column, pattern })),
-  like: vi.fn((column: unknown, pattern: string) => ({ operator: 'like', column, pattern })),
+  inArray: vi.fn((column: unknown, values: unknown[]) => ({ operator: 'inArray', column, values })),
+  gt: vi.fn((column: unknown, value: unknown) => ({ operator: 'gt', column, value })),
+  searchIndexedPostIds: vi.fn(),
   requireLocalNodeNsfwClassification: vi.fn(),
   isTrustedFederationRead: vi.fn(),
 }));
@@ -20,12 +22,16 @@ vi.mock('@/db', () => {
       query: {
         remoteReposts: { findMany: vi.fn() },
         posts: { findMany: vi.fn() },
+        swarmContentClock: { findFirst: vi.fn().mockResolvedValue({ sequence: 0 }) },
       },
     },
     posts: columns,
     users: columns,
     media: columns,
     remoteReposts: columns,
+    feedStories: columns,
+    swarmPostChanges: columns,
+    swarmAccountTombstones: columns,
   };
 });
 
@@ -35,13 +41,15 @@ vi.mock('drizzle-orm', () => {
 
   return {
     eq: expression('eq'),
+    asc: expression('asc'),
     desc: expression('desc'),
+    gt: mocks.gt,
     and: mocks.and,
     isNull: expression('isNull'),
     lt: expression('lt'),
-    inArray: expression('inArray'),
-    like: mocks.like,
+    inArray: mocks.inArray,
     notLike: mocks.notLike,
+    or: expression('or'),
     sql,
   };
 });
@@ -66,14 +74,18 @@ vi.mock('@/lib/nsfw/content-visibility', () => ({
   redactSensitivePostForViewer: vi.fn((post) => post),
 }));
 
+vi.mock('@/lib/search/post-index', () => ({
+  searchIndexedPostIds: mocks.searchIndexedPostIds,
+}));
+
 import { GET } from './route';
 
-function emptySelectBuilder() {
+function emptySelectBuilder(rows: unknown[] = []) {
   const builder: Record<string, ReturnType<typeof vi.fn>> = {};
   for (const method of ['from', 'innerJoin', 'where', 'groupBy', 'orderBy']) {
     builder[method] = vi.fn(() => builder);
   }
-  builder.limit = vi.fn().mockResolvedValue([]);
+  builder.limit = vi.fn().mockResolvedValue(rows);
   return builder;
 }
 
@@ -83,14 +95,12 @@ describe('GET /api/swarm/timeline local-author boundary', () => {
     vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'local.example');
     mocks.requireLocalNodeNsfwClassification.mockResolvedValue(false);
     mocks.isTrustedFederationRead.mockResolvedValue(true);
+    mocks.searchIndexedPostIds.mockResolvedValue([]);
   });
 
-  it('excludes qualified cached-remote handles from both timeline source queries', async () => {
-    const recentPostsQuery = emptySelectBuilder();
-    const remoteActivityQuery = emptySelectBuilder();
-    mocks.select
-      .mockReturnValueOnce(recentPostsQuery)
-      .mockReturnValueOnce(remoteActivityQuery);
+  it('excludes qualified cached-remote handles from the indexed story query', async () => {
+    const storyQuery = emptySelectBuilder();
+    mocks.select.mockReturnValueOnce(storyQuery);
 
     const response = await GET(
       new Request('https://local.example/api/swarm/timeline') as never,
@@ -98,29 +108,26 @@ describe('GET /api/swarm/timeline local-author boundary', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ posts: [] });
-    expect(mocks.notLike).toHaveBeenCalledTimes(2);
-    expect(mocks.notLike).toHaveBeenNthCalledWith(1, 'handle', '%@%');
-    expect(mocks.notLike).toHaveBeenNthCalledWith(2, 'handle', '%@%');
-    expect(recentPostsQuery.where).toHaveBeenCalledOnce();
-    expect(remoteActivityQuery.where).toHaveBeenCalledOnce();
+    expect(mocks.notLike).toHaveBeenCalledOnce();
+    expect(mocks.notLike).toHaveBeenCalledWith('handle', '%@%');
+    expect(storyQuery.where).toHaveBeenCalledOnce();
   });
 
-  it('applies a post-content query to both timeline source queries', async () => {
-    const recentPostsQuery = emptySelectBuilder();
-    const remoteActivityQuery = emptySelectBuilder();
-    mocks.select
-      .mockReturnValueOnce(recentPostsQuery)
-      .mockReturnValueOnce(remoteActivityQuery);
+  it('applies a word-index result to the materialized story query', async () => {
+    const storyQuery = emptySelectBuilder();
+    mocks.select.mockReturnValueOnce(storyQuery);
+    mocks.searchIndexedPostIds.mockResolvedValue(['post-1']);
 
     const response = await GET(
       new Request('https://local.example/api/swarm/timeline?q=Yolked') as never,
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.like).toHaveBeenCalledOnce();
-    expect(mocks.like).toHaveBeenCalledWith('content', '%Yolked%');
-    const searchCondition = mocks.like.mock.results[0]?.value;
+    expect(mocks.searchIndexedPostIds).toHaveBeenCalledWith('local', 'Yolked');
+    expect(mocks.inArray).toHaveBeenCalledWith('id', ['post-1']);
+    const searchCondition = mocks.inArray.mock.results[0]?.value;
     expect(mocks.and).toHaveBeenCalledWith(
+      expect.anything(),
       expect.anything(),
       expect.anything(),
       expect.anything(),
@@ -128,5 +135,90 @@ describe('GET /api/swarm/timeline local-author boundary', () => {
       expect.anything(),
       searchCondition,
     );
+  });
+
+  it('returns unseen activity oldest-first when a sync bookmark is supplied', async () => {
+    const storyQuery = emptySelectBuilder();
+    mocks.select.mockReturnValueOnce(storyQuery);
+
+    const response = await GET(new Request(
+      'https://local.example/api/swarm/timeline?since=2026-07-18T00%3A00%3A00.000Z&sinceId=post-1',
+    ) as never);
+
+    expect(response.status).toBe(200);
+    expect(mocks.gt).toHaveBeenCalledWith('latestActivityAt', new Date('2026-07-18T00:00:00.000Z'));
+    expect(mocks.gt).toHaveBeenCalledWith('storyId', 'post-1');
+    expect(storyQuery.orderBy).toHaveBeenCalledWith(
+      { operator: 'asc', values: ['latestActivityAt'] },
+      { operator: 'asc', values: ['storyId'] },
+    );
+  });
+
+  it('returns authenticated deletion tombstones after a change cursor', async () => {
+    mocks.select
+      .mockReturnValueOnce(emptySelectBuilder([{
+        storyId: 'deleted-post',
+        sequence: 42,
+        changeType: 'delete',
+        changedAt: new Date('2026-07-18T01:00:00.000Z'),
+      }]))
+      .mockReturnValueOnce(emptySelectBuilder());
+
+    const response = await GET(new Request(
+      'https://local.example/api/swarm/timeline?changesSince=41',
+    ) as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      posts: [],
+      changeCursor: 42,
+      hasMoreChanges: false,
+      changes: [{
+        sequence: 42,
+        type: 'delete',
+        postId: 'deleted-post',
+      }],
+    });
+  });
+
+  it('does not expose the change stream to unauthenticated scrapers', async () => {
+    mocks.isTrustedFederationRead.mockResolvedValue(false);
+    const response = await GET(new Request(
+      'https://local.example/api/swarm/timeline?changesSince=0',
+    ) as never);
+    expect(response.status).toBe(401);
+  });
+
+  it('returns durable account tombstones after an account cursor', async () => {
+    mocks.select
+      .mockReturnValueOnce(emptySelectBuilder([{
+        handle: 'alice',
+        did: 'did:key:alice-deleted-identity',
+        sequence: 51,
+        deletedAt: new Date('2026-07-18T02:00:00.000Z'),
+      }]))
+      .mockReturnValueOnce(emptySelectBuilder());
+
+    const response = await GET(new Request(
+      'https://local.example/api/swarm/timeline?accountsSince=50',
+    ) as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      accountChanges: [{
+        sequence: 51,
+        handle: 'alice',
+        did: 'did:key:alice-deleted-identity',
+      }],
+      hasMoreAccountChanges: false,
+    });
+  });
+
+  it('does not expose account tombstones to unauthenticated scrapers', async () => {
+    mocks.isTrustedFederationRead.mockResolvedValue(false);
+    const response = await GET(new Request(
+      'https://local.example/api/swarm/timeline?accountsSince=0',
+    ) as never);
+    expect(response.status).toBe(401);
   });
 });

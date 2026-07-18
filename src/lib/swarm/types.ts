@@ -14,6 +14,7 @@ export interface SwarmNodeInfo {
   userCount?: number;
   postCount?: number;
   mediaCount?: number;
+  contentSequence?: number;
   capabilities?: SwarmCapability[];
   isNsfw?: boolean;
   lastSeenAt?: string;
@@ -33,6 +34,7 @@ export interface SwarmAnnouncement {
   userCount: number;
   postCount: number;
   mediaCount: number;
+  contentSequence: number;
   capabilities: SwarmCapability[];
   isNsfw: boolean;
   timestamp: string;
