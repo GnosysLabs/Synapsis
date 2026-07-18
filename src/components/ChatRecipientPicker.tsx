@@ -245,7 +245,7 @@ export function ChatRecipientPicker({ currentUserHandle, onClose, onSelect }: Ch
                 </div>
 
                 <footer className="chat-recipient-picker-footer">
-                    Search a full <strong>@name@node.example</strong> handle to find someone on another Synapsis node.
+                    Search by name or <strong>@handle</strong> across Synapsis nodes.
                 </footer>
             </div>
         </div>,

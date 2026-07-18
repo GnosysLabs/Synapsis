@@ -9,6 +9,7 @@ import { Post } from '@/lib/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
+import { getLiveSearchQuery, LIVE_SEARCH_DEBOUNCE_MS } from '@/lib/search/live-search';
 
 interface User {
     id: string;
@@ -90,9 +91,11 @@ export default function SearchPage() {
     const [users, setUsers] = useState<User[]>([]);
     const [posts, setPosts] = useState<Post[]>([]);
     const [loading, setLoading] = useState(false);
+    const [searchedQuery, setSearchedQuery] = useState('');
     const [activeTab, setActiveTab] = useState<'all' | 'users' | 'posts'>('all');
+    const liveSearchQuery = getLiveSearchQuery(query);
 
-    const search = useCallback(async (q: string, type: string = 'all') => {
+    const search = useCallback(async (q: string, type: string, signal: AbortSignal) => {
         if (!q.trim()) {
             setUsers([]);
             setPosts([]);
@@ -101,36 +104,56 @@ export default function SearchPage() {
 
         setLoading(true);
         try {
-            const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&type=${type}`);
+            const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&type=${type}`, {
+                cache: 'no-store',
+                signal,
+            });
+            if (!res.ok) throw new Error('Search failed');
             const data = await res.json();
+            if (signal.aborted) return;
+            setSearchedQuery(q);
             setUsers(data.users || []);
             setPosts(data.posts || []);
-        } catch {
-            console.error('Search failed');
+        } catch (error) {
+            if (!signal.aborted) console.error('Search failed', error);
         } finally {
-            setLoading(false);
+            if (!signal.aborted) setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        if (initialQuery) {
-            search(initialQuery, activeTab);
+        if (!liveSearchQuery) {
+            setUsers([]);
+            setPosts([]);
+            setSearchedQuery('');
+            setLoading(false);
+            return;
         }
-    }, [initialQuery, activeTab, search]);
+
+        const controller = new AbortController();
+        setLoading(true);
+        setSearchedQuery(liveSearchQuery);
+        setUsers([]);
+        setPosts([]);
+        const timeout = window.setTimeout(() => {
+            void search(liveSearchQuery, activeTab, controller.signal);
+        }, LIVE_SEARCH_DEBOUNCE_MS);
+
+        return () => {
+            window.clearTimeout(timeout);
+            controller.abort();
+        };
+    }, [activeTab, liveSearchQuery, search]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (query.trim()) {
-            router.push(`/search?q=${encodeURIComponent(query)}`);
-            search(query, activeTab);
+        if (liveSearchQuery) {
+            router.replace(`/search?q=${encodeURIComponent(liveSearchQuery)}`, { scroll: false });
         }
     };
 
     const handleTabChange = (tab: 'all' | 'users' | 'posts') => {
         setActiveTab(tab);
-        if (query.trim()) {
-            search(query, tab);
-        }
     };
 
     const handleLike = async (postId: string, currentLiked: boolean) => {
@@ -234,13 +257,13 @@ export default function SearchPage() {
                 <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
                     Searching...
                 </div>
-            ) : !initialQuery ? (
+            ) : !liveSearchQuery ? (
                 <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
                     <p>Search for users and posts</p>
                 </div>
             ) : users.length === 0 && posts.length === 0 ? (
                 <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
-                    <p>No results for &ldquo;{initialQuery}&rdquo;</p>
+                    <p>No results for &ldquo;{searchedQuery}&rdquo;</p>
                 </div>
             ) : (
                 <>

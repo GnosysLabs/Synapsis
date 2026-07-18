@@ -459,6 +459,55 @@ export const notifications = sqliteTable('notifications', {
   uniqueIndex('notifications_interaction_unique_idx').on(table.interactionId),
 ]);
 
+// ============================================
+// NATIVE PUSH NOTIFICATIONS
+// ============================================
+
+/**
+ * A device subscription belongs to an authenticated local user, but contains
+ * only an opaque relay subscription ID and encrypted, delivery-only bearer
+ * token. APNs device tokens and Apple credentials never reach community nodes.
+ */
+export const pushSubscriptions = sqliteTable('push_subscriptions', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  installationId: text('installation_id').notNull(),
+  relaySubscriptionId: text('relay_subscription_id').notNull(),
+  relayDeliveryTokenEncrypted: text('relay_delivery_token_encrypted').notNull(),
+  environment: text('environment').notNull(), // sandbox | production
+  topic: text('topic').notNull(),
+  followEnabled: integer('follow_enabled', { mode: 'boolean' }).default(true).notNull(),
+  replyEnabled: integer('reply_enabled', { mode: 'boolean' }).default(true).notNull(),
+  mentionEnabled: integer('mention_enabled', { mode: 'boolean' }).default(true).notNull(),
+  likeEnabled: integer('like_enabled', { mode: 'boolean' }).default(true).notNull(),
+  repostEnabled: integer('repost_enabled', { mode: 'boolean' }).default(true).notNull(),
+  disabledAt: integer('disabled_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('push_subscriptions_user_installation_unique_idx').on(table.userId, table.installationId),
+  index('push_subscriptions_user_idx').on(table.userId),
+  index('push_subscriptions_relay_idx').on(table.relaySubscriptionId),
+]);
+
+/** Durable per-device work created automatically whenever a notification is inserted. */
+export const pushDeliveries = sqliteTable('push_deliveries', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  notificationId: text('notification_id').notNull().references(() => notifications.id, { onDelete: 'cascade' }),
+  subscriptionId: text('subscription_id').notNull().references(() => pushSubscriptions.id, { onDelete: 'cascade' }),
+  status: text('status').default('pending').notNull(), // pending | processing | retry | delivered | dead
+  attempts: integer('attempts').default(0).notNull(),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  lastAttemptAt: integer('last_attempt_at', { mode: 'timestamp' }),
+  deliveredAt: integer('delivered_at', { mode: 'timestamp' }),
+  lastError: text('last_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('push_deliveries_notification_subscription_unique_idx').on(table.notificationId, table.subscriptionId),
+  index('push_deliveries_due_idx').on(table.status, table.nextAttemptAt),
+]);
+
 
 // ============================================
 // MENTION DELIVERY OUTBOX

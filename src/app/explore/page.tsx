@@ -13,6 +13,7 @@ import { ANONYMOUS_APP_DESTINATION } from '@/lib/posts/home-feed';
 import { EXPLORE_FEED_API_TYPE, EXPLORE_TABS, type ExploreTab } from '@/lib/posts/explore-feed';
 import type { Post, User } from '@/lib/types';
 import { useFormattedHandle } from '@/lib/utils/handle';
+import { getLiveSearchQuery, LIVE_SEARCH_DEBOUNCE_MS } from '@/lib/search/live-search';
 
 function UserCard({ user }: { user: User }) {
     const fullHandle = useFormattedHandle(user.handle);
@@ -52,9 +53,11 @@ export default function ExplorePage() {
     const [query, setQuery] = useState('');
     const [searching, setSearching] = useState(false);
     const [hasSearched, setHasSearched] = useState(false);
+    const [searchedQuery, setSearchedQuery] = useState('');
     const [searchResults, setSearchResults] = useState<{ posts: Post[]; users: User[] }>({ posts: [], users: [] });
     const loadMoreRef = useRef<HTMLDivElement>(null);
     const loadingCursorRef = useRef<string | null>(null);
+    const liveSearchQuery = getLiveSearchQuery(query);
 
     const loadExplore = useCallback(async (cursor: string | null = null) => {
         if (cursor && loadingCursorRef.current === cursor) return;
@@ -154,31 +157,52 @@ export default function ExplorePage() {
         setHasSearched(false);
     };
 
-    const handleSearch = async (event: React.FormEvent) => {
-        event.preventDefault();
-        const trimmedQuery = query.trim();
-
-        if (!trimmedQuery) {
+    useEffect(() => {
+        if (!user || !liveSearchQuery) {
             setHasSearched(false);
+            setSearching(false);
+            setSearchedQuery('');
+            setSearchResults({ posts: [], users: [] });
             return;
         }
 
+        const controller = new AbortController();
         setHasSearched(true);
         setSearching(true);
+        setSearchResults({ posts: [], users: [] });
+        const timeout = window.setTimeout(async () => {
+            try {
+                const response = await fetch(`/api/search?q=${encodeURIComponent(liveSearchQuery)}`, {
+                    cache: 'no-store',
+                    signal: controller.signal,
+                });
+                if (!response.ok) throw new Error('Search failed');
+                const data = await response.json();
+                if (controller.signal.aborted) return;
+                setSearchedQuery(liveSearchQuery);
+                setSearchResults({
+                    posts: data.posts || [],
+                    users: data.users || [],
+                });
+            } catch (error) {
+                if (!controller.signal.aborted) {
+                    console.error('Search failed', error);
+                    setSearchedQuery(liveSearchQuery);
+                    setSearchResults({ posts: [], users: [] });
+                }
+            } finally {
+                if (!controller.signal.aborted) setSearching(false);
+            }
+        }, LIVE_SEARCH_DEBOUNCE_MS);
 
-        try {
-            const response = await fetch(`/api/search?q=${encodeURIComponent(trimmedQuery)}`);
-            if (!response.ok) throw new Error('Search failed');
-            const data = await response.json();
-            setSearchResults({
-                posts: data.posts || [],
-                users: data.users || [],
-            });
-        } catch {
-            setSearchResults({ posts: [], users: [] });
-        } finally {
-            setSearching(false);
-        }
+        return () => {
+            window.clearTimeout(timeout);
+            controller.abort();
+        };
+    }, [liveSearchQuery, user]);
+
+    const handleSearch = (event: React.FormEvent) => {
+        event.preventDefault();
     };
 
     const handleLike = async (postId: string, currentLiked: boolean) => {
@@ -222,7 +246,7 @@ export default function ExplorePage() {
             return (
                 <div className="explore-empty">
                     <SearchIcon />
-                    <p>No results found for &ldquo;{query.trim()}&rdquo;</p>
+                    <p>No results found for &ldquo;{searchedQuery}&rdquo;</p>
                 </div>
             );
         }
@@ -355,7 +379,6 @@ export default function ExplorePage() {
                         value={query}
                         onChange={(event) => {
                             setQuery(event.target.value);
-                            if (!event.target.value.trim()) setHasSearched(false);
                         }}
                     />
                 </form>

@@ -9,7 +9,7 @@ import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 
 const querySchema = z.object({
-  q: z.string().max(30).regex(/^[a-zA-Z0-9_]*$/),
+  q: z.string().max(30).regex(/^[a-zA-Z0-9_ -]*$/),
   limit: z.coerce.number().int().min(1).max(12).default(8),
 });
 

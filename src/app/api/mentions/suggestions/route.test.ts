@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   localNodeIsNsfw: vi.fn(),
   activeNodes: vi.fn(),
   signedRead: vi.fn(),
+  searchKnownUsers: vi.fn(),
   select: vi.fn(),
 }));
 
@@ -55,6 +56,9 @@ vi.mock('@/lib/swarm/registry', () => ({
   getKnownSwarmNodeNsfw: vi.fn(),
 }));
 vi.mock('@/lib/swarm/signed-read', () => ({ signedFederationRead: mocks.signedRead }));
+vi.mock('@/lib/swarm/user-directory-search', () => ({
+  searchKnownSwarmUsers: mocks.searchKnownUsers,
+}));
 vi.mock('@/lib/swarm/interactions', () => ({ isSwarmNode: vi.fn().mockResolvedValue(true) }));
 vi.mock('@/lib/swarm/discovery', () => ({ discoverNode: vi.fn() }));
 
@@ -73,6 +77,26 @@ describe('GET /api/mentions/suggestions', () => {
     mocks.activeNodes.mockResolvedValue([
       { domain: 'one.com', isNsfw: false },
       { domain: 'two.com', isNsfw: false },
+    ]);
+    mocks.searchKnownUsers.mockResolvedValue([
+      {
+        handle: 'alex@one.com',
+        displayName: 'Alex Remote',
+        avatarUrl: null,
+        isRemote: true,
+        nodeDomain: 'one.com',
+        isNsfw: false,
+        nodeIsNsfw: false,
+      },
+      {
+        handle: 'alina@two.com',
+        displayName: 'Alina Remote',
+        avatarUrl: null,
+        isRemote: true,
+        nodeDomain: 'two.com',
+        isNsfw: false,
+        nodeIsNsfw: false,
+      },
     ]);
     mocks.select.mockImplementation((selection: Record<string, unknown>) => {
       if ('blockedUserId' in selection || 'mutedUserId' in selection || 'nodeDomain' in selection) {
@@ -117,10 +141,13 @@ describe('GET /api/mentions/suggestions', () => {
         { handle: 'alina@two.com', isRemote: true },
       ],
     });
-    expect(mocks.signedRead).toHaveBeenCalledTimes(2);
-    expect(mocks.signedRead).toHaveBeenCalledWith(
-      'https://one.com/api/swarm/users?q=al&limit=4',
-      expect.objectContaining({ timeoutMs: 1_500 }),
+    expect(mocks.searchKnownUsers).toHaveBeenCalledWith(
+      'al',
+      expect.objectContaining({
+        limit: 4,
+        localDomain: 'local.com',
+        timeoutMs: 1_500,
+      }),
     );
   });
 });

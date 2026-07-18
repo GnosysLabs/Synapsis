@@ -13,10 +13,12 @@ import { getSwarmStats } from '@/lib/swarm/registry';
 import { syncRemoteFollowsPosts } from '@/lib/background/remote-sync';
 import { isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { processMentionDeliveryOutbox } from '@/lib/mentions/delivery';
+import { processPushDeliveryOutbox } from '@/lib/push/delivery';
 
 const GOSSIP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const REMOTE_SYNC_INTERVAL_MS = 60 * 1000; // 1 minute - keep feeds fresh
 const MENTION_DELIVERY_INTERVAL_MS = 30 * 1000;
+const PUSH_DELIVERY_INTERVAL_MS = 15 * 1000;
 const STARTUP_DELAY_MS = 10 * 1000; // Wait 10s for server to be ready
 
 let isStarted = false;
@@ -38,6 +40,17 @@ async function runMentionDeliveries() {
     }
   } catch (error) {
     log('MENTIONS', `Outbox error: ${error}`);
+  }
+}
+
+async function runPushDeliveries() {
+  try {
+    const result = await processPushDeliveryOutbox();
+    if (result.delivered > 0 || result.retried > 0 || result.dead > 0) {
+      log('PUSH', `Delivered ${result.delivered}, retrying ${result.retried}, dead-lettered ${result.dead}`);
+    }
+  } catch (error) {
+    log('PUSH', `Outbox error: ${error}`);
   }
 }
 
@@ -117,12 +130,14 @@ export function startBackgroundTasks(origin?: string) {
     }
     
     await runMentionDeliveries();
+    await runPushDeliveries();
     
     // Run initial remote sync (after 15s to let server stabilize)
     setTimeout(() => runRemoteSync(syncOrigin), 15 * 1000);
     
     // Schedule recurring tasks
     setInterval(runMentionDeliveries, MENTION_DELIVERY_INTERVAL_MS);
+    setInterval(runPushDeliveries, PUSH_DELIVERY_INTERVAL_MS);
     if (publicSwarmEnabled) {
       setInterval(runSwarmGossip, GOSSIP_INTERVAL_MS);
     }

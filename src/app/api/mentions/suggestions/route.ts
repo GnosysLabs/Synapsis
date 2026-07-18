@@ -4,12 +4,10 @@ import { z } from 'zod';
 
 import { db, blocks, mutedNodes, mutes, remoteFollows, users } from '@/db';
 import { requireAuth } from '@/lib/auth';
-import { discoverNode } from '@/lib/swarm/discovery';
-import { isSwarmNode } from '@/lib/swarm/interactions';
-import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
-import { signedFederationRead } from '@/lib/swarm/signed-read';
-import { getActiveSwarmNodes, getKnownSwarmNodeNsfw } from '@/lib/swarm/registry';
+import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
+import { fetchSwarmUserDirectory } from '@/lib/swarm/user-directory';
+import { searchKnownSwarmUsers } from '@/lib/swarm/user-directory-search';
 import { isValidNodeDomain } from '@/lib/utils/federation';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
@@ -24,18 +22,6 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(12).default(8),
 });
 
-const remoteDirectorySchema = z.object({
-  users: z.array(z.object({
-    handle: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
-    displayName: z.string().max(100).nullable(),
-    avatarUrl: z.string().url().nullable(),
-    isNsfw: z.boolean().optional(),
-    nodeIsNsfw: z.boolean().optional(),
-  })).max(12),
-});
-
-const MENTION_SWARM_NODE_LIMIT = 12;
-const MENTION_SWARM_RESULTS_PER_NODE = 4;
 const MENTION_SWARM_TIMEOUT_MS = 1_500;
 
 async function excludedLocalUserIds(viewerId: string): Promise<Set<string>> {
@@ -102,50 +88,6 @@ async function mutedNodeDomains(viewerId: string): Promise<Set<string>> {
     .from(mutedNodes)
     .where(eq(mutedNodes.userId, viewerId));
   return new Set(rows.map((row) => normalizeNodeDomain(row.nodeDomain)));
-}
-
-async function fetchRemoteSuggestions(
-  handleQuery: string,
-  domain: string,
-  limit: number,
-  options: {
-    knownNode?: boolean;
-    nodeIsNsfw?: boolean;
-    timeoutMs?: number;
-  } = {},
-): Promise<MentionSuggestion[]> {
-  let known = options.knownNode === true || await isSwarmNode(domain);
-  if (!known) known = (await discoverNode(domain)).success;
-  if (!known) return [];
-
-  const publicDomain = getPublicSwarmDomain(domain);
-  const isDevelopmentLoopback = process.env.NODE_ENV === 'development'
-    && /^(?:localhost|127\.0\.0\.1)(?::\d{1,5})?$/.test(domain);
-  if (!publicDomain && !isDevelopmentLoopback) return [];
-
-  const protocol = isDevelopmentLoopback ? 'http' : 'https';
-  const url = new URL('/api/swarm/users', `${protocol}://${publicDomain || domain}`);
-  url.searchParams.set('q', handleQuery);
-  url.searchParams.set('limit', String(limit));
-  const response = await signedFederationRead(url.toString(), {
-    headers: { Accept: 'application/json' },
-    maxResponseBytes: 64 * 1024,
-    timeoutMs: options.timeoutMs ?? 4_000,
-  });
-  if (response.status < 200 || response.status >= 300) return [];
-
-  const parsed = remoteDirectorySchema.safeParse(response.json());
-  if (!parsed.success) return [];
-  const registryNodeIsNsfw = typeof options.nodeIsNsfw === 'boolean'
-    ? options.nodeIsNsfw
-    : await getKnownSwarmNodeNsfw(domain);
-  return parsed.data.users.map((user) => ({
-    ...user,
-    handle: `${user.handle.toLowerCase()}@${domain}`,
-    isRemote: true,
-    nodeDomain: domain,
-    nodeIsNsfw: registryNodeIsNsfw === true ? true : user.nodeIsNsfw,
-  }));
 }
 
 async function excludeBlockedRemoteSuggestions(
@@ -215,7 +157,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ suggestions: [] });
       }
 
-      const suggestions = await fetchRemoteSuggestions(handleQuery, domain, parsed.data.limit);
+      const suggestions = await fetchSwarmUserDirectory(handleQuery, domain, parsed.data.limit);
       return NextResponse.json({
         suggestions: redactSuggestions(
           await excludeBlockedRemoteSuggestions(suggestions, excludedIds),
@@ -224,7 +166,7 @@ export async function GET(request: NextRequest) {
     }
 
     const local = await localSuggestions(query, parsed.data.limit, excludedIds, localNodeIsNsfw);
-    const [mutedDomains, knownRemote, activeNodes] = await Promise.all([
+    const [mutedDomains, knownRemote] = await Promise.all([
       mutedNodeDomains(viewer.id),
       db.select({
       handle: remoteFollows.targetHandle,
@@ -240,7 +182,6 @@ export async function GET(request: NextRequest) {
           ),
         ))
         .limit(parsed.data.limit),
-      getActiveSwarmNodes(MENTION_SWARM_NODE_LIMIT),
     ]);
 
     const seen = new Set(local.map((item) => item.handle.toLowerCase()));
@@ -259,22 +200,12 @@ export async function GET(request: NextRequest) {
     });
 
     const localDomain = normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || '');
-    const searchableNodes = activeNodes.filter((node) => {
-      const domain = normalizeNodeDomain(node.domain);
-      return domain !== localDomain && !mutedDomains.has(domain);
+    const discoveredRemote = await searchKnownSwarmUsers(query, {
+      limit: parsed.data.limit,
+      localDomain,
+      excludedDomains: mutedDomains,
+      timeoutMs: MENTION_SWARM_TIMEOUT_MS,
     });
-    const discoveredRemote = (await Promise.all(searchableNodes.map((node) => (
-      fetchRemoteSuggestions(
-        query,
-        normalizeNodeDomain(node.domain),
-        Math.min(parsed.data.limit, MENTION_SWARM_RESULTS_PER_NODE),
-        {
-          knownNode: true,
-          nodeIsNsfw: node.isNsfw,
-          timeoutMs: MENTION_SWARM_TIMEOUT_MS,
-        },
-      ).catch(() => [])
-    )))).flat();
     const remote = await excludeBlockedRemoteSuggestions(
       [...followedRemote, ...discoveredRemote],
       excludedIds,

@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
-import { db, users, posts } from '@/db';
+import { db, mutedNodes, users, posts } from '@/db';
 import { like, or, and, eq, isNull, notLike } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
+import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import type { SwarmDirectoryUser } from '@/lib/swarm/user-directory';
+import { searchKnownSwarmUsers } from '@/lib/swarm/user-directory-search';
 import { canCurrentViewerAccessSensitiveRemoteProfile } from '@/lib/nsfw/remote-profile-access';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import {
@@ -39,7 +42,49 @@ type SearchUser = {
     isRemote?: boolean;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
+    nodeDomain?: string | null;
 };
+
+const SEARCH_SWARM_TIMEOUT_MS = 1_500;
+
+function mergeSearchUsers(local: SearchUser[], remote: SearchUser[], limit: number): SearchUser[] {
+    const seen = new Set<string>();
+    const localQueue = local.filter((user) => {
+        const handle = user.handle.toLowerCase();
+        if (seen.has(handle)) return false;
+        seen.add(handle);
+        return true;
+    });
+    const remoteQueue = remote.filter((user) => {
+        const handle = user.handle.toLowerCase();
+        if (seen.has(handle)) return false;
+        seen.add(handle);
+        return true;
+    });
+    const merged: SearchUser[] = [];
+    let localIndex = 0;
+    let remoteIndex = 0;
+    while (merged.length < limit && (localIndex < localQueue.length || remoteIndex < remoteQueue.length)) {
+        if (localIndex < localQueue.length) merged.push(localQueue[localIndex++]);
+        if (merged.length < limit && remoteIndex < remoteQueue.length) merged.push(remoteQueue[remoteIndex++]);
+    }
+    return merged;
+}
+
+function toSearchUser(user: SwarmDirectoryUser): SearchUser {
+    return {
+        id: `swarm:${user.nodeDomain}:${user.handle.split('@')[0]}`,
+        handle: user.handle,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+        bio: null,
+        profileUrl: `https://${user.nodeDomain}/@${user.handle.split('@')[0]}`,
+        isRemote: true,
+        isNsfw: user.isNsfw,
+        nodeIsNsfw: user.nodeIsNsfw,
+        nodeDomain: user.nodeDomain,
+    };
+}
 
 const parseRemoteHandleQuery = (query: string): { handle: string; domain: string } | null => {
     let trimmed = query.trim();
@@ -162,6 +207,31 @@ export async function GET(request: Request) {
             }, canViewSensitive));
         }
 
+        // Search matching usernames through the replicated swarm handle directory.
+        // This is independent of post/node volume and never broadcasts a query to the whole swarm.
+        if ((type === 'all' || type === 'users') && !parseRemoteHandleQuery(query)) {
+            const directoryQuery = localSearchQuery.toLowerCase();
+            if (directoryQuery.length >= 2 && /^[a-z0-9_ -]{2,30}$/i.test(directoryQuery)) {
+                const mutedNodeRows = viewer
+                    ? await db.select({ nodeDomain: mutedNodes.nodeDomain })
+                        .from(mutedNodes)
+                        .where(eq(mutedNodes.userId, viewer.id))
+                    : [];
+                const mutedDomains = new Set(
+                    mutedNodeRows.map((row) => normalizeNodeDomain(row.nodeDomain)),
+                );
+                const remoteUsers = (await searchKnownSwarmUsers(directoryQuery, {
+                    limit,
+                    localDomain,
+                    excludedDomains: mutedDomains,
+                    timeoutMs: SEARCH_SWARM_TIMEOUT_MS,
+                }))
+                    .map(toSearchUser)
+                    .map((user) => redactSensitiveUserSummary(user, canViewSensitive));
+                searchUsers = mergeSearchUsers(searchUsers, remoteUsers, limit);
+            }
+        }
+
         // Swarm user lookup (exact handle@domain queries)
         if ((type === 'all' || type === 'users') && searchUsers.length < limit) {
             const parsedRemote = parseRemoteHandleQuery(query);
@@ -211,7 +281,7 @@ export async function GET(request: Request) {
         const moderatedIds = moderatedUsers.map((item) => item.id);
 
         // Search posts
-        if (type === 'all' || type === 'posts') {
+        if (type === 'posts' || (type === 'all' && !isHandleSearch)) {
             const postResults = await db.query.posts.findMany({
                 where: {
                     content: { like: searchPattern },
