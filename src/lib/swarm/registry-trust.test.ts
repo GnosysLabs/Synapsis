@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import crypto from 'node:crypto';
 
 const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
@@ -20,6 +21,12 @@ vi.mock('@/db', () => ({
 
 import { getTrustedSwarmReadPeerPublicKey } from './registry';
 
+const peerPublicKey = crypto.generateKeyPairSync('ec', {
+  namedCurve: 'prime256v1',
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+}).publicKey;
+
 const establishedPeer = {
   domain: 'peer.social',
   discoveredVia: 'direct',
@@ -27,7 +34,7 @@ const establishedPeer = {
   isBlocked: false,
   nsfwClassificationKnown: true,
   trustScore: 50,
-  publicKey: 'PINNED PUBLIC KEY',
+  publicKey: peerPublicKey,
 };
 
 describe('trusted swarm read peers', () => {
@@ -39,7 +46,7 @@ describe('trusted swarm read peers', () => {
     mocks.findFirst.mockResolvedValue(establishedPeer);
 
     await expect(getTrustedSwarmReadPeerPublicKey('peer.social'))
-      .resolves.toBe('PINNED PUBLIC KEY');
+      .resolves.toBe(peerPublicKey.trim());
   });
 
   it.each([

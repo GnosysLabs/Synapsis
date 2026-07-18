@@ -13,6 +13,7 @@ import { getPublicSwarmDomain } from './node-domain';
 import { safeFederationRequest } from './safe-federation-http';
 import { isRateLimited } from '@/lib/rate-limit';
 import { getPinnedSwarmNodePublicKey, pinSwarmNodePublicKey } from './registry';
+import { normalizeSwarmNodePublicKey } from './node-public-key';
 
 const NODE_PUBLIC_KEY_CACHE_TTL_MS = 60_000;
 const MAX_NODE_PUBLIC_KEY_CACHE_ENTRIES = 1_000;
@@ -44,19 +45,6 @@ function cacheNodePublicKey(domain: string, publicKey: string): void {
     publicKey,
     expiresAt: Date.now() + NODE_PUBLIC_KEY_CACHE_TTL_MS,
   });
-}
-
-function normalizeNodePublicKey(publicKey: string): string | null {
-  try {
-    const key = crypto.createPublicKey(publicKey);
-    if (key.asymmetricKeyType !== 'ec'
-      || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1') {
-      return null;
-    }
-    return key.export({ type: 'spki', format: 'pem' }).toString();
-  } catch {
-    return null;
-  }
 }
 
 function resolveFederationDomain(domain: string): { domain: string; protocol: 'http' | 'https' } | null {
@@ -163,7 +151,7 @@ export async function getNodePublicKey(domain: string): Promise<string | null> {
 
       const data = response.json() as { publicKey?: unknown };
       const publicKey = typeof data.publicKey === 'string'
-        ? normalizeNodePublicKey(data.publicKey)
+        ? normalizeSwarmNodePublicKey(data.publicKey)
         : null;
       if (publicKey) cacheNodePublicKey(normalizedDomain, publicKey);
       return publicKey;

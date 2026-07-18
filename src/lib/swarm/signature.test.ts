@@ -51,16 +51,16 @@ describe('node public key discovery', () => {
   });
 
   it('uses a directly pinned key without following a remote key change', async () => {
-    mocks.getPinnedSwarmNodePublicKey.mockResolvedValue(publicKey);
+    mocks.getPinnedSwarmNodePublicKey.mockResolvedValue(publicKey.trim());
 
-    await expect(getNodePublicKey('pinned.example')).resolves.toBe(publicKey);
+    await expect(getNodePublicKey('pinned.example')).resolves.toBe(publicKey.trim());
     expect(mocks.safeFederationRequest).not.toHaveBeenCalled();
   });
 
   it('uses the bounded key-only endpoint', async () => {
     mocks.safeFederationRequest.mockResolvedValue(response(200, { publicKey }));
 
-    await expect(getNodePublicKey('small.example')).resolves.toBe(publicKey);
+    await expect(getNodePublicKey('small.example')).resolves.toBe(publicKey.trim());
     expect(mocks.safeFederationRequest).toHaveBeenCalledOnce();
     expect(mocks.safeFederationRequest).toHaveBeenCalledWith(
       'https://small.example/api/node/key',
@@ -74,7 +74,7 @@ describe('node public key discovery', () => {
       .mockResolvedValueOnce(response(404, {}))
       .mockResolvedValueOnce(response(200, { publicKey }));
 
-    await expect(getNodePublicKey('legacy.example')).resolves.toBe(publicKey);
+    await expect(getNodePublicKey('legacy.example')).resolves.toBe(publicKey.trim());
     expect(mocks.safeFederationRequest).toHaveBeenNthCalledWith(
       2,
       'https://legacy.example/api/node',
@@ -91,7 +91,7 @@ describe('node public key discovery', () => {
       signPayload(payload, privateKey),
       'verified.example',
     )).resolves.toBe(true);
-    expect(mocks.pinSwarmNodePublicKey).toHaveBeenCalledWith('verified.example', publicKey);
+    expect(mocks.pinSwarmNodePublicKey).toHaveBeenCalledWith('verified.example', publicKey.trim());
   });
 
   it('rejects unsupported key algorithms without persisting them', async () => {

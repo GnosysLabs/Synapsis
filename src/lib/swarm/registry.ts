@@ -14,6 +14,7 @@ import {
   isPublicSwarmDomain,
 } from './node-domain';
 import { mergePermanentNodeNsfwClassification } from '@/lib/node/nsfw-classification';
+import { normalizeSwarmNodePublicKey } from './node-public-key';
 
 interface NetworkStatNode {
   isActive: boolean;
@@ -70,7 +71,7 @@ export async function upsertSwarmNode(
   });
 
   const classificationIsAuthoritative = discoveredVia === 'announcement' || discoveredVia === 'direct';
-  const incomingKey = node.publicKey?.trim();
+  const incomingKey = normalizeSwarmNodePublicKey(node.publicKey);
   if (classificationIsAuthoritative && (!incomingKey || typeof node.isNsfw !== 'boolean')) {
     throw new Error(`Direct node identity is incomplete for ${normalizedDomain}`);
   }
@@ -120,7 +121,10 @@ export async function upsertSwarmNode(
   const existingKeyIsPinned = (existing.discoveredVia === 'direct'
     || existing.discoveredVia === 'announcement'
     || existing.discoveredVia === 'key') && Boolean(existing.publicKey);
-  if (existingKeyIsPinned && existing.publicKey !== incomingKey) {
+  const existingPinnedKey = existingKeyIsPinned
+    ? normalizeSwarmNodePublicKey(existing.publicKey)
+    : null;
+  if (existingKeyIsPinned && (!existingPinnedKey || existingPinnedKey !== incomingKey)) {
     throw new Error(`Node signing key changed for ${normalizedDomain}`);
   }
 
@@ -131,7 +135,7 @@ export async function upsertSwarmNode(
       name: node.name ?? existing.name,
       description: node.description ?? existing.description,
       logoUrl: node.logoUrl ?? existing.logoUrl,
-      publicKey: existingKeyIsPinned ? existing.publicKey : incomingKey,
+      publicKey: existingKeyIsPinned ? existingPinnedKey : incomingKey,
       softwareVersion: node.softwareVersion ?? existing.softwareVersion,
       userCount: node.userCount ?? existing.userCount,
       postCount: node.postCount ?? existing.postCount,
@@ -247,7 +251,7 @@ export async function getTrustedSwarmReadPeerPublicKey(domain: string): Promise<
     && node.nsfwClassificationKnown
     && node.publicKey
   )) return null;
-  return node.publicKey;
+  return normalizeSwarmNodePublicKey(node.publicKey);
 }
 
 /** Return a directly learned key regardless of reputation, for continuity checks. */
@@ -260,7 +264,7 @@ export async function getPinnedSwarmNodePublicKey(domain: string): Promise<strin
     || node?.discoveredVia === 'announcement'
     || node?.discoveredVia === 'key';
   return node && directlyEstablished && !node.isBlocked && node.publicKey
-    ? node.publicKey
+    ? normalizeSwarmNodePublicKey(node.publicKey)
     : null;
 }
 
@@ -268,14 +272,23 @@ export async function getPinnedSwarmNodePublicKey(domain: string): Promise<strin
 export async function pinSwarmNodePublicKey(domain: string, publicKey: string): Promise<void> {
   if (!db) return;
   const normalizedDomain = getPublicSwarmDomain(domain);
-  const normalizedKey = publicKey.trim();
+  const normalizedKey = normalizeSwarmNodePublicKey(publicKey);
   if (!normalizedDomain || !normalizedKey) throw new Error('Cannot pin an invalid node identity');
 
   const existing = await db.query.swarmNodes.findFirst({ where: { domain: normalizedDomain } });
-  if (existing?.publicKey && existing.publicKey !== normalizedKey) {
-    throw new Error(`Node signing key changed for ${normalizedDomain}`);
+  if (existing?.publicKey) {
+    const existingKey = normalizeSwarmNodePublicKey(existing.publicKey);
+    if (!existingKey || existingKey !== normalizedKey) {
+      throw new Error(`Node signing key changed for ${normalizedDomain}`);
+    }
+    if (existing.publicKey !== existingKey) {
+      await db.update(swarmNodes).set({
+        publicKey: existingKey,
+        updatedAt: new Date(),
+      }).where(eq(swarmNodes.domain, normalizedDomain));
+    }
+    return;
   }
-  if (existing?.publicKey) return;
 
   if (existing) {
     await db.update(swarmNodes).set({
@@ -301,7 +314,7 @@ export async function pinSwarmNodePublicKey(domain: string, publicKey: string): 
   }
 
   const pinned = await db.query.swarmNodes.findFirst({ where: { domain: normalizedDomain } });
-  if (pinned?.publicKey !== normalizedKey) {
+  if (normalizeSwarmNodePublicKey(pinned?.publicKey) !== normalizedKey) {
     throw new Error(`Node signing key changed for ${normalizedDomain}`);
   }
 }
