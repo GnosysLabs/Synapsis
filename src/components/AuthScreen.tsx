@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { completePostSignInNavigation } from '@/lib/auth/post-sign-in-navigation';
+import { LegalLinks } from './LegalLinks';
 
 declare global {
     interface Window {
@@ -887,9 +888,10 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                 )}
 
                 {!modal && (
-                    <p style={{ textAlign: 'center', marginTop: '24px', color: 'var(--foreground-tertiary)', fontSize: '14px' }}>
+                    <div style={{ textAlign: 'center', marginTop: '24px', color: 'var(--foreground-tertiary)', fontSize: '14px', display: 'grid', gap: '12px', justifyItems: 'center' }}>
                         <Link href="/">← Back to home</Link>
-                    </p>
+                        <LegalLinks includeContact />
+                    </div>
                 )}
             </div>
         </div>

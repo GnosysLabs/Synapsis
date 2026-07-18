@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { AvatarImage } from './AvatarImage';
 import { ProfileBanner } from './ProfileBanner';
+import { LegalLinks } from './LegalLinks';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 
 interface Admin {
@@ -236,7 +237,7 @@ export function RightSidebar() {
                         </div>
                     ))}
                 </div>
-
+                <LegalLinks className="right-sidebar-legal" includeContact />
             </div>
         </aside>
     );
