@@ -121,7 +121,16 @@ async function runSwarmContentSync() {
   try {
     const result = await syncSwarmContentBatch();
     await reconcilePostSearchIndex();
-    markBackgroundTask('contentSync', { success: true });
+    const failures = result.domains.filter((domain) => domain.error);
+    if (failures.length > 0) {
+      const detail = failures
+        .map((domain) => `${domain.domain}: ${domain.error}`)
+        .join('; ');
+      markBackgroundTask('contentSync', { success: false, error: detail });
+      log('SWARM_CONTENT', `Peer failures: ${detail}`);
+    } else {
+      markBackgroundTask('contentSync', { success: true });
+    }
     if (result.claimed > 0) {
       log('SWARM_CONTENT', `Synced ${result.synced}/${result.claimed} peers, cached ${result.cached} snapshots, failures ${result.failed}`);
     }

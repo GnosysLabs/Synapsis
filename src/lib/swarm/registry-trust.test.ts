@@ -54,13 +54,22 @@ describe('trusted swarm read peers', () => {
     { nsfwClassificationKnown: false },
     { discoveredVia: 'key' },
     { isBlocked: true },
-    { isActive: false },
-    { trustScore: 25 },
     { publicKey: null },
-  ])('rejects an unestablished or unhealthy peer: %o', async (override) => {
+  ])('rejects an unestablished, blocked, or unclassified peer: %o', async (override) => {
     mocks.findFirst.mockResolvedValue({ ...establishedPeer, ...override });
 
     await expect(getTrustedSwarmReadPeerPublicKey('peer.social'))
       .resolves.toBeNull();
+  });
+
+  it.each([
+    { isActive: false },
+    { trustScore: 25 },
+    { trustScore: 0 },
+  ])('allows a pinned peer to authenticate a bounded recovery read: %o', async (override) => {
+    mocks.findFirst.mockResolvedValue({ ...establishedPeer, ...override });
+
+    await expect(getTrustedSwarmReadPeerPublicKey('peer.social'))
+      .resolves.toBe(peerPublicKey.trim());
   });
 });
