@@ -14,6 +14,16 @@ Connect a node. The command opens a browser where the signed-in user approves a 
 synapsis auth connect https://social.example
 ```
 
+Run the connect command for every account and node you want available. A custom `--profile` alias is optional; without one, the CLI identifies each connection internally as `username@node-hostname`.
+
+```bash
+synapsis auth connect https://one.example
+synapsis auth connect https://two.example
+synapsis auth status
+```
+
+The bundled agent skill lets users select an account naturally by username. If a username exists on multiple nodes, or the user does not identify an account when several are connected, the agent asks which destination to use before posting.
+
 Publish text:
 
 ```bash

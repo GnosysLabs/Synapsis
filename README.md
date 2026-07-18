@@ -95,6 +95,8 @@ After installation, update the CLI and refresh its bundled agent skill with `syn
 
 The connect command creates a scoped, revocable device credential and opens the node's browser approval screen. It does not copy the account's primary signing key. Credentials default to 90 days, can be reviewed or revoked under **Settings → CLI & Agents**, and are stored in an owner-only local configuration file.
 
+Connect as many accounts and nodes as needed; the agent can select them by username and asks which account or node to use when a posting request is ambiguous.
+
 Publish text and media from a terminal or agent:
 
 ```bash

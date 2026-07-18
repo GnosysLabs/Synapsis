@@ -72,6 +72,15 @@ test('does not let an existing default target block the other agent installs', a
   assert.equal(stderr.value(), '');
 });
 
+test('bundled skill resolves usernames and requires clarification for ambiguous accounts', async () => {
+  const skill = await readFile(new URL('../skill/synapsis-post/SKILL.md', import.meta.url), 'utf8');
+
+  assert.match(skill, /match it case-insensitively against `profiles\[\]\.handle`/);
+  assert.match(skill, /username matches profiles on multiple nodes, ask which node/);
+  assert.match(skill, /supplies neither a username nor a node, ask which account/);
+  assert.match(skill, /pass its exact `profiles\[\]\.name` through `--profile` on every post/);
+});
+
 test('updates the global CLI before refreshing every bundled skill install', async () => {
   const stdout = output();
   const stderr = output();
@@ -132,15 +141,51 @@ test('connects through browser pairing and stores only the delegated private key
 
   await run([
     'auth', 'connect', 'https://social.example',
-    '--name', 'Test agent', '--profile', 'agent', '--no-open',
+    '--name', 'Test agent', '--no-open',
   ], { stdout: stdout.stream, stderr: stderr.stream }, { environment, fetch: fetchImpl });
 
   const config = await loadConfig(environment);
-  assert.equal(config.currentProfile, 'agent');
-  assert.equal(config.profiles.agent.publicKey, publicKey);
-  assert.match(config.profiles.agent.privateKey, /^[A-Za-z0-9+/=]+$/);
-  assert.equal('password' in config.profiles.agent, false);
+  assert.equal(config.currentProfile, 'alice@social.example');
+  assert.equal(config.profiles['alice@social.example'].publicKey, publicKey);
+  assert.match(config.profiles['alice@social.example'].privateKey, /^[A-Za-z0-9+/=]+$/);
+  assert.equal('password' in config.profiles['alice@social.example'], false);
   assert.match(stdout.value(), /Key fingerprint:/);
+  assert.equal(stderr.value(), '');
+});
+
+test('lists multiple account and node choices without exposing credentials', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'synapsis-cli-profiles-'));
+  const environment = { SYNAPSIS_CONFIG_DIR: directory };
+  const profiles = [
+    ['alice@one.example', 'https://one.example', 'alice'],
+    ['bob@one.example', 'https://one.example', 'bob'],
+    ['alice@two.example', 'https://two.example', 'alice'],
+  ];
+  for (const [name, nodeUrl, handle] of profiles) {
+    await storeProfile(name, {
+      nodeUrl,
+      account: { handle },
+      scopes: ['posts:write', 'media:write'],
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      privateKey: `secret-for-${name}`,
+    }, environment);
+  }
+  const stdout = output();
+  const stderr = output();
+
+  await run(['auth', 'status', '--json'], {
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+  }, { environment });
+
+  const status = JSON.parse(stdout.value());
+  assert.equal(status.currentProfile, 'alice@two.example');
+  assert.deepEqual(status.profiles.map(profile => ({
+    name: profile.name,
+    nodeUrl: profile.nodeUrl,
+    handle: profile.handle,
+  })), profiles.map(([name, nodeUrl, handle]) => ({ name, nodeUrl, handle })));
+  assert.equal(stdout.value().includes('secret-for-'), false);
   assert.equal(stderr.value(), '');
 });
 

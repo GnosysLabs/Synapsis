@@ -14,12 +14,12 @@ import { normalizeNodeUrl, requestJson, signedRequest, sleep } from './http.js';
 import { uploadMediaFile } from './media.js';
 import { generateCredentialKeyPair } from './signing.js';
 
-export const CLI_VERSION = '0.1.2';
+export const CLI_VERSION = '0.1.3';
 
 const HELP = `Synapsis CLI ${CLI_VERSION}
 
 Usage:
-  synapsis auth connect <node-url> [--name <device>] [--profile <name>] [--expires-days <1-365>] [--no-open] [--json]
+  synapsis auth connect <node-url> [--name <device>] [--profile <alias>] [--expires-days <1-365>] [--no-open] [--json]
   synapsis auth status [--json]
   synapsis auth use <profile>
   synapsis auth disconnect [--profile <name>] [--local]
