@@ -19,6 +19,7 @@ describe('Stuffbox client', () => {
       codeChallenge: 'challenge',
       state: 'state',
       scopes: ['assets:write'],
+      accountLabel: '@alice@synapsis.test',
     })).resolves.toEqual({
       id: 'request-1',
       clientId: 'client-1',
@@ -38,6 +39,7 @@ describe('Stuffbox client', () => {
       code_challenge_method: 'S256',
       scopes: ['assets:write'],
       state: 'state',
+      account_label: '@alice@synapsis.test',
     });
   });
 

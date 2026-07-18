@@ -14,6 +14,13 @@ function nodeOrigin(request: NextRequest): string {
   return new URL(configured.includes('://') ? configured : `${protocol}://${configured}`).origin;
 }
 
+function accountLabel(handle: string, origin: string): string {
+  const normalizedHandle = handle.trim().replace(/^@/, '');
+  return normalizedHandle.includes('@')
+    ? `@${normalizedHandle}`
+    : `@${normalizedHandle}@${new URL(origin).host}`;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
@@ -33,6 +40,7 @@ export async function POST(request: NextRequest) {
       codeChallenge: pkce.challenge,
       state: pkce.state,
       scopes: STUFFBOX_SCOPES,
+      accountLabel: accountLabel(user.handle, origin),
     });
 
     await saveStuffboxConnectionState({

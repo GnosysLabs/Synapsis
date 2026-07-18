@@ -101,6 +101,7 @@ export async function createConnectionRequest(baseUrl: string, input: {
   codeChallenge: string;
   state: string;
   scopes: readonly StuffboxScope[];
+  accountLabel?: string;
 }): Promise<{
   id: string;
   clientId: string;
@@ -108,6 +109,7 @@ export async function createConnectionRequest(baseUrl: string, input: {
   authorizationUrl: string;
   expiresAt: string;
 }> {
+  const accountLabel = input.accountLabel?.trim();
   const data = object(await request(baseUrl, '/api/v1/connection-requests', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -118,6 +120,7 @@ export async function createConnectionRequest(baseUrl: string, input: {
       code_challenge_method: 'S256',
       scopes: input.scopes,
       state: input.state,
+      ...(accountLabel ? { account_label: accountLabel } : {}),
     }),
   }));
   return {

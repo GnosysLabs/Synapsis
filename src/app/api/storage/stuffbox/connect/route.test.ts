@@ -35,7 +35,7 @@ describe('POST /api/storage/stuffbox/connect', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-15T01:00:00.000Z'));
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://synapsis.example/app');
-    vi.mocked(requireAuth).mockResolvedValue({ id: 'user-1' } as never);
+    vi.mocked(requireAuth).mockResolvedValue({ id: 'user-1', handle: 'alice' } as never);
     vi.mocked(configuredStuffboxUrl).mockReturnValue('https://stuffbox.example');
     vi.mocked(generatePkce).mockReturnValue({
       challenge: 'pkce-challenge',
@@ -68,6 +68,7 @@ describe('POST /api/storage/stuffbox/connect', () => {
       codeChallenge: 'pkce-challenge',
       state: 'connection-state',
       scopes: ['assets:write'],
+      accountLabel: '@alice@synapsis.example',
     });
     expect(saveStuffboxConnectionState).toHaveBeenCalledWith({
       userId: 'user-1',
