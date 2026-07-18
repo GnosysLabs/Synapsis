@@ -19,7 +19,6 @@ function formatTime(value: number): string {
 }
 
 export function AudioPlayer({ src, title = 'Audio track' }: AudioPlayerProps) {
-    const playerRef = useRef<HTMLDivElement>(null);
     const audioRef = useRef<HTMLAudioElement>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
@@ -59,23 +58,7 @@ export function AudioPlayer({ src, title = 'Audio track' }: AudioPlayerProps) {
     }, [src]);
 
     useEffect(() => {
-        const player = playerRef.current;
-        if (!player) return;
-
-        // Restore metadata/artwork before playback without eagerly scanning an
-        // entire feed. Only players near the viewport start the bounded scan.
-        if (typeof IntersectionObserver === 'undefined') {
-            ensureMetadata();
-            return;
-        }
-
-        const observer = new IntersectionObserver((entries) => {
-            if (!entries.some((entry) => entry.isIntersecting)) return;
-            observer.disconnect();
-            ensureMetadata();
-        }, { rootMargin: '240px' });
-        observer.observe(player);
-        return () => observer.disconnect();
+        ensureMetadata();
     }, [ensureMetadata]);
 
     const metadata = resolvedMetadata?.src === src ? resolvedMetadata.metadata : null;
@@ -102,11 +85,11 @@ export function AudioPlayer({ src, title = 'Audio track' }: AudioPlayerProps) {
     };
 
     return (
-        <div ref={playerRef} className="audio-player" onClick={(event) => event.stopPropagation()}>
+        <div className="audio-player" onClick={(event) => event.stopPropagation()}>
             <audio
                 ref={audioRef}
                 src={src}
-                preload="none"
+                preload="metadata"
                 onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
                 onDurationChange={(event) => setDuration(event.currentTarget.duration)}
                 onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}

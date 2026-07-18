@@ -4,11 +4,18 @@ import { describe, expect, it } from 'vitest';
 import BlurredVideo, { formatVideoTime } from './BlurredVideo';
 
 describe('BlurredVideo', () => {
-    it('renders accessible playback, seek, and sound controls', () => {
+    it('autoplays muted inline on a loop with accessible playback, seek, and sound controls', () => {
         const markup = renderToStaticMarkup(
             createElement(BlurredVideo, { src: 'https://example.com/video.mp4' })
         );
 
+        expect(markup.match(/<video/g)).toHaveLength(2);
+        expect(markup.match(/autoPlay=""/g)).toHaveLength(2);
+        expect(markup.match(/muted=""/g)).toHaveLength(2);
+        expect(markup.match(/loop=""/g)).toHaveLength(2);
+        expect(markup.match(/playsInline=""/g)).toHaveLength(2);
+        expect(markup).toContain('class="blurred-video-bg"');
+        expect(markup).toContain('aria-hidden="true"');
         expect(markup).toContain('aria-label="Play video"');
         expect(markup).toContain('aria-label="Seek video"');
         expect(markup).toContain('type="range"');

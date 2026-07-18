@@ -5,17 +5,23 @@ import { describe, expect, it } from 'vitest';
 import { ChatMessageAttachments } from './ChatMessageAttachments';
 
 describe('ChatMessageAttachments', () => {
-  it('loads video metadata so the browser can render a preview frame', () => {
-    const markup = renderToStaticMarkup(createElement(ChatMessageAttachments, {
-      attachments: [{
-        url: 'https://stuffbox.xyz/video.mp4',
-        filename: 'video.mp4',
-        mimeType: 'video/mp4',
-        size: 1_024,
-      }],
-    }));
+  it('uses explicit controls and preview metadata without autoplay for video attachments', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ChatMessageAttachments, {
+        attachments: [{
+          url: 'https://stuffbox.example/video.mp4',
+          filename: 'video.mp4',
+          mimeType: 'video/mp4',
+          size: 1_024,
+        }],
+      })
+    );
 
+    expect(markup).not.toContain('autoPlay=""');
+    expect(markup).not.toContain('muted=""');
+    expect(markup).not.toContain('loop=""');
+    expect(markup).toContain('playsInline=""');
+    expect(markup).toContain('controls=""');
     expect(markup).toContain('preload="metadata"');
-    expect(markup).not.toContain('preload="none"');
   });
 });
