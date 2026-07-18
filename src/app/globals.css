@@ -1603,6 +1603,96 @@ a.btn-primary:visited {
   flex: 1;
 }
 
+.chat-post-card,
+.chat-post-card-loading,
+.chat-post-card-fallback {
+  width: min(520px, 62vw);
+  max-width: 100%;
+  margin-top: 8px;
+  color: var(--foreground);
+  white-space: normal;
+}
+
+.chat-post-card .post.embedded {
+  overflow: hidden;
+  margin: 0;
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.chat-post-card .post.embedded .post-media-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.chat-post-card-loading,
+.chat-post-card-fallback {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 86px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--background-secondary);
+}
+
+.chat-post-card-loading > div {
+  display: grid;
+  flex: 1;
+  gap: 9px;
+}
+
+.chat-post-card-loading span {
+  display: block;
+  width: min(220px, 80%);
+  height: 10px;
+  border-radius: var(--radius-full);
+  background: var(--background-tertiary);
+}
+
+.chat-post-card-loading span:last-child {
+  width: min(150px, 55%);
+}
+
+.chat-post-card-fallback {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.chat-post-card-fallback-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.chat-post-card-fallback-message {
+  margin-top: 3px;
+  color: var(--foreground-secondary);
+  font-size: 12px;
+}
+
+.chat-post-card-fallback-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.chat-post-card-fallback-actions button,
+.chat-post-card-fallback-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--background);
+  color: var(--foreground-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-decoration: none;
+}
+
 @media (max-width: 640px) {
   .chat-message-attachments,
   .chat-message-attachments.single {
@@ -1612,6 +1702,16 @@ a.btn-primary:visited {
   .chat-message-attachment.visual img,
   .chat-message-attachment.visual video {
     min-height: 120px;
+  }
+
+  .chat-post-card,
+  .chat-post-card-loading,
+  .chat-post-card-fallback {
+    width: min(72vw, 420px);
+  }
+
+  .chat-post-card-fallback {
+    flex-direction: column;
   }
 }
 

@@ -21,6 +21,7 @@ import type { E2EEKeyBundle, E2EEKeyMaterial, E2EEMessageEnvelope } from '@/lib/
 import { useE2EEIdentity } from '@/lib/e2ee/use-e2ee-identity';
 import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
 import { ChatMessageAttachments } from '@/components/ChatMessageAttachments';
+import { ChatPostCard } from '@/components/ChatPostCard';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { getMaxMediaSize, getMediaKind } from '@/lib/media/upload-policy';
@@ -31,6 +32,8 @@ import {
     getChatMessagePreview,
     type ChatAttachment,
 } from '@/lib/chat/message-content';
+import { findChatPostLinks, removeChatPostLinks, uniqueChatPostLinks } from '@/lib/chat/post-links';
+import { useDomain } from '@/lib/contexts/ConfigContext';
 import {
     buildChatShareContinuationHref,
     buildChatShareHref,
@@ -131,6 +134,7 @@ function accountConversationKey(accountDid: string | null, conversationKey: stri
 export default function ChatPage() {
     const { user, loading: authLoading, isIdentityUnlocked, isRestoring: isIdentityRestoring } = useAuth();
     const router = useRouter();
+    const domain = useDomain();
     const searchParams = useSearchParams();
     const composeHandle = searchParams.get('compose');
     const sharedPostUrl = searchParams.get('share');
@@ -491,9 +495,13 @@ export default function ChatPage() {
                             requestAccountDid,
                             e2eeMaterial.material,
                         );
+                        const postLinks = findChatPostLinks(content, domain);
+                        const previewText = removeChatPostLinks(content, postLinks);
                         return {
                             ...conversation,
-                            lastMessagePreview: getChatMessagePreview({ text: content, attachments }),
+                            lastMessagePreview: postLinks.length > 0 && !previewText
+                                ? uniqueChatPostLinks(postLinks).length > 1 ? 'Shared posts' : 'Shared a post'
+                                : getChatMessagePreview({ text: previewText, attachments }),
                         };
                     } catch {
                         return { ...conversation, lastMessagePreview: 'Encrypted message' };
@@ -527,7 +535,7 @@ export default function ChatPage() {
                 setLoading(false);
             }
         }
-    }, []);
+    }, [domain]);
 
     const markAsRead = useCallback(async (conversationId: string) => {
         const requestAccountDid = renderedAccountDidRef.current;
@@ -1368,6 +1376,14 @@ export default function ChatPage() {
                             const startsEncryptedSection = msg.protocolVersion === 1
                                 && i > 0
                                 && messages[i - 1].legacy;
+                            const detectedPostLinks = msg.decryptionError
+                                ? []
+                                : findChatPostLinks(msg.content, domain);
+                            const sharedPostLinks = uniqueChatPostLinks(detectedPostLinks);
+                            const visibleMessageContent = removeChatPostLinks(msg.content, detectedPostLinks);
+                            const hasMessageBubble = msg.decryptionError
+                                || Boolean(visibleMessageContent)
+                                || msg.attachments.length > 0;
 
                             return (
                                 <Fragment key={msg.id || i}>
@@ -1384,7 +1400,7 @@ export default function ChatPage() {
                                     <div style={{
                                         display: 'flex',
                                         gap: '12px',
-                                        maxWidth: '70%',
+                                        maxWidth: sharedPostLinks.length > 0 ? '92%' : '70%',
                                         marginLeft: msg.isSentByMe ? 'auto' : '0',
                                         flexDirection: msg.isSentByMe ? 'row-reverse' : 'row'
                                     }}>
@@ -1399,41 +1415,46 @@ export default function ChatPage() {
                                             />
                                         </div>
 
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: msg.isSentByMe ? 'flex-end' : 'flex-start' }}>
-                                            <div
-                                                role={msg.decryptionError ? 'status' : undefined}
-                                                style={{
-                                                    padding: '10px 14px',
-                                                    borderRadius: '16px',
-                                                    background: msg.decryptionError
-                                                        ? 'var(--background-secondary)'
-                                                        : msg.isSentByMe ? 'var(--accent)' : 'var(--background-secondary)',
-                                                    color: msg.decryptionError
-                                                        ? 'var(--foreground-secondary)'
-                                                        : msg.isSentByMe ? '#000' : 'var(--foreground)',
-                                                    border: msg.decryptionError || !msg.isSentByMe ? '1px solid var(--border)' : 'none',
-                                                    wordBreak: 'break-word',
-                                                    whiteSpace: 'pre-wrap',
-                                                    maxWidth: '100%'
-                                                }}
-                                            >
-                                                {msg.decryptionError ? (
-                                                    <div>
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
-                                                            <LockKeyhole size={14} aria-hidden="true" />
-                                                            Encrypted message unavailable
+                                        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, alignItems: msg.isSentByMe ? 'flex-end' : 'flex-start' }}>
+                                            {hasMessageBubble && (
+                                                <div
+                                                    role={msg.decryptionError ? 'status' : undefined}
+                                                    style={{
+                                                        padding: '10px 14px',
+                                                        borderRadius: '16px',
+                                                        background: msg.decryptionError
+                                                            ? 'var(--background-secondary)'
+                                                            : msg.isSentByMe ? 'var(--accent)' : 'var(--background-secondary)',
+                                                        color: msg.decryptionError
+                                                            ? 'var(--foreground-secondary)'
+                                                            : msg.isSentByMe ? '#000' : 'var(--foreground)',
+                                                        border: msg.decryptionError || !msg.isSentByMe ? '1px solid var(--border)' : 'none',
+                                                        wordBreak: 'break-word',
+                                                        whiteSpace: 'pre-wrap',
+                                                        maxWidth: '100%'
+                                                    }}
+                                                >
+                                                    {msg.decryptionError ? (
+                                                        <div>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+                                                                <LockKeyhole size={14} aria-hidden="true" />
+                                                                Encrypted message unavailable
+                                                            </div>
+                                                            <div style={{ marginTop: 4, fontSize: 12 }}>
+                                                                This message could not be decrypted on this device.
+                                                            </div>
                                                         </div>
-                                                        <div style={{ marginTop: 4, fontSize: 12 }}>
-                                                            This message could not be decrypted on this device.
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <>
-                                                        {msg.content || null}
-                                                        <ChatMessageAttachments attachments={msg.attachments} />
-                                                    </>
-                                                )}
-                                            </div>
+                                                    ) : (
+                                                        <>
+                                                            {visibleMessageContent || null}
+                                                            <ChatMessageAttachments attachments={msg.attachments} />
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {sharedPostLinks.map((postLink) => (
+                                                <ChatPostCard link={postLink} key={postLink.postId} />
+                                            ))}
                                             {msg.legacy && (
                                                 <div style={{ fontSize: '10px', color: 'var(--foreground-tertiary)', marginTop: 4 }}>
                                                     Sent before end-to-end encryption
