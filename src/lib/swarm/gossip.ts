@@ -12,6 +12,7 @@ import {
   getNodesForGossip,
   getActiveSwarmNodes,
   getNodesSince,
+  upsertSwarmNode,
   upsertSwarmNodes,
   markNodeSuccess,
   markNodeFailure,
@@ -21,6 +22,31 @@ import { upsertHandleEntries } from '@/lib/federation/handles';
 import { buildAnnouncement } from './discovery';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
 import { safeFederationRequest } from './safe-federation-http';
+
+/**
+ * A successful gossip exchange is a direct peer handshake: incoming gossip is
+ * signature-verified by the route, while an outgoing response is received from
+ * the peer's own HTTPS origin. Promote only that peer's self-description. Nodes
+ * merely relayed inside the same gossip payload remain gossip-only.
+ */
+export async function establishDirectGossipPeer(
+  nodes: SwarmNodeInfo[],
+  peerDomain: string,
+): Promise<boolean> {
+  const normalizedPeer = getPublicSwarmDomain(peerDomain);
+  if (!normalizedPeer) return false;
+
+  const peer = nodes.find((node) =>
+    getPublicSwarmDomain(node.domain) === normalizedPeer
+    && typeof node.isNsfw === 'boolean'
+    && typeof node.publicKey === 'string'
+    && node.publicKey.trim().length > 0
+  );
+  if (!peer) return false;
+
+  await upsertSwarmNode({ ...peer, domain: normalizedPeer }, 'direct');
+  return true;
+}
 
 /**
  * Build a gossip payload to send to another node
@@ -84,8 +110,13 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
  * Process incoming gossip and return our response
  */
 export async function processGossip(
-  payload: SwarmGossipPayload
+  payload: SwarmGossipPayload,
+  options: { senderAuthenticated: boolean },
 ): Promise<SwarmGossipResponse> {
+  if (options.senderAuthenticated) {
+    await establishDirectGossipPeer(payload.nodes, payload.sender);
+  }
+
   // Process incoming nodes
   const nodeResult = await upsertSwarmNodes(payload.nodes, payload.sender);
 
@@ -186,6 +217,10 @@ export async function gossipToNode(
     }
 
     const gossipResponse = response.json() as SwarmGossipResponse;
+
+    // The response came from the exact HTTPS origin we contacted, so its own
+    // complete self-description establishes the target as a direct peer.
+    await establishDirectGossipPeer(gossipResponse.nodes, publicTargetDomain);
 
     // Process the response (nodes and handles they sent back)
     const nodeResult = await upsertSwarmNodes(gossipResponse.nodes, publicTargetDomain);

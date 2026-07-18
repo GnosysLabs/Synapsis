@@ -101,7 +101,9 @@ export async function POST(request: Request) {
     console.log(`[Swarm] Gossip from ${data.sender}: ${data.nodes.length} nodes, ${data.handles?.length || 0} handles`);
 
     // Process the incoming gossip and build our response
-    const response = await processGossip(payload as SwarmGossipPayload);
+    const response = await processGossip(payload as SwarmGossipPayload, {
+      senderAuthenticated: true,
+    });
     
     // Mark the sender as successfully contacted
     await markNodeSuccess(data.sender);
