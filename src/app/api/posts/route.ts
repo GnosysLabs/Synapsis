@@ -38,6 +38,7 @@ import {
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
+import { refreshFederatedReplyCounts } from '@/lib/swarm/reply-counts';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_SEED_MULTIPLIER = 5;
@@ -54,6 +55,7 @@ type FeedPostWithChildren = {
     originalPostId?: string | null;
     feedActivityAt?: string;
     repostsCount?: number;
+    repliesCount?: number;
     repostedBy?: Array<{
         id: string;
         handle: string;
@@ -375,7 +377,11 @@ async function getLocallyRepostedRemoteStories(
         return reposter ? [mapUserSwarmRepostToFeedPost(row, reposter)] : [];
     });
 
-    return collapseSharedFeedPosts(wrappers as unknown as Post[], localDomain) as FeedPostWithChildren[];
+    const stories = collapseSharedFeedPosts(
+        wrappers as unknown as Post[],
+        localDomain,
+    ) as FeedPostWithChildren[];
+    return refreshFederatedReplyCounts(stories);
 }
 
 const createPostSchema = z.object({
