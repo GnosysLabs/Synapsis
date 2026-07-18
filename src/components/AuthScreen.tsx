@@ -3,8 +3,10 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { completePostSignInNavigation } from '@/lib/auth/post-sign-in-navigation';
 
 declare global {
     interface Window {
@@ -28,6 +30,7 @@ interface AuthScreenProps {
 }
 
 export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProps) {
+    const router = useRouter();
     const [mode, setMode] = useState<'login' | 'register' | 'import'>('login');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -242,12 +245,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             setImportWarnings(warnings);
             if (warnings.length === 0) {
                 setTimeout(() => {
-                    if (onSuccess) {
-                        onSuccess();
-                        window.location.reload();
-                    } else {
-                        window.location.assign('/');
-                    }
+                    completePostSignInNavigation(router, onSuccess);
                 }, 2000);
             }
 
@@ -333,15 +331,9 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             setPassword('');
             setConfirmPassword('');
 
-            // Start Chat in a fresh JavaScript realm before it creates or loads
-            // the E2EE account key. Turnstile-enabled credential handling remains
-            // part of the login trust boundary and is documented accordingly.
-            if (onSuccess) {
-                onSuccess();
-                window.location.reload();
-            } else {
-                window.location.assign('/');
-            }
+            // Keep this JavaScript realm alive: login just decrypted the signing
+            // key into memory, and App Router navigation preserves it.
+            completePostSignInNavigation(router, onSuccess);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
             // Reset Turnstile on error
@@ -715,12 +707,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                             type="button"
                                             className="btn"
                                             onClick={() => {
-                                                if (onSuccess) {
-                                                    onSuccess();
-                                                    window.location.reload();
-                                                } else {
-                                                    window.location.assign('/');
-                                                }
+                                                completePostSignInNavigation(router, onSuccess);
                                             }}
                                             style={{ width: '100%', justifyContent: 'center' }}
                                         >

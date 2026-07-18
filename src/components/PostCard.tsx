@@ -136,7 +136,6 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         did,
         handle: currentUserHandle,
         isIdentityUnlocked,
-        setShowUnlockPrompt,
     } = useAuth();
     const { showToast } = useToast();
     const { showConfirm, showPrompt } = useAppDialog();
@@ -448,8 +447,8 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         if (deleting) return;
         if (!isIdentityUnlocked) {
             setShowMenu(false);
-            setShowUnlockPrompt(true);
-            showToast('Unlock your identity, then try deleting the post again.', 'info');
+            showToast('Your session expired. Please sign in again.', 'error');
+            router.push('/login');
             return;
         }
         const confirmed = await showConfirm({

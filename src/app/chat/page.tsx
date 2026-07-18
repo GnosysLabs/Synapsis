@@ -9,7 +9,6 @@ import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AvatarImage } from '@/components/AvatarImage';
 import { E2EEChatGate } from '@/components/E2EEChatGate';
-import { IdentityUnlockPrompt } from '@/components/IdentityUnlockPrompt';
 import {
     decryptStoredChatMessage,
     E2EEClientError,
@@ -886,7 +885,19 @@ export default function ChatPage() {
     if (user === null) return null;
 
     if (!isIdentityUnlocked) {
-        return <IdentityUnlockPrompt onCancel={() => router.push('/')} />;
+        return (
+            <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
+                <div className="card" style={{ maxWidth: 420, padding: 24, textAlign: 'center' }}>
+                    <h1 style={{ fontSize: 22, marginBottom: 12 }}>Session expired</h1>
+                    <p style={{ color: 'var(--foreground-secondary)', marginBottom: 20 }}>
+                        Please sign in again to restore your secure session.
+                    </p>
+                    <Link href="/login" className="btn btn-primary">
+                        Sign in
+                    </Link>
+                </div>
+            </main>
+        );
     }
 
     if (e2eeIdentity.state.status !== 'ready') {

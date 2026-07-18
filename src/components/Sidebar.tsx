@@ -11,7 +11,6 @@ import { Check, ChevronDown, LogOut, Plus, Settings2 } from 'lucide-react';
 import { AuthScreen } from '@/components/AuthScreen';
 import { AvatarImage } from './AvatarImage';
 import { ANONYMOUS_APP_DESTINATION } from '@/lib/posts/home-feed';
-// import { IdentityUnlockPrompt } from './IdentityUnlockPrompt'; // Moved to LayoutWrapper
 
 function shortHandle(handle: string) {
     const cleanHandle = handle.startsWith('@') ? handle.slice(1) : handle;
@@ -447,14 +446,12 @@ export function Sidebar() {
                 </div>
             )}
 
-            {/* Identity Unlock Prompt Modal is now handled in LayoutWrapper */}
             {showAuthModal && (
                 <AuthScreen
                     modal
                     onClose={() => setShowAuthModal(false)}
                     onSuccess={() => {
                         setShowAuthModal(false);
-                        router.refresh();
                     }}
                 />
             )}

@@ -18,6 +18,7 @@ import {
   importPrivateKey,
   createSignedAction
 } from '@/lib/crypto/user-signing';
+import { canReuseUnlockedSigningIdentity } from '@/lib/auth/signing-identity-lifecycle';
 
 export interface UserIdentity {
   did: string;
@@ -92,6 +93,26 @@ export function useUserIdentity() {
     privateKeyEncrypted?: string;
   }) => {
     const generation = ++generationRef.current;
+    const currentIdentity = keyStore.getIdentity();
+    const currentPrivateKey = keyStore.getPrivateKey();
+
+    if (canReuseUnlockedSigningIdentity({
+      currentDid: currentIdentity?.did,
+      requestedDid: userData.did,
+      hasPrivateKey: Boolean(currentPrivateKey),
+    })) {
+      const currentUnlockedIdentity = {
+        did: userData.did,
+        handle: userData.handle,
+        publicKey: userData.publicKey,
+      };
+      keyStore.setIdentity(currentUnlockedIdentity);
+      setIdentity({ ...currentUnlockedIdentity, isUnlocked: true });
+      setIsUnlocked(true);
+      setIsRestoring(false);
+      return;
+    }
+
     keyStore.clear();
 
     const coreIdentity = {

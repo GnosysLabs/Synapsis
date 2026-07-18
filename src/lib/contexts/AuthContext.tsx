@@ -36,17 +36,12 @@ interface AuthContextType {
     did: string | null;
     handle: string | null;
     checkAdmin: () => Promise<void>;
-    unlockIdentity: (password: string, explicitUser?: User) => Promise<void>;
     login: (user: User, password: string) => Promise<void>;
     logout: (userId?: string) => Promise<void>;
     switchAccount: (userId: string) => Promise<void>;
     refreshAuth: () => Promise<void>;
     updateUserProfile: (updates: Partial<User>) => void;
-    lockIdentity: () => Promise<void>;  // New: manual lock
     signUserAction: (action: string, data: unknown) => Promise<unknown>;
-    requiresUnlock: boolean;  // True if user has encrypted key but not unlocked
-    showUnlockPrompt: boolean;
-    setShowUnlockPrompt: (show: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -60,17 +55,12 @@ const AuthContext = createContext<AuthContextType>({
     did: null,
     handle: null,
     checkAdmin: async () => { },
-    unlockIdentity: async () => { },
     login: async () => { },
     logout: async () => { },
     switchAccount: async () => { },
     refreshAuth: async () => { },
     updateUserProfile: () => { },
-    lockIdentity: async () => { },
     signUserAction: async () => Promise.reject('Not initialized'),
-    requiresUnlock: false,
-    showUnlockPrompt: false,
-    setShowUnlockPrompt: () => { },
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -78,7 +68,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [accounts, setAccounts] = useState<AuthAccount[]>([]);
     const [isAdmin, setIsAdmin] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [showUnlockPrompt, setShowUnlockPrompt] = useState(false);
     const authGenerationRef = useRef(0);
     const signInInProgressRef = useRef(false);
 
@@ -89,7 +78,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isRestoring,
         initializeIdentity,
         unlockIdentity: unlockIdentityHook,
-        lockIdentity: lockIdentityHook,
         clearIdentity,
         signUserAction,
     } = useUserIdentity();
@@ -190,15 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             });
         }
 
-        setShowUnlockPrompt(false); // Close prompt on success
     }, [user, unlockIdentityHook]);
-
-    /**
-     * Manually lock the identity (user wants to secure their session)
-     */
-    const lockIdentity = useCallback(async () => {
-        await lockIdentityHook();
-    }, [lockIdentityHook]);
 
     /**
      * Complete a password sign-in as one ordered operation. Applying the
@@ -242,7 +222,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 body: JSON.stringify(userId ? { userId } : {}),
             });
             broadcastAuthChange();
-            setShowUnlockPrompt(false);
             await refreshAuth();
         } catch (error) {
             console.error('[Auth] Logout failed:', error);
@@ -309,8 +288,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
     }, [refreshAuth]);
 
-    // Determine if unlock is required (has encrypted key but not unlocked)
-    const requiresUnlock = !!user?.privateKeyEncrypted && !isUnlocked && !isRestoring;
     const activeAccountId = user?.id ?? null;
 
     return (
@@ -325,17 +302,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             did: identity?.did || null,
             handle: identity?.handle || null,
             checkAdmin,
-            unlockIdentity,
             login,
             logout,
             switchAccount,
             refreshAuth,
             updateUserProfile,
-            lockIdentity,
             signUserAction,
-            requiresUnlock,
-            showUnlockPrompt,
-            setShowUnlockPrompt,
         }}>
             {children}
         </AuthContext.Provider>

@@ -15,7 +15,7 @@ interface NsfwSettings {
 }
 
 export default function ContentSettingsPage() {
-    const { isIdentityUnlocked, signUserAction, setShowUnlockPrompt, updateUserProfile } = useAuth();
+    const { isIdentityUnlocked, signUserAction, updateUserProfile } = useAuth();
     const { config, isLoading: configLoading } = useRuntimeConfig();
     const [settings, setSettings] = useState<NsfwSettings | null>(null);
     const [loading, setLoading] = useState(true);
@@ -48,8 +48,8 @@ export default function ContentSettingsPage() {
         if (!settings) return;
 
         if (!isIdentityUnlocked) {
-            setError('Unlock your identity to change this setting.');
-            setShowUnlockPrompt(true);
+            setError('Your session expired. Please sign in again.');
+            window.location.assign('/login');
             return;
         }
 
@@ -92,8 +92,8 @@ export default function ContentSettingsPage() {
     const handleAgeConfirm = async () => {
         if (!isIdentityUnlocked) {
             setShowAgeModal(false);
-            setError('Unlock your identity to change this setting.');
-            setShowUnlockPrompt(true);
+            setError('Your session expired. Please sign in again.');
+            window.location.assign('/login');
             return;
         }
 
@@ -136,8 +136,8 @@ export default function ContentSettingsPage() {
         if (!settings) return;
 
         if (!isIdentityUnlocked) {
-            setError('Unlock your identity to change this setting.');
-            setShowUnlockPrompt(true);
+            setError('Your session expired. Please sign in again.');
+            window.location.assign('/login');
             return;
         }
 
