@@ -1,8 +1,9 @@
 'use client';
 
 import Image from 'next/image';
-import { Download, File, Music2 } from 'lucide-react';
+import { Download, File } from 'lucide-react';
 
+import { AudioPlayer } from '@/components/AudioPlayer';
 import type { ChatAttachment } from '@/lib/chat/message-content';
 import { getMediaKind } from '@/lib/media/upload-policy';
 
@@ -58,11 +59,7 @@ export function ChatMessageAttachments({ attachments }: ChatMessageAttachmentsPr
         if (kind === 'audio') {
           return (
             <div className="chat-message-attachment audio" key={key}>
-              <div className="chat-message-attachment-name">
-                <Music2 size={16} aria-hidden="true" />
-                <span title={attachment.filename}>{attachment.filename}</span>
-              </div>
-              <audio src={attachment.url} controls preload="metadata" aria-label={attachment.filename} />
+              <AudioPlayer src={attachment.url} title={attachment.filename} />
             </div>
           );
         }

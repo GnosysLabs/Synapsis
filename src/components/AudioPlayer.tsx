@@ -1,7 +1,10 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import Image from 'next/image';
+import { useEffect, useRef, useState } from 'react';
 import { Music2, Pause, Play } from 'lucide-react';
+
+import { loadAudioMetadata, type AudioTrackMetadata } from '@/lib/media/audio-metadata';
 
 interface AudioPlayerProps {
     src: string;
@@ -20,6 +23,37 @@ export function AudioPlayer({ src, title = 'Audio track' }: AudioPlayerProps) {
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
+    const [resolvedMetadata, setResolvedMetadata] = useState<{
+        src: string;
+        metadata: AudioTrackMetadata;
+        artworkUrl: string | null;
+    } | null>(null);
+
+    useEffect(() => {
+        let active = true;
+        let nextArtworkUrl: string | null = null;
+
+        void loadAudioMetadata(src).then((nextMetadata) => {
+            if (!active || !nextMetadata) return;
+            if (nextMetadata.artwork) {
+                nextArtworkUrl = URL.createObjectURL(new Blob(
+                    [nextMetadata.artwork.data as BlobPart],
+                    { type: nextMetadata.artwork.mimeType }
+                ));
+            }
+            setResolvedMetadata({ src, metadata: nextMetadata, artworkUrl: nextArtworkUrl });
+        });
+
+        return () => {
+            active = false;
+            if (nextArtworkUrl) URL.revokeObjectURL(nextArtworkUrl);
+        };
+    }, [src]);
+
+    const metadata = resolvedMetadata?.src === src ? resolvedMetadata.metadata : null;
+    const artworkUrl = resolvedMetadata?.src === src ? resolvedMetadata.artworkUrl : null;
+    const displayTitle = metadata?.title || title;
+    const detail = [metadata?.artist, metadata?.album].filter(Boolean).join(' · ');
 
     const togglePlayback = async () => {
         const audio = audioRef.current;
@@ -51,16 +85,27 @@ export function AudioPlayer({ src, title = 'Audio track' }: AudioPlayerProps) {
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => setIsPlaying(false)}
             />
+            {artworkUrl && (
+                <Image
+                    unoptimized
+                    className="audio-player-artwork"
+                    src={artworkUrl}
+                    alt=""
+                    width={64}
+                    height={64}
+                />
+            )}
             <button
                 type="button"
                 className="audio-player-toggle"
                 onClick={togglePlayback}
-                aria-label={isPlaying ? `Pause ${title}` : `Play ${title}`}
+                aria-label={isPlaying ? `Pause ${displayTitle}` : `Play ${displayTitle}`}
             >
                 {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
             </button>
             <div className="audio-player-body">
-                <div className="audio-player-title"><Music2 size={15} /> {title}</div>
+                <div className="audio-player-title"><Music2 size={15} /> <span>{displayTitle}</span></div>
+                {detail && <div className="audio-player-detail">{detail}</div>}
                 <input
                     className="audio-player-progress"
                     type="range"
@@ -69,7 +114,7 @@ export function AudioPlayer({ src, title = 'Audio track' }: AudioPlayerProps) {
                     step="0.1"
                     value={Math.min(currentTime, duration || 0)}
                     onChange={(event) => seek(Number(event.target.value))}
-                    aria-label={`Seek ${title}`}
+                    aria-label={`Seek ${displayTitle}`}
                 />
                 <div className="audio-player-time">
                     <span>{formatTime(currentTime)}</span>
