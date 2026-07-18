@@ -55,10 +55,7 @@ const nextConfig: NextConfig = {
   
   // Turbopack configuration
   turbopack: {
-    // Hop workspaces intentionally share the parent checkout's dependencies.
-    // Normal builds retain process.cwd(); isolated verification may point at
-    // that containing checkout so Turbopack can resolve Next.js.
-    root: process.env.SYNAPSIS_TURBOPACK_ROOT || process.cwd(),
+    root: process.cwd(),
   },
 
   async headers() {

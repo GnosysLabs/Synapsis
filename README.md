@@ -33,7 +33,7 @@ The installer creates:
 - Service: `synapsis.service`
 - Mandatory update timer: `synapsis-update.timer`
 
-Every node checks `origin/main` about once per minute. When a new commit is available, Synapsis fast-forwards the checkout, replaces the single `backups/latest` database snapshot, installs dependencies, runs migrations, builds, and restarts automatically. The repository commit count is shown in the Network Info card; `/api/version` exposes both that number and the full deployed commit hash.
+Every node pins `origin` to [`GnosysLabs/Synapsis`](https://github.com/GnosysLabs/Synapsis) on GitHub and checks `origin/main` about once per minute. When a new commit is available, Synapsis fast-forwards the checkout, replaces the single `backups/latest` database snapshot, installs dependencies, runs migrations, builds, and restarts automatically. The repository commit count is shown in the Network Info card; `/api/version` exposes both that number and the full deployed commit hash.
 
 While an update is being installed, `synapsis-maintenance.service` temporarily serves a maintenance page on the node's configured `PORT`, using that node's logo and accent color. Existing reverse proxies continue receiving an HTTP response instead of showing a gateway error, and browsers automatically reload when Synapsis is ready.
 
@@ -82,7 +82,7 @@ the relay protocol and central deployment contract.
 ## Development
 
 ```bash
-git clone https://githop.xyz/GnosysLabs/Synapsis.git
+git clone https://github.com/GnosysLabs/Synapsis.git
 cd Synapsis
 npm install
 cp .env.example .env

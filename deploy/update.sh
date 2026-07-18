@@ -19,6 +19,8 @@ set -a
 source "$ENV_FILE"
 set +a
 
+REPO_URL="${REPO_URL:-https://github.com/GnosysLabs/Synapsis.git}"
+
 # Existing installations predate encrypted-message recovery. Enroll them with
 # a distinct stable secret before migrations/builds make E2EE available.
 if [[ -z "${E2EE_RECOVERY_SECRET:-}" ]]; then
@@ -50,6 +52,16 @@ install_update_units() {
 }
 
 if [[ "${SYNAPSIS_APPLY_UPDATE:-0}" != "1" ]]; then
+  current_repo_url="$(runuser -u synapsis -- git -C "$APP_DIR" remote get-url origin 2>/dev/null || true)"
+  if [[ "$current_repo_url" != "$REPO_URL" ]]; then
+    if [[ -n "$current_repo_url" ]]; then
+      runuser -u synapsis -- git -C "$APP_DIR" remote set-url origin "$REPO_URL"
+    else
+      runuser -u synapsis -- git -C "$APP_DIR" remote add origin "$REPO_URL"
+    fi
+    echo "Synapsis update source set to $REPO_URL."
+  fi
+
   runuser -u synapsis -- git -C "$APP_DIR" fetch --prune origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
 
   current_commit="$(runuser -u synapsis -- git -C "$APP_DIR" rev-parse HEAD)"
@@ -73,7 +85,7 @@ if [[ "${SYNAPSIS_APPLY_UPDATE:-0}" != "1" ]]; then
     runuser -u synapsis -- git -C "$APP_DIR" merge --ff-only "origin/$BRANCH"
   fi
 
-  exec env SYNAPSIS_APPLY_UPDATE=1 APP_DIR="$APP_DIR" DATA_DIR="$DATA_DIR" ENV_FILE="$ENV_FILE" BRANCH="$BRANCH" bash "$APP_DIR/deploy/update.sh"
+  exec env SYNAPSIS_APPLY_UPDATE=1 APP_DIR="$APP_DIR" DATA_DIR="$DATA_DIR" ENV_FILE="$ENV_FILE" REPO_URL="$REPO_URL" BRANCH="$BRANCH" bash "$APP_DIR/deploy/update.sh"
 fi
 
 install_update_units
