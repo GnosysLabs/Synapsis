@@ -7,6 +7,7 @@ import {
   CLI_AUTHORIZATION_TTL_MS,
   CLI_CREDENTIAL_LIFETIME_DAYS_DEFAULT,
   CLI_CREDENTIAL_LIFETIME_DAYS_MAX,
+  cliVerificationOrigin,
   createCliDeviceCode,
   fingerprintCliPublicKey,
   hashCliDeviceCode,
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
       expiresAt,
     }).returning();
 
-    const origin = new URL(request.url).origin;
+    const origin = cliVerificationOrigin(request.url);
     const verificationUri = new URL('/settings/cli', origin);
     const verificationUriComplete = new URL(verificationUri);
     verificationUriComplete.searchParams.set('request', authorization.id);

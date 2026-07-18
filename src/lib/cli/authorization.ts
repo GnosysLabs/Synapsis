@@ -6,6 +6,21 @@ export const CLI_AUTHORIZATION_POLL_INTERVAL_SECONDS = 3;
 export const CLI_CREDENTIAL_LIFETIME_DAYS_DEFAULT = 90;
 export const CLI_CREDENTIAL_LIFETIME_DAYS_MAX = 365;
 
+export function cliVerificationOrigin(
+  requestUrl: string,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const configuredDomain = environment.NEXT_PUBLIC_NODE_DOMAIN?.trim()
+    || environment.NODE_DOMAIN?.trim();
+  if (!configuredDomain) return new URL(requestUrl).origin;
+
+  const isLocal = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::|$)/i.test(configuredDomain);
+  const configuredUrl = configuredDomain.includes('://')
+    ? configuredDomain
+    : `${isLocal ? 'http' : 'https'}://${configuredDomain}`;
+  return new URL(configuredUrl).origin;
+}
+
 function publicKeyBytes(publicKey: string): Buffer {
   const clean = publicKey
     .replace(/-----BEGIN PUBLIC KEY-----/g, '')
