@@ -1519,6 +1519,8 @@ a.btn-primary:visited {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
   width: min(360px, 56vw);
+  max-width: 100%;
+  min-width: 0;
   margin-top: 8px;
   white-space: normal;
 }
