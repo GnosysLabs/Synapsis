@@ -78,6 +78,9 @@ async function fetchAudioMetadata(src: string): Promise<AudioTrackMetadata | nul
   const timeout = window.setTimeout(() => controller.abort(), AUDIO_METADATA_TIMEOUT_MS);
   const response = await fetch(src, {
     credentials: 'omit',
+    headers: {
+      Range: `bytes=0-${MAX_AUDIO_METADATA_BYTES - 1}`,
+    },
     referrerPolicy: 'no-referrer',
     signal: controller.signal,
   });
@@ -87,7 +90,6 @@ async function fetchAudioMetadata(src: string): Promise<AudioTrackMetadata | nul
     return null;
   }
 
-  const contentLength = Number(response.headers.get('content-length'));
   const contentType = response.headers.get('content-type') || undefined;
   const path = (() => {
     try {
@@ -96,27 +98,38 @@ async function fetchAudioMetadata(src: string): Promise<AudioTrackMetadata | nul
       return undefined;
     }
   })();
-  const { parseWebStream } = await import('music-metadata');
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
   let receivedBytes = 0;
-  const boundedStream = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, streamController) {
-      receivedBytes += chunk.byteLength;
-      if (receivedBytes > MAX_AUDIO_METADATA_BYTES) {
-        controller.abort();
-        streamController.error(new Error('Audio metadata scan exceeded its byte limit'));
-        return;
-      }
-      streamController.enqueue(chunk);
-    },
-  }));
   try {
-    const parsed = await parseWebStream(boundedStream, {
+    while (receivedBytes < MAX_AUDIO_METADATA_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const remainingBytes = MAX_AUDIO_METADATA_BYTES - receivedBytes;
+      const chunk = value.byteLength > remainingBytes
+        ? value.subarray(0, remainingBytes)
+        : value;
+      chunks.push(chunk);
+      receivedBytes += chunk.byteLength;
+    }
+
+    const bytes = new Uint8Array(receivedBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    const { parseBuffer } = await import('music-metadata');
+    const parsed = await parseBuffer(bytes, {
       mimeType: contentType,
-      size: Number.isFinite(contentLength) && contentLength > 0 ? contentLength : undefined,
+      size: bytes.byteLength,
       path,
     }, { duration: false });
     return normalizeAudioMetadata(parsed.common);
   } finally {
+    await reader.cancel().catch(() => {});
     window.clearTimeout(timeout);
     controller.abort();
   }
