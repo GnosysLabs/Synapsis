@@ -6,6 +6,7 @@ import { Download, File } from 'lucide-react';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import type { ChatAttachment } from '@/lib/chat/message-content';
 import { getMediaKind } from '@/lib/media/upload-policy';
+import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 
 interface ChatMessageAttachmentsProps {
   attachments: ChatAttachment[];
@@ -50,7 +51,8 @@ export function ChatMessageAttachments({ attachments }: ChatMessageAttachmentsPr
                 src={attachment.url}
                 controls
                 playsInline
-                preload="none"
+                preload="metadata"
+                onLoadedMetadata={(event) => primeVideoPreviewFrame(event.currentTarget)}
                 aria-label={attachment.filename}
               />
             </div>

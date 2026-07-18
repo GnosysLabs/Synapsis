@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useState } from 'react';
 import { Pause, Play, Volume2, VolumeX } from 'lucide-react';
+import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 
 interface BlurredVideoProps {
     src: string;
@@ -106,7 +107,8 @@ export default function BlurredVideo({ src }: BlurredVideoProps) {
                 muted
                 loop
                 playsInline
-                preload="none"
+                preload="metadata"
+                onLoadedMetadata={(event) => primeVideoPreviewFrame(event.currentTarget)}
                 className="blurred-video-main"
                 onClick={togglePlayback}
                 onKeyDown={(event) => {

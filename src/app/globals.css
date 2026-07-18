@@ -864,10 +864,11 @@ a.btn-primary:visited {
   transform: scale(1.04);
 }
 
-.audio-player-artwork {
-  flex: 0 0 64px;
-  width: 64px;
-  height: 64px;
+.audio-player .audio-player-artwork {
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  max-height: 48px;
   border-radius: 8px;
   object-fit: cover;
   box-shadow: 0 5px 18px rgb(0 0 0 / 24%);

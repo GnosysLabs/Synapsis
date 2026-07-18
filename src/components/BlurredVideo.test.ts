@@ -13,6 +13,8 @@ describe('BlurredVideo', () => {
         expect(markup).toContain('aria-label="Seek video"');
         expect(markup).toContain('type="range"');
         expect(markup).toContain('aria-label="Unmute video"');
+        expect(markup).toContain('preload="metadata"');
+        expect(markup).not.toContain('preload="none"');
     });
 
     it('formats video timestamps', () => {

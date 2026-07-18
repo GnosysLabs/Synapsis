@@ -1,3 +1,5 @@
+import { isTrustedFederationMediaUrl } from '@/lib/utils/federation';
+
 export interface AudioArtwork {
   data: Uint8Array;
   mimeType: string;
@@ -86,11 +88,6 @@ async function fetchAudioMetadata(src: string): Promise<AudioTrackMetadata | nul
   }
 
   const contentLength = Number(response.headers.get('content-length'));
-  if (Number.isFinite(contentLength) && contentLength > MAX_AUDIO_METADATA_BYTES) {
-    window.clearTimeout(timeout);
-    controller.abort();
-    return null;
-  }
   const contentType = response.headers.get('content-type') || undefined;
   const path = (() => {
     try {
@@ -139,6 +136,12 @@ async function withMetadataSlot<T>(work: () => Promise<T>): Promise<T> {
 }
 
 export function loadAudioMetadata(src: string): Promise<AudioTrackMetadata | null> {
+  // Metadata loading is a background request, so it must obey the same media
+  // origin boundary as rendering. This keeps a hostile node from using an
+  // audio URL as a tracking callback while still allowing Stuffbox and the
+  // operator's explicitly configured CDN origins.
+  if (!isTrustedFederationMediaUrl(src)) return Promise.resolve(null);
+
   const existing = metadataRequests.get(src);
   if (existing) return existing;
 
