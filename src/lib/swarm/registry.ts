@@ -365,19 +365,53 @@ export async function getNodesSince(since: Date, limit = 100): Promise<SwarmNode
   return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
 }
 
-/** Fixed-cost candidates that still require direct origin verification. */
+/**
+ * Fixed-cost candidates that still require direct origin verification.
+ *
+ * Retry previously established peers before probing gossip-only hints. An
+ * established peer can retain a positive trust score after enough failures to
+ * become inactive; restricting retries to zero-trust hints would strand that
+ * peer permanently. Direct discovery still verifies the peer at its own HTTPS
+ * origin and enforces its pinned signing key before reactivation.
+ */
 export async function getSwarmDiscoveryCandidates(count: number): Promise<SwarmNodeInfo[]> {
   if (!db) return [];
-  const nodes = await db.query.swarmNodes.findMany({
+  const limit = Math.max(0, Math.min(count, SWARM_CONFIG.discoveryProbeFanout));
+  if (limit === 0) return [];
+
+  const establishedNodes = await db.query.swarmNodes.findMany({
+    where: { AND: [
+      { isActive: false },
+      { isBlocked: false },
+      { OR: [
+        { discoveredVia: 'direct' },
+        { discoveredVia: 'announcement' },
+      ] },
+    ] },
+    orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.lastSeenAt)],
+    limit,
+  });
+
+  const candidates = establishedNodes.filter((node) => isPublicSwarmDomain(node.domain));
+  const remaining = limit - candidates.length;
+  if (remaining <= 0) return candidates.slice(0, limit).map(nodeToInfo);
+
+  const gossipHints = await db.query.swarmNodes.findMany({
     where: { AND: [
       { isActive: false },
       { isBlocked: false },
       { trustScore: SWARM_CONFIG.minTrustScore },
     ] },
     orderBy: () => sql`RANDOM()`,
-    limit: Math.max(0, Math.min(count, SWARM_CONFIG.discoveryProbeFanout)),
+    limit: remaining,
   });
-  return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
+  const establishedDomains = new Set(candidates.map((node) => node.domain));
+  return [
+    ...candidates,
+    ...gossipHints.filter((node) => (
+      isPublicSwarmDomain(node.domain) && !establishedDomains.has(node.domain)
+    )),
+  ].slice(0, limit).map(nodeToInfo);
 }
 
 /**
