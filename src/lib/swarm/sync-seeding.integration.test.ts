@@ -29,7 +29,10 @@ describe('SQLite synchronization state seeding', () => {
         domain text NOT NULL UNIQUE,
         is_active integer DEFAULT 1 NOT NULL,
         is_blocked integer DEFAULT 0 NOT NULL,
-        trust_score integer DEFAULT 50 NOT NULL
+        trust_score integer DEFAULT 50 NOT NULL,
+        public_key text,
+        discovered_via text,
+        nsfw_classification_known integer DEFAULT 0 NOT NULL
       );
       CREATE TABLE swarm_content_sync_states (
         domain text PRIMARY KEY NOT NULL REFERENCES swarm_nodes(domain) ON DELETE CASCADE
@@ -51,7 +54,9 @@ describe('SQLite synchronization state seeding', () => {
 
   it('uses unqualified SQLite conflict-target columns for both seeders', async () => {
     await client.exec(`
-      INSERT INTO swarm_nodes (id, domain) VALUES ('peer', 'remote.social');
+      INSERT INTO swarm_nodes (
+        id, domain, public_key, discovered_via, nsfw_classification_known
+      ) VALUES ('peer', 'remote.social', 'PINNED KEY', 'direct', 1);
       INSERT INTO remote_follows (id, target_handle)
       VALUES ('follow', 'Alice@Remote.Social');
     `);
@@ -72,6 +77,27 @@ describe('SQLite synchronization state seeding', () => {
       target_handle: 'alice@remote.social',
       node_domain: 'remote.social',
     }]);
+  });
+
+  it('schedules established peers for bounded recovery even when trust is quarantined', async () => {
+    await client.exec(`
+      INSERT INTO swarm_nodes (
+        id, domain, is_active, is_blocked, trust_score, public_key,
+        discovered_via, nsfw_classification_known
+      ) VALUES
+        ('recovering', 'recovering.social', 1, 0, 0, 'PINNED', 'announcement', 1),
+        ('gossip', 'gossip.social', 1, 0, 100, NULL, 'relay.social', 0),
+        ('blocked', 'blocked.social', 1, 1, 100, 'PINNED', 'direct', 1),
+        ('inactive', 'inactive.social', 0, 0, 100, 'PINNED', 'direct', 1);
+    `);
+
+    const runnableDatabase = database as Pick<typeof productionDatabase, 'run'>;
+    await seedSwarmContentSyncStates(runnableDatabase);
+
+    const contentStates = await database.all<{ domain: string }>(sql.raw(
+      'SELECT domain FROM swarm_content_sync_states ORDER BY domain',
+    ));
+    expect(contentStates).toEqual([{ domain: 'recovering.social' }]);
   });
 });
 

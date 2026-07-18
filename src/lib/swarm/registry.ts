@@ -552,7 +552,10 @@ export async function markNodeFailure(domain: string): Promise<void> {
  * 
  * @throws Error if database operation fails (after logging)
  */
-export async function markNodeSuccess(domain: string): Promise<void> {
+export async function markNodeSuccess(
+  domain: string,
+  options: { verifiedContent?: boolean } = {},
+): Promise<void> {
   if (!db) return;
 
   try {
@@ -564,10 +567,16 @@ export async function markNodeSuccess(domain: string): Promise<void> {
 
     const now = new Date();
     const lastTrustIncrease = node.lastSyncAt?.getTime() ?? 0;
-    const mayIncreaseTrust = now.getTime() - lastTrustIncrease >= SWARM_CONFIG.gossipIntervalMs;
+    const recoversAvailabilityQuarantine = options.verifiedContent === true
+      && node.trustScore <= SWARM_CONFIG.quarantineTrustScore;
+    const mayIncreaseTrust = recoversAvailabilityQuarantine
+      || now.getTime() - lastTrustIncrease >= SWARM_CONFIG.gossipIntervalMs;
+    const trustBaseline = recoversAvailabilityQuarantine
+      ? SWARM_CONFIG.quarantineTrustScore
+      : node.trustScore;
     const newTrust = Math.min(
       SWARM_CONFIG.maxTrustScore,
-      node.trustScore + (mayIncreaseTrust ? SWARM_CONFIG.trustScoreOnSuccess : 0)
+      trustBaseline + (mayIncreaseTrust ? SWARM_CONFIG.trustScoreOnSuccess : 0)
     );
 
     await db.update(swarmNodes)

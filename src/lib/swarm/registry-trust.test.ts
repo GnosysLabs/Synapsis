@@ -3,6 +3,9 @@ import crypto from 'node:crypto';
 
 const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
+  update: vi.fn(),
+  set: vi.fn(),
+  where: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
@@ -10,6 +13,7 @@ vi.mock('@/db', () => ({
     query: {
       swarmNodes: { findFirst: mocks.findFirst },
     },
+    update: mocks.update,
   },
   media: {},
   posts: {},
@@ -19,7 +23,7 @@ vi.mock('@/db', () => ({
   users: {},
 }));
 
-import { getTrustedSwarmReadPeerPublicKey } from './registry';
+import { getTrustedSwarmReadPeerPublicKey, markNodeSuccess } from './registry';
 
 const peerPublicKey = crypto.generateKeyPairSync('ec', {
   namedCurve: 'prime256v1',
@@ -40,6 +44,9 @@ const establishedPeer = {
 describe('trusted swarm read peers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.update.mockReturnValue({ set: mocks.set });
+    mocks.set.mockReturnValue({ where: mocks.where });
+    mocks.where.mockResolvedValue(undefined);
   });
 
   it('returns the pinned key for a directly established, classified peer', async () => {
@@ -71,5 +78,22 @@ describe('trusted swarm read peers', () => {
 
     await expect(getTrustedSwarmReadPeerPublicKey('peer.social'))
       .resolves.toBe(peerPublicKey.trim());
+  });
+
+  it('restores availability trust after a verified content exchange', async () => {
+    mocks.findFirst.mockResolvedValue({
+      ...establishedPeer,
+      trustScore: 0,
+      lastSyncAt: new Date(),
+      consecutiveFailures: 5,
+    });
+
+    await markNodeSuccess('peer.social', { verifiedContent: true });
+
+    expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({
+      trustScore: 26,
+      consecutiveFailures: 0,
+      isActive: true,
+    }));
   });
 });

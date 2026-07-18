@@ -37,6 +37,7 @@ import { parseRemoteTimelineResponse } from './remote-timeline-payload';
 import { signedFederationRead } from './signed-read';
 import { SWARM_CONFIG } from './types';
 import { normalizeNodeDomain } from './node-domain';
+import { markNodeSuccess } from './registry';
 import { decodeFeedCursorPosition, type FeedCursorPosition } from '@/lib/posts/feed-pagination';
 import { indexRemotePostContent, searchIndexedPostIds } from '@/lib/search/post-index';
 
@@ -155,7 +156,9 @@ export async function seedSwarmContentSyncStates(
     from ${swarmNodes}
     where ${swarmNodes.isActive} = 1
       and ${swarmNodes.isBlocked} = 0
-      and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore}
+      and ${swarmNodes.nsfwClassificationKnown} = 1
+      and ${swarmNodes.publicKey} is not null
+      and ${swarmNodes.discoveredVia} in ('direct', 'announcement')
     on conflict (${sql.identifier('domain')}) do nothing
   `);
 }
@@ -179,7 +182,9 @@ async function claimDuePeers(batchSize: number): Promise<ClaimedPeer[]> {
     .where(and(
       eq(swarmNodes.isActive, true),
       eq(swarmNodes.isBlocked, false),
-      sql`${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore}`,
+      eq(swarmNodes.nsfwClassificationKnown, true),
+      sql`${swarmNodes.publicKey} is not null`,
+      sql`${swarmNodes.discoveredVia} in ('direct', 'announcement')`,
       lte(swarmContentSyncStates.nextAttemptAt, now),
       or(
         isNull(swarmContentSyncStates.leaseExpiresAt),
@@ -665,12 +670,20 @@ async function reconcileLegacyPeerReferences(peer: ClaimedPeer): Promise<{
 
 async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: number; error?: string }> {
   try {
+    const [cacheState] = await db.select({ count: sql<number>`count(*)` })
+      .from(remotePosts)
+      .where(eq(remotePosts.nodeDomain, peer.domain));
+    // A persisted cursor without its corresponding cache can happen after an
+    // interrupted migration or manual recovery. Asking only for later changes
+    // would leave the peer permanently empty, so rebuild from a bounded full
+    // snapshot whenever the cache is missing.
+    const requestFullSnapshot = Number(cacheState?.count || 0) === 0;
     const timelineUrl = new URL(`https://${peer.domain}/api/swarm/timeline`);
     timelineUrl.searchParams.set('limit', '50');
     timelineUrl.searchParams.set('accountsSince', String(peer.accountChangeCursor ?? 0));
-    if (peer.changeCursor !== null && peer.changeCursor >= 0) {
+    if (!requestFullSnapshot && peer.changeCursor !== null && peer.changeCursor >= 0) {
       timelineUrl.searchParams.set('changesSince', String(peer.changeCursor));
-    } else if (peer.changeCursor === -1 && peer.highWaterAt) {
+    } else if (!requestFullSnapshot && peer.changeCursor === -1 && peer.highWaterAt) {
       timelineUrl.searchParams.set('since', peer.highWaterAt.toISOString());
       if (peer.highWaterId) timelineUrl.searchParams.set('sinceId', peer.highWaterId);
     }
@@ -709,7 +722,7 @@ async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: nu
     // The first change-stream snapshot is authoritative for this bounded
     // cache. Clearing only this peer repairs stale rows created before
     // tombstones existed without touching media or local interaction data.
-    if (peer.changeCursor === null && parsed.changeCursor !== undefined) {
+    if ((peer.changeCursor === null || requestFullSnapshot) && parsed.changeCursor !== undefined) {
       await db.delete(remotePosts).where(eq(remotePosts.nodeDomain, peer.domain));
     }
 
@@ -731,6 +744,10 @@ async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: nu
         ? { at: activityAt, id: post.id }
         : newest;
     }, peer.highWaterAt ? { at: peer.highWaterAt, id: peer.highWaterId || '' } : null);
+    // A valid, bounded timeline response from a pinned peer is the successful
+    // exchange that ends availability quarantine. Content is still treated as
+    // untrusted and must pass all parsing/classification/display filters.
+    await markNodeSuccess(peer.domain, { verifiedContent: true });
     await finishPeerSync(peer, {
       success: true,
       highWaterAt: highWater?.at || null,
@@ -764,7 +781,9 @@ export async function syncSwarmContentBatch(): Promise<ContentSyncResult> {
           .where(and(
             eq(swarmNodes.isActive, true),
             eq(swarmNodes.isBlocked, false),
-            sql`${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore}`,
+            eq(swarmNodes.nsfwClassificationKnown, true),
+            sql`${swarmNodes.publicKey} is not null`,
+            sql`${swarmNodes.discoveredVia} in ('direct', 'announcement')`,
           )))[0]?.count || 0) / TARGET_FULL_SWEEP_MINUTES),
       ));
   const peers = await claimDuePeers(effectiveBatchSize);
