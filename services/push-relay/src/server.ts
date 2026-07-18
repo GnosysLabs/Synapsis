@@ -277,7 +277,10 @@ export function createRelayServer(dependencies: RelayDependencies): http.Server 
           subscription.id,
           dependencies.config.dataKey,
         );
-        const result = await dependencies.apns.send(subscription.environment, deviceToken, event);
+        const result = await dependencies.apns.send(subscription.environment, deviceToken, {
+          ...event,
+          subscriptionId: subscription.id,
+        });
         if (result.status === 200) {
           await dependencies.database.finishDelivery(
             subscription.id,

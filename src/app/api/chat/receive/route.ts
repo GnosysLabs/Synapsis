@@ -13,6 +13,7 @@ import { verifyActionSignature, type SignedAction } from '@/lib/auth/verify-sign
 import { normalizeSigningPublicKey } from '@/lib/crypto/did-key';
 import { signingPublicKeyFromDid } from '@/lib/e2ee/bundle-proof';
 import {
+  E2EE_MAX_MESSAGE_CIPHERTEXT_BYTES,
   E2EE_PROTOCOL_VERSION,
   e2eeMessageEnvelopeSchema,
   signedUserActionSchema,
@@ -125,7 +126,7 @@ export async function POST(request: NextRequest) {
     }
     if (Buffer.from(envelope.nonce, 'base64url').length !== 24
       || Buffer.from(envelope.ciphertext, 'base64url').length < 17
-      || Buffer.from(envelope.ciphertext, 'base64url').length > 8_192
+      || Buffer.from(envelope.ciphertext, 'base64url').length > E2EE_MAX_MESSAGE_CIPHERTEXT_BYTES
       || Buffer.from(envelope.keyCommitment, 'base64url').length !== 32
       || envelope.keyEnvelopes.some((item) => Buffer.from(item.sealedKey, 'base64url').length !== 112)) {
       return NextResponse.json({ error: 'Invalid encrypted message sizes' }, { status: 400 });

@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   E2EE_KDF,
   E2EE_CIPHER_SUITE,
+  E2EE_MAX_MESSAGE_PLAINTEXT_BYTES,
   E2EE_PROTOCOL,
   type E2EEKeyBundle,
   type E2EEKeyMaterial,
@@ -237,6 +238,10 @@ export async function encryptE2EEMessage(input: {
   recipientHandle: string;
   recipientBundle: E2EEKeyBundle;
 }): Promise<E2EEMessageEnvelope> {
+  const plaintext = encoder.encode(input.plaintext);
+  if (plaintext.length > E2EE_MAX_MESSAGE_PLAINTEXT_BYTES) {
+    throw new Error('Encrypted message exceeds the maximum size');
+  }
   const crypto = await ready();
   const contentKey = crypto.randombytes_buf(crypto.crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
   const nonce = crypto.randombytes_buf(crypto.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
@@ -270,7 +275,7 @@ export async function encryptE2EEMessage(input: {
   try {
     const authenticatedData = encoder.encode(messageAuthenticatedData(header));
     const ciphertext = crypto.crypto_aead_xchacha20poly1305_ietf_encrypt(
-      encoder.encode(input.plaintext),
+      plaintext,
       authenticatedData,
       null,
       nonce,
@@ -300,6 +305,7 @@ export async function encryptE2EEMessage(input: {
       })),
     };
   } finally {
+    crypto.memzero(plaintext);
     crypto.memzero(contentKey);
     if (sealedPayload) crypto.memzero(sealedPayload);
   }

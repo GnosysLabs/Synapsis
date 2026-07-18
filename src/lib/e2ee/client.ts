@@ -2,6 +2,7 @@
 
 import { canonicalize, createSignedAction, verifySignedActionSignature } from '@/lib/crypto/user-signing';
 import { signingPublicKeyFromDid, verifyE2EEPublicBundle } from './bundle-proof';
+import { decodeChatMessageContent, type ChatAttachment } from '@/lib/chat/message-content';
 import {
   createE2EEVault,
   decryptE2EEMessage,
@@ -260,9 +261,9 @@ export async function decryptStoredChatMessage(
   message: StoredChatMessage,
   userDid: string,
   material: E2EEKeyMaterial,
-): Promise<{ content: string; legacy: boolean }> {
+): Promise<{ content: string; attachments: ChatAttachment[]; legacy: boolean }> {
   if (message.protocolVersion === 0) {
-    return { content: message.content || '[Empty legacy message]', legacy: true };
+    return { content: message.content || '[Empty legacy message]', attachments: [], legacy: true };
   }
 
   const envelope = e2eeMessageEnvelopeSchema.parse(message.encryptedEnvelope);
@@ -276,8 +277,10 @@ export async function decryptStoredChatMessage(
   if (!signingPublicKey || !await verifySignedActionSignature(signedAction, signingPublicKey)) {
     throw new E2EEClientError('Encrypted message signature is invalid', 'E2EE_MESSAGE_SIGNATURE_INVALID');
   }
+  const content = decodeChatMessageContent(await decryptE2EEMessage(envelope, userDid, material));
   return {
-    content: await decryptE2EEMessage(envelope, userDid, material),
+    content: content.text,
+    attachments: content.attachments,
     legacy: false,
   };
 }

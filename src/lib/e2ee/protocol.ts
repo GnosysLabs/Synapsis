@@ -12,6 +12,9 @@ export const E2EE_RECOVERY_PASSWORD_MIN_LENGTH = 8;
 export const E2EE_RECOVERY_PASSWORD_MAX_LENGTH = 256;
 export const E2EE_MAX_UNLOCK_ATTEMPTS = 10;
 export const E2EE_LOCKOUT_MS = 60 * 60 * 1000;
+export const E2EE_MAX_MESSAGE_PLAINTEXT_BYTES = 32_000;
+export const E2EE_MAX_MESSAGE_CIPHERTEXT_BYTES = E2EE_MAX_MESSAGE_PLAINTEXT_BYTES + 16;
+export const E2EE_MAX_MESSAGE_CIPHERTEXT_BASE64_LENGTH = 43_000;
 
 export const E2EE_KDF = {
   algorithm: 'argon2id13' as const,
@@ -19,7 +22,7 @@ export const E2EE_KDF = {
   memLimit: 64 * 1024 * 1024,
 };
 
-const base64UrlSchema = z.string().min(1).max(24_000).regex(/^[A-Za-z0-9_-]+$/);
+const base64UrlSchema = z.string().min(1).max(E2EE_MAX_MESSAGE_CIPHERTEXT_BASE64_LENGTH).regex(/^[A-Za-z0-9_-]+$/);
 const didSchema = z.string().min(8).max(2_048).regex(/^did:/);
 const handleSchema = z.string().min(1).max(320);
 const keyIdSchema = z.string().min(12).max(96).regex(/^k1_[A-Za-z0-9_-]+$/);
@@ -77,7 +80,7 @@ export const e2eeMessageEnvelopeSchema = z.strictObject({
   recipientKeyId: keyIdSchema,
   recipientKeyVersion: z.number().int().positive().max(1_000_000),
   nonce: base64UrlSchema.max(64),
-  ciphertext: base64UrlSchema.max(16_000),
+  ciphertext: base64UrlSchema.max(E2EE_MAX_MESSAGE_CIPHERTEXT_BASE64_LENGTH),
   keyCommitment: base64UrlSchema.max(64),
   keyEnvelopes: z.array(e2eeKeyEnvelopeSchema).min(1).max(2),
 });

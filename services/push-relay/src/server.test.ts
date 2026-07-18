@@ -105,6 +105,7 @@ describe('push relay protocol', () => {
     expect((await deliver()).status).toBe(202);
     expect(apns.calls).toHaveLength(1);
     expect(apns.calls[0]).toMatchObject({ environment: 'sandbox', deviceToken: apnsToken });
+    expect(apns.calls[0]?.event.subscriptionId).toBe(credentials.subscriptionId);
 
     const unauthorized = await fetch(
       `${baseURL}/v1/subscriptions/${credentials.subscriptionId}/deliver`,

@@ -11,6 +11,7 @@ import {
   toBase64Url,
 } from './client-crypto';
 import {
+  E2EE_MAX_MESSAGE_PLAINTEXT_BYTES,
   E2EE_PROTOCOL,
   e2eeMessageEnvelopeSchema,
   validateMessageBindings,
@@ -76,6 +77,20 @@ describe('E2EE message crypto', () => {
     const { envelope } = await messageFixture();
     const mallory = await generateE2EEKeyMaterial();
     await expect(decryptE2EEMessage(envelope, bobDid, mallory)).rejects.toThrow();
+  });
+
+  it('rejects plaintext larger than the encrypted-message transport limit', async () => {
+    const alice = await generateE2EEKeyMaterial();
+    const bob = await generateE2EEKeyMaterial();
+    await expect(encryptE2EEMessage({
+      plaintext: 'x'.repeat(E2EE_MAX_MESSAGE_PLAINTEXT_BYTES + 1),
+      senderDid: aliceDid,
+      senderHandle: 'alice',
+      senderBundle: bundle(alice),
+      recipientDid: bobDid,
+      recipientHandle: 'bob',
+      recipientBundle: bundle(bob),
+    })).rejects.toThrow(/maximum size/);
   });
 
   it.each(['ciphertext', 'nonce', 'keyCommitment'] as const)(

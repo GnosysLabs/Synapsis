@@ -1,9 +1,10 @@
 'use client';
 
 import { Fragment, useCallback, useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
-import { ArrowLeft, Send, Loader2, LockKeyhole, MessageCircle, Search, Trash2 } from 'lucide-react';
+import { ArrowLeft, Send, Loader2, LockKeyhole, MessageCircle, Music2, Paperclip, Search, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
 import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -19,6 +20,17 @@ import { encryptE2EEMessage } from '@/lib/e2ee/client-crypto';
 import type { E2EEKeyBundle, E2EEKeyMaterial, E2EEMessageEnvelope } from '@/lib/e2ee/protocol';
 import { useE2EEIdentity } from '@/lib/e2ee/use-e2ee-identity';
 import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
+import { ChatMessageAttachments } from '@/components/ChatMessageAttachments';
+import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
+import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { getMaxMediaSize, getMediaKind } from '@/lib/media/upload-policy';
+import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
+import {
+    CHAT_ATTACHMENT_LIMIT,
+    encodeChatMessageContent,
+    getChatMessagePreview,
+    type ChatAttachment,
+} from '@/lib/chat/message-content';
 import {
     buildChatShareContinuationHref,
     buildChatShareHref,
@@ -61,9 +73,24 @@ interface ChatMessagePayload extends StoredChatMessage {
 
 type Message = Omit<ChatMessagePayload, 'content'> & {
     content: string;
+    attachments: ChatAttachment[];
     legacy: boolean;
     decryptionError: boolean;
 };
+
+interface ChatComposerAttachment extends ChatAttachment {
+    id: string;
+    previewUrl: string;
+    file?: File;
+    uploadState: 'uploading' | 'ready' | 'failed';
+    uploadProgress: number;
+}
+
+interface PendingChatUpload {
+    conversationKey: string;
+    id: string;
+    file: File;
+}
 
 type ConversationEncryptionState =
     | { status: 'idle' }
@@ -87,7 +114,7 @@ const CHAT_REQUEST_TIMEOUT_MS = 15_000;
 interface PreparedSend {
     accountDid: string;
     conversationKey: string;
-    draft: string;
+    plaintext: string;
     senderKeyId: string;
     recipientKeyId: string;
     envelope: E2EEMessageEnvelope;
@@ -118,6 +145,12 @@ export default function ChatPage() {
     const selectedHandle = useFormattedHandle(selectedConversation?.participant2.handle || '');
     const [messages, setMessages] = useState<Message[]>([]);
     const [drafts, setDrafts] = useState<Record<string, string>>({});
+    const [attachmentDrafts, setAttachmentDrafts] = useState<Record<string, ChatComposerAttachment[]>>({});
+    const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
+    const [storageNotices, setStorageNotices] = useState<Record<string, string>>({});
+    const [pendingStorageUploads, setPendingStorageUploads] = useState<PendingChatUpload[]>([]);
+    const [showStorageConfiguration, setShowStorageConfiguration] = useState(false);
+    const [isCheckingStorage, setIsCheckingStorage] = useState(false);
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
     const [sendError, setSendError] = useState<string | null>(null);
@@ -138,6 +171,8 @@ export default function ChatPage() {
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const messagesContainerRef = useRef<HTMLDivElement>(null);
+    const mediaInputRef = useRef<HTMLInputElement>(null);
+    const attachmentDraftsRef = useRef<Record<string, ChatComposerAttachment[]>>({});
     const [isAtBottom, setIsAtBottom] = useState(true);
     const appliedSharedPostRef = useRef<string | null>(null);
     const messagesRequestRef = useRef(0);
@@ -155,6 +190,7 @@ export default function ChatPage() {
     const e2eeMaterialRef = useRef<{ accountDid: string; material: E2EEKeyMaterial } | null>(null);
 
     renderedAccountDidRef.current = user?.did ?? null;
+    attachmentDraftsRef.current = attachmentDrafts;
     e2eeMaterialRef.current = user?.did && e2eeIdentity.state.status === 'ready'
         ? { accountDid: user.did, material: e2eeIdentity.state.material }
         : null;
@@ -165,16 +201,219 @@ export default function ChatPage() {
 
     const selectedConversationKey = selectedConversationKeyRef.current;
     const newMessage = selectedConversationKey ? drafts[selectedConversationKey] || '' : '';
+    const selectedAttachments = selectedConversationKey ? attachmentDrafts[selectedConversationKey] || [] : [];
+    const selectedAttachmentError = selectedConversationKey ? attachmentErrors[selectedConversationKey] || null : null;
+    const selectedStorageNotice = selectedConversationKey ? storageNotices[selectedConversationKey] || null : null;
+    const hasUnreadyAttachments = selectedAttachments.some((attachment) => attachment.uploadState !== 'ready');
+    const canSendMessage = Boolean(newMessage.trim() || selectedAttachments.length > 0)
+        && !hasUnreadyAttachments;
 
     const updateSelectedDraft = useCallback((value: string) => {
         const key = selectedConversationKeyRef.current;
         if (!key) return;
         const cacheKey = accountConversationKey(renderedAccountDidRef.current, key);
-        const prepared = preparedSendsRef.current.get(cacheKey);
-        if (prepared && prepared.draft !== value) preparedSendsRef.current.delete(cacheKey);
+        preparedSendsRef.current.delete(cacheKey);
         setDrafts((current) => current[key] === value ? current : { ...current, [key]: value });
         setSendError(null);
     }, []);
+
+    const updateConversationAttachments = useCallback((
+        conversationKey: string,
+        update: (current: ChatComposerAttachment[]) => ChatComposerAttachment[],
+    ) => {
+        const nextAttachments = update(attachmentDraftsRef.current[conversationKey] || []);
+        const nextDrafts = { ...attachmentDraftsRef.current };
+        if (nextAttachments.length > 0) nextDrafts[conversationKey] = nextAttachments;
+        else delete nextDrafts[conversationKey];
+        attachmentDraftsRef.current = nextDrafts;
+        setAttachmentDrafts(nextDrafts);
+    }, []);
+
+    const setConversationAttachmentError = useCallback((conversationKey: string, message: string | null) => {
+        setAttachmentErrors((current) => {
+            const next = { ...current };
+            if (message) next[conversationKey] = message;
+            else delete next[conversationKey];
+            return next;
+        });
+    }, []);
+
+    const updatePendingAttachment = useCallback((
+        conversationKey: string,
+        id: string,
+        update: Partial<ChatComposerAttachment>,
+    ) => {
+        updateConversationAttachments(conversationKey, (current) => current.map((attachment) => (
+            attachment.id === id ? { ...attachment, ...update } : attachment
+        )));
+    }, [updateConversationAttachments]);
+
+    const uploadPendingAttachments = useCallback(async (pendingUploads: PendingChatUpload[]) => {
+        for (let index = 0; index < pendingUploads.length; index += 1) {
+            const pending = pendingUploads[index];
+            const exists = attachmentDraftsRef.current[pending.conversationKey]
+                ?.some((attachment) => attachment.id === pending.id);
+            if (!exists) continue;
+
+            updatePendingAttachment(pending.conversationKey, pending.id, {
+                uploadState: 'uploading',
+                uploadProgress: 0,
+            });
+            try {
+                const media = await uploadMediaFile(pending.file, (progress) => {
+                    updatePendingAttachment(pending.conversationKey, pending.id, { uploadProgress: progress });
+                });
+                updatePendingAttachment(pending.conversationKey, pending.id, {
+                    url: media.url,
+                    mimeType: pending.file.type as ChatAttachment['mimeType'],
+                    file: undefined,
+                    uploadState: 'ready',
+                    uploadProgress: 1,
+                });
+            } catch (error) {
+                console.error('[Chat] Attachment upload failed:', error);
+                updatePendingAttachment(pending.conversationKey, pending.id, {
+                    uploadState: 'failed',
+                    uploadProgress: 0,
+                });
+
+                if (error instanceof MediaUploadError && error.code === 'STORAGE_NOT_CONFIGURED') {
+                    const remaining = pendingUploads.slice(index).filter((waiting) => (
+                        attachmentDraftsRef.current[waiting.conversationKey]
+                            ?.some((attachment) => attachment.id === waiting.id)
+                    ));
+                    for (const waiting of remaining) {
+                        updatePendingAttachment(waiting.conversationKey, waiting.id, {
+                            uploadState: 'failed',
+                            uploadProgress: 0,
+                        });
+                    }
+                    setPendingStorageUploads(remaining);
+                    setShowStorageConfiguration(true);
+                    return;
+                }
+
+                setConversationAttachmentError(
+                    pending.conversationKey,
+                    'An attachment could not be uploaded. Remove it or try again.',
+                );
+            }
+        }
+    }, [setConversationAttachmentError, updatePendingAttachment]);
+
+    const uploadMediaFiles = useCallback(async (conversationKey: string, files: File[]) => {
+        const remainingSlots = Math.max(
+            0,
+            CHAT_ATTACHMENT_LIMIT - (attachmentDraftsRef.current[conversationKey]?.length || 0),
+        );
+        if (remainingSlots === 0) {
+            setConversationAttachmentError(conversationKey, `You can attach up to ${CHAT_ATTACHMENT_LIMIT} files.`);
+            return;
+        }
+
+        setConversationAttachmentError(conversationKey, null);
+        setStorageNotices((current) => {
+            const next = { ...current };
+            delete next[conversationKey];
+            return next;
+        });
+
+        const validFiles: File[] = [];
+        let validationError: string | null = null;
+        for (const file of files) {
+            if (validFiles.length >= remainingSlots) {
+                validationError = `Only ${CHAT_ATTACHMENT_LIMIT} attachments can be added to a message.`;
+                break;
+            }
+            const kind = getMediaKind(file.type);
+            const maximum = getMaxMediaSize(file.type);
+            if (kind === 'unsupported' || maximum === null) {
+                validationError = `${file.name} is not a supported image, video, or audio file.`;
+                continue;
+            }
+            if (file.size <= 0 || file.size > maximum) {
+                const limit = Math.round(maximum / (1024 * 1024));
+                validationError = `${file.name} must be larger than 0 bytes and no more than ${limit} MB.`;
+                continue;
+            }
+            validFiles.push(file);
+        }
+        if (validationError) setConversationAttachmentError(conversationKey, validationError);
+        if (validFiles.length === 0) return;
+
+        const pendingUploads = validFiles.map((file): PendingChatUpload => ({
+            conversationKey,
+            id: `chat-${crypto.randomUUID()}`,
+            file,
+        }));
+        const optimistic = pendingUploads.map(({ id, file }): ChatComposerAttachment => {
+            const previewUrl = URL.createObjectURL(file);
+            return {
+                id,
+                url: previewUrl,
+                previewUrl,
+                filename: file.name,
+                mimeType: file.type as ChatAttachment['mimeType'],
+                size: file.size,
+                file,
+                uploadState: 'uploading',
+                uploadProgress: 0,
+            };
+        });
+
+        updateConversationAttachments(conversationKey, (current) => (
+            [...current, ...optimistic].slice(0, CHAT_ATTACHMENT_LIMIT)
+        ));
+        preparedSendsRef.current.delete(accountConversationKey(renderedAccountDidRef.current, conversationKey));
+        await uploadPendingAttachments(pendingUploads);
+    }, [setConversationAttachmentError, updateConversationAttachments, uploadPendingAttachments]);
+
+    const handleMediaSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(event.target.files || []);
+        event.target.value = '';
+        const conversationKey = selectedConversationKeyRef.current;
+        if (!conversationKey || files.length === 0) return;
+        await uploadMediaFiles(conversationKey, files);
+    };
+
+    const handleAddMedia = async () => {
+        const conversationKey = selectedConversationKeyRef.current;
+        if (!conversationKey) return;
+        setConversationAttachmentError(conversationKey, null);
+        setIsCheckingStorage(true);
+        try {
+            if (!await getStorageProvider()) {
+                setShowStorageConfiguration(true);
+                return;
+            }
+            mediaInputRef.current?.click();
+        } catch (error) {
+            setConversationAttachmentError(
+                conversationKey,
+                error instanceof Error ? error.message : 'Media storage could not be checked.',
+            );
+        } finally {
+            setIsCheckingStorage(false);
+        }
+    };
+
+    const handleRemoveAttachment = (conversationKey: string, id: string) => {
+        const attachment = attachmentDraftsRef.current[conversationKey]
+            ?.find((candidate) => candidate.id === id);
+        if (attachment) URL.revokeObjectURL(attachment.previewUrl);
+        updateConversationAttachments(conversationKey, (current) => (
+            current.filter((candidate) => candidate.id !== id)
+        ));
+        preparedSendsRef.current.delete(accountConversationKey(renderedAccountDidRef.current, conversationKey));
+        setConversationAttachmentError(conversationKey, null);
+        setSendError(null);
+    };
+
+    const handleRetryAttachment = async (conversationKey: string, attachment: ChatComposerAttachment) => {
+        if (!attachment.file || attachment.uploadState === 'uploading') return;
+        setConversationAttachmentError(conversationKey, null);
+        await uploadPendingAttachments([{ conversationKey, id: attachment.id, file: attachment.file }]);
+    };
 
     const selectConversation = useCallback((conversation: Conversation | null) => {
         messagesRequestRef.current += 1;
@@ -247,18 +486,14 @@ export default function ChatPage() {
                 nextConversations = await Promise.all(nextConversations.map(async (conversation) => {
                     if (!conversation.lastMessage) return conversation;
                     try {
-                        const { content } = await decryptStoredChatMessage(
+                        const { content, attachments } = await decryptStoredChatMessage(
                             conversation.lastMessage,
                             requestAccountDid,
                             e2eeMaterial.material,
                         );
-                        const normalized = content.replace(/\s+/g, ' ').trim();
-                        const characters = Array.from(normalized);
                         return {
                             ...conversation,
-                            lastMessagePreview: characters.length > 96
-                                ? `${characters.slice(0, 96).join('')}…`
-                                : normalized,
+                            lastMessagePreview: getChatMessagePreview({ text: content, attachments }),
                         };
                     } catch {
                         return { ...conversation, lastMessagePreview: 'Encrypted message' };
@@ -329,6 +564,7 @@ export default function ChatPage() {
                     return {
                         ...msg,
                         content: 'Encrypted message unavailable',
+                        attachments: [],
                         legacy: false,
                         decryptionError: true,
                     };
@@ -339,6 +575,7 @@ export default function ChatPage() {
                     return {
                         ...msg,
                         content: decrypted.content,
+                        attachments: decrypted.attachments,
                         legacy: decrypted.legacy,
                         decryptionError: false,
                     };
@@ -347,6 +584,7 @@ export default function ChatPage() {
                     return {
                         ...msg,
                         content: 'Encrypted message unavailable',
+                        attachments: [],
                         legacy: false,
                         decryptionError: true,
                     };
@@ -364,6 +602,7 @@ export default function ChatPage() {
                         const next = decryptedMessages[index];
                         return message.id === next.id
                             && message.content === next.content
+                            && JSON.stringify(message.attachments) === JSON.stringify(next.attachments)
                             && message.decryptionError === next.decryptionError
                             && message.readAt === next.readAt
                             && message.deliveredAt === next.deliveredAt;
@@ -454,7 +693,14 @@ export default function ChatPage() {
         const conversation = selectedConversationRef.current;
         const conversationKey = selectedConversationKeyRef.current;
         const draftToSend = conversationKey ? drafts[conversationKey] || '' : '';
-        if (!draftToSend.trim() || !conversation || !conversationKey) return;
+        const composerAttachments = conversationKey
+            ? attachmentDraftsRef.current[conversationKey] || []
+            : [];
+        if ((!draftToSend.trim() && composerAttachments.length === 0) || !conversation || !conversationKey) return;
+        if (composerAttachments.some((attachment) => attachment.uploadState !== 'ready')) {
+            setSendError('Wait for every attachment to finish uploading, or remove the failed attachment.');
+            return;
+        }
         const cacheKey = accountConversationKey(renderedAccountDidRef.current, conversationKey);
         if (activeSendKeysRef.current.has(cacheKey)) {
             setSendError('This encrypted message is still being confirmed.');
@@ -472,10 +718,20 @@ export default function ChatPage() {
 
         const accountDid = user.did;
         const requestId = ++sendRequestRef.current;
-        if (new TextEncoder().encode(draftToSend).length > 8_000) {
-            setSendError('Encrypted messages can be up to 8,000 bytes. Your draft has not been sent.');
+        const attachmentsToSend: ChatAttachment[] = composerAttachments.map((attachment) => ({
+            url: attachment.url,
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+        }));
+        let plaintext: string;
+        try {
+            plaintext = encodeChatMessageContent({ text: draftToSend, attachments: attachmentsToSend });
+        } catch (error) {
+            setSendError(error instanceof Error ? error.message : 'This encrypted message cannot be sent.');
             return;
         }
+        const sentAttachmentIds = composerAttachments.map((attachment) => attachment.id);
         activeSendKeysRef.current.add(cacheKey);
         setSending(true);
         setSendError(null);
@@ -484,13 +740,13 @@ export default function ChatPage() {
             let envelope: E2EEMessageEnvelope;
             if (priorPrepared
                 && priorPrepared.accountDid === accountDid
-                && priorPrepared.draft === draftToSend
+                && priorPrepared.plaintext === plaintext
                 && priorPrepared.senderKeyId === conversationEncryption.senderBundle.keyId
                 && priorPrepared.recipientKeyId === conversationEncryption.recipientBundle.keyId) {
                 envelope = priorPrepared.envelope;
             } else {
                 envelope = await encryptE2EEMessage({
-                    plaintext: draftToSend,
+                    plaintext,
                     senderDid: accountDid,
                     senderHandle: user.handle,
                     senderBundle: conversationEncryption.senderBundle,
@@ -501,7 +757,7 @@ export default function ChatPage() {
                 preparedSendsRef.current.set(cacheKey, {
                     accountDid,
                     conversationKey,
-                    draft: draftToSend,
+                    plaintext,
                     senderKeyId: conversationEncryption.senderBundle.keyId,
                     recipientKeyId: conversationEncryption.recipientBundle.keyId,
                     envelope,
@@ -537,6 +793,14 @@ export default function ChatPage() {
                 delete next[conversationKey];
                 return next;
             });
+            const currentAttachments = attachmentDraftsRef.current[conversationKey] || [];
+            const attachmentsUnchanged = currentAttachments.length === sentAttachmentIds.length
+                && currentAttachments.every((attachment, index) => attachment.id === sentAttachmentIds[index]);
+            if (attachmentsUnchanged) {
+                for (const attachment of currentAttachments) URL.revokeObjectURL(attachment.previewUrl);
+                updateConversationAttachments(conversationKey, () => []);
+                setConversationAttachmentError(conversationKey, null);
+            }
 
             if (requestId !== sendRequestRef.current
                 || renderedAccountDidRef.current !== accountDid
@@ -614,6 +878,17 @@ export default function ChatPage() {
             }
 
             setConversations(prev => prev.filter(c => c.id !== conversationToDelete.id));
+            const deletedConversationKey = encryptionConversationKey(conversationToDelete);
+            for (const attachment of attachmentDraftsRef.current[deletedConversationKey] || []) {
+                URL.revokeObjectURL(attachment.previewUrl);
+            }
+            updateConversationAttachments(deletedConversationKey, () => []);
+            setDrafts((current) => {
+                const next = { ...current };
+                delete next[deletedConversationKey];
+                return next;
+            });
+            preparedSendsRef.current.delete(accountConversationKey(renderedAccountDidRef.current, deletedConversationKey));
             if (selectedConversation?.id === conversationToDelete.id) {
                 selectConversation(null);
             }
@@ -648,6 +923,16 @@ export default function ChatPage() {
         setSelectedConversation(null);
         setMessages([]);
         setDrafts({});
+        for (const attachments of Object.values(attachmentDraftsRef.current)) {
+            for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl);
+        }
+        attachmentDraftsRef.current = {};
+        setAttachmentDrafts({});
+        setAttachmentErrors({});
+        setStorageNotices({});
+        setPendingStorageUploads([]);
+        setShowStorageConfiguration(false);
+        setIsCheckingStorage(false);
         setSendError(null);
         setConversationsError(null);
         setMessagesError(null);
@@ -659,6 +944,12 @@ export default function ChatPage() {
         setConversationEncryption({ status: 'idle' });
         setLoading(Boolean(did));
     }, [user?.did]);
+
+    useEffect(() => () => {
+        for (const attachments of Object.values(attachmentDraftsRef.current)) {
+            for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl);
+        }
+    }, []);
 
     // Load conversations
     useEffect(() => {
@@ -1122,7 +1413,8 @@ export default function ChatPage() {
                                                         : msg.isSentByMe ? '#000' : 'var(--foreground)',
                                                     border: msg.decryptionError || !msg.isSentByMe ? '1px solid var(--border)' : 'none',
                                                     wordBreak: 'break-word',
-                                                    whiteSpace: 'pre-wrap'
+                                                    whiteSpace: 'pre-wrap',
+                                                    maxWidth: '100%'
                                                 }}
                                             >
                                                 {msg.decryptionError ? (
@@ -1135,7 +1427,12 @@ export default function ChatPage() {
                                                             This message could not be decrypted on this device.
                                                         </div>
                                                     </div>
-                                                ) : msg.content}
+                                                ) : (
+                                                    <>
+                                                        {msg.content || null}
+                                                        <ChatMessageAttachments attachments={msg.attachments} />
+                                                    </>
+                                                )}
                                             </div>
                                             {msg.legacy && (
                                                 <div style={{ fontSize: '10px', color: 'var(--foreground-tertiary)', marginTop: 4 }}>
@@ -1156,9 +1453,119 @@ export default function ChatPage() {
 
                 {/* Input */}
                 <div className="compose" style={{ borderTop: '1px solid var(--border)', background: 'var(--background)', flexShrink: 0 }}>
+                    <StorageConfigurationPrompt
+                        open={showStorageConfiguration}
+                        onConfigured={async () => {
+                            setShowStorageConfiguration(false);
+                            const pending = pendingStorageUploads;
+                            setPendingStorageUploads([]);
+                            if (pending.length > 0) {
+                                await uploadPendingAttachments(pending);
+                                return;
+                            }
+                            const conversationKey = selectedConversationKeyRef.current;
+                            if (conversationKey) {
+                                setStorageNotices((current) => ({
+                                    ...current,
+                                    [conversationKey]: 'Stuffbox connected. Choose up to four attachments.',
+                                }));
+                                mediaInputRef.current?.click();
+                            }
+                        }}
+                        onCancel={() => {
+                            setShowStorageConfiguration(false);
+                            setPendingStorageUploads([]);
+                        }}
+                    />
                     {selectedEncryptionReady ? (
                         <>
+                            {selectedAttachments.length > 0 && (
+                                <div className="compose-media-grid" aria-label="Message attachments">
+                                    {selectedAttachments.map((attachment) => {
+                                        const mediaKind = getMediaKind(attachment.mimeType);
+                                        return (
+                                            <div
+                                                className={`compose-media-item ${mediaKind === 'audio' ? 'audio' : ''} ${attachment.uploadState}`}
+                                                key={attachment.id}
+                                            >
+                                                {mediaKind === 'video' ? (
+                                                    <video
+                                                        src={attachment.previewUrl}
+                                                        muted
+                                                        playsInline
+                                                        preload="auto"
+                                                        onLoadedMetadata={(event) => primeVideoPreviewFrame(event.currentTarget)}
+                                                    />
+                                                ) : mediaKind === 'audio' ? (
+                                                    <div className="compose-audio-preview">
+                                                        <Music2 size={22} aria-hidden="true" />
+                                                        <span title={attachment.filename}>{attachment.filename}</span>
+                                                    </div>
+                                                ) : (
+                                                    <Image
+                                                        unoptimized
+                                                        src={attachment.previewUrl}
+                                                        alt={`Preview of ${attachment.filename}`}
+                                                        width={800}
+                                                        height={600}
+                                                    />
+                                                )}
+                                                {attachment.uploadState === 'uploading' && (
+                                                    <div className="compose-media-upload-status" role="status" aria-label={`Uploading ${attachment.filename}`}>
+                                                        <span style={{ width: `${Math.max(6, attachment.uploadProgress * 100)}%` }} />
+                                                    </div>
+                                                )}
+                                                {attachment.uploadState === 'failed' && (
+                                                    <button
+                                                        type="button"
+                                                        className="compose-media-retry"
+                                                        onClick={() => void handleRetryAttachment(selectedConversationKey!, attachment)}
+                                                        disabled={sending}
+                                                    >
+                                                        Retry
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    className="compose-media-remove"
+                                                    onClick={() => handleRemoveAttachment(selectedConversationKey!, attachment.id)}
+                                                    disabled={sending}
+                                                    aria-label={`Remove ${attachment.filename}`}
+                                                >
+                                                    <X size={12} aria-hidden="true" />
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                            {selectedAttachments.length > 0 && (
+                                <div style={{ color: 'var(--foreground-tertiary)', fontSize: 11, margin: '8px 0 0' }}>
+                                    {selectedAttachments.length} of {CHAT_ATTACHMENT_LIMIT} attachments
+                                </div>
+                            )}
                             <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <button
+                                    type="button"
+                                    className="compose-media-button"
+                                    title={`Attach media (${selectedAttachments.length}/${CHAT_ATTACHMENT_LIMIT})`}
+                                    aria-label="Attach image, video, or audio"
+                                    onClick={() => void handleAddMedia()}
+                                    disabled={sending || isCheckingStorage || selectedAttachments.length >= CHAT_ATTACHMENT_LIMIT}
+                                >
+                                    {isCheckingStorage
+                                        ? <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                                        : <Paperclip size={20} aria-hidden="true" />}
+                                </button>
+                                <input
+                                    ref={mediaInputRef}
+                                    type="file"
+                                    accept="image/*,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/ogg,audio/flac"
+                                    multiple
+                                    onChange={handleMediaSelect}
+                                    disabled={sending || selectedAttachments.length >= CHAT_ATTACHMENT_LIMIT}
+                                    className="compose-media-input"
+                                />
                                 <input
                                     type="text"
                                     className="input"
@@ -1167,15 +1574,20 @@ export default function ChatPage() {
                                     value={newMessage}
                                     onChange={e => updateSelectedDraft(e.target.value)}
                                     aria-label={`Encrypted message to ${selectedHandle}`}
-                                    aria-describedby={sendError ? 'encrypted-send-error' : undefined}
+                                    aria-describedby={sendError || selectedAttachmentError ? 'encrypted-send-error' : undefined}
                                 />
-                                <button type="submit" disabled={!newMessage.trim() || sending} className="btn btn-primary" aria-label="Send encrypted message">
+                                <button type="submit" disabled={!canSendMessage || sending} className="btn btn-primary" aria-label="Send encrypted message">
                                     {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                                 </button>
                             </form>
-                            {sendError && (
+                            {(sendError || selectedAttachmentError) && (
                                 <p id="encrypted-send-error" role="alert" style={{ color: 'var(--destructive)', fontSize: 13, margin: '10px 0 0' }}>
-                                    {sendError}
+                                    {sendError || selectedAttachmentError}
+                                </p>
+                            )}
+                            {selectedStorageNotice && (
+                                <p role="status" style={{ color: 'var(--success)', fontSize: 13, margin: '10px 0 0' }}>
+                                    {selectedStorageNotice}
                                 </p>
                             )}
                         </>

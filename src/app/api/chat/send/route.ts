@@ -10,6 +10,7 @@ import {
 } from '@/db';
 import { requireSignedAction, SignedActionError, type SignedAction } from '@/lib/auth/verify-signature';
 import {
+  E2EE_MAX_MESSAGE_CIPHERTEXT_BYTES,
   E2EE_PROTOCOL_VERSION,
   e2eeMessageEnvelopeSchema,
   signedUserActionSchema,
@@ -23,7 +24,9 @@ import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 function validateCiphertextLengths(envelope: z.infer<typeof e2eeMessageEnvelopeSchema>): void {
   if (Buffer.from(envelope.nonce, 'base64url').length !== 24) throw new Error('Invalid message nonce');
   const ciphertextLength = Buffer.from(envelope.ciphertext, 'base64url').length;
-  if (ciphertextLength < 17 || ciphertextLength > 8_192) throw new Error('Invalid encrypted message');
+  if (ciphertextLength < 17 || ciphertextLength > E2EE_MAX_MESSAGE_CIPHERTEXT_BYTES) {
+    throw new Error('Invalid encrypted message');
+  }
   if (Buffer.from(envelope.keyCommitment, 'base64url').length !== 32) {
     throw new Error('Invalid encrypted message key commitment');
   }
