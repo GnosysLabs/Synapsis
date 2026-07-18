@@ -14,7 +14,7 @@ import { normalizeNodeUrl, requestJson, signedRequest, sleep } from './http.js';
 import { uploadMediaFile } from './media.js';
 import { generateCredentialKeyPair } from './signing.js';
 
-export const CLI_VERSION = '0.1.3';
+export const CLI_VERSION = '0.1.4';
 
 const HELP = `Synapsis CLI ${CLI_VERSION}
 

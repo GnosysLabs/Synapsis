@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { signedRequest, SynapsisApiError } from './http.js';
@@ -52,24 +51,35 @@ function validatedUploadUrl(value) {
   return url.toString();
 }
 
+async function directUploadFailureDetails(response) {
+  const requestId = response.headers.get('x-amz-request-id') || response.headers.get('cf-ray');
+  let code = null;
+  try {
+    const body = await response.text();
+    code = body.match(/<Code>([A-Za-z0-9_.-]{1,80})<\/Code>/i)?.[1] || null;
+  } catch {
+    // The status still identifies the failed upload when the provider body is unavailable.
+  }
+  return [
+    code,
+    requestId && /^[A-Za-z0-9_.:-]{1,128}$/.test(requestId) ? `request ${requestId}` : null,
+  ].filter(Boolean).join('; ');
+}
+
 export async function uploadMediaFile(profile, entry, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const inspected = await inspectMedia(entry.path);
   if (entry.alt && entry.alt.length > 1500) throw new Error('Media alt text must be 1500 characters or fewer');
   const bytes = await readFile(entry.path);
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
 
   options.onProgress?.(`Starting upload for ${inspected.filename}`);
   const upload = await signedRequest(profile, '/api/media/stuffbox/uploads', 'media_upload_start', {
     ...inspected,
-    sha256,
   }, fetchImpl);
   if (!upload.id || !upload.uploadUrl) throw new Error('Synapsis returned an invalid Stuffbox upload session');
   const uploadUrl = validatedUploadUrl(upload.uploadUrl);
 
   const requiredHeaders = { ...(upload.requiredHeaders || {}) };
-  const hasContentType = Object.keys(requiredHeaders).some(name => name.toLowerCase() === 'content-type');
-  if (!hasContentType) requiredHeaders['Content-Type'] = inspected.mimeType;
 
   let directResponse;
   try {
@@ -82,8 +92,9 @@ export async function uploadMediaFile(profile, entry, options = {}) {
     throw new SynapsisApiError(`Unable to upload media to Stuffbox: ${error.message}`, 0, 'DIRECT_UPLOAD_FAILED');
   }
   if (!directResponse.ok) {
+    const details = await directUploadFailureDetails(directResponse);
     throw new SynapsisApiError(
-      `Stuffbox rejected ${inspected.filename} (${directResponse.status})`,
+      `Stuffbox rejected ${inspected.filename} (${directResponse.status}${details ? `; ${details}` : ''})`,
       directResponse.status,
       'DIRECT_UPLOAD_FAILED',
     );

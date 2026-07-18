@@ -1,6 +1,6 @@
 {
   "name": "@gnosyslabs/synapsis-cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Secure command-line posting client for Synapsis",
   "type": "module",
   "bin": {
