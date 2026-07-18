@@ -4,7 +4,7 @@ import { Fragment, useCallback, useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
-import { ArrowLeft, Send, Loader2, LockKeyhole, MessageCircle, Music2, Paperclip, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Send, Loader2, LockKeyhole, MessageCircle, Music2, Paperclip, Reply as ReplyIcon, Search, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
 import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -31,7 +31,9 @@ import {
     encodeChatMessageContent,
     getChatMessagePreview,
     type ChatAttachment,
+    type ChatReplyReference,
 } from '@/lib/chat/message-content';
+import { getEmojiOnlyCount } from '@/lib/chat/emoji-only';
 import { findChatPostLinks, removeChatPostLinks, uniqueChatPostLinks } from '@/lib/chat/post-links';
 import { useDomain } from '@/lib/contexts/ConfigContext';
 import {
@@ -61,6 +63,7 @@ interface Conversation {
 
 interface ChatMessagePayload extends StoredChatMessage {
     id: string;
+    clientMessageId?: string | null;
     senderHandle: string;
     senderDisplayName?: string;
     senderAvatarUrl?: string;
@@ -77,6 +80,7 @@ interface ChatMessagePayload extends StoredChatMessage {
 type Message = Omit<ChatMessagePayload, 'content'> & {
     content: string;
     attachments: ChatAttachment[];
+    replyTo: ChatReplyReference | null;
     legacy: boolean;
     decryptionError: boolean;
 };
@@ -131,6 +135,20 @@ function accountConversationKey(accountDid: string | null, conversationKey: stri
     return JSON.stringify([accountDid, conversationKey]);
 }
 
+function chatMessageReferenceId(message: Pick<Message, 'id' | 'clientMessageId'>): string {
+    return message.clientMessageId || message.id;
+}
+
+function getReplyPreview(message: Message, domain: string): string {
+    if (message.decryptionError) return 'Encrypted message unavailable';
+    const postLinks = findChatPostLinks(message.content, domain);
+    const previewText = removeChatPostLinks(message.content, postLinks);
+    if (postLinks.length > 0 && !previewText) {
+        return uniqueChatPostLinks(postLinks).length > 1 ? 'Shared posts' : 'Shared a post';
+    }
+    return getChatMessagePreview({ text: previewText, attachments: message.attachments });
+}
+
 export default function ChatPage() {
     const { user, loading: authLoading, isIdentityUnlocked, isRestoring: isIdentityRestoring } = useAuth();
     const router = useRouter();
@@ -149,6 +167,7 @@ export default function ChatPage() {
     const selectedHandle = useFormattedHandle(selectedConversation?.participant2.handle || '');
     const [messages, setMessages] = useState<Message[]>([]);
     const [drafts, setDrafts] = useState<Record<string, string>>({});
+    const [replyDrafts, setReplyDrafts] = useState<Record<string, ChatReplyReference>>({});
     const [attachmentDrafts, setAttachmentDrafts] = useState<Record<string, ChatComposerAttachment[]>>({});
     const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
     const [storageNotices, setStorageNotices] = useState<Record<string, string>>({});
@@ -166,6 +185,7 @@ export default function ChatPage() {
     const [conversationEncryption, setConversationEncryption] = useState<ConversationEncryptionState>({ status: 'idle' });
     const [searchQuery, setSearchQuery] = useState('');
     const [loadingMessages, setLoadingMessages] = useState(false);
+    const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
 
     // Legacy / V2 Hybrid State
     const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -175,7 +195,10 @@ export default function ChatPage() {
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const messagesContainerRef = useRef<HTMLDivElement>(null);
+    const messageInputRef = useRef<HTMLInputElement>(null);
     const mediaInputRef = useRef<HTMLInputElement>(null);
+    const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
+    const highlightTimeoutRef = useRef<number | null>(null);
     const attachmentDraftsRef = useRef<Record<string, ChatComposerAttachment[]>>({});
     const [isAtBottom, setIsAtBottom] = useState(true);
     const appliedSharedPostRef = useRef<string | null>(null);
@@ -205,12 +228,14 @@ export default function ChatPage() {
 
     const selectedConversationKey = selectedConversationKeyRef.current;
     const newMessage = selectedConversationKey ? drafts[selectedConversationKey] || '' : '';
+    const selectedReply = selectedConversationKey ? replyDrafts[selectedConversationKey] || null : null;
     const selectedAttachments = selectedConversationKey ? attachmentDrafts[selectedConversationKey] || [] : [];
     const selectedAttachmentError = selectedConversationKey ? attachmentErrors[selectedConversationKey] || null : null;
     const selectedStorageNotice = selectedConversationKey ? storageNotices[selectedConversationKey] || null : null;
     const hasUnreadyAttachments = selectedAttachments.some((attachment) => attachment.uploadState !== 'ready');
     const canSendMessage = Boolean(newMessage.trim() || selectedAttachments.length > 0)
         && !hasUnreadyAttachments;
+    const loadedMessageIds = new Set(messages.map(chatMessageReferenceId));
 
     const updateSelectedDraft = useCallback((value: string) => {
         const key = selectedConversationKeyRef.current;
@@ -219,6 +244,41 @@ export default function ChatPage() {
         preparedSendsRef.current.delete(cacheKey);
         setDrafts((current) => current[key] === value ? current : { ...current, [key]: value });
         setSendError(null);
+    }, []);
+
+    const updateSelectedReply = useCallback((replyTo: ChatReplyReference | null) => {
+        const key = selectedConversationKeyRef.current;
+        if (!key) return;
+        preparedSendsRef.current.delete(accountConversationKey(renderedAccountDidRef.current, key));
+        setReplyDrafts((current) => {
+            const next = { ...current };
+            if (replyTo) next[key] = replyTo;
+            else delete next[key];
+            return next;
+        });
+        setSendError(null);
+        if (replyTo) window.requestAnimationFrame(() => messageInputRef.current?.focus());
+    }, []);
+
+    const handleReplyToMessage = useCallback((message: Message) => {
+        updateSelectedReply({
+            messageId: chatMessageReferenceId(message),
+            senderHandle: message.senderHandle,
+            senderDisplayName: message.senderDisplayName?.trim() || null,
+            preview: getReplyPreview(message, domain),
+        });
+    }, [domain, updateSelectedReply]);
+
+    const jumpToMessage = useCallback((messageId: string) => {
+        const target = messageElementsRef.current.get(messageId);
+        if (!target) return;
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setHighlightedMessageId(messageId);
+        if (highlightTimeoutRef.current !== null) window.clearTimeout(highlightTimeoutRef.current);
+        highlightTimeoutRef.current = window.setTimeout(() => {
+            setHighlightedMessageId((current) => current === messageId ? null : current);
+            highlightTimeoutRef.current = null;
+        }, 1_600);
     }, []);
 
     const updateConversationAttachments = useCallback((
@@ -428,6 +488,12 @@ export default function ChatPage() {
             ? encryptionConversationKey(conversation)
             : null;
         setMessages([]);
+        messageElementsRef.current.clear();
+        setHighlightedMessageId(null);
+        if (highlightTimeoutRef.current !== null) {
+            window.clearTimeout(highlightTimeoutRef.current);
+            highlightTimeoutRef.current = null;
+        }
         setMessagesError(null);
         setSendError(null);
         setSending(conversation
@@ -573,6 +639,7 @@ export default function ChatPage() {
                         ...msg,
                         content: 'Encrypted message unavailable',
                         attachments: [],
+                        replyTo: null,
                         legacy: false,
                         decryptionError: true,
                     };
@@ -584,6 +651,7 @@ export default function ChatPage() {
                         ...msg,
                         content: decrypted.content,
                         attachments: decrypted.attachments,
+                        replyTo: decrypted.replyTo,
                         legacy: decrypted.legacy,
                         decryptionError: false,
                     };
@@ -593,6 +661,7 @@ export default function ChatPage() {
                         ...msg,
                         content: 'Encrypted message unavailable',
                         attachments: [],
+                        replyTo: null,
                         legacy: false,
                         decryptionError: true,
                     };
@@ -611,6 +680,7 @@ export default function ChatPage() {
                         return message.id === next.id
                             && message.content === next.content
                             && JSON.stringify(message.attachments) === JSON.stringify(next.attachments)
+                            && JSON.stringify(message.replyTo) === JSON.stringify(next.replyTo)
                             && message.decryptionError === next.decryptionError
                             && message.readAt === next.readAt
                             && message.deliveredAt === next.deliveredAt;
@@ -704,6 +774,7 @@ export default function ChatPage() {
         const composerAttachments = conversationKey
             ? attachmentDraftsRef.current[conversationKey] || []
             : [];
+        const replyToSend = conversationKey ? replyDrafts[conversationKey] || null : null;
         if ((!draftToSend.trim() && composerAttachments.length === 0) || !conversation || !conversationKey) return;
         if (composerAttachments.some((attachment) => attachment.uploadState !== 'ready')) {
             setSendError('Wait for every attachment to finish uploading, or remove the failed attachment.');
@@ -734,7 +805,11 @@ export default function ChatPage() {
         }));
         let plaintext: string;
         try {
-            plaintext = encodeChatMessageContent({ text: draftToSend, attachments: attachmentsToSend });
+            plaintext = encodeChatMessageContent({
+                text: draftToSend,
+                attachments: attachmentsToSend,
+                replyTo: replyToSend,
+            });
         } catch (error) {
             setSendError(error instanceof Error ? error.message : 'This encrypted message cannot be sent.');
             return;
@@ -797,6 +872,12 @@ export default function ChatPage() {
             preparedSendsRef.current.delete(cacheKey);
             setDrafts((current) => {
                 if (current[conversationKey] !== draftToSend) return current;
+                const next = { ...current };
+                delete next[conversationKey];
+                return next;
+            });
+            setReplyDrafts((current) => {
+                if (!replyToSend || current[conversationKey]?.messageId !== replyToSend.messageId) return current;
                 const next = { ...current };
                 delete next[conversationKey];
                 return next;
@@ -896,6 +977,11 @@ export default function ChatPage() {
                 delete next[deletedConversationKey];
                 return next;
             });
+            setReplyDrafts((current) => {
+                const next = { ...current };
+                delete next[deletedConversationKey];
+                return next;
+            });
             preparedSendsRef.current.delete(accountConversationKey(renderedAccountDidRef.current, deletedConversationKey));
             if (selectedConversation?.id === conversationToDelete.id) {
                 selectConversation(null);
@@ -931,6 +1017,13 @@ export default function ChatPage() {
         setSelectedConversation(null);
         setMessages([]);
         setDrafts({});
+        setReplyDrafts({});
+        messageElementsRef.current.clear();
+        setHighlightedMessageId(null);
+        if (highlightTimeoutRef.current !== null) {
+            window.clearTimeout(highlightTimeoutRef.current);
+            highlightTimeoutRef.current = null;
+        }
         for (const attachments of Object.values(attachmentDraftsRef.current)) {
             for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl);
         }
@@ -954,6 +1047,7 @@ export default function ChatPage() {
     }, [user?.did]);
 
     useEffect(() => () => {
+        if (highlightTimeoutRef.current !== null) window.clearTimeout(highlightTimeoutRef.current);
         for (const attachments of Object.values(attachmentDraftsRef.current)) {
             for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl);
         }
@@ -1381,9 +1475,17 @@ export default function ChatPage() {
                                 : findChatPostLinks(msg.content, domain);
                             const sharedPostLinks = uniqueChatPostLinks(detectedPostLinks);
                             const visibleMessageContent = removeChatPostLinks(msg.content, detectedPostLinks);
+                            const emojiOnlyCount = !msg.decryptionError
+                                && msg.attachments.length === 0
+                                && sharedPostLinks.length === 0
+                                ? getEmojiOnlyCount(visibleMessageContent)
+                                : null;
                             const hasMessageBubble = msg.decryptionError
-                                || Boolean(visibleMessageContent)
-                                || msg.attachments.length > 0;
+                                || ((Boolean(visibleMessageContent) || msg.attachments.length > 0)
+                                    && emojiOnlyCount === null);
+                            const messageReferenceId = chatMessageReferenceId(msg);
+                            const canJumpToReply = Boolean(msg.replyTo
+                                && loadedMessageIds.has(msg.replyTo.messageId));
 
                             return (
                                 <Fragment key={msg.id || i}>
@@ -1397,7 +1499,13 @@ export default function ChatPage() {
                                             <span style={{ height: 1, flex: 1, background: 'var(--border)' }} />
                                         </div>
                                     )}
-                                    <div style={{
+                                    <div
+                                        ref={(element) => {
+                                            if (element) messageElementsRef.current.set(messageReferenceId, element);
+                                            else messageElementsRef.current.delete(messageReferenceId);
+                                        }}
+                                        className={`chat-message-row ${msg.isSentByMe ? 'sent' : 'received'}`}
+                                        style={{
                                         display: 'flex',
                                         gap: '12px',
                                         maxWidth: sharedPostLinks.length > 0 ? '92%' : '70%',
@@ -1415,7 +1523,23 @@ export default function ChatPage() {
                                             />
                                         </div>
 
-                                        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, alignItems: msg.isSentByMe ? 'flex-end' : 'flex-start' }}>
+                                        <div
+                                            className={`chat-message-stack ${highlightedMessageId === messageReferenceId ? 'highlighted' : ''}`}
+                                            style={{ display: 'flex', flexDirection: 'column', minWidth: 0, alignItems: msg.isSentByMe ? 'flex-end' : 'flex-start' }}
+                                        >
+                                            {msg.replyTo && (
+                                                <button
+                                                    type="button"
+                                                    className="chat-message-reply-quote"
+                                                    onClick={() => jumpToMessage(msg.replyTo!.messageId)}
+                                                    disabled={!canJumpToReply}
+                                                    title={canJumpToReply ? 'Jump to original message' : 'Original message is not loaded'}
+                                                    aria-label={`Reply to ${msg.replyTo.senderDisplayName || msg.replyTo.senderHandle}: ${msg.replyTo.preview}`}
+                                                >
+                                                    <span>{msg.replyTo.senderDisplayName || msg.replyTo.senderHandle}</span>
+                                                    <span>{msg.replyTo.preview}</span>
+                                                </button>
+                                            )}
                                             {hasMessageBubble && (
                                                 <div
                                                     role={msg.decryptionError ? 'status' : undefined}
@@ -1452,6 +1576,14 @@ export default function ChatPage() {
                                                     )}
                                                 </div>
                                             )}
+                                            {emojiOnlyCount !== null && (
+                                                <div
+                                                    className={`chat-emoji-message emoji-count-${emojiOnlyCount}`}
+                                                    aria-label={visibleMessageContent.trim()}
+                                                >
+                                                    {visibleMessageContent.trim()}
+                                                </div>
+                                            )}
                                             {sharedPostLinks.map((postLink) => (
                                                 <ChatPostCard link={postLink} key={postLink.postId} />
                                             ))}
@@ -1464,6 +1596,15 @@ export default function ChatPage() {
                                                 {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                             </div>
                                         </div>
+                                        <button
+                                            type="button"
+                                            className="chat-message-reply-button"
+                                            onClick={() => handleReplyToMessage(msg)}
+                                            aria-label={`Reply to message from ${msg.isSentByMe ? 'yourself' : msg.senderDisplayName || msg.senderHandle}`}
+                                            title="Reply"
+                                        >
+                                            <ReplyIcon size={16} aria-hidden="true" />
+                                        </button>
                                     </div>
                                 </Fragment>
                             );
@@ -1500,6 +1641,24 @@ export default function ChatPage() {
                     />
                     {selectedEncryptionReady ? (
                         <>
+                            {selectedReply && (
+                                <div className="chat-reply-composer" role="status">
+                                    <ReplyIcon size={18} aria-hidden="true" />
+                                    <div>
+                                        <span>Replying to {selectedReply.senderDisplayName || selectedReply.senderHandle}</span>
+                                        <span>{selectedReply.preview}</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => updateSelectedReply(null)}
+                                        aria-label="Cancel reply"
+                                        title="Cancel reply"
+                                        disabled={sending}
+                                    >
+                                        <X size={16} aria-hidden="true" />
+                                    </button>
+                                </div>
+                            )}
                             {selectedAttachments.length > 0 && (
                                 <div className="compose-media-grid" aria-label="Message attachments">
                                     {selectedAttachments.map((attachment) => {
@@ -1588,6 +1747,7 @@ export default function ChatPage() {
                                     className="compose-media-input"
                                 />
                                 <input
+                                    ref={messageInputRef}
                                     type="text"
                                     className="input"
                                     style={{ flex: 1 }}

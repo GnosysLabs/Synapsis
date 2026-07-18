@@ -65,6 +65,7 @@ describe('stored encrypted messages', () => {
     }, recipientDid, recipient)).resolves.toEqual({
       content: 'sent from another node',
       attachments: [],
+      replyTo: null,
       legacy: false,
     });
   });
@@ -100,6 +101,7 @@ describe('stored encrypted messages', () => {
     }, recipientDid, recipient)).resolves.toEqual({
       content: 'signed and encrypted',
       attachments: [],
+      replyTo: null,
       legacy: false,
     });
 
@@ -115,7 +117,7 @@ describe('stored encrypted messages', () => {
     }, recipientDid, recipient)).rejects.toThrow(/signature/);
   });
 
-  it('decrypts attachment metadata from the signed message payload', async () => {
+  it('decrypts attachment and reply metadata from the signed message payload', async () => {
     const signingKeys = await generateKeyPair();
     const signingPublicKey = await exportPublicKey(signingKeys.publicKey);
     keyStore.setPrivateKey(signingKeys.privateKey);
@@ -127,8 +129,14 @@ describe('stored encrypted messages', () => {
       mimeType: 'image/png' as const,
       size: 1_024,
     }];
+    const replyTo = {
+      messageId: '15f11861-693a-4f70-8480-5d82bb8d14a7',
+      senderHandle: 'bob',
+      senderDisplayName: 'Bob',
+      preview: 'Original encrypted message',
+    };
     const envelope = await encryptE2EEMessage({
-      plaintext: encodeChatMessageContent({ text: 'from my camera', attachments }),
+      plaintext: encodeChatMessageContent({ text: 'from my camera', attachments, replyTo }),
       senderDid,
       senderHandle: 'alice',
       senderBundle: bundle(sender),
@@ -146,6 +154,7 @@ describe('stored encrypted messages', () => {
     }, recipientDid, recipient)).resolves.toEqual({
       content: 'from my camera',
       attachments,
+      replyTo,
       legacy: false,
     });
   });

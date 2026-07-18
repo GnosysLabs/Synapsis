@@ -27,6 +27,21 @@ describe('encrypted chat message content', () => {
     expect(decodeChatMessageContent(encodeChatMessageContent(content))).toEqual(content);
   });
 
+  it('round-trips an encrypted reply reference', () => {
+    const content = {
+      text: 'Exactly',
+      attachments: [],
+      replyTo: {
+        messageId: '15f11861-693a-4f70-8480-5d82bb8d14a7',
+        senderHandle: 'friend@remote.example',
+        senderDisplayName: 'Friend',
+        preview: 'The original encrypted message',
+      },
+    };
+
+    expect(decodeChatMessageContent(encodeChatMessageContent(content))).toEqual(content);
+  });
+
   it('keeps existing text-only encrypted messages backward compatible', () => {
     expect(decodeChatMessageContent('a message from before attachments')).toEqual({
       text: 'a message from before attachments',
@@ -46,6 +61,16 @@ describe('encrypted chat message content', () => {
     expect(() => encodeChatMessageContent({
       text: '',
       attachments: [{ ...attachment(1), url: 'javascript:alert(1)' }],
+    })).toThrow(/invalid/i);
+    expect(() => encodeChatMessageContent({
+      text: 'Reply',
+      attachments: [],
+      replyTo: {
+        messageId: 'not-a-message-id',
+        senderHandle: 'friend',
+        senderDisplayName: 'Friend',
+        preview: 'Original',
+      },
     })).toThrow(/invalid/i);
   });
 

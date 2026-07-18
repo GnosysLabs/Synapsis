@@ -32,18 +32,28 @@ const chatAttachmentSchema = z.strictObject({
   }
 });
 
+const chatReplyReferenceSchema = z.strictObject({
+  messageId: z.string().uuid(),
+  senderHandle: z.string().trim().min(1).max(640),
+  senderDisplayName: z.string().trim().min(1).max(160).nullable(),
+  preview: z.string().trim().min(1).max(160),
+});
+
 const encryptedChatContentSchema = z.strictObject({
   type: z.literal('synapsis-chat-message'),
   version: z.literal(1),
   text: z.string(),
   attachments: z.array(chatAttachmentSchema).max(CHAT_ATTACHMENT_LIMIT),
+  replyTo: chatReplyReferenceSchema.optional(),
 });
 
 export type ChatAttachment = z.infer<typeof chatAttachmentSchema>;
+export type ChatReplyReference = z.infer<typeof chatReplyReferenceSchema>;
 
 export interface ChatMessageContent {
   text: string;
   attachments: ChatAttachment[];
+  replyTo?: ChatReplyReference | null;
 }
 
 function assertContentSize(content: ChatMessageContent, encoded: string): void {
@@ -65,6 +75,7 @@ export function encodeChatMessageContent(content: ChatMessageContent): string {
     version: 1,
     text: content.text,
     attachments: content.attachments,
+    ...(content.replyTo ? { replyTo: content.replyTo } : {}),
   });
   if (!parsed.success) {
     throw new Error('One or more chat attachments are invalid. Remove them and try again.');
@@ -94,7 +105,11 @@ export function decodeChatMessageContent(plaintext: string): ChatMessageContent 
   const parsed = encryptedChatContentSchema.safeParse(candidate);
   if (!parsed.success) throw new Error('Encrypted chat content is invalid');
   assertContentSize({ text: parsed.data.text, attachments: parsed.data.attachments }, plaintext);
-  return { text: parsed.data.text, attachments: parsed.data.attachments };
+  return {
+    text: parsed.data.text,
+    attachments: parsed.data.attachments,
+    ...(parsed.data.replyTo ? { replyTo: parsed.data.replyTo } : {}),
+  };
 }
 
 export function getChatMessagePreview(content: ChatMessageContent): string {

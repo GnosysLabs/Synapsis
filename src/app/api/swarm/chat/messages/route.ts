@@ -165,6 +165,7 @@ export async function GET(request: NextRequest) {
 
       return {
         id: msg.id,
+        clientMessageId: msg.clientMessageId,
         senderHandle: msg.senderHandle,
         senderDisplayName: senderProfile.displayName,
         senderAvatarUrl: senderProfile.avatarUrl,
