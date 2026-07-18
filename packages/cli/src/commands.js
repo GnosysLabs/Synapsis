@@ -14,7 +14,7 @@ import { normalizeNodeUrl, requestJson, signedRequest, sleep } from './http.js';
 import { uploadMediaFile } from './media.js';
 import { generateCredentialKeyPair } from './signing.js';
 
-export const CLI_VERSION = '0.1.1';
+export const CLI_VERSION = '0.1.2';
 
 const HELP = `Synapsis CLI ${CLI_VERSION}
 
@@ -25,6 +25,7 @@ Usage:
   synapsis auth disconnect [--profile <name>] [--local]
   synapsis post create [--text <content> | --stdin] [--media <path> [--alt <text>]]... [--nsfw] [--profile <name>] [--json]
   synapsis skill install [--path <skills-directory>] [--force]
+  synapsis update
 
 Media may be repeated up to four times. Supported files: JPEG, PNG, GIF, WebP,
 MP4, WebM, MOV, MP3, M4A, AAC, WAV, OGG, and FLAC.
@@ -126,6 +127,21 @@ function defaultOpenUrl(url) {
     child.once('spawn', () => {
       child.unref();
       resolve();
+    });
+  });
+}
+
+function defaultRunCommand(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: 'inherit' });
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const reason = signal ? `signal ${signal}` : `exit code ${code}`;
+      reject(new Error(`${command} failed with ${reason}`));
     });
   });
 }
@@ -328,6 +344,26 @@ async function skillInstall(args, io, dependencies) {
   }
 }
 
+async function update(args, io, dependencies) {
+  if (args.length > 0) throw new Error('Usage: synapsis update');
+
+  write(io.stdout, 'Updating the Synapsis CLI...');
+  await dependencies.runCommand(dependencies.npmCommand, [
+    'install',
+    '--global',
+    '@gnosyslabs/synapsis-cli@latest',
+  ]);
+
+  write(io.stdout, 'Refreshing the Synapsis agent skill...');
+  await dependencies.runCommand(dependencies.cliCommand, [
+    ...dependencies.cliArguments,
+    'skill',
+    'install',
+    '--force',
+  ]);
+  write(io.stdout, 'Synapsis CLI and agent skill are up to date.');
+}
+
 export async function run(argv, io = process, dependencies = {}) {
   const runtime = {
     fetch: dependencies.fetch || globalThis.fetch,
@@ -335,6 +371,10 @@ export async function run(argv, io = process, dependencies = {}) {
     openUrl: dependencies.openUrl,
     sleep: dependencies.sleep,
     homeDirectory: dependencies.homeDirectory,
+    runCommand: dependencies.runCommand || defaultRunCommand,
+    npmCommand: dependencies.npmCommand || (process.platform === 'win32' ? 'npm.cmd' : 'npm'),
+    cliCommand: dependencies.cliCommand || process.execPath,
+    cliArguments: dependencies.cliArguments || [fileURLToPath(new URL('./cli.js', import.meta.url))],
   };
   const [group, command, ...args] = argv;
   if (!group || group === 'help' || group === '--help' || group === '-h') {
@@ -351,5 +391,6 @@ export async function run(argv, io = process, dependencies = {}) {
   if (group === 'auth' && command === 'disconnect') return disconnect(args, io, runtime);
   if (group === 'post' && command === 'create') return createPost(args, io, runtime);
   if (group === 'skill' && command === 'install') return skillInstall(args, io, runtime);
+  if (group === 'update') return update([command, ...args].filter(value => value !== undefined), io, runtime);
   throw new Error(`Unknown command: ${[group, command].filter(Boolean).join(' ')}\n\n${HELP}`);
 }

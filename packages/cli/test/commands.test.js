@@ -72,6 +72,31 @@ test('does not let an existing default target block the other agent installs', a
   assert.equal(stderr.value(), '');
 });
 
+test('updates the global CLI before refreshing every bundled skill install', async () => {
+  const stdout = output();
+  const stderr = output();
+  const commands = [];
+
+  await run(['update'], {
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+  }, {
+    npmCommand: 'test-npm',
+    cliCommand: 'test-node',
+    cliArguments: ['/test/synapsis-cli.js'],
+    runCommand: async (command, args) => commands.push([command, args]),
+  });
+
+  assert.deepEqual(commands, [
+    ['test-npm', ['install', '--global', '@gnosyslabs/synapsis-cli@latest']],
+    ['test-node', ['/test/synapsis-cli.js', 'skill', 'install', '--force']],
+  ]);
+  assert.match(stdout.value(), /Updating the Synapsis CLI/);
+  assert.match(stdout.value(), /Refreshing the Synapsis agent skill/);
+  assert.match(stdout.value(), /up to date/);
+  assert.equal(stderr.value(), '');
+});
+
 test('connects through browser pairing and stores only the delegated private key locally', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'synapsis-cli-connect-'));
   const environment = { SYNAPSIS_CONFIG_DIR: directory };

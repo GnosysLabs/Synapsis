@@ -43,4 +43,10 @@ synapsis skill install
 
 By default this installs `synapsis-post` under `~/.codex/skills`, `~/.agents/skills`, and `~/.claude/skills`. Use `--path <skills-directory>` for a custom single destination, or `--force` to replace existing copies.
 
+Update the global CLI to the latest npm release and refresh the bundled skill in all three default locations:
+
+```bash
+synapsis update
+```
+
 Credentials are stored in `~/.config/synapsis/credentials.json` with owner-only permissions. Set `SYNAPSIS_CONFIG_DIR` to use a different location. Revoke a device from Synapsis Settings → CLI & Agents or run `synapsis auth disconnect`.
