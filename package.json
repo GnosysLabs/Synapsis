@@ -20,8 +20,10 @@
     "db:studio": "drizzle-kit studio",
     "db:studio:dev": "dotenv -e .env.dev -- drizzle-kit studio",
     "type-check": "tsc --noEmit",
-    "test": "vitest run && npm test --workspace @gnosyslabs/synapsis-cli",
+    "test": "vitest run --dir src && vitest run --dir services && npm test --workspace @gnosyslabs/synapsis-cli",
     "test:watch": "vitest",
+    "push-relay:start": "tsx services/push-relay/src/server.ts",
+    "push-relay:test": "vitest run services/push-relay/src",
     "cli:test": "npm test --workspace @gnosyslabs/synapsis-cli",
     "cli:pack": "npm pack --workspace @gnosyslabs/synapsis-cli"
   },

@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, posts, users, media, remoteReposts } from '@/db';
-import { eq, desc, and, isNull, lt, inArray, notLike, sql } from 'drizzle-orm';
+import { eq, desc, and, isNull, lt, inArray, like, notLike, sql } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 import type { User } from '@/lib/types';
@@ -182,6 +182,10 @@ export async function GET(request: NextRequest) {
     const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
 
     const cursor = searchParams.get('cursor');
+    const searchQuery = searchParams.get('q')?.trim() || '';
+    if (searchQuery.length > 100) {
+      return NextResponse.json({ error: 'Search query is too long' }, { status: 400 });
+    }
 
     if (!db) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
@@ -195,6 +199,9 @@ export async function GET(request: NextRequest) {
     // Use query builder for better conditional logic
     // Only return posts from local users (not remote placeholder users)
     // Local posts may have apId if they've been federated, so we check nodeId instead
+    const searchCondition = searchQuery
+      ? like(posts.content, `%${searchQuery}%`)
+      : undefined;
     let whereCondition = and(
       isNull(posts.replyToId), // Not a reply
       isNull(posts.swarmReplyToId), // Not a swarm reply
@@ -205,6 +212,7 @@ export async function GET(request: NextRequest) {
         select 1 from ${remoteReposts}
         where ${remoteReposts.postId} = coalesce(${posts.repostOfId}, ${posts.id})
       )`,
+      searchCondition,
     );
 
     const parsedCursorDate = cursor ? new Date(cursor) : null;
@@ -275,6 +283,7 @@ export async function GET(request: NextRequest) {
         eq(posts.isRemoved, false),
         isNull(users.nodeId),
         notLike(users.handle, '%@%'),
+        searchCondition,
       ))
       .groupBy(remoteReposts.postId)
       .orderBy(desc(latestRemoteActivityAt))

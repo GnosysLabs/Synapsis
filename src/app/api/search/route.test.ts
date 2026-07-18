@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     searchKnownUsers: vi.fn(),
     viewerAccess: vi.fn(),
     postFindMany: vi.fn(),
+    fetchSwarmTimeline: vi.fn(),
 }));
 
 function queryBuilder(rows: unknown[]) {
@@ -63,6 +64,9 @@ vi.mock('@/lib/nsfw/remote-profile-access', () => ({
 vi.mock('@/lib/swarm/user-directory-search', () => ({
     searchKnownSwarmUsers: mocks.searchKnownUsers,
 }));
+vi.mock('@/lib/swarm/timeline', () => ({
+    fetchSwarmTimeline: mocks.fetchSwarmTimeline,
+}));
 vi.mock('@/lib/swarm/interactions', () => ({
     fetchSwarmUserProfile: vi.fn(),
     isSwarmNode: vi.fn(),
@@ -91,6 +95,12 @@ describe('GET /api/search swarm users', () => {
             nodeIsNsfw: true,
         }]);
         mocks.postFindMany.mockResolvedValue([]);
+        mocks.fetchSwarmTimeline.mockResolvedValue({
+            posts: [],
+            sources: [],
+            fetchedAt: '2026-07-18T00:00:00.000Z',
+            continuationDate: null,
+        });
     });
 
     it('finds an exact remote username without requiring its node domain', async () => {
@@ -117,5 +127,59 @@ describe('GET /api/search swarm users', () => {
             }),
         );
         expect(mocks.postFindMany).not.toHaveBeenCalled();
+        expect(mocks.fetchSwarmTimeline).not.toHaveBeenCalled();
+    });
+
+    it('finds matching post text on remote swarm nodes', async () => {
+        mocks.fetchSwarmTimeline.mockResolvedValue({
+            posts: [{
+                id: 'post-1',
+                content: 'Yolked!',
+                createdAt: '2026-07-17T12:00:00.000Z',
+                author: {
+                    handle: 'bubbabator',
+                    displayName: 'BubbaBator',
+                    avatarUrl: 'https://rprh.link/avatar.jpg',
+                    isNsfw: false,
+                },
+                nodeDomain: 'rprh.link',
+                nodeIsNsfw: false,
+                isNsfw: false,
+                likeCount: 2,
+                repostCount: 1,
+                replyCount: 0,
+            }],
+            sources: [{ domain: 'rprh.link', postCount: 1 }],
+            fetchedAt: '2026-07-18T00:00:00.000Z',
+            continuationDate: null,
+        });
+
+        const response = await GET(new Request(
+            'https://local.com/api/search?q=Yolked&type=posts',
+        ));
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({
+            users: [],
+            posts: [{
+                id: 'swarm:rprh.link:post-1',
+                content: 'Yolked!',
+                nodeDomain: 'rprh.link',
+                author: { handle: 'bubbabator@rprh.link' },
+            }],
+        });
+        expect(mocks.fetchSwarmTimeline).toHaveBeenCalledWith(
+            undefined,
+            20,
+            expect.objectContaining({
+                includeNsfw: true,
+                query: 'Yolked',
+                excludeDomains: expect.any(Set),
+            }),
+        );
+        const options = mocks.fetchSwarmTimeline.mock.calls[0]?.[2] as {
+            excludeDomains: Set<string>;
+        };
+        expect(options.excludeDomains).toContain('local.com');
     });
 });

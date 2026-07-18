@@ -22,6 +22,8 @@ interface TimelineResult {
 interface TimelineOptions {
   includeNsfw?: boolean; // Whether to include NSFW content
   cursor?: string; // Timestamp cursor for pagination
+  query?: string; // Optional post-content search query
+  excludeDomains?: ReadonlySet<string>;
 }
 
 function isReplyPost(post: SwarmPost): boolean {
@@ -143,7 +145,8 @@ async function enrichPostsWithPreviews(posts: SwarmPost[]): Promise<SwarmPost[]>
 async function fetchNodeTimeline(
   domain: string,
   limit: number = 20,
-  cursor?: string
+  cursor?: string,
+  query?: string,
 ): Promise<{ posts: SwarmPost[]; nodeIsNsfw?: boolean; error?: string }> {
   try {
     const normalizedDomain = normalizeNodeDomain(domain);
@@ -160,7 +163,7 @@ async function fetchNodeTimeline(
     } else {
       baseUrl = `https://${normalizedDomain}`;
     }
-    const url = `${baseUrl}/api/swarm/timeline?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const url = `${baseUrl}/api/swarm/timeline?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
 
     const response = await signedFederationRead(url, {
       headers: { 'Accept': 'application/json' },
@@ -191,7 +194,7 @@ export async function fetchSwarmTimeline(
   postsPerNode: number = 10,
   options: TimelineOptions = {}
 ): Promise<TimelineResult> {
-  const { includeNsfw = false, cursor } = options;
+  const { includeNsfw = false, cursor, query, excludeDomains } = options;
 
   // Get active nodes to query
   const nodes = await getActiveSwarmNodes(maxNodes);
@@ -200,10 +203,13 @@ export async function fetchSwarmTimeline(
   const ourDomain = normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost');
 
   // Always query all nodes - we filter posts, not nodes
+  const normalizedExcludedDomains = new Set(
+    Array.from(excludeDomains || []).map(normalizeNodeDomain),
+  );
   const candidateDomains = [
     ourDomain,
     ...nodes.map(n => n.domain).filter(d => d !== ourDomain)
-  ];
+  ].filter((domain) => !normalizedExcludedDomains.has(normalizeNodeDomain(domain)));
   const allowedDomains = await filterBlockedDomains(candidateDomains);
   const nodesToQuery = maxNodes === undefined ? allowedDomains : allowedDomains.slice(0, maxNodes);
   const knownNsfwByDomain = new Map(
@@ -216,7 +222,7 @@ export async function fetchSwarmTimeline(
   // Fetch from all nodes in parallel
   const results = await Promise.all(
     nodesToQuery.map(async (domain) => {
-      const result = await fetchNodeTimeline(domain, postsPerNode, cursor);
+      const result = await fetchNodeTimeline(domain, postsPerNode, cursor, query);
       return {
         domain,
         knownNodeIsNsfw: knownNsfwByDomain.get(normalizeNodeDomain(domain)),

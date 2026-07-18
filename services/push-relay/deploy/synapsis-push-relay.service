@@ -1,0 +1,29 @@
+[Unit]
+Description=Synapsis central APNs push relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=true
+WorkingDirectory=/opt/synapsis-push-relay
+EnvironmentFile=/etc/synapsis-push-relay.env
+Environment=NODE_ENV=production
+Environment=PUSH_RELAY_DATABASE_PATH=/var/lib/synapsis-push-relay/relay.db
+Environment=APNS_PRODUCTION_KEY_FILE=%d/apns-production.p8
+Environment=APNS_SANDBOX_KEY_FILE=%d/apns-sandbox.p8
+LoadCredential=apns-production.p8:/etc/synapsis-push-relay/apns-production.p8
+LoadCredential=apns-sandbox.p8:/etc/synapsis-push-relay/apns-sandbox.p8
+ExecStart=/usr/bin/env npm start
+Restart=on-failure
+RestartSec=5
+StateDirectory=synapsis-push-relay
+StateDirectoryMode=0700
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

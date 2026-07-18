@@ -6,6 +6,8 @@ import { discoverNode } from '@/lib/swarm/discovery';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import type { SwarmDirectoryUser } from '@/lib/swarm/user-directory';
 import { searchKnownSwarmUsers } from '@/lib/swarm/user-directory-search';
+import { fetchSwarmTimeline } from '@/lib/swarm/timeline';
+import { mapSwarmPostToPost } from '@/lib/swarm/feed-post';
 import { canCurrentViewerAccessSensitiveRemoteProfile } from '@/lib/nsfw/remote-profile-access';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import {
@@ -125,6 +127,14 @@ export async function GET(request: Request) {
         if (localNodeIsNsfw && !viewer) {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
         }
+        const mutedNodeRows = viewer
+            ? await db.select({ nodeDomain: mutedNodes.nodeDomain })
+                .from(mutedNodes)
+                .where(eq(mutedNodes.userId, viewer.id))
+            : [];
+        const mutedDomains = new Set(
+            mutedNodeRows.map((row) => normalizeNodeDomain(row.nodeDomain)),
+        );
 
         // Normalize query for local user search
         // Strip leading @ and local domain if present
@@ -212,14 +222,6 @@ export async function GET(request: Request) {
         if ((type === 'all' || type === 'users') && !parseRemoteHandleQuery(query)) {
             const directoryQuery = localSearchQuery.toLowerCase();
             if (directoryQuery.length >= 2 && /^[a-z0-9_ -]{2,30}$/i.test(directoryQuery)) {
-                const mutedNodeRows = viewer
-                    ? await db.select({ nodeDomain: mutedNodes.nodeDomain })
-                        .from(mutedNodes)
-                        .where(eq(mutedNodes.userId, viewer.id))
-                    : [];
-                const mutedDomains = new Set(
-                    mutedNodeRows.map((row) => normalizeNodeDomain(row.nodeDomain)),
-                );
                 const remoteUsers = (await searchKnownSwarmUsers(directoryQuery, {
                     limit,
                     localDomain,
@@ -279,6 +281,7 @@ export async function GET(request: Request) {
             .from(users)
             .where(or(eq(users.isSuspended, true), eq(users.isSilenced, true)));
         const moderatedIds = moderatedUsers.map((item) => item.id);
+        let remoteSearchPosts: Array<Record<string, unknown>> = [];
 
         // Search posts
         if (type === 'posts' || (type === 'all' && !isHandleSearch)) {
@@ -304,48 +307,79 @@ export async function GET(request: Request) {
                 }));
             }
 
-            // Populate isLiked and isReposted for authenticated users
-            try {
-                const { getSession } = await import('@/lib/auth');
-                const session = await getSession();
+            // Populate isLiked and isReposted for authenticated users using the
+            // viewer already resolved for content visibility.
+            if (viewer && searchPosts.length > 0) {
+                const postIds = searchPosts.map(p => p.id).filter(Boolean);
 
-                if (session?.user && searchPosts.length > 0) {
-                    const viewer = session.user;
-                    const postIds = searchPosts.map(p => p.id).filter(Boolean);
+                if (postIds.length > 0) {
+                    const viewerLikes = await db.query.likes.findMany({
+                        where: { AND: [{ userId: viewer.id }, { postId: { in: postIds } }] },
+                    });
+                    const likedPostIds = new Set(viewerLikes.map(l => l.postId));
 
-                    if (postIds.length > 0) {
-                        const viewerLikes = await db.query.likes.findMany({
-                            where: { AND: [{ userId: viewer.id }, { postId: { in: postIds } }] },
-                        });
-                        const likedPostIds = new Set(viewerLikes.map(l => l.postId));
+                    const viewerReposts = await db.query.posts.findMany({
+                        where: { AND: [{ userId: viewer.id }, { repostOfId: { in: postIds } }, { isRemoved: false }] },
+                    });
+                    const repostedPostIds = new Set(viewerReposts.map(r => r.repostOfId));
 
-                        const viewerReposts = await db.query.posts.findMany({
-                            where: { AND: [{ userId: viewer.id }, { repostOfId: { in: postIds } }, { isRemoved: false }] },
-                        });
-                        const repostedPostIds = new Set(viewerReposts.map(r => r.repostOfId));
-
-                        searchPosts = searchPosts.map(p => ({
-                            ...p,
-                            isLiked: likedPostIds.has(p.id),
-                            isReposted: repostedPostIds.has(p.id),
-                        }));
-                    }
+                    searchPosts = searchPosts.map(p => ({
+                        ...p,
+                        isLiked: likedPostIds.has(p.id),
+                        isReposted: repostedPostIds.has(p.id),
+                    }));
                 }
-            } catch (error) {
-                console.error('Error populating interaction flags:', error);
+            }
+
+            // Search every known active peer for matching post text. Each peer searches
+            // its own database, so this covers the swarm without downloading timelines
+            // or imposing a node-count ceiling.
+            if (localSearchQuery.length >= 2) {
+                const normalizedLocalDomain = normalizeNodeDomain(localDomain || 'localhost:43821');
+                const excludedDomains = new Set(mutedDomains);
+                excludedDomains.add(normalizedLocalDomain);
+                const swarmResults = await fetchSwarmTimeline(undefined, limit, {
+                    includeNsfw: canViewSensitive,
+                    query: localSearchQuery,
+                    excludeDomains: excludedDomains,
+                });
+                remoteSearchPosts = swarmResults.posts.map((post) => redactSensitivePostForViewer(
+                    mapSwarmPostToPost(post, { localDomain: normalizedLocalDomain }) as unknown as Record<string, unknown>,
+                    {
+                        canViewSensitive,
+                        localNodeDomain: normalizedLocalDomain,
+                        localNodeIsNsfw,
+                    },
+                ));
             }
         }
 
+        const localSearchPosts = searchPosts.map((post) => redactSensitivePostForViewer(
+            post as unknown as Record<string, unknown>,
+            {
+                canViewSensitive,
+                localNodeDomain: localDomain || 'localhost:43821',
+                localNodeIsNsfw,
+            },
+        ));
+        const seenPostIds = new Set<string>();
+        const mergedSearchPosts = [...localSearchPosts, ...remoteSearchPosts]
+            .sort((left, right) => {
+                const leftTime = new Date(String(left.createdAt || 0)).getTime();
+                const rightTime = new Date(String(right.createdAt || 0)).getTime();
+                return rightTime - leftTime;
+            })
+            .filter((post) => {
+                const id = String(post.id || '');
+                if (!id || seenPostIds.has(id)) return false;
+                seenPostIds.add(id);
+                return true;
+            })
+            .slice(0, limit);
+
         return NextResponse.json({
             users: searchUsers,
-            posts: searchPosts.map((post) => redactSensitivePostForViewer(
-                post as unknown as Record<string, unknown>,
-                {
-                    canViewSensitive,
-                    localNodeDomain: localDomain || 'localhost:43821',
-                    localNodeIsNsfw,
-                },
-            )),
+            posts: mergedSearchPosts,
         });
     } catch (error) {
         console.error('Search error:', error);

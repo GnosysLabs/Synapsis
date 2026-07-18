@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   select: vi.fn(),
   and: vi.fn((...conditions: unknown[]) => ({ operator: 'and', conditions })),
   notLike: vi.fn((column: unknown, pattern: string) => ({ operator: 'notLike', column, pattern })),
+  like: vi.fn((column: unknown, pattern: string) => ({ operator: 'like', column, pattern })),
   requireLocalNodeNsfwClassification: vi.fn(),
   isTrustedFederationRead: vi.fn(),
 }));
@@ -39,6 +40,7 @@ vi.mock('drizzle-orm', () => {
     isNull: expression('isNull'),
     lt: expression('lt'),
     inArray: expression('inArray'),
+    like: mocks.like,
     notLike: mocks.notLike,
     sql,
   };
@@ -101,5 +103,30 @@ describe('GET /api/swarm/timeline local-author boundary', () => {
     expect(mocks.notLike).toHaveBeenNthCalledWith(2, 'handle', '%@%');
     expect(recentPostsQuery.where).toHaveBeenCalledOnce();
     expect(remoteActivityQuery.where).toHaveBeenCalledOnce();
+  });
+
+  it('applies a post-content query to both timeline source queries', async () => {
+    const recentPostsQuery = emptySelectBuilder();
+    const remoteActivityQuery = emptySelectBuilder();
+    mocks.select
+      .mockReturnValueOnce(recentPostsQuery)
+      .mockReturnValueOnce(remoteActivityQuery);
+
+    const response = await GET(
+      new Request('https://local.example/api/swarm/timeline?q=Yolked') as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.like).toHaveBeenCalledOnce();
+    expect(mocks.like).toHaveBeenCalledWith('content', '%Yolked%');
+    const searchCondition = mocks.like.mock.results[0]?.value;
+    expect(mocks.and).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      searchCondition,
+    );
   });
 });
