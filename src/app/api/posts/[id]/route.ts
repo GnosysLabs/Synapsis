@@ -61,12 +61,15 @@ const postDetailRelations = {
 type SwarmDetailPostInput = {
     id: string;
     originalPostId?: string;
-    nodeDomain?: string;
+    nodeDomain?: string | null;
     content: string;
     createdAt: string;
     likesCount?: number;
     repostsCount?: number;
     repliesCount?: number;
+    likeCount?: number;
+    repostCount?: number;
+    replyCount?: number;
     repostOfId?: string | null;
     repostOf?: SwarmDetailPostInput | null;
     repostedBy?: Array<{
@@ -107,9 +110,9 @@ function mapSwarmDetailPost(post: SwarmDetailPostInput, fallbackDomain: string):
         originalPostId: rawId,
         content: post.content,
         createdAt: post.createdAt,
-        likesCount: post.likesCount || 0,
-        repostsCount: post.repostsCount || 0,
-        repliesCount: post.repliesCount || 0,
+        likesCount: post.likesCount ?? post.likeCount ?? 0,
+        repostsCount: post.repostsCount ?? post.repostCount ?? 0,
+        repliesCount: post.repliesCount ?? post.replyCount ?? 0,
         isSwarm: true,
         nodeDomain: effectiveDomain,
         isNsfw: post.isNsfw,
@@ -241,11 +244,21 @@ export async function GET(
                 // Fetch from origin node in real-time
                 try {
                     const protocol = originDomain.includes('localhost') ? 'http' : 'https';
-                    const res = await signedFederationRead(`${protocol}://${originDomain}/api/swarm/posts/${originalPostId}`, {
-                        headers: { 'Accept': 'application/json' },
-                        timeoutMs: 8_000,
-                        maxResponseBytes: 1024 * 1024,
-                    });
+                    const [postResult, repliesResult] = await Promise.allSettled([
+                        signedFederationRead(`${protocol}://${originDomain}/api/swarm/posts/${originalPostId}`, {
+                            headers: { 'Accept': 'application/json' },
+                            timeoutMs: 8_000,
+                            maxResponseBytes: 1024 * 1024,
+                        }),
+                        signedFederationRead(`${protocol}://${originDomain}/api/swarm/replies?postId=${encodeURIComponent(originalPostId)}`, {
+                            headers: { 'Accept': 'application/json' },
+                            timeoutMs: 8_000,
+                            maxResponseBytes: 1024 * 1024,
+                        }),
+                    ]);
+
+                    if (postResult.status === 'rejected') throw postResult.reason;
+                    const res = postResult.value;
 
                     if (res.status >= 200 && res.status < 300) {
                         const data = res.json() as { post: SwarmDetailPostInput; replies?: SwarmDetailPostInput[] };
@@ -272,11 +285,21 @@ export async function GET(
                             nodeDomain: originDomain,
                         }, originDomain);
 
-                        // Transform replies from the origin node
-                        replyPosts = (data.replies || []).map((reply) => mapSwarmDetailPost({
+                        // The post endpoint intentionally exports only replies authored on the
+                        // origin node. The dedicated thread endpoint includes replies delivered
+                        // from other signed peers, so prefer it when the origin supports it.
+                        let originReplies = data.replies || [];
+                        if (repliesResult.status === 'fulfilled'
+                            && repliesResult.value.status >= 200
+                            && repliesResult.value.status < 300) {
+                            const threadData = repliesResult.value.json() as { replies?: SwarmDetailPostInput[] };
+                            originReplies = threadData.replies || originReplies;
+                        }
+
+                        replyPosts = originReplies.map((reply) => mapSwarmDetailPost({
                             ...classifyOriginPost(reply),
-                            nodeDomain: originDomain,
-                        }, originDomain));
+                            nodeDomain: reply.nodeDomain || originDomain,
+                        }, reply.nodeDomain || originDomain));
 
                         mainPost.repliesCount = replyPosts.length;
 

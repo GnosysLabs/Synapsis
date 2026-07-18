@@ -194,4 +194,48 @@ describe('swarm reply authorization and sensitivity', () => {
     expect(JSON.stringify(body)).not.toContain('REMOTE SECRET BODY');
     expect(JSON.stringify(body)).not.toContain('secret-avatar.jpg');
   });
+
+  it('returns a delivered reply under its source-node id to trusted peers', async () => {
+    mocks.isTrustedFederationRead.mockResolvedValue(true);
+    mocks.findFirst.mockResolvedValue({
+      id: parentId,
+      isNsfw: false,
+      author: { handle: 'local-author', nodeId: null, isNsfw: false },
+    });
+    mocks.limit.mockResolvedValue([{
+      id: 'origin-cache-row',
+      apId: `swarm:source.social:${replyId}`,
+      content: 'Federated reply',
+      createdAt: new Date('2026-07-18T00:00:00.000Z'),
+      likesCount: 2,
+      repostsCount: 3,
+      repliesCount: 4,
+      authorHandle: 'alice@source.social',
+      authorDisplayName: 'Alice',
+      authorAvatarUrl: null,
+      authorIsNsfw: true,
+      authorNodeId: 'source-node-row',
+      postIsNsfw: true,
+    }]);
+
+    const response = await GET(new Request(
+      `https://target.social/api/swarm/replies?postId=${parentId}`,
+    ) as never);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.replies).toHaveLength(1);
+    expect(body.replies[0]).toMatchObject({
+      id: replyId,
+      nodeDomain: 'source.social',
+      likeCount: 2,
+      repostCount: 3,
+      replyCount: 4,
+      isNsfw: true,
+      author: {
+        handle: 'alice',
+        isNsfw: true,
+      },
+    });
+  });
 });

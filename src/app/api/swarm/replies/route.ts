@@ -14,6 +14,7 @@ import { isPostSensitive, redactSensitivePostForViewer } from '@/lib/nsfw/conten
 import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 import { upsertRemoteUser } from '@/lib/swarm/user-cache';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import { parseSwarmPostId } from '@/lib/swarm/post-id';
 
 // Schema for incoming swarm reply
 const swarmReplySchema = z.object({
@@ -296,6 +297,7 @@ export async function GET(request: NextRequest) {
     const replies = await db
       .select({
         id: posts.id,
+        apId: posts.apId,
         content: posts.content,
         createdAt: posts.createdAt,
         likesCount: posts.likesCount,
@@ -324,12 +326,16 @@ export async function GET(request: NextRequest) {
       const authorIsRemote = reply.authorHandle.includes('@')
         || (reply.authorNodeId !== null && reply.authorNodeId !== undefined);
       const handleParts = reply.authorHandle.split('@');
-      const remoteDomain = authorIsRemote && handleParts.length > 1
-        ? handleParts[handleParts.length - 1]
+      const parsedRemotePostId = reply.apId?.startsWith('swarm:')
+        ? parseSwarmPostId(reply.apId)
         : null;
+      const remoteDomain = parsedRemotePostId?.domain
+        || (authorIsRemote && handleParts.length > 1
+          ? handleParts[handleParts.length - 1]
+          : null);
 
       return {
-        id: reply.id,
+        id: parsedRemotePostId?.originalPostId || reply.id,
         content: reply.content,
         createdAt: reply.createdAt.toISOString(),
         author: {
