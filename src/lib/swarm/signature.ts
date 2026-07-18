@@ -7,8 +7,6 @@
  */
 
 import crypto from 'crypto';
-import { db, users } from '@/db';
-import { eq } from 'drizzle-orm';
 import { canonicalize } from '@/lib/crypto/user-signing';
 import { isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
 import { getPublicSwarmDomain } from './node-domain';
@@ -46,6 +44,19 @@ function cacheNodePublicKey(domain: string, publicKey: string): void {
     publicKey,
     expiresAt: Date.now() + NODE_PUBLIC_KEY_CACHE_TTL_MS,
   });
+}
+
+function normalizeNodePublicKey(publicKey: string): string | null {
+  try {
+    const key = crypto.createPublicKey(publicKey);
+    if (key.asymmetricKeyType !== 'ec'
+      || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1') {
+      return null;
+    }
+    return key.export({ type: 'spki', format: 'pem' }).toString();
+  } catch {
+    return null;
+  }
 }
 
 function resolveFederationDomain(domain: string): { domain: string; protocol: 'http' | 'https' } | null {
@@ -151,11 +162,10 @@ export async function getNodePublicKey(domain: string): Promise<string | null> {
       }
 
       const data = response.json() as { publicKey?: unknown };
-      const publicKey = typeof data.publicKey === 'string' ? data.publicKey : null;
-      if (publicKey) {
-        await pinSwarmNodePublicKey(normalizedDomain, publicKey);
-        cacheNodePublicKey(normalizedDomain, publicKey);
-      }
+      const publicKey = typeof data.publicKey === 'string'
+        ? normalizeNodePublicKey(data.publicKey)
+        : null;
+      if (publicKey) cacheNodePublicKey(normalizedDomain, publicKey);
       return publicKey;
     })();
     pendingNodePublicKeyRequests.set(normalizedDomain, keyRequest);
@@ -194,8 +204,10 @@ export async function verifySwarmRequest(
     return false;
   }
 
+  // The claimed domain is unauthenticated at this point. Charging its bucket
+  // here would let anyone spoof a victim domain until that real peer is rate
+  // limited. Keep only origin-independent capacity guards before verification.
   if (isRateLimited('swarm-signature-preauth-global', 1_200, 60 * 1_000)
-    || isRateLimited(`swarm-signature-node:${normalizedDomain}`, 600, 60 * 1_000)
     || activeSwarmVerifications >= MAX_CONCURRENT_SWARM_VERIFICATIONS) {
     console.warn(`[Signature] Verification capacity exceeded for ${normalizedDomain}`);
     return false;
@@ -211,114 +223,26 @@ export async function verifySwarmRequest(
       return false;
     }
 
-    return verifySignature(payload, signature, publicKey);
+    if (!verifySignature(payload, signature, publicKey)) return false;
+
+    // The signature has now authenticated normalizedDomain, so this bucket
+    // cannot be poisoned by a request merely claiming to come from that peer.
+    if (isRateLimited(`swarm-signature-node:${normalizedDomain}`, 600, 60 * 1_000)) {
+      console.warn(`[Signature] Verification capacity exceeded for ${normalizedDomain}`);
+      return false;
+    }
+
+    // First-contact material remains ephemeral until it has successfully
+    // authenticated a request. Invalid requests must not create durable peers.
+    try {
+      await pinSwarmNodePublicKey(normalizedDomain, publicKey);
+    } catch (error) {
+      console.warn(`[Signature] Could not pin verified node identity for ${normalizedDomain}`, error);
+      return false;
+    }
+    return true;
   } finally {
     activeSwarmVerifications -= 1;
-  }
-}
-
-/**
- * Verify a user interaction signature
- * 
- * For user-specific interactions (like, follow, etc), we verify using
- * the user's public key, not the node's.
- * 
- * @param payload - The request payload (without signature field)
- * @param signature - The signature to verify
- * @param userHandle - The full handle of the user (handle@domain)
- * @returns true if signature is valid, false otherwise
- */
-export async function verifyUserInteraction(
-  payload: unknown,
-  signature: string,
-  userHandle: string,
-  userDomain: string
-): Promise<boolean> {
-  try {
-    const target = resolveFederationDomain(userDomain);
-    if (!target) {
-      console.warn(`[Signature] Rejected user interaction from non-public node ${userDomain}`);
-      return false;
-    }
-    const normalizedDomain = target.domain;
-    if (await isNodeBlocked(normalizedDomain)) {
-      console.warn(`[Signature] Rejected user interaction from blocked node ${normalizedDomain}`);
-      return false;
-    }
-    if (isRateLimited('swarm-user-signature-preauth-global', 600, 60 * 1_000)
-      || isRateLimited(`swarm-user-signature-node:${normalizedDomain}`, 300, 60 * 1_000)
-      || activeSwarmVerifications >= MAX_CONCURRENT_SWARM_VERIFICATIONS) {
-      console.warn(`[Signature] User verification capacity exceeded for ${normalizedDomain}`);
-      return false;
-    }
-
-    activeSwarmVerifications += 1;
-    try {
-      // Try to get cached user
-      const fullHandle = `${userHandle}@${normalizedDomain}`;
-      const user = await db?.query.users.findFirst({
-        where: { handle: fullHandle },
-      });
-
-      let publicKey: string | null = null;
-
-      if (user?.publicKey) {
-        publicKey = user.publicKey;
-      } else {
-      // Fetch from remote node
-      const response = await safeFederationRequest(`${target.protocol}://${normalizedDomain}/api/users/${encodeURIComponent(userHandle)}`, {
-        headers: { 'Accept': 'application/json' },
-        timeoutMs: 5_000,
-        maxResponseBytes: 64 * 1024,
-      });
-      
-      if (response.status < 200 || response.status >= 300) {
-        console.error(`[Signature] Failed to fetch user ${userHandle}@${normalizedDomain}: ${response.status}`);
-        return false;
-      }
-
-      const userData = response.json() as {
-        publicKey?: unknown;
-        user?: {
-          avatarUrl?: string | null;
-          did?: string;
-          displayName?: string | null;
-          publicKey?: unknown;
-        };
-      };
-      const resolvedPublicKey = userData.user?.publicKey || userData.publicKey;
-      publicKey = typeof resolvedPublicKey === 'string' ? resolvedPublicKey : null;
-
-      // Cache the user if we don't have them
-      if (!user && publicKey && db) {
-        await db.insert(users).values({
-          did: userData.user?.did || `did:swarm:${normalizedDomain}:${userHandle}`,
-          handle: fullHandle,
-          displayName: userData.user?.displayName || userHandle,
-          avatarUrl: userData.user?.avatarUrl,
-          publicKey,
-        }).onConflictDoNothing();
-      } else if (user && publicKey && db) {
-        // Update cached user's public key
-        await db.update(users)
-          .set({ publicKey })
-          .where(eq(users.id, user.id));
-      }
-      }
-
-      if (!publicKey) {
-        console.error(`[Signature] No public key found for ${fullHandle}`);
-        return false;
-      }
-
-      // Verify the signature
-      return verifySignature(payload, signature, publicKey);
-    } finally {
-      activeSwarmVerifications -= 1;
-    }
-  } catch (error) {
-    console.error(`[Signature] Error verifying user interaction:`, error);
-    return false;
   }
 }
 

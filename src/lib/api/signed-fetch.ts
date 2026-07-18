@@ -7,6 +7,7 @@
 
 import { createSignedAction, hasUserPrivateKey } from '@/lib/crypto/user-signing';
 import type { E2EEMessageEnvelope } from '@/lib/e2ee/protocol';
+import type { SignedMediaDescriptor } from '@/lib/types';
 
 export interface SignedFetchOptions {
   method?: string;
@@ -120,13 +121,15 @@ export const signedAPI = {
     replyToId: string | undefined,
     swarmReplyTo: unknown | undefined,
     isNsfw: boolean,
+    mediaManifest: SignedMediaDescriptor[],
     userDid: string,
     userHandle: string
   ) {
+    const clientPostId = crypto.randomUUID();
     return signedFetch(
       '/api/posts',
       'post',
-      { content, mediaIds, linkPreview, replyToId, swarmReplyTo, isNsfw },
+      { clientPostId, content, mediaIds, mediaManifest, linkPreview, replyToId, swarmReplyTo, isNsfw },
       userDid,
       userHandle
     );

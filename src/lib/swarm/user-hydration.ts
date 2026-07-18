@@ -1,4 +1,9 @@
 import { fetchSwarmUserProfile } from './interactions';
+import { mapWithConcurrency } from '@/lib/async/concurrency';
+import { getPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
+
+const MAX_REMOTE_USERS_TO_HYDRATE = 50;
+const MAX_CONCURRENT_PROFILE_HYDRATIONS = 6;
 
 export interface HydratedUser {
     id: string; // The ID used in the list (usually handle or handle@domain)
@@ -27,11 +32,14 @@ export async function hydrateSwarmUsers(
         avatarUrl?: string | null;
         bio?: string | null;
         isRemote: boolean;
+        nodeDomain?: string;
         isNsfw?: boolean;
         nodeIsNsfw?: boolean;
     }[]
 ): Promise<HydratedUser[]> {
-    const needsHydration = users.filter(u => u.isRemote);
+    const needsHydration = users
+        .filter(u => u.isRemote)
+        .slice(0, MAX_REMOTE_USERS_TO_HYDRATE);
 
     if (needsHydration.length === 0) {
         return users.map(u => ({
@@ -45,16 +53,23 @@ export async function hydrateSwarmUsers(
 
     const hydratedMap = new Map<string, Partial<HydratedUser>>();
 
-    // Create a promise for each remote user
-    const promises = needsHydration.map(async (user) => {
+    await mapWithConcurrency(
+        needsHydration,
+        MAX_CONCURRENT_PROFILE_HYDRATIONS,
+        async (user) => {
         try {
             // Parse handle and domain
             // Handle format for remote users in lists is usually "user@domain.com"
-            const parts = user.handle.split('@');
+            const normalizedHandle = user.handle.trim().replace(/^@/, '').toLowerCase();
+            const parts = normalizedHandle.split('@');
             if (parts.length !== 2) return; // Should be user@domain
 
             const handle = parts[0];
-            const domain = parts[1];
+            const domain = getPublicSwarmDomain(parts[1]);
+            const assertedDomain = normalizeNodeDomain(user.nodeDomain || parts[1]);
+            if (!/^[a-z0-9_]{3,30}$/i.test(handle)
+                || !domain
+                || assertedDomain !== domain) return;
 
             // Fetch profile
             // We set a small timeout in fetchSwarmUserProfile (10s), but we might want shorter for lists?
@@ -76,10 +91,8 @@ export async function hydrateSwarmUsers(
             // Just ignore failures and keep original data
             console.warn(`Failed to hydrate user ${user.handle}:`, e);
         }
-    });
-
-    // Run all (or batch if list is huge, but pagination limits to 20-50 usually)
-    await Promise.allSettled(promises);
+        },
+    );
 
     // Merge results
     return users.map(user => {

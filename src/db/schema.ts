@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, index, primaryKey, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 
@@ -173,6 +173,9 @@ export const posts = sqliteTable('posts', {
   swarmReplyToId: text('swarm_reply_to_id'), // Format: "swarm:domain:postId"
   swarmReplyToContent: text('swarm_reply_to_content'), // Cached content for display
   swarmReplyToAuthor: text('swarm_reply_to_author'), // JSON: {handle, displayName, avatarUrl, nodeDomain}
+  // Exact original node envelope + browser signature for portable, independently
+  // verifiable cross-node reply provenance. Never synthesize this from rows.
+  federationReplyProvenanceJson: text('federation_reply_provenance_json'),
   likesCount: integer('likes_count').default(0).notNull(),
   repostsCount: integer('reposts_count').default(0).notNull(),
   repliesCount: integer('replies_count').default(0).notNull(),
@@ -519,6 +522,9 @@ export const mentionDeliveries = sqliteTable('mention_deliveries', {
   postId: text('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
   targetHandle: text('target_handle').notNull(),
   targetDomain: text('target_domain').notNull(),
+  // The browser-created author proof must survive retries unchanged. A node
+  // must never reconstruct or fabricate user authorization from mutable rows.
+  userActionJson: text('user_action_json'),
   status: text('status').default('pending').notNull(), // pending | processing | retry | delivered | dead
   attempts: integer('attempts').default(0).notNull(),
   nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
@@ -541,10 +547,17 @@ export const handleRegistry = sqliteTable('handle_registry', {
   handle: text('handle').primaryKey(), // @username
   did: text('did').notNull(),
   nodeDomain: text('node_domain').notNull(),
+  // Directory gossip and direct node lookups provide routing hints, not user
+  // authorization. Only local account ownership or a valid self-certifying
+  // user signature may make this binding an immutable identity pin.
+  identityVerified: integer('identity_verified', { mode: 'boolean' }).default(false).notNull(),
   registeredAt: integer('registered_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
   index('handle_registry_updated_idx').on(table.updatedAt),
+  uniqueIndex('handle_registry_verified_node_did_unique_idx')
+    .on(table.nodeDomain, table.did)
+    .where(sql`${table.identityVerified} = 1`),
 ]);
 
 // ============================================
@@ -696,6 +709,49 @@ export const swarmInboundActions = sqliteTable('swarm_inbound_actions', {
   uniqueIndex('swarm_inbound_actions_replay_unique_idx')
     .on(table.sourceDomain, table.action, table.interactionId),
   index('swarm_inbound_actions_created_idx').on(table.createdAt),
+]);
+
+/**
+ * Last-writer ordering ledger for reversible federated relationships.
+ *
+ * Hostile or unreliable nodes may deliver like/unlike, follow/unfollow, and
+ * repost/unrepost out of order. The signed user-action timestamp and a stable
+ * hash tie-breaker make the winning state deterministic for each relationship.
+ */
+export const swarmRelationshipStates = sqliteTable('swarm_relationship_states', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  sourceDomain: text('source_domain').notNull(),
+  actorDid: text('actor_did').notNull(),
+  relationshipKind: text('relationship_kind', {
+    enum: ['like', 'follow', 'repost'],
+  }).notNull(),
+  target: text('target').notNull(),
+  lastActionTs: integer('last_action_ts').notNull(),
+  lastActionTieBreaker: text('last_action_tie_breaker').notNull(),
+  state: integer('state', { mode: 'boolean' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('swarm_relationship_states_identity_unique_idx').on(
+    table.sourceDomain,
+    table.actorDid,
+    table.relationshipKind,
+    table.target,
+  ),
+  index('swarm_relationship_states_actor_idx').on(table.sourceDomain, table.actorDid),
+]);
+
+/** Durable fixed-window quota shared by every process serving a source node. */
+export const swarmFederationActionQuotaBuckets = sqliteTable('swarm_federation_action_quota_buckets', {
+  sourceDomain: text('source_domain').notNull(),
+  bucketStartMs: integer('bucket_start_ms').notNull(),
+  actionCount: integer('action_count').default(0).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  primaryKey({
+    name: 'swarm_federation_action_quota_buckets_pk',
+    columns: [table.sourceDomain, table.bucketStartMs],
+  }),
+  index('swarm_federation_action_quota_buckets_start_idx').on(table.bucketStartMs),
 ]);
 
 /**

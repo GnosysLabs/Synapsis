@@ -70,7 +70,7 @@ const sensitivePost: Post = {
     },
     media: [{
         id: 'media-1',
-        url: 'https://local.example/private-video.mp4',
+        url: 'https://stuffbox.xyz/private-video.mp4',
         mimeType: 'video/mp4',
     }],
     linkPreviewUrl: 'https://private.example/story',
@@ -157,6 +157,53 @@ describe('PostCard', () => {
         expect(html).not.toContain('Review settings');
         expect(html).toContain('PRIVATE SENSITIVE BODY');
         expect(html).toContain('private-video.mp4');
+    });
+
+    it('does not render peer-hosted media from a remote post in production', () => {
+        mocks.user = {
+            id: 'viewer-1',
+            handle: 'viewer',
+            displayName: 'Viewer',
+            nsfwEnabled: true,
+            ageVerifiedAt: '2026-07-17T00:00:00.000Z',
+        };
+        vi.stubEnv('NODE_ENV', 'production');
+        try {
+            const html = renderToStaticMarkup(createElement(PostCard, {
+                post: {
+                    ...sensitivePost,
+                    id: 'remote-tracking-post',
+                    content: 'A remote post',
+                    isNsfw: false,
+                    nodeIsNsfw: false,
+                    nodeDomain: 'remote.example',
+                    isSwarm: true,
+                    author: {
+                        ...sensitivePost.author,
+                        handle: 'author@remote.example',
+                        isNsfw: false,
+                        nodeIsNsfw: false,
+                        nodeDomain: 'remote.example',
+                        isRemote: true,
+                    },
+                    media: [{
+                        id: 'tracking-media',
+                        url: 'https://remote.example/unique-viewer-pixel.gif',
+                        mimeType: 'image/gif',
+                    }],
+                    linkPreviewImage: 'https://remote.example/preview-tracker.gif',
+                    linkPreviewMedia: [{ url: 'https://remote.example/gallery-tracker.gif' }],
+                },
+            }));
+
+            expect(html).toContain('A remote post');
+            expect(html).not.toContain('unique-viewer-pixel.gif');
+            expect(html).not.toContain('preview-tracker.gif');
+            expect(html).not.toContain('gallery-tracker.gif');
+            expect(html).not.toContain('aria-label="Download media"');
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 
     it('requires a pre-existing adult-node member to confirm their age', () => {

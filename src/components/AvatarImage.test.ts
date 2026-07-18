@@ -30,10 +30,11 @@ beforeEach(() => {
 });
 
 describe('getDiceBearAvatarUrl', () => {
-    it('uses the site-wide bottts-neutral style and a stable encoded handle seed', () => {
-        expect(getDiceBearAvatarUrl('cyph3r@node.example')).toBe(
-            'https://api.dicebear.com/9.x/bottts-neutral/svg?seed=cyph3r%40node.example',
-        );
+    it('keeps the DiceBear seed stable while routing the artwork through this node', () => {
+        const first = getDiceBearAvatarUrl('cyph3r@node.example');
+        expect(first).toBe(getDiceBearAvatarUrl('cyph3r@node.example'));
+        expect(first).toBe('/avatar?seed=cyph3r%40node.example');
+        expect(first).not.toContain('api.dicebear.com');
     });
 
     it('uses the same seed for bare and qualified forms of a remote account', () => {
@@ -67,7 +68,7 @@ describe('getDiceBearAvatarUrl', () => {
         }));
 
         expect(html).not.toContain(privateUrl);
-        expect(html).toContain('api.dicebear.com');
+        expect(html).toContain('/avatar?seed=');
     });
 
     it('fails closed when a remote avatar has incomplete classification metadata', () => {
@@ -80,7 +81,7 @@ describe('getDiceBearAvatarUrl', () => {
         }));
 
         expect(html).not.toContain(privateUrl);
-        expect(html).toContain('api.dicebear.com');
+        expect(html).toContain('/avatar?seed=');
     });
 
     it('fails closed while the local node classification is unknown', () => {
@@ -95,12 +96,12 @@ describe('getDiceBearAvatarUrl', () => {
         }));
 
         expect(html).not.toContain(privateUrl);
-        expect(html).toContain('api.dicebear.com');
+        expect(html).toContain('/avatar?seed=');
     });
 
     it('uses the custom avatar only after sensitive viewing is enabled', () => {
         mocks.user = { nsfwEnabled: true, ageVerifiedAt: '2026-07-17T00:00:00.000Z' };
-        const privateUrl = 'https://adult.example/allowed-avatar.jpg';
+        const privateUrl = 'https://cdn.stuffbox.xyz/allowed-avatar.jpg';
         const html = renderToStaticMarkup(createElement(AvatarImage, {
             avatarUrl: privateUrl,
             seed: 'adult@adult.example',
@@ -110,5 +111,25 @@ describe('getDiceBearAvatarUrl', () => {
         }));
 
         expect(html).toContain(privateUrl);
+    });
+
+    it('still rejects an eligible remote avatar hosted by the peer in production', () => {
+        mocks.user = { nsfwEnabled: true, ageVerifiedAt: '2026-07-17T00:00:00.000Z' };
+        const trackingUrl = 'https://remote.example/viewer-specific-avatar.gif';
+        vi.stubEnv('NODE_ENV', 'production');
+        try {
+            const html = renderToStaticMarkup(createElement(AvatarImage, {
+                avatarUrl: trackingUrl,
+                seed: 'remote@remote.example',
+                nodeDomain: 'remote.example',
+                isNsfw: false,
+                nodeIsNsfw: false,
+            }));
+
+            expect(html).not.toContain(trackingUrl);
+            expect(html).toContain('/avatar?seed=');
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 });

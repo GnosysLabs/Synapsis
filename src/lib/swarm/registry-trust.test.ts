@@ -45,7 +45,7 @@ describe('trusted swarm read peers', () => {
   it.each([
     { discoveredVia: 'gossip' },
     { nsfwClassificationKnown: false },
-    { trustScore: 49 },
+    { discoveredVia: 'key' },
     { isBlocked: true },
     { isActive: false },
     { publicKey: null },

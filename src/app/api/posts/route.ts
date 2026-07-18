@@ -16,6 +16,7 @@ import { hasPublishablePostContent } from '@/lib/posts/content-policy';
 import { decodeFeedCursor, encodeFeedCursor, newestDate, selectFeedWindow } from '@/lib/posts/feed-pagination';
 import { mapSwarmPostToPost } from '@/lib/swarm/feed-post';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { parseBoundedInteger } from '@/lib/http/query';
 import {
     CURATED_FEED_WEIGHTS,
     CURATED_FEED_WINDOW_HOURS,
@@ -39,10 +40,17 @@ import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
 import { refreshFederatedReplyCounts } from '@/lib/swarm/reply-counts';
+import { mapWithConcurrency } from '@/lib/async/concurrency';
+import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
+import { federationMediaUrlSchema } from '@/lib/utils/federation';
+import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import { parseSwarmPostId } from '@/lib/swarm/post-id';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_SEED_MULTIPLIER = 5;
 const CURATION_SEED_CAP = 200;
+const MAX_REMOTE_FOLLOWS_PER_HOME_REQUEST = 50;
+const MAX_CONCURRENT_REMOTE_PROFILE_FETCHES = 6;
 
 type FeedPostWithChildren = {
     id: string;
@@ -385,6 +393,7 @@ async function getLocallyRepostedRemoteStories(
 }
 
 const createPostSchema = z.object({
+    clientPostId: z.string().uuid().optional(),
     content: z.string().max(POST_MAX_LENGTH),
     replyToId: z.string().uuid().optional(), // Must be UUID (swarm replies use separate field)
     swarmReplyTo: z.object({
@@ -399,6 +408,12 @@ const createPostSchema = z.object({
         }).optional(),
     }).optional(),
     mediaIds: z.array(z.string().uuid()).max(4).optional(),
+    mediaManifest: z.array(z.strictObject({
+        id: z.string().uuid(),
+        url: federationMediaUrlSchema,
+        altText: z.string().max(2_000).nullish(),
+        mimeType: z.string().max(255).nullish(),
+    })).max(4).optional(),
     isNsfw: z.boolean().optional(),
     linkPreview: z.object({
         url: z.string().url(),
@@ -456,8 +471,22 @@ export async function POST(request: Request) {
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
         }
+        if (isSignedActionPayload(requestBody) && !data.clientPostId) {
+            return NextResponse.json(
+                { error: 'Signed posts require a client-generated post ID' },
+                { status: 400 },
+            );
+        }
 
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const nodeDomain = normalizeNodeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
+        if (data.swarmReplyTo && !isSignedActionPayload(requestBody)) {
+            return NextResponse.json(
+                { error: 'Federated replies require a browser-signed user action' },
+                { status: 428 },
+            );
+        }
 
         // Build swarm reply fields if replying to a swarm post
         const swarmReplyFields = data.swarmReplyTo ? {
@@ -485,6 +514,25 @@ export async function POST(request: Request) {
                 { status: 400 },
             );
         }
+        if (isSignedActionPayload(requestBody)) {
+            const manifest = data.mediaManifest || [];
+            const manifestById = new Map(manifest.map((item) => [item.id, item]));
+            const mediaProofMatches = manifest.length === requestedMediaIds.length
+                && manifestById.size === manifest.length
+                && unattachedMedia.every((item) => {
+                    const signed = manifestById.get(item.id);
+                    return Boolean(signed
+                        && signed.url === item.url
+                        && (signed.mimeType || null) === (item.mimeType || null)
+                        && (signed.altText || null) === (item.altText || null));
+                });
+            if (!mediaProofMatches) {
+                return NextResponse.json(
+                    { error: 'Media authorization no longer matches the uploaded assets' },
+                    { status: 409 },
+                );
+            }
+        }
 
         const postContent = data.content.trim();
         if (!hasPublishablePostContent(postContent, unattachedMedia.map(item => item.id))) {
@@ -495,13 +543,14 @@ export async function POST(request: Request) {
         }
 
         const [post] = await db.insert(posts).values({
+            id: data.clientPostId,
             userId: user.id,
             content: postContent,
             replyToId: data.replyToId,
             ...swarmReplyFields,
             isNsfw: data.isNsfw || user.isNsfw || false, // Inherit from account if account is NSFW
-            apId: `https://${nodeDomain}/posts/${crypto.randomUUID()}`,
-            apUrl: `https://${nodeDomain}/posts/${crypto.randomUUID()}`,
+            apId: `https://${nodeDomain}/posts/${data.clientPostId || crypto.randomUUID()}`,
+            apUrl: `https://${nodeDomain}/posts/${data.clientPostId || crypto.randomUUID()}`,
             linkPreviewUrl: data.linkPreview?.url,
             linkPreviewTitle: data.linkPreview?.title,
             linkPreviewDescription: data.linkPreview?.description,
@@ -518,6 +567,13 @@ export async function POST(request: Request) {
                 const targetUrl = `${protocol}://${data.swarmReplyTo.nodeDomain}/api/swarm/replies`;
 
                 const replyPayload = {
+                    federation: (await import('@/lib/swarm/federated-action'))
+                        .createFederationActionContext({
+                            destinationDomain: data.swarmReplyTo.nodeDomain,
+                            method: 'POST',
+                            path: '/api/swarm/replies',
+                        }),
+                    userAction: requestBody,
                     postId: data.swarmReplyTo.postId,
                     reply: {
                         id: post.id,
@@ -534,7 +590,7 @@ export async function POST(request: Request) {
                         nodeDomain,
                         nodeIsNsfw,
                         isNsfw: post.isNsfw,
-                        mediaUrls: unattachedMedia.map(m => m.url),
+                        mediaUrls: (data.mediaManifest || []).map((item) => item.url),
                     },
                 };
 
@@ -639,6 +695,7 @@ export async function POST(request: Request) {
                     publicKey: user.publicKey,
                 },
                 nodeDomain,
+                userAction: isSignedActionPayload(requestBody) ? requestBody : undefined,
             });
         } catch (err) {
             console.error('[Posts] Error registering mentions:', err);
@@ -733,27 +790,85 @@ const normalizeForDedup = (content: string): string => {
 
 // Helper to transform cached remote posts to match local post format
 // Deduplicates by apId AND by similar content from same author
-const transformRemotePosts = (remotePostsData: typeof remotePosts.$inferSelect[]) => {
+const cachedRemoteMediaSchema = z.array(z.object({
+    url: federationMediaUrlSchema,
+    altText: z.string().max(2_000).nullish(),
+})).max(4);
+
+const CACHED_REMOTE_POST_UUID =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function canonicalCachedRemotePostIdentity(apId: string): { id: string; domain: string } | null {
+    const canonical = parseSwarmPostId(apId);
+    if (canonical) {
+        return { id: `swarm:${canonical.domain}:${canonical.originalPostId}`, domain: canonical.domain };
+    }
+
+    // Upgrade only the exact historical cache format. General actor URLs are
+    // not accepted as authoritative post identities.
+    try {
+        const legacy = new URL(apId);
+        const path = legacy.pathname.match(/^\/posts\/([0-9a-f-]+)$/i);
+        const normalizedDomain = normalizeNodeDomain(legacy.host);
+        const publicDomain = getPublicSwarmDomain(normalizedDomain);
+        const developmentDomain = process.env.NODE_ENV !== 'production'
+            && /^(?:localhost|127\.0\.0\.1)(?::\d{1,5})?$/i.test(normalizedDomain)
+            ? normalizedDomain
+            : null;
+        const domain = publicDomain ?? developmentDomain;
+        if (legacy.protocol !== 'swarm:' || !domain || !path || !CACHED_REMOTE_POST_UUID.test(path[1])) {
+            return null;
+        }
+        return { id: `swarm:${domain}:${path[1].toLowerCase()}`, domain };
+    } catch {
+        return null;
+    }
+}
+
+const transformRemotePosts = (
+    remotePostsData: typeof remotePosts.$inferSelect[],
+    blockedDomains: ReadonlySet<string>,
+) => {
     const seenApIds = new Set<string>();
     const seenContentKeys = new Set<string>(); // author+normalizedContent
-    const uniquePosts: typeof remotePosts.$inferSelect[] = [];
+    const uniquePosts: Array<{
+        row: typeof remotePosts.$inferSelect;
+        identity: { id: string; domain: string };
+    }> = [];
 
     for (const rp of remotePostsData) {
-        if (seenApIds.has(rp.apId)) continue;
+        const identity = canonicalCachedRemotePostIdentity(rp.apId);
+        if (!identity) continue;
+        const handleDomain = rp.authorHandle.includes('@')
+            ? rp.authorHandle.slice(rp.authorHandle.lastIndexOf('@') + 1).toLowerCase()
+            : null;
+        if (blockedDomains.has(identity.domain)
+            || (handleDomain && handleDomain !== identity.domain)) continue;
+        if (seenApIds.has(identity.id)) continue;
 
         // Content-based dedup: same author + similar content = skip
         const contentKey = `${rp.authorHandle}:${normalizeForDedup(rp.content)}`;
         if (seenContentKeys.has(contentKey)) continue;
 
-        seenApIds.add(rp.apId);
+        seenApIds.add(identity.id);
         seenContentKeys.add(contentKey);
-        uniquePosts.push(rp);
+        uniquePosts.push({ row: rp, identity });
     }
 
-    return uniquePosts.map(rp => {
-        const mediaData = rp.mediaJson ? JSON.parse(rp.mediaJson) : [];
+    return uniquePosts.map(({ row: rp, identity }) => {
+        let mediaData: z.infer<typeof cachedRemoteMediaSchema> = [];
+        if (rp.mediaJson) {
+            try {
+                const parsed = cachedRemoteMediaSchema.safeParse(JSON.parse(rp.mediaJson));
+                if (parsed.success) mediaData = parsed.data;
+            } catch {
+                mediaData = [];
+            }
+        }
         return {
-            id: rp.id,
+            // User signatures must bind the immutable origin object, not a
+            // node-local cache UUID that could be remapped after signing.
+            id: identity.id,
             content: rp.content,
             createdAt: rp.publishedAt,
             likesCount: 0,
@@ -775,8 +890,8 @@ const transformRemotePosts = (remotePostsData: typeof remotePosts.$inferSelect[]
                 avatarUrl: rp.authorAvatarUrl,
                 isRemote: true,
             },
-            media: mediaData.map((m: { url: string; altText?: string }, idx: number) => ({
-                id: `${rp.id}-media-${idx}`,
+            media: mediaData.map((m, idx) => ({
+                id: `${identity.id}-media-${idx}`,
                 url: m.url,
                 altText: m.altText || null,
             })),
@@ -797,7 +912,11 @@ export async function GET(request: Request) {
         const type = searchParams.get('type') || 'home'; // home, public, user, curated, replies
         const userId = searchParams.get('userId');
         const cursor = searchParams.get('cursor');
-        const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
+        const limit = parseBoundedInteger(searchParams.get('limit'), {
+            defaultValue: 20,
+            min: 1,
+            max: 50,
+        });
         const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
         const requestSession = await getSession().catch(() => null);
 
@@ -866,10 +985,13 @@ export async function GET(request: Request) {
             // Get all cached remote posts
             const remotePostsData = await db.query.remotePosts.findMany({
                 orderBy: (remotePosts, { desc }) => [desc(remotePosts.publishedAt)],
-                limit: limit,
+                limit: Math.min(limit * 4, 200),
             });
 
-            const transformedRemote = transformRemotePosts(remotePostsData);
+            const transformedRemote = transformRemotePosts(
+                remotePostsData,
+                await getBlockedNodeDomains(),
+            );
 
             // Merge and sort by date
             feedPosts = [...localPosts, ...transformedRemote]
@@ -1053,6 +1175,8 @@ export async function GET(request: Request) {
                 // Get handles of remote users we follow
                 const followedRemoteUsers = await db.query.remoteFollows.findMany({
                     where: { followerId: user.id },
+                    orderBy: (remoteFollows, { desc }) => [desc(remoteFollows.createdAt)],
+                    limit: MAX_REMOTE_FOLLOWS_PER_HOME_REQUEST,
                 });
 
                 // Fetch posts LIVE from followed remote users (in parallel, with timeout)
@@ -1069,7 +1193,10 @@ export async function GET(request: Request) {
                         ]);
                     };
 
-                    const fetchPromises = followedRemoteUsers.map(async (follow) => {
+                    const results = await mapWithConcurrency(
+                        followedRemoteUsers,
+                        MAX_CONCURRENT_REMOTE_PROFILE_FETCHES,
+                        async (follow) => {
                         try {
                             const atIndex = follow.targetHandle.lastIndexOf('@');
                             if (atIndex === -1) return [];
@@ -1112,9 +1239,8 @@ export async function GET(request: Request) {
                             console.error(`[Home] Error fetching posts from ${follow.targetHandle}:`, error);
                             return [];
                         }
-                    });
-
-                    const results = await Promise.all(fetchPromises);
+                        },
+                    );
                     liveRemotePosts = results.flat();
                 }
 

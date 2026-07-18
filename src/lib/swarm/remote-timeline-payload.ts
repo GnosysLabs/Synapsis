@@ -1,30 +1,23 @@
 import { z } from 'zod';
 import type { SwarmPost } from '@/app/api/swarm/timeline/route';
-import { isPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
+import {
+  federationMediaUrlSchema,
+  federationWebUrlSchema,
+} from '@/lib/utils/federation';
+import { normalizeNodeDomain } from './node-domain';
 
 const MAX_REMOTE_POSTS = 50;
 const boundedCount = z.number().int().nonnegative().max(1_000_000_000);
 const timestamp = z.string().datetime();
-const webUrl = z.string().max(4_096).url().refine((value) => {
-  const protocol = new URL(value).protocol;
-  return protocol === 'https:' || protocol === 'http:';
-}, 'URL must use HTTP or HTTPS');
-const mediaUrl = webUrl.refine((value) => {
-  const parsed = new URL(value);
-  return (parsed.protocol === 'https:' && isPublicSwarmDomain(parsed.hostname))
-    || (process.env.NODE_ENV === 'development'
-    && parsed.protocol === 'http:'
-    && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname));
-}, 'Remote media must use HTTPS');
 
 const mediaSchema = z.object({
-  url: mediaUrl,
+  url: federationMediaUrlSchema,
   mimeType: z.string().max(255).optional(),
   altText: z.string().max(2_000).optional(),
 });
 
 const previewMediaSchema = z.object({
-  url: mediaUrl,
+  url: federationMediaUrlSchema,
   width: z.number().int().positive().max(100_000).nullish(),
   height: z.number().int().positive().max(100_000).nullish(),
   mimeType: z.string().max(255).nullish(),
@@ -33,7 +26,7 @@ const previewMediaSchema = z.object({
 const authorSchema = z.object({
   handle: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
   displayName: z.string().min(1).max(50),
-  avatarUrl: mediaUrl.optional(),
+  avatarUrl: federationMediaUrlSchema.optional(),
   isNsfw: z.boolean().optional(),
 });
 
@@ -41,7 +34,7 @@ const reposterSchema = z.object({
   id: z.string().min(1).max(1_024),
   handle: z.string().min(3).max(640),
   displayName: z.string().min(1).max(50),
-  avatarUrl: mediaUrl.nullish(),
+  avatarUrl: federationMediaUrlSchema.nullish(),
   isNsfw: z.boolean().optional(),
   nodeIsNsfw: z.boolean().optional(),
   nodeDomain: z.string().min(1).max(253).nullish(),
@@ -68,12 +61,12 @@ const shallowPostSchema = z.object({
   repostCount: boundedCount,
   replyCount: boundedCount,
   media: z.array(mediaSchema).max(4).optional(),
-  linkPreviewUrl: webUrl.optional(),
+  linkPreviewUrl: federationWebUrlSchema.optional(),
   linkPreviewTitle: z.string().max(300).optional(),
   linkPreviewDescription: z.string().max(1_000).optional(),
-  linkPreviewImage: mediaUrl.optional(),
+  linkPreviewImage: federationMediaUrlSchema.optional(),
   linkPreviewType: z.enum(['card', 'image', 'gallery', 'video']).optional(),
-  linkPreviewVideoUrl: mediaUrl.optional(),
+  linkPreviewVideoUrl: federationMediaUrlSchema.optional(),
   linkPreviewMedia: z.array(previewMediaSchema).max(4).optional(),
 });
 

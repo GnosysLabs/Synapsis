@@ -15,6 +15,7 @@ import {
     redactSensitivePostForViewer,
     redactSensitiveUserSummary,
 } from '@/lib/nsfw/content-visibility';
+import { parseBoundedInteger } from '@/lib/http/query';
 
 const embeddedPostRelations = {
     author: true,
@@ -109,7 +110,11 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const query = searchParams.get('q') || '';
         const type = searchParams.get('type') || 'all'; // all, users, posts
-        const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
+        const limit = parseBoundedInteger(searchParams.get('limit'), {
+            defaultValue: 20,
+            min: 1,
+            max: 50,
+        });
 
         if (!query.trim()) {
             return NextResponse.json({ users: [], posts: [] });

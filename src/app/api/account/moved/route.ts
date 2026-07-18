@@ -9,22 +9,33 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, users } from '@/db';
 import { eq } from 'drizzle-orm';
 import * as crypto from 'crypto';
+import { z } from 'zod';
 
-interface MoveNotification {
-    oldHandle: string;
-    newActorUrl: string;
-    did: string;
-    movedAt: string;
-    signature: string;
-}
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { federationWebUrlSchema, localHandleSchema } from '@/lib/utils/federation';
+
+const MAX_MOVE_NOTIFICATION_BYTES = 32 * 1024;
+const MOVE_NOTIFICATION_MAX_AGE_MS = 10 * 60 * 1_000;
+const moveNotificationSchema = z.strictObject({
+    oldHandle: localHandleSchema,
+    newActorUrl: federationWebUrlSchema,
+    did: z.string().min(16).max(2_048),
+    movedAt: z.string().datetime(),
+    signature: z.string().min(1).max(16_384).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+});
 
 export async function POST(req: NextRequest) {
     try {
-        const body = await req.json() as MoveNotification;
-        const { oldHandle, newActorUrl, did, movedAt, signature } = body;
-
-        if (!oldHandle || !newActorUrl || !did || !signature) {
-            return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+        const body = moveNotificationSchema.parse(await readLimitedJson(
+            req,
+            MAX_MOVE_NOTIFICATION_BYTES,
+        ));
+        const { newActorUrl, did, movedAt, signature } = body;
+        const oldHandle = body.oldHandle.toLowerCase();
+        const movedAtMs = Date.parse(movedAt);
+        if (!Number.isFinite(movedAtMs)
+            || Math.abs(Date.now() - movedAtMs) > MOVE_NOTIFICATION_MAX_AGE_MS) {
+            return NextResponse.json({ error: 'Move notification is stale' }, { status: 400 });
         }
 
         // Find the user on this node
@@ -42,7 +53,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Verify the signature using the user's public key
-        const payload = { oldHandle, newActorUrl, did, movedAt };
+        const payload = { oldHandle: body.oldHandle, newActorUrl, did, movedAt };
         const verify = crypto.createVerify('sha256');
         verify.update(JSON.stringify(payload));
 
@@ -60,7 +71,7 @@ export async function POST(req: NextRequest) {
         await db.update(users)
             .set({
                 movedTo: newActorUrl,
-                migratedAt: new Date(movedAt),
+                migratedAt: new Date(movedAtMs),
                 updatedAt: new Date(),
             })
             .where(eq(users.id, user.id));
@@ -82,6 +93,12 @@ export async function POST(req: NextRequest) {
         });
 
     } catch (error) {
+        if (error instanceof FederationRequestBodyError) {
+            return NextResponse.json({ error: error.message }, { status: error.status });
+        }
+        if (error instanceof z.ZodError) {
+            return NextResponse.json({ error: 'Invalid move notification' }, { status: 400 });
+        }
         console.error('Move notification error:', error);
         return NextResponse.json({ error: 'Failed to process move notification' }, { status: 500 });
     }

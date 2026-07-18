@@ -10,7 +10,11 @@ const previewUrlSchema = z.string().trim().min(1).max(2_048);
 function isRedditUrl(url: string): boolean {
     try {
         const parsed = new URL(url);
-        return parsed.hostname.endsWith('reddit.com') || parsed.hostname === 'redd.it';
+        const hostname = parsed.hostname.toLowerCase();
+        return hostname === 'reddit.com'
+            || hostname.endsWith('.reddit.com')
+            || hostname === 'redd.it'
+            || hostname.endsWith('.redd.it');
     } catch {
         return false;
     }

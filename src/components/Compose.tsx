@@ -3,7 +3,7 @@
 import { useState, useEffect, useId, useRef } from 'react';
 import Image from 'next/image';
 import AutoTextarea from '@/components/AutoTextarea';
-import { Post, Attachment } from '@/lib/types';
+import { Post, Attachment, type SignedMediaDescriptor } from '@/lib/types';
 import { AlertTriangle, Music2, Paperclip } from 'lucide-react';
 import { VideoEmbed } from '@/components/VideoEmbed';
 import { useFormattedHandle } from '@/lib/utils/handle';
@@ -48,7 +48,14 @@ interface MentionSuggestion {
 }
 
 interface ComposeProps {
-    onPost: (content: string, mediaIds: string[], linkPreview?: LinkPreviewData, replyToId?: string, isNsfw?: boolean) => void | boolean | Promise<void | boolean>;
+    onPost: (
+        content: string,
+        mediaIds: string[],
+        linkPreview?: LinkPreviewData,
+        replyToId?: string,
+        isNsfw?: boolean,
+        mediaManifest?: SignedMediaDescriptor[],
+    ) => void | boolean | Promise<void | boolean>;
     onPosted?: () => void;
     replyingTo?: Post | null;
     onCancelReply?: () => void;
@@ -252,7 +259,19 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
 
         setIsPosting(true);
         try {
-            const posted = await onPost(content, attachments.map((item) => item.id).filter(Boolean), linkPreview || undefined, replyingTo?.id, isNsfw);
+            const posted = await onPost(
+                content,
+                attachments.map((item) => item.id).filter(Boolean),
+                linkPreview || undefined,
+                replyingTo?.id,
+                isNsfw,
+                attachments.map((item) => ({
+                    id: item.id,
+                    url: item.url,
+                    altText: item.altText ?? null,
+                    mimeType: item.mimeType ?? null,
+                })),
+            );
             if (posted === false) {
                 setIsPosting(false);
                 return;

@@ -4,11 +4,16 @@ import { db, follows, users, notifications, remoteFollows } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth';
 import { requireSignedAction } from '@/lib/auth/verify-signature';
+import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import { isSwarmNode, deliverSwarmFollow, deliverSwarmUnfollow, cacheSwarmUserPosts } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
+import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import { z } from 'zod';
 
 type RouteContext = { params: Promise<{ handle: string }> };
+
+const followActionDataSchema = z.strictObject({ targetHandle: z.string().min(3).max(320) });
 
 // Check follow status
 export async function GET(request: Request, context: RouteContext) {
@@ -70,8 +75,8 @@ export async function GET(request: Request, context: RouteContext) {
 // Follow a user
 export async function POST(request: Request, context: RouteContext) {
     try {
-        const signedAction = await request.json();
-        const currentUser = await requireSignedAction(signedAction);
+        const signedAction = signedUserActionSchema.parse(await request.json());
+        const currentUser = await requireSignedAction(signedAction, 'follow');
 
         // Extract handle from URL params (still needed for routing)
         // But we should also validate it matches the signed action intent if possible, 
@@ -83,7 +88,16 @@ export async function POST(request: Request, context: RouteContext) {
         const resolvedHandle = resolveUserHandle(handle);
         const cleanHandle = resolvedHandle.canonicalHandle;
         const remote = resolvedHandle.remote;
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const nodeDomain = normalizeNodeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
+        const authorizedTarget = followActionDataSchema.parse(signedAction.data).targetHandle.toLowerCase();
+        const expectedTarget = remote
+            ? `${remote.handle}@${remote.domain}`
+            : cleanHandle;
+        if (authorizedTarget !== expectedTarget.toLowerCase()) {
+            return NextResponse.json({ error: 'Follow target mismatch' }, { status: 403 });
+        }
 
         if (currentUser.isSuspended || currentUser.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -115,6 +129,7 @@ export async function POST(request: Request, context: RouteContext) {
             const activityId = crypto.randomUUID();
 
             const result = await deliverSwarmFollow(remote.domain, {
+                userAction: signedAction,
                 targetHandle: remote.handle,
                 follow: {
                     followerHandle: currentUser.handle,
@@ -228,14 +243,23 @@ export async function POST(request: Request, context: RouteContext) {
 // Unfollow a user
 export async function DELETE(request: Request, context: RouteContext) {
     try {
-        const signedAction = await request.json();
-        const currentUser = await requireSignedAction(signedAction);
+        const signedAction = signedUserActionSchema.parse(await request.json());
+        const currentUser = await requireSignedAction(signedAction, 'unfollow');
 
         const { handle } = await context.params;
         const resolvedHandle = resolveUserHandle(handle);
         const cleanHandle = resolvedHandle.canonicalHandle;
         const remote = resolvedHandle.remote;
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const nodeDomain = normalizeNodeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
+        const authorizedTarget = followActionDataSchema.parse(signedAction.data).targetHandle.toLowerCase();
+        const expectedTarget = remote
+            ? `${remote.handle}@${remote.domain}`
+            : cleanHandle;
+        if (authorizedTarget !== expectedTarget.toLowerCase()) {
+            return NextResponse.json({ error: 'Unfollow target mismatch' }, { status: 403 });
+        }
 
         if (remote) {
             if (!db) {
@@ -251,6 +275,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
             // Use swarm protocol for unfollow
             const result = await deliverSwarmUnfollow(remote.domain, {
+                userAction: signedAction,
                 targetHandle: remote.handle,
                 unfollow: {
                     followerHandle: currentUser.handle,

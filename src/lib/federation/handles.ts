@@ -1,5 +1,5 @@
 import { db, handleRegistry } from '@/db';
-import { eq } from 'drizzle-orm';
+import { and, eq, lt, or } from 'drizzle-orm';
 import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
 
 export type HandleEntry = {
@@ -17,7 +17,11 @@ export interface HandleMergeOptions {
     authoritativeDomain: string;
     /** Local account recovery may deliberately rotate its self-certifying DID. */
     allowIdentityChange?: boolean;
+    /** Only local account ownership, never node directory data, verifies identity. */
+    identityVerified?: boolean;
 }
+
+type HandleDirectoryDatabase = Pick<typeof db, 'insert' | 'query'>;
 
 function canonicalDomain(value: string): string | null {
     const normalized = normalizeNodeDomain(value);
@@ -63,14 +67,14 @@ function authoritativeUpdatedAt(value: string | undefined): Date | null {
 export async function upsertHandleEntries(
     entries: HandleEntry[],
     options: HandleMergeOptions,
+    database: HandleDirectoryDatabase = db,
 ) {
-    if (!db) {
-        return { added: 0, updated: 0, rejected: 0 };
-    }
-
     let added = 0;
     let updated = 0;
     let rejected = 0;
+    const localDomain = canonicalDomain(
+        process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
 
     for (const candidate of entries) {
         const entry = canonicalHandleEntry(candidate, options.authoritativeDomain);
@@ -80,38 +84,80 @@ export async function upsertHandleEntries(
             continue;
         }
 
-        const existing = await db.query.handleRegistry.findFirst({
-            where: { handle: entry.handle },
-        });
-
-        if (!existing) {
-            await db.insert(handleRegistry).values({
-                handle: entry.handle,
-                did: entry.did.trim(),
-                nodeDomain: entry.nodeDomain,
-                updatedAt: incomingUpdatedAt,
-            });
-            added += 1;
-            continue;
-        }
-
-        const identityChanged = existing.did !== entry.did.trim()
-            || canonicalDomain(existing.nodeDomain) !== entry.nodeDomain;
-        if (identityChanged && !options.allowIdentityChange) {
+        const incomingDid = entry.did.trim();
+        const incomingVerified = options.identityVerified === true;
+        // Remote node/directory data is never sufficient to verify a user.
+        // Signed remote actor proofs use pinVerifiedFederatedActorIdentity.
+        if (incomingVerified && entry.nodeDomain !== localDomain) {
             rejected += 1;
             continue;
         }
 
-        if (!existing.updatedAt || incomingUpdatedAt > existing.updatedAt) {
-            await db.update(handleRegistry)
-                .set({
-                    did: entry.did.trim(),
-                    nodeDomain: entry.nodeDomain,
-                    updatedAt: incomingUpdatedAt,
-                })
-                .where(eq(handleRegistry.handle, entry.handle));
-            updated += 1;
+        const existing = await database.query.handleRegistry.findFirst({
+            where: { handle: entry.handle },
+        });
+
+        const sameIdentity = and(
+            eq(handleRegistry.did, incomingDid),
+            eq(handleRegistry.nodeDomain, entry.nodeDomain),
+        );
+        const isNewer = lt(handleRegistry.updatedAt, incomingUpdatedAt);
+        const canRotateVerifiedLocalIdentity = incomingVerified
+            && options.allowIdentityChange === true;
+        const updateWhere = canRotateVerifiedLocalIdentity
+            ? undefined
+            : incomingVerified
+                ? or(
+                    eq(handleRegistry.identityVerified, false),
+                    and(
+                        eq(handleRegistry.identityVerified, true),
+                        sameIdentity,
+                        isNewer,
+                    ),
+                )
+                : and(
+                    eq(handleRegistry.identityVerified, false),
+                    sameIdentity,
+                    isNewer,
+                );
+
+        const statement = database.insert(handleRegistry).values({
+            handle: entry.handle,
+            did: incomingDid,
+            nodeDomain: entry.nodeDomain,
+            identityVerified: incomingVerified,
+            updatedAt: incomingUpdatedAt,
+        }).onConflictDoUpdate({
+            target: handleRegistry.handle,
+            set: {
+                did: incomingDid,
+                nodeDomain: entry.nodeDomain,
+                identityVerified: incomingVerified,
+                updatedAt: incomingUpdatedAt,
+            },
+            ...(updateWhere ? { setWhere: updateWhere } : {}),
+        }).returning({
+            did: handleRegistry.did,
+            nodeDomain: handleRegistry.nodeDomain,
+            identityVerified: handleRegistry.identityVerified,
+        });
+        const [merged] = await statement;
+
+        if (merged) {
+            if (existing) updated += 1;
+            else added += 1;
+            continue;
         }
+
+        // A no-op can mean an identical stale entry or that another writer
+        // won the race. Re-read before deciding whether this was a conflict.
+        const current = await database.query.handleRegistry.findFirst({
+            where: { handle: entry.handle },
+        });
+        const sameCurrentIdentity = current?.did === incomingDid
+            && canonicalDomain(current.nodeDomain) === entry.nodeDomain;
+        const verificationSatisfied = !incomingVerified || current?.identityVerified === true;
+        if (!sameCurrentIdentity || !verificationSatisfied) rejected += 1;
     }
 
     return { added, updated, rejected };

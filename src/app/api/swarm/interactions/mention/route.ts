@@ -1,32 +1,40 @@
-/**
- * Swarm Mention Endpoint
- * 
- * POST: Receive a mention notification from another swarm node
- * 
- * SECURITY: All requests must be cryptographically signed by the sender.
- */
-
 import { NextRequest, NextResponse } from 'next/server';
-import { db, notifications } from '@/db';
 import { z } from 'zod';
-import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
+
+import {
+  db,
+  notifications,
+  swarmInboundActions,
+} from '@/db';
+import { signedUserActionSchema } from '@/lib/e2ee/protocol';
+import { parseMentions, uniqueMentions } from '@/lib/mentions/parser';
+import {
+  FederatedIdentityContinuityError,
+  federationActionContextSchema,
+  federationActionDomain,
+  pinVerifiedFederatedActorIdentity,
+  verifyFederatedUserAction,
+} from '@/lib/swarm/federated-action';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import {
   federationMediaUrlSchema,
   localHandleSchema,
   nodeDomainSchema,
 } from '@/lib/utils/federation';
-import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
-import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
-import { claimInboundFederationAction } from '@/lib/swarm/replay';
 
-const swarmMentionSchema = z.object({
+const PATH = '/api/swarm/interactions/mention' as const;
+const MAX_MENTION_DELIVERY_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+
+const swarmMentionSchema = z.strictObject({
+  federation: federationActionContextSchema,
+  userAction: signedUserActionSchema,
   mentionedHandle: localHandleSchema,
-  mention: z.object({
+  mention: z.strictObject({
     actorHandle: localHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
     actorAvatarUrl: federationMediaUrlSchema.optional(),
     actorNodeDomain: nodeDomainSchema,
-    actorDid: z.string().min(1).max(500).optional(),
+    actorDid: z.string().min(1).max(2_048).optional(),
     actorPublicKey: z.string().min(1).max(16_384).optional(),
     postId: z.string().uuid(),
     postContent: z.string().max(600),
@@ -35,6 +43,11 @@ const swarmMentionSchema = z.object({
   }),
   signature: z.string().min(1).max(16_384),
 });
+
+const postActionDataSchema = z.object({
+  clientPostId: z.string().uuid(),
+  content: z.string().max(650),
+}).passthrough();
 
 async function acceptsRemoteMention(
   userId: string,
@@ -66,90 +79,103 @@ async function acceptsRemoteMention(
   return !block && !mute;
 }
 
-/**
- * POST /api/swarm/interactions/mention
- * 
- * Receives a mention notification from another swarm node.
- */
 export async function POST(request: NextRequest) {
   try {
-    if (!db) {
-      return NextResponse.json({ error: 'Database not available' }, { status: 503 });
+    const data = swarmMentionSchema.parse(await readLimitedJson(request));
+    const actorDomain = federationActionDomain(data.mention.actorNodeDomain);
+    if (!actorDomain) {
+      return NextResponse.json({ error: 'Invalid source node' }, { status: 400 });
     }
 
-    const body = await readLimitedJson(request);
-    const data = swarmMentionSchema.parse(body);
-    if (!isFreshFederationTimestamp(data.mention.timestamp)) {
-      return NextResponse.json({ error: 'Stale interaction' }, { status: 400 });
-    }
-
-    // SECURITY: Verify the signature
     const { signature, ...payload } = data;
-    const isValid = await verifySwarmRequest(payload, signature, data.mention.actorNodeDomain);
-
-    if (!isValid) {
-      console.warn(`[Swarm] Invalid signature for mention from ${data.mention.actorHandle}@${data.mention.actorNodeDomain}`);
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
-    }
-    if (!await claimInboundFederationAction(
-      data.mention.actorNodeDomain,
-      'mention',
-      data.mention.interactionId,
-    )) {
-      return NextResponse.json({ success: true, message: 'Interaction already processed' });
-    }
-
-    // Find the mentioned user (local user)
-    const mentionedUser = await db.query.users.findFirst({
-      where: { handle: data.mentionedHandle.toLowerCase() },
+    const verified = await verifyFederatedUserAction({
+      payload,
+      nodeSignature: signature,
+      sourceDomain: actorDomain,
+      expectedMethod: 'POST',
+      expectedPath: PATH,
+      expectedAction: 'post',
+      actorHandle: data.mention.actorHandle,
+      replayBinding: {
+        mentionedHandle: data.mentionedHandle.toLowerCase(),
+        postId: data.mention.postId,
+      },
+      maxUserActionAgeMs: MAX_MENTION_DELIVERY_AGE_MS,
+      maxActionsPerMinute: 120,
     });
-
-    if (!mentionedUser) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    if (!verified.ok) {
+      return NextResponse.json({ error: verified.error }, { status: verified.status });
     }
 
-    if (mentionedUser.isSuspended) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    const actionData = postActionDataSchema.safeParse(verified.userAction.data);
+    const mentionedHandle = data.mentionedHandle.toLowerCase();
+    if (!actionData.success
+      || actionData.data.clientPostId !== data.mention.postId
+      || actionData.data.content.trim() !== data.mention.postContent) {
+      return NextResponse.json({ error: 'Mention content is not user-authorized' }, { status: 403 });
+    }
+    const authorizedMention = uniqueMentions(
+      parseMentions(actionData.data.content, verified.sourceDomain),
+    ).some((mention) => !mention.isLocal
+      && mention.handle === mentionedHandle
+      && mention.domain === verified.destinationDomain);
+    if (!authorizedMention) {
+      return NextResponse.json({ error: 'Mention target is not user-authorized' }, { status: 403 });
     }
 
-    const actorDomain = normalizeNodeDomain(data.mention.actorNodeDomain);
-    const interactionKey = `mention:remote:${actorDomain}:${data.mention.interactionId}`;
+    const mentionedUser = await db.query.users.findFirst({ where: { handle: mentionedHandle } });
+    if (!mentionedUser || mentionedUser.isSuspended
+      || mentionedUser.nodeId !== null || mentionedUser.handle.includes('@')) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+    const fullActorHandle = `${verified.actorHandle}@${actorDomain}`;
     const cachedActor = await db.query.users.findFirst({
-      where: { handle: `${data.mention.actorHandle.toLowerCase()}@${actorDomain}` },
+      where: { handle: fullActorHandle },
       columns: { id: true },
     });
     if (!(await acceptsRemoteMention(mentionedUser.id, actorDomain, cachedActor?.id || null))) {
-      // Do not disclose moderation state to the sending node.
       return NextResponse.json({ success: true, message: 'Mention received' });
     }
 
-    // The interaction ID is persisted under a unique index. A retried signed
-    // request therefore remains successful without creating duplicates.
-    const inserted = await db.insert(notifications).values({
+    const outcome = await db.transaction(async (tx) => {
+      await pinVerifiedFederatedActorIdentity({
+        sourceDomain: actorDomain,
+        actorHandle: verified.actorHandle,
+        did: verified.userAction.did,
+      }, tx);
+
+      const [claim] = await tx.insert(swarmInboundActions).values({
+        sourceDomain: actorDomain,
+        action: 'mention',
+        interactionId: verified.replayId,
+      }).onConflictDoNothing().returning({ id: swarmInboundActions.id });
+      if (!claim) return 'replay' as const;
+
+      await tx.insert(notifications).values({
         userId: mentionedUser.id,
-        actorHandle: data.mention.actorHandle,
-        actorDisplayName: data.mention.actorDisplayName,
-        actorAvatarUrl: data.mention.actorAvatarUrl || null,
+        actorHandle: verified.actorHandle,
+        actorDisplayName: verified.actorHandle,
+        actorAvatarUrl: null,
         actorNodeDomain: actorDomain,
         remotePostId: data.mention.postId,
         remotePostDomain: actorDomain,
         postContent: data.mention.postContent.slice(0, 200),
-        interactionId: interactionKey,
+        interactionId: `mention:remote:${actorDomain}:${verified.replayId}`,
         type: 'mention',
-      }).onConflictDoNothing().returning({ id: notifications.id });
-    if (inserted.length > 0) {
-      console.log(`[Swarm] Created mention notification for @${data.mentionedHandle} from ${data.mention.actorHandle}@${data.mention.actorNodeDomain}`);
-    }
-
-    console.log(`[Swarm] Received mention from ${data.mention.actorHandle}@${data.mention.actorNodeDomain} for @${data.mentionedHandle}`);
+      }).onConflictDoNothing();
+      return 'created' as const;
+    });
 
     return NextResponse.json({
       success: true,
-      message: 'Mention received',
+      message: outcome === 'replay' ? 'Interaction already processed' : 'Mention received',
     });
   } catch (error) {
     if (error instanceof FederationRequestBodyError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (error instanceof FederatedIdentityContinuityError) {
+      return NextResponse.json({ error: 'Federated identity changed' }, { status: 409 });
     }
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid request', details: error.issues }, { status: 400 });

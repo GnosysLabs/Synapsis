@@ -4,6 +4,7 @@ import { users } from '@/db';
 import { desc, sql } from 'drizzle-orm';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
+import { parseBoundedInteger } from '@/lib/http/query';
 
 export async function GET(request: NextRequest) {
     try {
@@ -12,7 +13,11 @@ export async function GET(request: NextRequest) {
         }
 
         const searchParams = request.nextUrl.searchParams;
-        const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
+        const limit = parseBoundedInteger(searchParams.get('limit'), {
+            defaultValue: 20,
+            min: 1,
+            max: 50,
+        });
         const { viewer, localNodeIsNsfw, canViewSensitive } = await getSensitiveContentViewerAccess();
         if (localNodeIsNsfw && !viewer) {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });

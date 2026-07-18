@@ -11,6 +11,12 @@ import { getSession } from '@/lib/auth';
 import { requireSignedAction } from '@/lib/auth/verify-signature';
 import { requireCliSignedAction } from '@/lib/auth/cli-credentials';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { registerPostMentions } from '@/lib/mentions/delivery';
+
+const mocks = vi.hoisted(() => ({
+  insertValues: vi.fn(),
+  deliverPostToSwarmFollowers: vi.fn().mockResolvedValue({ delivered: 0, failed: 0 }),
+}));
 
 // Mock the dependencies
 vi.mock('@/lib/auth/verify-signature', () => ({
@@ -51,22 +57,29 @@ vi.mock('@/lib/mentions/delivery', () => ({
   }),
 }));
 
+vi.mock('@/lib/swarm/interactions', () => ({
+  deliverPostToSwarmFollowers: mocks.deliverPostToSwarmFollowers,
+}));
+
 vi.mock('@/db', () => ({
   db: {
     insert: vi.fn(() => ({
-      values: vi.fn(() => ({
-        returning: vi.fn(() => Promise.resolve([{
-          id: 'test-post-id',
-          userId: 'test-user-id',
-          content: 'Test post content',
-          createdAt: new Date(),
-          isRemoved: false,
-          isNsfw: false,
-          likesCount: 0,
-          repostsCount: 0,
-          repliesCount: 0,
-        }])),
-      })),
+      values: vi.fn((values: Record<string, unknown>) => {
+        mocks.insertValues(values);
+        return {
+          returning: vi.fn(() => Promise.resolve([{
+            id: values.id || 'test-post-id',
+            userId: values.userId || 'test-user-id',
+            content: values.content || '',
+            createdAt: new Date(),
+            isRemoved: false,
+            isNsfw: values.isNsfw || false,
+            likesCount: 0,
+            repostsCount: 0,
+            repliesCount: 0,
+          }])),
+        };
+      }),
     })),
     update: vi.fn(() => ({
       set: vi.fn(() => ({
@@ -86,6 +99,18 @@ vi.mock('@/db', () => ({
   users: {},
   media: {},
 }));
+
+const clientPostId = '8d42ce12-7ba0-4c4f-841b-a0d7669fe652';
+
+function signedPostData(content = 'Test post content') {
+  return {
+    clientPostId,
+    content,
+    mediaIds: [],
+    mediaManifest: [],
+    isNsfw: false,
+  };
+}
 
 describe('POST /api/posts', () => {
   beforeEach(() => {
@@ -110,11 +135,7 @@ describe('POST /api/posts', () => {
     // Create a signed action payload
     const signedAction = {
       action: 'post',
-      data: {
-        content: 'Test post content',
-        mediaIds: [],
-        isNsfw: false,
-      },
+      data: signedPostData(),
       did: 'did:synapsis:test123',
       handle: 'testuser',
       ts: Date.now(),
@@ -143,6 +164,16 @@ describe('POST /api/posts', () => {
 
     // Verify requireSignedAction was called
     expect(requireSignedAction).toHaveBeenCalledWith(signedAction, 'post');
+    expect(mocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      id: clientPostId,
+      userId: 'test-user-id',
+      content: 'Test post content',
+    }));
+    expect(registerPostMentions).toHaveBeenCalledWith(expect.objectContaining({
+      postId: clientPostId,
+      content: 'Test post content',
+      userAction: signedAction,
+    }));
   });
 
   it('accepts a delegated CLI action with post scope', async () => {
@@ -186,9 +217,7 @@ describe('POST /api/posts', () => {
 
     const signedAction = {
       action: 'post',
-      data: {
-        content: 'Test post content',
-      },
+      data: signedPostData(),
       did: 'did:synapsis:test123',
       handle: 'testuser',
       ts: Date.now(),
@@ -217,9 +246,7 @@ describe('POST /api/posts', () => {
 
     const signedAction = {
       action: 'post',
-      data: {
-        content: 'Test post content',
-      },
+      data: signedPostData(),
       did: 'did:synapsis:nonexistent',
       handle: 'nonexistent',
       ts: Date.now(),
@@ -248,9 +275,7 @@ describe('POST /api/posts', () => {
 
     const signedAction = {
       action: 'post',
-      data: {
-        content: 'Test post content',
-      },
+      data: signedPostData(),
       did: 'did:synapsis:test123',
       handle: 'wronghandle',
       ts: Date.now(),
@@ -279,9 +304,7 @@ describe('POST /api/posts', () => {
 
     const signedAction = {
       action: 'post',
-      data: {
-        content: 'Test post content',
-      },
+      data: signedPostData(),
       did: 'did:synapsis:test123',
       handle: 'testuser',
       ts: Date.now() - 10 * 60 * 1000,
@@ -321,9 +344,7 @@ describe('POST /api/posts', () => {
 
     const signedAction = {
       action: 'post',
-      data: {
-        content: 'Test post content',
-      },
+      data: signedPostData(),
       did: 'did:synapsis:test123',
       handle: 'testuser',
       ts: Date.now(),
@@ -362,9 +383,7 @@ describe('POST /api/posts', () => {
 
     const signedAction = {
       action: 'post',
-      data: {
-        content: '', // Empty content should fail validation
-      },
+      data: signedPostData(''), // Empty content should fail validation
       did: 'did:synapsis:test123',
       handle: 'testuser',
       ts: Date.now(),

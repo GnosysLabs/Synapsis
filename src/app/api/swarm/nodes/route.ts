@@ -7,6 +7,7 @@
 
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { parseBoundedInteger } from '@/lib/http/query';
 import { requireAdmin } from '@/lib/auth/admin';
 import { 
   getActiveSwarmNodes, 
@@ -30,7 +31,11 @@ import { isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 500);
+    const limit = parseBoundedInteger(searchParams.get('limit'), {
+      defaultValue: 100,
+      min: 1,
+      max: 500,
+    });
     const includeStats = searchParams.get('stats') === 'true';
 
     const nodes = await getActiveSwarmNodes(limit);

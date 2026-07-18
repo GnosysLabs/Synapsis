@@ -30,7 +30,14 @@ vi.mock('./registry', () => ({
   pinSwarmNodePublicKey: mocks.pinSwarmNodePublicKey,
 }));
 
-import { getNodePublicKey } from './signature';
+import crypto from 'node:crypto';
+import { getNodePublicKey, signPayload, verifySwarmRequest } from './signature';
+
+const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
+  namedCurve: 'prime256v1',
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+});
 
 function response(status: number, body: unknown) {
   return { status, json: () => body };
@@ -44,34 +51,58 @@ describe('node public key discovery', () => {
   });
 
   it('uses a directly pinned key without following a remote key change', async () => {
-    mocks.getPinnedSwarmNodePublicKey.mockResolvedValue('pinned-node-key');
+    mocks.getPinnedSwarmNodePublicKey.mockResolvedValue(publicKey);
 
-    await expect(getNodePublicKey('pinned.example')).resolves.toBe('pinned-node-key');
+    await expect(getNodePublicKey('pinned.example')).resolves.toBe(publicKey);
     expect(mocks.safeFederationRequest).not.toHaveBeenCalled();
   });
 
   it('uses the bounded key-only endpoint', async () => {
-    mocks.safeFederationRequest.mockResolvedValue(response(200, { publicKey: 'node-key' }));
+    mocks.safeFederationRequest.mockResolvedValue(response(200, { publicKey }));
 
-    await expect(getNodePublicKey('small.example')).resolves.toBe('node-key');
+    await expect(getNodePublicKey('small.example')).resolves.toBe(publicKey);
     expect(mocks.safeFederationRequest).toHaveBeenCalledOnce();
     expect(mocks.safeFederationRequest).toHaveBeenCalledWith(
       'https://small.example/api/node/key',
       expect.objectContaining({ maxResponseBytes: 16 * 1024 }),
     );
-    expect(mocks.pinSwarmNodePublicKey).toHaveBeenCalledWith('small.example', 'node-key');
+    expect(mocks.pinSwarmNodePublicKey).not.toHaveBeenCalled();
   });
 
   it('supports legacy nodes whose node document contains embedded branding', async () => {
     mocks.safeFederationRequest
       .mockResolvedValueOnce(response(404, {}))
-      .mockResolvedValueOnce(response(200, { publicKey: 'legacy-node-key' }));
+      .mockResolvedValueOnce(response(200, { publicKey }));
 
-    await expect(getNodePublicKey('legacy.example')).resolves.toBe('legacy-node-key');
+    await expect(getNodePublicKey('legacy.example')).resolves.toBe(publicKey);
     expect(mocks.safeFederationRequest).toHaveBeenNthCalledWith(
       2,
       'https://legacy.example/api/node',
       expect.objectContaining({ maxResponseBytes: 256 * 1024 }),
     );
+  });
+
+  it('pins first-contact keys only after a request proves possession', async () => {
+    mocks.safeFederationRequest.mockResolvedValue(response(200, { publicKey }));
+    const payload = { hello: 'world' };
+
+    await expect(verifySwarmRequest(
+      payload,
+      signPayload(payload, privateKey),
+      'verified.example',
+    )).resolves.toBe(true);
+    expect(mocks.pinSwarmNodePublicKey).toHaveBeenCalledWith('verified.example', publicKey);
+  });
+
+  it('rejects unsupported key algorithms without persisting them', async () => {
+    const rsa = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    mocks.safeFederationRequest.mockResolvedValue(response(200, { publicKey: rsa.publicKey }));
+
+    await expect(getNodePublicKey('rsa.example')).resolves.toBeNull();
+    expect(mocks.pinSwarmNodePublicKey).not.toHaveBeenCalled();
   });
 });

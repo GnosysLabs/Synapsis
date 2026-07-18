@@ -14,6 +14,7 @@ import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { parseBoundedInteger } from '@/lib/http/query';
 
 export interface SwarmPost {
   id: string;
@@ -179,7 +180,11 @@ function buildSwarmPost(
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 50);
+    const limit = parseBoundedInteger(searchParams.get('limit'), {
+      defaultValue: 20,
+      min: 1,
+      max: 50,
+    });
 
     const cursor = searchParams.get('cursor');
     const searchQuery = searchParams.get('q')?.trim() || '';

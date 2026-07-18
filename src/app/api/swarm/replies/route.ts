@@ -6,50 +6,49 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, users, media, notifications } from '@/db';
+import { db, posts, users, media, notifications, swarmInboundActions } from '@/db';
 import { eq, desc, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
+import { signingPublicKeyFromDid } from '@/lib/crypto/did-key';
+import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import { isPostSensitive, redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 import { upsertRemoteUser } from '@/lib/swarm/user-cache';
-import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
-import { parseSwarmPostId } from '@/lib/swarm/post-id';
-import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import {
-  federationMediaUrlSchema,
-  localHandleSchema,
-  nodeDomainSchema,
-} from '@/lib/utils/federation';
+  FederatedIdentityContinuityError,
+  federationActionContextSchema,
+  federationActionDomain,
+  pinVerifiedFederatedActorIdentity,
+  verifyFederatedUserAction,
+} from '@/lib/swarm/federated-action';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { parseSwarmPostId } from '@/lib/swarm/post-id';
+import {
+  createRelayedReplyProvenance,
+  federatedReplyEnvelopeSchema,
+  federatedReplyUserActionDataSchema,
+  relayedReplyProvenanceSchema,
+} from '@/lib/swarm/reply-provenance';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 
-// Schema for incoming swarm reply
-const swarmReplySchema = z.strictObject({
-  postId: z.string().uuid(), // The local post being replied to
-  reply: z.strictObject({
-    id: z.string().uuid(), // Original reply ID on the sender's node
-    content: z.string().max(600),
-    createdAt: z.string().datetime(),
-    author: z.strictObject({
-      handle: localHandleSchema,
-      displayName: z.string().max(50).optional().nullable(),
-      avatarUrl: federationMediaUrlSchema.optional(),
-      did: z.string().min(1).max(1_024).optional(),
-      publicKey: z.string().min(1).max(16_384).optional(),
-      isNsfw: z.boolean().optional(),
-    }),
-    nodeDomain: nodeDomainSchema,
-    nodeIsNsfw: z.boolean().optional(),
-    isNsfw: z.boolean().optional(),
-    mediaUrls: z.array(federationMediaUrlSchema).max(4).optional(),
-  }),
-});
+// The same exact schema is persisted with the source node signature so other
+// peers can independently verify a relayed reply instead of trusting us.
+const swarmReplySchema = federatedReplyEnvelopeSchema;
 
 const swarmReplyDeletionSchema = z.object({
+  federation: federationActionContextSchema,
+  userAction: signedUserActionSchema,
   replyId: z.string().uuid(),
   nodeDomain: z.string().min(1).max(253),
   authorHandle: z.string().min(1).max(64),
   timestamp: z.string().datetime(),
 }).strict();
+
+const replyActionDataSchema = federatedReplyUserActionDataSchema;
+
+const deleteReplyActionDataSchema = z.strictObject({
+  postId: z.string().min(1).max(512),
+});
 
 const swarmReplyPostIdSchema = z.string().uuid();
 
@@ -67,6 +66,16 @@ async function syncParentReplyCount(postId: string) {
     .where(eq(posts.id, postId));
 }
 
+function parseStoredReplyProvenance(value: string | null) {
+  if (!value) return null;
+  try {
+    const parsed = relayedReplyProvenanceSchema.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * POST /api/swarm/replies
  * 
@@ -75,35 +84,49 @@ async function syncParentReplyCount(postId: string) {
  */
 export async function POST(request: NextRequest) {
   try {
-    if (!db) {
-      return NextResponse.json({ error: 'Database not available' }, { status: 503 });
-    }
-
-    const body = await readLimitedJson(request);
-    const validation = swarmReplySchema.safeParse(body);
+    const validation = swarmReplySchema.safeParse(await readLimitedJson(request));
     if (!validation.success) {
       return NextResponse.json({ error: 'Invalid request', details: validation.error.issues }, { status: 400 });
     }
-
     const signature = request.headers.get('X-Swarm-Signature');
     const sourceDomainHeader = request.headers.get('X-Swarm-Source-Domain');
-
     if (!signature || !sourceDomainHeader) {
       return NextResponse.json({ error: 'Missing swarm signature headers' }, { status: 401 });
     }
-    const sourceDomain = normalizeNodeDomain(sourceDomainHeader);
-    if (!isFreshFederationTimestamp(validation.data.reply.createdAt, 24 * 60 * 60 * 1_000)) {
-      return NextResponse.json({ error: 'Reply timestamp is stale' }, { status: 400 });
-    }
-
-    const isValid = await verifySwarmRequest(validation.data, signature, sourceDomain);
-    if (!isValid) {
-      return NextResponse.json({ error: 'Invalid node signature' }, { status: 403 });
-    }
-
     const data = validation.data;
-    if (data.reply.nodeDomain !== sourceDomain) {
-      return NextResponse.json({ error: 'Source domain mismatch' }, { status: 400 });
+    const sourceDomain = federationActionDomain(sourceDomainHeader);
+    if (!sourceDomain || federationActionDomain(data.reply.nodeDomain) !== sourceDomain) {
+      return NextResponse.json({ error: 'Source domain mismatch' }, { status: 403 });
+    }
+    const verified = await verifyFederatedUserAction({
+      payload: data,
+      nodeSignature: signature,
+      sourceDomain,
+      expectedMethod: 'POST',
+      expectedPath: '/api/swarm/replies',
+      expectedAction: 'post',
+      actorHandle: data.reply.author.handle,
+      replayBinding: { postId: data.postId, replyId: data.reply.id },
+      maxActionsPerMinute: 30,
+    });
+    if (!verified.ok) {
+      return NextResponse.json({ error: verified.error }, { status: verified.status });
+    }
+
+    const actionData = replyActionDataSchema.safeParse(verified.userAction.data);
+    const signedMediaUrls = actionData.success
+      ? (actionData.data.mediaManifest || []).map((item) => item.url)
+      : [];
+    if (!actionData.success
+      || actionData.data.clientPostId !== data.reply.id
+      || actionData.data.content.trim() !== data.reply.content
+      || federationActionDomain(actionData.data.swarmReplyTo.nodeDomain)
+        !== verified.destinationDomain
+      || actionData.data.swarmReplyTo.postId !== data.postId
+      || signedMediaUrls.length !== (data.reply.mediaUrls || []).length
+      || signedMediaUrls.some((url, index) => url !== data.reply.mediaUrls?.[index])
+      || data.reply.author.did !== verified.userAction.did) {
+      return NextResponse.json({ error: 'Reply is not user-authorized' }, { status: 403 });
     }
 
     const parentPost = await db.query.posts.findFirst({
@@ -113,24 +136,40 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    if (!parentPost) {
+    if (!parentPost || !hasStrictLocalUserOrigin(parentPost.author)) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
+    const nodeMute = await db.query.mutedNodes.findFirst({
+      where: { AND: [{ userId: parentPost.userId }, { nodeDomain: sourceDomain }] },
+      columns: { id: true },
+    });
+    if (nodeMute) {
+      return NextResponse.json({ success: true, message: 'Reply received' });
+    }
 
-    const remoteHandle = `${data.reply.author.handle}@${sourceDomain}`;
-    const remoteDid = data.reply.author.did || `did:swarm:${sourceDomain}:${data.reply.author.handle}`;
+    await pinVerifiedFederatedActorIdentity({
+      sourceDomain,
+      actorHandle: verified.actorHandle,
+      did: verified.userAction.did,
+    });
+
+    const remoteHandle = `${verified.actorHandle}@${sourceDomain}`;
+    const signingPublicKey = signingPublicKeyFromDid(verified.userAction.did);
+    if (!signingPublicKey) {
+      return NextResponse.json({ error: 'Reply author DID is not self-certifying' }, { status: 403 });
+    }
 
     await upsertRemoteUser({
       handle: remoteHandle,
-      displayName: data.reply.author.displayName || data.reply.author.handle,
-      avatarUrl: data.reply.author.avatarUrl || null,
-      did: remoteDid,
-      publicKey: data.reply.author.publicKey,
-      isNsfw: data.reply.author.isNsfw,
-    });
+      displayName: verified.actorHandle,
+      avatarUrl: null,
+      did: verified.userAction.did,
+      publicKey: signingPublicKey,
+      isNsfw: actionData.data.isNsfw ?? true,
+    }, { identityVerified: true });
 
     const remoteUser = await db.query.users.findFirst({
-      where: { handle: remoteHandle },
+      where: { did: verified.userAction.did },
     });
 
     if (!remoteUser) {
@@ -138,59 +177,82 @@ export async function POST(request: NextRequest) {
     }
 
     const replyApId = `swarm:${sourceDomain}:${data.reply.id}`;
-    const existingReply = await db.query.posts.findFirst({
-      where: { apId: replyApId },
-    });
+    const createdAt = new Date(verified.userAction.ts);
+    const federationReplyProvenanceJson = JSON.stringify(
+      createRelayedReplyProvenance(data, signature),
+    );
+    const outcome = await db.transaction(async (tx) => {
+      const [claim] = await tx.insert(swarmInboundActions).values({
+        sourceDomain,
+        action: 'reply',
+        interactionId: verified.replayId,
+      }).onConflictDoNothing().returning({ id: swarmInboundActions.id });
 
-    if (existingReply) {
-      return NextResponse.json({ success: true, message: 'Reply already received' });
-    }
+      const existingReply = await tx.query.posts.findFirst({ where: { apId: replyApId } });
+      if (existingReply) {
+        if (existingReply.userId !== remoteUser.id
+          || existingReply.content !== data.reply.content) {
+          return 'conflict' as const;
+        }
+        await tx.update(posts).set({ federationReplyProvenanceJson })
+          .where(eq(posts.id, existingReply.id));
+        return claim ? 'unchanged' as const : 'replay' as const;
+      }
+      if (!claim) return 'replay' as const;
 
-    const classifierMissing = typeof data.reply.isNsfw !== 'boolean'
-      || typeof data.reply.author.isNsfw !== 'boolean'
-      || typeof data.reply.nodeIsNsfw !== 'boolean';
-    const [createdReply] = await db.insert(posts).values({
-      userId: remoteUser.id,
-      content: data.reply.content,
-      replyToId: data.postId,
-      apId: replyApId,
-      apUrl: `https://${sourceDomain}/posts/${data.reply.id}`,
-      createdAt: new Date(data.reply.createdAt),
-      updatedAt: new Date(data.reply.createdAt),
-      isNsfw: classifierMissing
-        || data.reply.isNsfw === true
-        || data.reply.author.isNsfw === true
-        || data.reply.nodeIsNsfw === true,
-    }).returning();
+      const [createdReply] = await tx.insert(posts).values({
+        userId: remoteUser.id,
+        content: data.reply.content,
+        replyToId: data.postId,
+        apId: replyApId,
+        apUrl: `https://${sourceDomain}/posts/${data.reply.id}`,
+        createdAt,
+        updatedAt: createdAt,
+        federationReplyProvenanceJson,
+        isNsfw: actionData.data.isNsfw !== false
+          || data.reply.isNsfw === true
+          || data.reply.author.isNsfw === true
+          || data.reply.nodeIsNsfw === true,
+      }).returning();
 
-    if (data.reply.mediaUrls?.length) {
-      await db.insert(media).values(
-        data.reply.mediaUrls.map((url, index) => ({
+      if (signedMediaUrls.length) {
+        await tx.insert(media).values(signedMediaUrls.map((url, index) => ({
           userId: remoteUser.id,
           postId: createdReply.id,
           url,
           altText: `Remote reply attachment ${index + 1}`,
-        }))
-      );
+        })));
+      }
+
+      if (parentPost.userId !== remoteUser.id) {
+        await tx.insert(notifications).values({
+          userId: parentPost.userId,
+          actorHandle: verified.actorHandle,
+          actorDisplayName: verified.actorHandle,
+          actorAvatarUrl: null,
+          actorNodeDomain: sourceDomain,
+          postId: data.postId,
+          postContent: data.reply.content.slice(0, 200),
+          interactionId: `reply:remote:${sourceDomain}:${verified.replayId}`,
+          type: 'reply',
+        }).onConflictDoNothing();
+      }
+      return 'created' as const;
+    });
+
+    if (outcome === 'conflict') {
+      return NextResponse.json({ error: 'Reply ID conflicts with an existing reply' }, { status: 409 });
     }
 
     await syncParentReplyCount(data.postId);
-
-    if (parentPost.userId !== remoteUser.id) {
-      await db.insert(notifications).values({
-        userId: parentPost.userId,
-        actorHandle: data.reply.author.handle,
-        actorDisplayName: data.reply.author.displayName || data.reply.author.handle,
-        actorAvatarUrl: data.reply.author.avatarUrl || null,
-        actorNodeDomain: sourceDomain,
-        postId: data.postId,
-        postContent: data.reply.content.slice(0, 200),
-        type: 'reply',
-      });
-    }
-
-    return NextResponse.json({ success: true, message: 'Reply received' });
+    return NextResponse.json({
+      success: true,
+      message: outcome === 'replay' ? 'Reply already received' : 'Reply received',
+    });
   } catch (error) {
+    if (error instanceof FederatedIdentityContinuityError) {
+      return NextResponse.json({ error: 'Federated identity changed' }, { status: 409 });
+    }
     if (error instanceof FederationRequestBodyError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
@@ -207,10 +269,6 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    if (!db) {
-      return NextResponse.json({ error: 'Database not available' }, { status: 503 });
-    }
-
     const validation = swarmReplyDeletionSchema.safeParse(await readLimitedJson(request));
     if (!validation.success) {
       return NextResponse.json(
@@ -224,33 +282,70 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Missing swarm signature headers' }, { status: 401 });
     }
 
-    const sourceDomain = normalizeNodeDomain(sourceDomainHeader);
+    const sourceDomain = federationActionDomain(sourceDomainHeader);
+    if (!sourceDomain) {
+      return NextResponse.json({ error: 'Invalid source node' }, { status: 400 });
+    }
     const { replyId, nodeDomain } = validation.data;
-    if (nodeDomain !== sourceDomain) {
-      return NextResponse.json({ error: 'Source domain mismatch' }, { status: 400 });
+    if (federationActionDomain(nodeDomain) !== sourceDomain) {
+      return NextResponse.json({ error: 'Source domain mismatch' }, { status: 403 });
     }
-    if (!isFreshFederationTimestamp(validation.data.timestamp)) {
-      return NextResponse.json({ error: 'Stale deletion request' }, { status: 400 });
+    const verified = await verifyFederatedUserAction({
+      payload: validation.data,
+      nodeSignature: signature,
+      sourceDomain,
+      expectedMethod: 'DELETE',
+      expectedPath: '/api/swarm/replies',
+      expectedAction: 'delete',
+      actorHandle: validation.data.authorHandle,
+      replayBinding: { replyId },
+      maxActionsPerMinute: 30,
+    });
+    if (!verified.ok) {
+      return NextResponse.json({ error: verified.error }, { status: verified.status });
     }
-    if (!await verifySwarmRequest(validation.data, signature, sourceDomain)) {
-      return NextResponse.json({ error: 'Invalid node signature' }, { status: 403 });
+    const actionData = deleteReplyActionDataSchema.safeParse(verified.userAction.data);
+    if (!actionData.success
+      || ![
+        replyId,
+        `swarm:${sourceDomain}:${replyId}`,
+      ].includes(actionData.data.postId)) {
+      return NextResponse.json({ error: 'Reply deletion is not user-authorized' }, { status: 403 });
     }
 
     // Find the reply by its swarm ID
-    const swarmReplyId = `swarm:${nodeDomain}:${replyId}`;
+    const swarmReplyId = `swarm:${sourceDomain}:${replyId}`;
     const existingReply = await db.query.posts.findFirst({
       where: { apId: swarmReplyId },
+      with: { author: true },
     });
 
     if (!existingReply) {
       // Already deleted or never existed
       return NextResponse.json({ success: true, message: 'Reply not found or already deleted' });
     }
+    if (existingReply.author.did !== verified.userAction.did
+      || existingReply.author.handle !== `${verified.actorHandle}@${sourceDomain}`) {
+      return NextResponse.json({ error: 'Reply author mismatch' }, { status: 403 });
+    }
+
+    await pinVerifiedFederatedActorIdentity({
+      sourceDomain,
+      actorHandle: verified.actorHandle,
+      did: verified.userAction.did,
+    });
 
     const parentReplyToId = existingReply.replyToId;
-
-    // Delete the reply
-    await db.delete(posts).where(eq(posts.id, existingReply.id));
+    const outcome = await db.transaction(async (tx) => {
+      const [claim] = await tx.insert(swarmInboundActions).values({
+        sourceDomain,
+        action: 'delete_reply',
+        interactionId: verified.replayId,
+      }).onConflictDoNothing().returning({ id: swarmInboundActions.id });
+      if (!claim) return 'replay' as const;
+      await tx.delete(posts).where(eq(posts.id, existingReply.id));
+      return 'deleted' as const;
+    });
 
     if (parentReplyToId) {
       await syncParentReplyCount(parentReplyToId);
@@ -258,8 +353,11 @@ export async function DELETE(request: NextRequest) {
 
     console.log(`[Swarm] Deleted reply ${swarmReplyId} from ${nodeDomain}`);
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, replayed: outcome === 'replay' });
   } catch (error) {
+    if (error instanceof FederatedIdentityContinuityError) {
+      return NextResponse.json({ error: 'Federated identity changed' }, { status: 409 });
+    }
     if (error instanceof FederationRequestBodyError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
@@ -323,6 +421,7 @@ export async function GET(request: NextRequest) {
         likesCount: posts.likesCount,
         repostsCount: posts.repostsCount,
         repliesCount: posts.repliesCount,
+        federationReplyProvenanceJson: posts.federationReplyProvenanceJson,
         authorHandle: users.handle,
         authorDisplayName: users.displayName,
         authorAvatarUrl: users.avatarUrl,
@@ -353,11 +452,40 @@ export async function GET(request: NextRequest) {
         || (authorIsRemote && handleParts.length > 1
           ? handleParts[handleParts.length - 1]
           : null);
+      const provenance = parseStoredReplyProvenance(reply.federationReplyProvenanceJson);
+      const provenanceActionData = provenance
+        ? federatedReplyUserActionDataSchema.safeParse(provenance.payload.userAction.data)
+        : null;
+      const provenanceMedia = provenanceActionData?.success
+        ? (provenanceActionData.data.mediaManifest || []).map((item) => ({
+            url: item.url,
+            altText: item.altText,
+            mimeType: item.mimeType,
+          }))
+        : [];
+      const hasPortableProvenance = Boolean(
+        provenance
+        && provenanceActionData?.success
+        && remoteDomain
+        && federationActionDomain(provenance.payload.federation.sourceDomain) === remoteDomain
+        && federationActionDomain(provenance.payload.federation.destinationDomain)
+          === federationActionDomain(nodeDomain)
+        && provenance.payload.postId === postId
+        && provenance.payload.reply.id === parsedRemotePostId?.originalPostId
+        && provenance.payload.reply.content === reply.content
+        && provenanceActionData.data.clientPostId === parsedRemotePostId?.originalPostId
+        && provenanceActionData.data.content.trim() === reply.content
+        && provenanceActionData.data.swarmReplyTo.postId === postId
+        && federationActionDomain(provenanceActionData.data.swarmReplyTo.nodeDomain)
+          === federationActionDomain(nodeDomain)
+      );
 
       return {
         id: parsedRemotePostId?.originalPostId || reply.id,
         content: reply.content,
-        createdAt: reply.createdAt.toISOString(),
+        createdAt: hasPortableProvenance
+          ? new Date(provenance!.payload.userAction.ts).toISOString()
+          : reply.createdAt.toISOString(),
         author: {
           handle: remoteDomain ? handleParts.slice(0, -1).join('@') : reply.authorHandle,
           displayName: reply.authorDisplayName || reply.authorHandle,
@@ -368,25 +496,31 @@ export async function GET(request: NextRequest) {
           nodeIsNsfw: authorIsRemote ? undefined : localNodeIsNsfw,
         },
         nodeDomain: remoteDomain || (authorIsRemote ? null : nodeDomain),
+        media: hasPortableProvenance ? provenanceMedia : [],
         likeCount: reply.likesCount,
         repostCount: reply.repostsCount,
         replyCount: reply.repliesCount,
         isNsfw: reply.postIsNsfw,
         nodeIsNsfw: authorIsRemote ? undefined : localNodeIsNsfw,
         isRemote: authorIsRemote,
+        provenance: hasPortableProvenance ? provenance : undefined,
       };
     });
     const responseReplies = trustedRead
       ? formattedReplies
       : formattedReplies
-          .map((reply) => redactSensitivePostForViewer(
-            reply as unknown as Record<string, unknown>,
-            {
-              canViewSensitive: false,
-              localNodeDomain: nodeDomain,
-              localNodeIsNsfw,
-            },
-          ))
+          .map((reply) => {
+            const replyWithoutProvenance = { ...reply } as Record<string, unknown>;
+            delete replyWithoutProvenance.provenance;
+            return redactSensitivePostForViewer(
+              replyWithoutProvenance,
+              {
+                canViewSensitive: false,
+                localNodeDomain: nodeDomain,
+                localNodeIsNsfw,
+              },
+            );
+          })
           .filter((reply) => reply.sensitiveContentRestricted !== true);
 
     return NextResponse.json({

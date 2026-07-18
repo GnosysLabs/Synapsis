@@ -60,17 +60,6 @@ export async function GET(request: Request, context: RouteContext) {
                             accountIsNsfw: profile.isNsfw,
                             nodeIsNsfw: profile.nodeIsNsfw,
                         });
-                        // CACHE: Upsert the remote user into our local database
-                        const { upsertRemoteUser } = await import('@/lib/swarm/user-cache');
-                        await upsertRemoteUser({
-                            handle: `${profile.handle}@${remote.domain}`,
-                            displayName: profile.displayName,
-                            avatarUrl: profile.avatarUrl || null,
-                            did: profile.did || '',
-                            publicKey: profile.publicKey,
-                            isNsfw: profile.isNsfw,
-                        });
-
                         return NextResponse.json({
                             user: {
                                 id: `swarm:${remote.domain}:${profile.handle}`,

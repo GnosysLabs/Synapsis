@@ -1,27 +1,39 @@
-/**
- * Swarm Like Endpoint
- * 
- * POST: Receive a like from another swarm node
- * 
- * SECURITY: All requests must be cryptographically signed by the sender.
- */
-
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, notifications, remoteLikes } from '@/db';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
+
+import {
+  db,
+  notifications,
+  posts,
+  remoteLikes,
+  swarmInboundActions,
+} from '@/db';
+import { signedUserActionSchema } from '@/lib/e2ee/protocol';
+import {
+  FederatedIdentityContinuityError,
+  federationActionContextSchema,
+  federationActionDomain,
+  pinVerifiedFederatedActorIdentity,
+  verifyFederatedUserAction,
+} from '@/lib/swarm/federated-action';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { applyOrderedFederatedRelationshipState } from '@/lib/swarm/relationship-ordering';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { isFreshFederationTimestamp } from '@/lib/swarm/signature';
 import {
   federationMediaUrlSchema,
   localHandleSchema,
   nodeDomainSchema,
 } from '@/lib/utils/federation';
-import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
-import { claimInboundFederationAction } from '@/lib/swarm/replay';
 
-const swarmLikeSchema = z.object({
+const PATH = '/api/swarm/interactions/like' as const;
+
+const swarmLikeSchema = z.strictObject({
+  federation: federationActionContextSchema,
+  userAction: signedUserActionSchema,
   postId: z.string().uuid(),
-  like: z.object({
+  like: z.strictObject({
     actorHandle: localHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
     actorAvatarUrl: federationMediaUrlSchema.optional(),
@@ -32,102 +44,121 @@ const swarmLikeSchema = z.object({
   signature: z.string().min(1).max(16_384),
 });
 
-/**
- * POST /api/swarm/interactions/like
- * 
- * Receives a like from another swarm node.
- */
+const likeActionDataSchema = z.strictObject({ postId: z.string().min(1).max(512) });
+
 export async function POST(request: NextRequest) {
   try {
-    if (!db) {
-      return NextResponse.json({ error: 'Database not available' }, { status: 503 });
-    }
-
-    const body = await readLimitedJson(request);
-    const data = swarmLikeSchema.parse(body);
+    const data = swarmLikeSchema.parse(await readLimitedJson(request));
     if (!isFreshFederationTimestamp(data.like.timestamp)) {
       return NextResponse.json({ error: 'Stale interaction' }, { status: 400 });
     }
 
-    // SECURITY: Verify the signature
+    const actorDomain = federationActionDomain(data.like.actorNodeDomain);
+    if (!actorDomain) {
+      return NextResponse.json({ error: 'Invalid source node' }, { status: 400 });
+    }
     const { signature, ...payload } = data;
-    const isValid = await verifySwarmRequest(payload, signature, data.like.actorNodeDomain);
-
-    if (!isValid) {
-      console.warn(`[Swarm] Invalid signature for like from ${data.like.actorHandle}@${data.like.actorNodeDomain}`);
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
+    const verified = await verifyFederatedUserAction({
+      payload,
+      nodeSignature: signature,
+      sourceDomain: actorDomain,
+      expectedMethod: 'POST',
+      expectedPath: PATH,
+      expectedAction: 'like',
+      actorHandle: data.like.actorHandle,
+      replayBinding: { postId: data.postId },
+      maxActionsPerMinute: 60,
+    });
+    if (!verified.ok) {
+      return NextResponse.json({ error: verified.error }, { status: verified.status });
     }
-    if (!await claimInboundFederationAction(
-      data.like.actorNodeDomain,
-      'like',
-      data.like.interactionId,
-    )) {
-      return NextResponse.json({ success: true, message: 'Interaction already processed' });
-    }
 
-    // Find the target post
+    const actionData = likeActionDataSchema.safeParse(verified.userAction.data);
+    if (!actionData.success
+      || actionData.data.postId !== `swarm:${verified.destinationDomain}:${data.postId}`) {
+      return NextResponse.json({ error: 'Like target is not user-authorized' }, { status: 403 });
+    }
+    // Validate a strict local target before persisting any attacker-controlled
+    // identity or replay state. Otherwise a valid hostile node could grow the
+    // permanent handle registry by targeting random post IDs.
     const post = await db.query.posts.findFirst({
-      where: { id: data.postId },
+      where: { AND: [{ id: data.postId }, { isRemoved: false }] },
       with: { author: true },
     });
-
-    if (!post) {
+    if (!post || !hasStrictLocalUserOrigin(post.author)) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
-
-    if (post.isRemoved) {
-      return NextResponse.json({ error: 'Post not found' }, { status: 404 });
+    await pinVerifiedFederatedActorIdentity({
+      sourceDomain: verified.sourceDomain,
+      actorHandle: verified.actorHandle,
+      did: verified.userAction.did,
+    });
+    const nodeMute = await db.query.mutedNodes.findFirst({
+      where: { AND: [{ userId: post.userId }, { nodeDomain: actorDomain }] },
+      columns: { id: true },
+    });
+    if (nodeMute) {
+      return NextResponse.json({ success: true, message: 'Like received' });
     }
 
-    // Check if already liked by this remote user
-    const existingLike = await db.query.remoteLikes.findFirst({
-      where: { AND: [{ postId: data.postId }, { actorHandle: data.like.actorHandle }, { actorNodeDomain: data.like.actorNodeDomain }] },
-    });
+    const outcome = await db.transaction(async (tx) => {
+      const [claim] = await tx.insert(swarmInboundActions).values({
+        sourceDomain: actorDomain,
+        action: 'like',
+        interactionId: verified.replayId,
+      }).onConflictDoNothing().returning({ id: swarmInboundActions.id });
+      if (!claim) return 'replay' as const;
 
-    if (existingLike) {
-      return NextResponse.json({ success: true, message: 'Already liked' });
-    }
+      const ordered = await applyOrderedFederatedRelationshipState(tx, {
+        sourceDomain: actorDomain,
+        relationshipKind: 'like',
+        target: data.postId,
+        state: true,
+        userAction: verified.userAction,
+      }, async () => {
+        const [inserted] = await tx.insert(remoteLikes).values({
+          postId: data.postId,
+          actorHandle: verified.actorHandle,
+          actorNodeDomain: actorDomain,
+        }).onConflictDoNothing().returning({ id: remoteLikes.id });
+        if (!inserted) return 'unchanged' as const;
 
-    // Track the remote like
-    await db.insert(remoteLikes).values({
-      postId: data.postId,
-      actorHandle: data.like.actorHandle,
-      actorNodeDomain: data.like.actorNodeDomain,
-    });
+        const [updatedPost] = await tx.update(posts)
+          .set({ likesCount: sql`${posts.likesCount} + 1` })
+          .where(and(eq(posts.id, data.postId), eq(posts.isRemoved, false)))
+          .returning({ id: posts.id });
+        if (!updatedPost) throw new Error('Like target disappeared');
 
-    // Increment like count
-    await db.update(posts)
-      .set({ likesCount: post.likesCount + 1 })
-      .where(eq(posts.id, data.postId));
-
-    // Create notification with actor info stored directly
-    try {
-      await db.insert(notifications).values({
-        userId: post.userId,
-        actorHandle: data.like.actorHandle,
-        actorDisplayName: data.like.actorDisplayName,
-        actorAvatarUrl: data.like.actorAvatarUrl || null,
-        actorNodeDomain: data.like.actorNodeDomain,
-        postId: data.postId,
-        postContent: post.content?.slice(0, 200) || null,
-        type: 'like',
+        await tx.insert(notifications).values({
+          userId: post.userId,
+          actorHandle: verified.actorHandle,
+          // Display metadata asserted only by a hostile node is not identity proof.
+          actorDisplayName: verified.actorHandle,
+          actorAvatarUrl: null,
+          actorNodeDomain: actorDomain,
+          postId: data.postId,
+          postContent: post.content?.slice(0, 200) || null,
+          interactionId: `like:remote:${actorDomain}:${verified.replayId}`,
+          type: 'like',
+        }).onConflictDoNothing();
+        return 'created' as const;
       });
-      console.log(`[Swarm] Created like notification for post ${data.postId} from ${data.like.actorHandle}@${data.like.actorNodeDomain}`);
-    } catch (notifError) {
-      // Log error with context but don't fail the request - notification creation is best-effort
-      console.error('[Swarm Like] Failed to create notification:', notifError);
-      console.error('[Swarm Like] Context:', { postId: data.postId, userId: post.userId, actor: data.like.actorHandle });
-    }
-
-    console.log(`[Swarm] Received like from ${data.like.actorHandle}@${data.like.actorNodeDomain} on post ${data.postId}`);
+      if (!ordered.applied) {
+        return ordered.reason === 'duplicate' ? 'replay' as const : 'stale' as const;
+      }
+      return ordered.value;
+    });
 
     return NextResponse.json({
       success: true,
-      message: 'Like received',
+      message: outcome === 'replay' ? 'Interaction already processed' : 'Like received',
     });
   } catch (error) {
     if (error instanceof FederationRequestBodyError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (error instanceof FederatedIdentityContinuityError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid request', details: error.issues }, { status: 400 });

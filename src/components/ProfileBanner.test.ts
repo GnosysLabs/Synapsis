@@ -116,7 +116,7 @@ describe('ProfileBanner', () => {
     });
 
     it('renders a classified safe remote banner', () => {
-        const publicUrl = 'https://safe.example/public-banner.jpg';
+        const publicUrl = 'https://cdn.stuffbox.xyz/public-banner.jpg';
         const html = renderToStaticMarkup(createElement(ProfileBanner, {
             url: publicUrl,
             accountHandle: 'safe-user@safe.example',
@@ -128,5 +128,24 @@ describe('ProfileBanner', () => {
 
         expect(html).toContain(publicUrl);
         expect(html).not.toContain('Sensitive profile banner hidden');
+    });
+
+    it('does not fetch a classified remote banner from the peer in production', () => {
+        mocks.user = { nsfwEnabled: true, ageVerifiedAt: '2026-07-17T00:00:00.000Z' };
+        const trackingUrl = 'https://remote.example/viewer-specific-banner.gif';
+        vi.stubEnv('NODE_ENV', 'production');
+        try {
+            const html = renderToStaticMarkup(createElement(ProfileBanner, {
+                url: trackingUrl,
+                accountHandle: 'remote-user@remote.example',
+                nodeDomain: 'remote.example',
+                isNsfw: false,
+                nodeIsNsfw: false,
+            }));
+
+            expect(html).not.toContain(trackingUrl);
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 });

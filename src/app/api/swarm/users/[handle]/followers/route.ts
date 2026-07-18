@@ -12,6 +12,7 @@ import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { parseBoundedInteger } from '@/lib/http/query';
 
 export interface SwarmFollowerUser {
   handle: string;
@@ -40,7 +41,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
     const { searchParams } = new URL(request.url);
-    const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 100);
+    const limit = parseBoundedInteger(searchParams.get('limit'), {
+      defaultValue: 50,
+      min: 1,
+      max: 100,
+    });
 
     if (!db) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });

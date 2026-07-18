@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseRemoteTimelineResponse } from './remote-timeline-payload';
 
 function post(overrides: Record<string, unknown> = {}) {
@@ -46,5 +46,24 @@ describe('remote timeline payload validation', () => {
     });
     const parsed = parseRemoteTimelineResponse({ posts: [recursive] }, 'source.social');
     expect((parsed.posts[0].repostOf as unknown as { repostOf?: unknown }).repostOf).toBeUndefined();
+  });
+
+  it('never accepts peer-hosted tracking media in production', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    try {
+      expect(() => parseRemoteTimelineResponse({
+        posts: [post({
+          media: [{ url: 'https://source.social/unique-viewer-pixel.gif' }],
+        })],
+      }, 'source.social')).toThrow(/failed validation/);
+
+      expect(parseRemoteTimelineResponse({
+        posts: [post({
+          media: [{ url: 'https://cdn.stuffbox.xyz/assets/photo.jpg' }],
+        })],
+      }, 'source.social').posts).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

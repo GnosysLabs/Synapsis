@@ -106,6 +106,7 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
       where: {
         AND: [
           { nodeDomain: ourDomain },
+          { identityVerified: true },
           ...(sinceDate ? [{ updatedAt: { gt: sinceDate } }] : []),
         ],
       },
@@ -121,9 +122,13 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
     }));
   }
 
+  const sharedNodes = isPublicSwarmDomain(ourDomain)
+    ? [selfNode, ...nodes.filter((node) => getPublicSwarmDomain(node.domain) !== getPublicSwarmDomain(ourDomain))]
+    : nodes;
+
   return {
     sender: ourDomain,
-    nodes: (isPublicSwarmDomain(ourDomain) ? [selfNode, ...nodes] : nodes).map((node) => {
+    nodes: sharedNodes.slice(0, SWARM_CONFIG.maxNodesPerGossip).map((node) => {
       // Trust is a local observation, never federation metadata.
       const publicNode = { ...node };
       delete publicNode.trustScore;
@@ -251,7 +256,9 @@ export async function gossipToNode(
 
     // The response came from the exact HTTPS origin we contacted, so its own
     // complete self-description establishes the target as a direct peer.
-    await establishDirectGossipPeer(gossipResponse.nodes, publicTargetDomain);
+    if (!await establishDirectGossipPeer(gossipResponse.nodes, publicTargetDomain)) {
+      throw new Error('Gossip peer did not provide a complete exact-origin identity');
+    }
 
     // Process the response (nodes and handles they sent back)
     const nodeResult = await upsertSwarmNodes(gossipResponse.nodes, publicTargetDomain);

@@ -37,6 +37,7 @@ export function ChatMessageAttachments({ attachments }: ChatMessageAttachmentsPr
                 width={800}
                 height={800}
                 loading="lazy"
+                referrerPolicy="no-referrer"
               />
             </a>
           );
@@ -49,7 +50,7 @@ export function ChatMessageAttachments({ attachments }: ChatMessageAttachmentsPr
                 src={attachment.url}
                 controls
                 playsInline
-                preload="metadata"
+                preload="none"
                 aria-label={attachment.filename}
               />
             </div>

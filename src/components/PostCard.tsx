@@ -9,7 +9,7 @@ import { MoreHorizontal, Download, MessageCircle, Link2, Share, TriangleAlert } 
 import { Post, LinkPreviewMediaItem } from '@/lib/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useToast } from '@/lib/contexts/ToastContext';
-import { VideoEmbed } from '@/components/VideoEmbed';
+import { parseVideoEmbedUrl, VideoEmbed } from '@/components/VideoEmbed';
 import BlurredImage from '@/components/BlurredImage';
 import BlurredVideo from '@/components/BlurredVideo';
 import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
@@ -26,6 +26,7 @@ import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
 import { buildChatShareHref, type ChatRecipient } from '@/lib/chat/recipients';
 import { shouldHideSensitivePost } from '@/lib/nsfw/content-visibility';
 import { PostOverflowMenu } from '@/components/PostOverflowMenu';
+import { isTrustedFederationMediaUrl } from '@/lib/utils/federation';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -48,7 +49,29 @@ function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
     );
 }
 
-const EMBED_VIDEO_REGEX = /(youtube\.com|youtu\.be|vimeo\.com)/;
+function parseLegacySwarmReplyAuthor(value: unknown): Post['swarmReplyToAuthor'] {
+    let candidate = value;
+    if (typeof value === 'string') {
+        try {
+            candidate = JSON.parse(value) as unknown;
+        } catch {
+            return null;
+        }
+    }
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+    const record = candidate as Record<string, unknown>;
+    if (typeof record.handle !== 'string' || !record.handle.trim() || record.handle.length > 640) {
+        return null;
+    }
+    return {
+        handle: record.handle,
+        displayName: typeof record.displayName === 'string'
+            ? record.displayName.slice(0, 160)
+            : null,
+        avatarUrl: typeof record.avatarUrl === 'string' ? record.avatarUrl : null,
+        nodeDomain: typeof record.nodeDomain === 'string' ? record.nodeDomain : null,
+    };
+}
 
 function isPlaceholderPreview(post: Post): boolean {
     if (!post.linkPreviewUrl) {
@@ -184,6 +207,14 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         || post.author.handle.includes('@')
         || (post.nodeDomain && post.nodeDomain !== domain)
     );
+    // Stored snapshots can outlive a parser deployment, and even a local
+    // account can submit a tracking URL through an older client. Every media
+    // action stays on Stuffbox/operator-approved origins so neither rendering
+    // nor downloading discloses the viewer to an arbitrary host.
+    const isSafeRenderedMediaUrl = (value: string | null | undefined): value is string => Boolean(
+        value && isTrustedFederationMediaUrl(value)
+    );
+    const visiblePostMedia = post.media?.filter((item) => isSafeRenderedMediaUrl(item.url));
     const hideSensitiveContent = shouldHideSensitivePost({
         sensitivity: {
             postIsNsfw: post.isNsfw,
@@ -245,7 +276,10 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     useEffect(() => {
         let cancelled = false;
 
-        if (hideSensitiveContent) {
+        // Never turn a hostile peer's embedded link into a background request
+        // from this node. Remote cards use only the bounded metadata that was
+        // already present in their validated federation payload.
+        if (hideSensitiveContent || isRemotePost) {
             setHydratedPreview(null);
             return;
         }
@@ -289,6 +323,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         post.linkPreviewMedia,
         post,
         hideSensitiveContent,
+        isRemotePost,
     ]);
 
     const formatTime = (dateStr: string | Date) => {
@@ -652,11 +687,11 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     const handleDownloadMedia = async (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!post.media?.length || downloading) return;
+        if (!visiblePostMedia?.length || downloading) return;
 
         setDownloading(true);
         try {
-            for (const [index, item] of post.media.entries()) {
+            for (const [index, item] of visiblePostMedia.entries()) {
                 const response = await fetch(item.url);
                 if (!response.ok) throw new Error(`Download failed with status ${response.status}`);
                 const blob = await response.blob();
@@ -795,20 +830,17 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     };
 
     // Build a synthetic replyTo for swarm replies
-    const effectiveReplyTo = post.replyTo || (post.swarmReplyToId && post.swarmReplyToAuthor ? {
+    const legacySwarmReplyAuthor = parseLegacySwarmReplyAuthor(post.swarmReplyToAuthor);
+    const effectiveReplyTo = post.replyTo || (post.swarmReplyToId && legacySwarmReplyAuthor ? {
         id: post.swarmReplyToId,
         content: post.swarmReplyToContent || '',
         createdAt: post.createdAt, // Use same time as approximation
         likesCount: 0,
         repostsCount: 0,
         repliesCount: 0,
-        author: typeof post.swarmReplyToAuthor === 'string'
-            ? JSON.parse(post.swarmReplyToAuthor)
-            : post.swarmReplyToAuthor,
+        author: legacySwarmReplyAuthor,
         isSwarm: true,
-        nodeDomain: (typeof post.swarmReplyToAuthor === 'string'
-            ? JSON.parse(post.swarmReplyToAuthor)
-            : post.swarmReplyToAuthor)?.nodeDomain,
+        nodeDomain: legacySwarmReplyAuthor.nodeDomain,
     } as Post : null);
     const replyToHandle = useFormattedHandle(
         effectiveReplyTo?.author?.handle || '',
@@ -820,14 +852,17 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     const uniqueReposters = dedupeReposters(reposters, domain);
     const visibleReposters = uniqueReposters.slice(0, 3);
     const hiddenReposters = Math.max(0, reposterCount - visibleReposters.length);
+    const candidatePreviewImage = hydratedPreview?.image || post.linkPreviewImage || null;
+    const candidatePreviewVideoUrl = hydratedPreview?.videoUrl || post.linkPreviewVideoUrl || null;
+    const candidatePreviewMedia = hydratedPreview?.media || post.linkPreviewMedia || null;
     const effectivePreview = {
         url: hydratedPreview?.url || post.linkPreviewUrl || null,
         title: hydratedPreview?.title || post.linkPreviewTitle || null,
         description: hydratedPreview?.description || post.linkPreviewDescription || null,
-        image: hydratedPreview?.image || post.linkPreviewImage || null,
+        image: isSafeRenderedMediaUrl(candidatePreviewImage) ? candidatePreviewImage : null,
         type: hydratedPreview?.type || post.linkPreviewType || null,
-        videoUrl: hydratedPreview?.videoUrl || post.linkPreviewVideoUrl || null,
-        media: hydratedPreview?.media || post.linkPreviewMedia || null,
+        videoUrl: isSafeRenderedMediaUrl(candidatePreviewVideoUrl) ? candidatePreviewVideoUrl : null,
+        media: candidatePreviewMedia?.filter((item) => isSafeRenderedMediaUrl(item.url)) || null,
     };
     const rawPreviewMedia = (() => {
         const mediaJson = (post as Post & { linkPreviewMediaJson?: string | null }).linkPreviewMediaJson;
@@ -836,7 +871,14 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         }
         try {
             const parsed = JSON.parse(mediaJson);
-            return Array.isArray(parsed) ? parsed : [];
+            return Array.isArray(parsed)
+                ? parsed.filter((item): item is LinkPreviewMediaItem => Boolean(
+                    item
+                    && typeof item === 'object'
+                    && typeof item.url === 'string'
+                    && isSafeRenderedMediaUrl(item.url)
+                ))
+                : [];
         } catch {
             return [];
         }
@@ -849,7 +891,9 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
             ? [{ url: effectivePreview.image }]
             : [];
     const previewImage = previewMedia[0]?.url || effectivePreview.image || null;
-    const isEmbeddedVideo = Boolean(effectivePreview.url && effectivePreview.url.match(EMBED_VIDEO_REGEX));
+    const isEmbeddedVideo = Boolean(
+        effectivePreview.url && parseVideoEmbedUrl(effectivePreview.url)
+    );
     const isRichVideoPreview = effectivePreview.type === 'video' && Boolean(effectivePreview.videoUrl);
     const isGalleryPreview = effectivePreview.type === 'gallery' && previewMedia.length > 1;
 
@@ -1081,7 +1125,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                                     <AvatarImage
                                         avatarUrl={reposter.avatarUrl}
                                         seed={reposter.handle}
-                                        nodeDomain={reposter.nodeDomain}
+                                        nodeDomain={reposter.nodeDomain || (isRemotePost ? post.nodeDomain : undefined)}
                                         isNsfw={reposter.isNsfw}
                                         nodeIsNsfw={reposter.nodeIsNsfw}
                                         alt=""
@@ -1174,9 +1218,9 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     <>
                 <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
 
-                {post.media && post.media.length > 0 && (
+                {visiblePostMedia && visiblePostMedia.length > 0 && (
                     <div className="post-media-grid">
-                        {post.media.map((item) => {
+                        {visiblePostMedia.map((item) => {
                             const mediaKind = getMediaKind(item.mimeType);
                             return (
                                 <div className={`post-media-item ${mediaKind === 'audio' ? 'audio' : ''}`} key={item.id}>
@@ -1229,7 +1273,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                         )}
                     </div>
                     <div className="post-actions-secondary">
-                        {!hideSensitiveContent && post.media && post.media.length > 0 && (
+                        {!hideSensitiveContent && visiblePostMedia && visiblePostMedia.length > 0 && (
                             <button className="post-action" onClick={handleDownloadMedia} disabled={downloading} title="Download media" aria-label="Download media">
                                 <Download size={20} />
                             </button>

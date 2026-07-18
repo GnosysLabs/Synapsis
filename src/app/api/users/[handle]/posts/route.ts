@@ -15,6 +15,7 @@ import {
 } from '@/lib/nsfw/remote-profile-access';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
+import { parseBoundedInteger } from '@/lib/http/query';
 
 const embeddedPostRelations = {
     author: true,
@@ -238,7 +239,11 @@ export async function GET(request: Request, context: RouteContext) {
         const resolvedHandle = resolveUserHandle(handle);
         const cleanHandle = resolvedHandle.canonicalHandle;
         const { searchParams } = new URL(request.url);
-        const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
+        const limit = parseBoundedInteger(searchParams.get('limit'), {
+            defaultValue: 25,
+            min: 1,
+            max: 50,
+        });
         const cursor = searchParams.get('cursor');
         const viewerAccess = await getSensitiveContentViewerAccess();
         const serializePosts = (postsToSerialize: FeedPostWithChildren[]) => (

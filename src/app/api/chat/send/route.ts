@@ -17,6 +17,7 @@ import {
   validateMessageBindings,
 } from '@/lib/e2ee/protocol';
 import { enqueueMessagePushDeliveries } from '@/lib/push/messages';
+import { createFederationActionContext } from '@/lib/swarm/federated-action';
 import { createSignedPayload } from '@/lib/swarm/signature';
 import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
@@ -289,9 +290,12 @@ export async function POST(request: NextRequest) {
     const registryEntry = await db.query.handleRegistry.findFirst({
       where: { handle: fullRecipientHandle },
     });
-    if (registryEntry && normalizeNodeDomain(registryEntry.nodeDomain) !== targetDomain) {
+    if (!registryEntry
+      || !registryEntry.identityVerified
+      || registryEntry.did !== envelope.recipientDid
+      || normalizeNodeDomain(registryEntry.nodeDomain) !== targetDomain) {
       return NextResponse.json({
-        error: 'Recipient node identity does not match the verified handle',
+        error: 'Recipient identity does not match the verified handle',
         code: 'E2EE_IDENTITY_KEY_CHANGED',
       }, { status: 409 });
     }
@@ -309,27 +313,28 @@ export async function POST(request: NextRequest) {
     }
 
     const protocol = isDevelopmentLoopback ? 'http' : 'https';
-    const sourceDomain = normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || '');
-    if (!sourceDomain) {
+    let federation: ReturnType<typeof createFederationActionContext>;
+    try {
+      federation = createFederationActionContext({
+        destinationDomain: targetDomain,
+        method: 'POST',
+        path: '/api/chat/receive',
+      });
+    } catch {
       return NextResponse.json({ error: 'This node is not configured for federated messages' }, { status: 503 });
     }
-    const deliveredAt = Date.now();
     const federatedPayload = {
+      federation,
       userAction: signedAction,
-      fullSenderHandle: `${user.handle}@${sourceDomain}`,
-      sourceDomain,
-      destinationDomain: targetDomain,
-      route: '/api/chat/receive' as const,
-      deliveryId: `${envelope.messageId}:${targetDomain}`,
-      ts: deliveredAt,
-      expiresAt: deliveredAt + 5 * 60 * 1000,
+      fullSenderHandle: `${user.handle}@${federation.sourceDomain}`,
+      deliveryId: `${envelope.messageId}:${federation.destinationDomain}`,
     };
     const { payload, signature } = await createSignedPayload(federatedPayload);
     const remoteResponse = await safeFederationRequest(`${protocol}://${targetDomain}/api/chat/receive`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Swarm-Source-Domain': sourceDomain,
+        'X-Swarm-Source-Domain': federation.sourceDomain,
         'X-Swarm-Signature': signature,
       },
       body: JSON.stringify(payload),

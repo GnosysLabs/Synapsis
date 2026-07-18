@@ -1,37 +1,13 @@
 import { NextResponse } from 'next/server';
 import { db, posts, users, notifications, remoteReposts, userSwarmReposts } from '@/db';
 import { requireAuth } from '@/lib/auth';
+import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import crypto from 'crypto';
-import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 import { normalizeSameNodePostId, parseSwarmPostId } from '@/lib/swarm/post-id';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
-import { signedFederationRead } from '@/lib/swarm/signed-read';
-
-type SwarmPostSnapshotResponse = {
-    post?: {
-        author?: { handle?: string; displayName?: string; avatarUrl?: string | null };
-        content?: string;
-        createdAt?: string;
-        likesCount?: number;
-        repostsCount?: number;
-        repliesCount?: number;
-        linkPreviewUrl?: string | null;
-        linkPreviewTitle?: string | null;
-        linkPreviewDescription?: string | null;
-        linkPreviewImage?: string | null;
-        linkPreviewType?: string | null;
-        linkPreviewVideoUrl?: string | null;
-        linkPreviewMedia?: Array<{
-            url: string;
-            width?: number | null;
-            height?: number | null;
-            mimeType?: string | null;
-        }> | null;
-        media?: unknown[];
-    };
-};
+import { fetchRemotePostSnapshot } from '@/lib/swarm/remote-post-snapshot';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -40,6 +16,25 @@ const postIdSchema = z.union([
     z.string().uuid(),
     z.string().refine((value) => parseSwarmPostId(value) !== null, 'Invalid swarm post ID format'),
 ]);
+
+function isSignedActionPayload(payload: unknown): payload is SignedAction {
+    if (!payload || typeof payload !== 'object') return false;
+    const value = payload as Record<string, unknown>;
+    return typeof value.action === 'string'
+        && typeof value.did === 'string'
+        && typeof value.handle === 'string'
+        && typeof value.ts === 'number'
+        && typeof value.nonce === 'string'
+        && typeof value.sig === 'string'
+        && typeof value.data === 'object'
+        && value.data !== null;
+}
+
+async function readOptionalJson(request: Request) {
+    const rawBody = await request.text();
+    if (!rawBody.trim()) return null;
+    return JSON.parse(rawBody);
+}
 
 /**
  * Extract domain from a swarm post ID (swarm:domain:postId)
@@ -68,54 +63,20 @@ function extractSwarmPostId(apId: string): string | null {
     return apId.substring(lastColonIndex + 1);
 }
 
-async function fetchSwarmPostSnapshot(domain: string, originalPostId: string) {
-    try {
-        const protocol = domain.includes('localhost') ? 'http' : 'https';
-        const res = await signedFederationRead(`${protocol}://${domain}/api/swarm/posts/${originalPostId}`, {
-            headers: { Accept: 'application/json' },
-            timeoutMs: 5_000,
-            maxResponseBytes: 1024 * 1024,
-        });
-
-        if (res.status < 200 || res.status >= 300) {
-            return null;
-        }
-
-        const data = res.json() as SwarmPostSnapshotResponse;
-        const post = data.post;
-        if (!post) {
-            return null;
-        }
-
-        return {
-            authorHandle: post.author?.handle || 'unknown',
-            authorDisplayName: post.author?.displayName || post.author?.handle || 'Unknown',
-            authorAvatarUrl: post.author?.avatarUrl || null,
-            content: post.content || '',
-            postCreatedAt: new Date(post.createdAt || new Date().toISOString()),
-            likesCount: post.likesCount || 0,
-            repostsCount: post.repostsCount || 0,
-            repliesCount: post.repliesCount || 0,
-            linkPreviewUrl: post.linkPreviewUrl || null,
-            linkPreviewTitle: post.linkPreviewTitle || null,
-            linkPreviewDescription: post.linkPreviewDescription || null,
-            linkPreviewImage: post.linkPreviewImage || null,
-            linkPreviewType: post.linkPreviewType || null,
-            linkPreviewVideoUrl: post.linkPreviewVideoUrl || null,
-            linkPreviewMediaJson: serializeLinkPreviewMedia(post.linkPreviewMedia),
-            mediaJson: post.media ? JSON.stringify(post.media) : null,
-        };
-    } catch {
-        return null;
-    }
-}
-
 // Repost a post
 export async function POST(request: Request, context: RouteContext) {
     try {
-        const user = await requireAuth();
+        const body = await readOptionalJson(request);
+        const signedAction = isSignedActionPayload(body) ? body : null;
+        const user = signedAction
+            ? await requireSignedAction(signedAction, 'repost')
+            : await requireAuth();
         const { id: rawId } = await context.params;
         const decodedId = decodeURIComponent(rawId);
+        if (signedAction?.data?.postId !== undefined
+            && signedAction.data.postId !== decodedId) {
+            return NextResponse.json({ error: 'Post ID mismatch' }, { status: 400 });
+        }
         let postId = postIdSchema.parse(decodedId);
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         postId = normalizeSameNodePostId(postId, nodeDomain);
@@ -127,6 +88,12 @@ export async function POST(request: Request, context: RouteContext) {
 
         // Handle swarm posts (format: swarm:domain:uuid)
         if (postId.startsWith('swarm:')) {
+            if (!signedAction) {
+                return NextResponse.json(
+                    { error: 'Remote reposts require a signed user action' },
+                    { status: 428 },
+                );
+            }
             const parsedSwarmId = parseSwarmPostId(postId);
             if (!parsedSwarmId) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
@@ -145,6 +112,7 @@ export async function POST(request: Request, context: RouteContext) {
             const { deliverSwarmRepost } = await import('@/lib/swarm/interactions');
 
             const result = await deliverSwarmRepost(targetDomain, {
+                userAction: signedAction,
                 postId: originalPostId,
                 repost: {
                     actorHandle: user.handle,
@@ -163,7 +131,7 @@ export async function POST(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: 'Failed to deliver repost to remote node' }, { status: 502 });
             }
 
-            const snapshot = await fetchSwarmPostSnapshot(targetDomain, originalPostId);
+            const snapshot = await fetchRemotePostSnapshot(targetDomain, originalPostId);
             if (snapshot) {
                 await db.insert(userSwarmReposts).values({
                     userId: user.id,
@@ -258,12 +226,17 @@ export async function POST(request: Request, context: RouteContext) {
             const targetDomain = extractSwarmDomain(originalPost.apId);
             const originalPostIdOnRemote = extractSwarmPostId(originalPost.apId!);
 
-            if (targetDomain && originalPostIdOnRemote) {
+            const canonicalTarget = targetDomain && originalPostIdOnRemote
+                ? `swarm:${targetDomain}:${originalPostIdOnRemote}`
+                : null;
+            if (targetDomain && originalPostIdOnRemote
+                && signedAction?.data?.postId === canonicalTarget) {
                 (async () => {
                     try {
                         const { deliverSwarmRepost } = await import('@/lib/swarm/interactions');
 
                         const result = await deliverSwarmRepost(targetDomain, {
+                            userAction: signedAction,
                             postId: originalPostIdOnRemote,
                             repost: {
                                 actorHandle: user.handle,
@@ -306,9 +279,17 @@ export async function POST(request: Request, context: RouteContext) {
 // Unrepost a post
 export async function DELETE(request: Request, context: RouteContext) {
     try {
-        const user = await requireAuth();
+        const body = await readOptionalJson(request);
+        const signedAction = isSignedActionPayload(body) ? body : null;
+        const user = signedAction
+            ? await requireSignedAction(signedAction, 'unrepost')
+            : await requireAuth();
         const { id: rawId } = await context.params;
         const decodedId = decodeURIComponent(rawId);
+        if (signedAction?.data?.postId !== undefined
+            && signedAction.data.postId !== decodedId) {
+            return NextResponse.json({ error: 'Post ID mismatch' }, { status: 400 });
+        }
         let postId = postIdSchema.parse(decodedId);
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         postId = normalizeSameNodePostId(postId, nodeDomain);
@@ -319,6 +300,12 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Handle swarm posts (format: swarm:domain:uuid)
         if (postId.startsWith('swarm:')) {
+            if (!signedAction) {
+                return NextResponse.json(
+                    { error: 'Remote unreposts require a signed user action' },
+                    { status: 428 },
+                );
+            }
             const parsedSwarmId = parseSwarmPostId(postId);
             if (!parsedSwarmId) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
@@ -337,6 +324,7 @@ export async function DELETE(request: Request, context: RouteContext) {
             const { deliverSwarmUnrepost } = await import('@/lib/swarm/interactions');
 
             const result = await deliverSwarmUnrepost(targetDomain, {
+                userAction: signedAction,
                 postId: originalPostId,
                 unrepost: {
                     actorHandle: user.handle,

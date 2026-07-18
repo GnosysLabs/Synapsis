@@ -25,20 +25,27 @@ interface CommonAudioMetadata {
 
 const metadataRequests = new Map<string, Promise<AudioTrackMetadata | null>>();
 const MAX_CACHED_REQUESTS = 64;
-const MAX_AUDIO_METADATA_BYTES = 8 * 1024 * 1024;
+const MAX_AUDIO_METADATA_BYTES = 4 * 1024 * 1024;
+const MAX_AUDIO_ARTWORK_BYTES = 1024 * 1024;
 const AUDIO_METADATA_TIMEOUT_MS = 8_000;
+const MAX_CONCURRENT_METADATA_REQUESTS = 2;
+let activeMetadataRequests = 0;
+const metadataWaiters: Array<() => void> = [];
 
 function clean(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
+  const normalized = value?.trim().slice(0, 300);
   return normalized || undefined;
 }
 
-function artworkMimeType(format: string): string {
+function artworkMimeType(format: string): string | null {
   const normalized = format.trim().toLowerCase();
-  if (normalized.includes('/')) return normalized;
+  if (normalized === 'image/jpeg' || normalized === 'image/png' || normalized === 'image/webp') {
+    return normalized;
+  }
   if (normalized === 'jpg' || normalized === 'jpeg') return 'image/jpeg';
-  if (normalized === 'svg') return 'image/svg+xml';
-  return `image/${normalized || 'jpeg'}`;
+  if (normalized === 'png') return 'image/png';
+  if (normalized === 'webp') return 'image/webp';
+  return null;
 }
 
 export function normalizeAudioMetadata(common: CommonAudioMetadata): AudioTrackMetadata | null {
@@ -48,13 +55,14 @@ export function normalizeAudioMetadata(common: CommonAudioMetadata): AudioTrackM
   const artist = clean(common.artist)
     ?? clean(common.artists?.join(', '))
     ?? clean(common.albumartist);
+  const pictureMimeType = picture ? artworkMimeType(picture.format) : null;
   const metadata: AudioTrackMetadata = {
     title: clean(common.title),
     artist,
     album: clean(common.album),
-    artwork: picture ? {
+    artwork: picture && pictureMimeType && picture.data.byteLength <= MAX_AUDIO_ARTWORK_BYTES ? {
       data: picture.data,
-      mimeType: artworkMimeType(picture.format),
+      mimeType: pictureMimeType,
     } : undefined,
   };
 
@@ -117,11 +125,24 @@ async function fetchAudioMetadata(src: string): Promise<AudioTrackMetadata | nul
   }
 }
 
+async function withMetadataSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (activeMetadataRequests >= MAX_CONCURRENT_METADATA_REQUESTS) {
+    await new Promise<void>((resolve) => metadataWaiters.push(resolve));
+  }
+  activeMetadataRequests += 1;
+  try {
+    return await work();
+  } finally {
+    activeMetadataRequests -= 1;
+    metadataWaiters.shift()?.();
+  }
+}
+
 export function loadAudioMetadata(src: string): Promise<AudioTrackMetadata | null> {
   const existing = metadataRequests.get(src);
   if (existing) return existing;
 
-  const request = fetchAudioMetadata(src).catch(() => null);
+  const request = withMetadataSlot(() => fetchAudioMetadata(src)).catch(() => null);
   metadataRequests.set(src, request);
 
   if (metadataRequests.size > MAX_CACHED_REQUESTS) {

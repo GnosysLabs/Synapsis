@@ -10,7 +10,7 @@ import {
 
 function attachment(index: number): ChatAttachment {
   return {
-    url: `https://media.example/chat/${index}.png`,
+    url: `https://stuffbox.xyz/chat/${index}.png`,
     filename: `photo-${index}.png`,
     mimeType: 'image/png',
     size: 1_024,

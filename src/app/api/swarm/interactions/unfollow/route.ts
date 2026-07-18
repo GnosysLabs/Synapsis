@@ -1,23 +1,29 @@
-/**
- * Swarm Unfollow Endpoint
- * 
- * POST: Receive an unfollow from another swarm node
- * 
- * SECURITY: All requests must be cryptographically signed by the sender.
- */
-
 import { NextRequest, NextResponse } from 'next/server';
-import { db, users, remoteFollowers } from '@/db';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
-import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
-import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
-import { claimInboundFederationAction } from '@/lib/swarm/replay';
 
-const swarmUnfollowSchema = z.object({
+import { db, remoteFollowers, swarmInboundActions, users } from '@/db';
+import { signedUserActionSchema } from '@/lib/e2ee/protocol';
+import {
+  FederatedIdentityContinuityError,
+  federationActionContextSchema,
+  federationActionDomain,
+  pinVerifiedFederatedActorIdentity,
+  verifyFederatedUserAction,
+} from '@/lib/swarm/federated-action';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { applyOrderedFederatedRelationshipState } from '@/lib/swarm/relationship-ordering';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { isFreshFederationTimestamp } from '@/lib/swarm/signature';
+import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+
+const PATH = '/api/swarm/interactions/unfollow' as const;
+
+const swarmUnfollowSchema = z.strictObject({
+  federation: federationActionContextSchema,
+  userAction: signedUserActionSchema,
   targetHandle: localHandleSchema,
-  unfollow: z.object({
+  unfollow: z.strictObject({
     followerHandle: localHandleSchema,
     followerNodeDomain: nodeDomainSchema,
     interactionId: z.string().uuid(),
@@ -26,79 +32,95 @@ const swarmUnfollowSchema = z.object({
   signature: z.string().min(1).max(16_384),
 });
 
-/**
- * POST /api/swarm/interactions/unfollow
- * 
- * Receives an unfollow from another swarm node.
- */
+const unfollowActionDataSchema = z.strictObject({ targetHandle: z.string().min(3).max(320) });
+
 export async function POST(request: NextRequest) {
   try {
-    if (!db) {
-      return NextResponse.json({ error: 'Database not available' }, { status: 503 });
-    }
-
-    const body = await readLimitedJson(request);
-    const data = swarmUnfollowSchema.parse(body);
+    const data = swarmUnfollowSchema.parse(await readLimitedJson(request));
     if (!isFreshFederationTimestamp(data.unfollow.timestamp)) {
       return NextResponse.json({ error: 'Stale interaction' }, { status: 400 });
     }
 
-    // SECURITY: Verify the signature
+    const actorDomain = federationActionDomain(data.unfollow.followerNodeDomain);
+    if (!actorDomain) {
+      return NextResponse.json({ error: 'Invalid source node' }, { status: 400 });
+    }
     const { signature, ...payload } = data;
-    const isValid = await verifySwarmRequest(payload, signature, data.unfollow.followerNodeDomain);
-
-    if (!isValid) {
-      console.warn(`[Swarm] Invalid signature for unfollow from ${data.unfollow.followerHandle}@${data.unfollow.followerNodeDomain}`);
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
-    }
-    if (!await claimInboundFederationAction(
-      data.unfollow.followerNodeDomain,
-      'unfollow',
-      data.unfollow.interactionId,
-    )) {
-      return NextResponse.json({ success: true, message: 'Interaction already processed' });
-    }
-
-    // Find the target user
-    const targetUser = await db.query.users.findFirst({
-      where: { handle: data.targetHandle.toLowerCase() },
+    const verified = await verifyFederatedUserAction({
+      payload,
+      nodeSignature: signature,
+      sourceDomain: actorDomain,
+      expectedMethod: 'POST',
+      expectedPath: PATH,
+      expectedAction: 'unfollow',
+      actorHandle: data.unfollow.followerHandle,
+      replayBinding: { targetHandle: data.targetHandle.toLowerCase() },
+      maxActionsPerMinute: 30,
     });
+    if (!verified.ok) {
+      return NextResponse.json({ error: verified.error }, { status: verified.status });
+    }
 
-    if (!targetUser) {
+    const targetHandle = data.targetHandle.toLowerCase();
+    const actionData = unfollowActionDataSchema.safeParse(verified.userAction.data);
+    if (!actionData.success
+      || actionData.data.targetHandle.toLowerCase()
+        !== `${targetHandle}@${verified.destinationDomain}`) {
+      return NextResponse.json({ error: 'Unfollow target is not user-authorized' }, { status: 403 });
+    }
+    const targetUser = await db.query.users.findFirst({ where: { handle: targetHandle } });
+    if (!targetUser || !hasStrictLocalUserOrigin(targetUser)) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
-
-    // Find and remove the remote follower record
-    const actorUrl = `swarm://${data.unfollow.followerNodeDomain}/${data.unfollow.followerHandle}`;
-    
-    const existingFollow = await db.query.remoteFollowers.findFirst({
-      where: { AND: [{ userId: targetUser.id }, { actorUrl: actorUrl }] },
+    await pinVerifiedFederatedActorIdentity({
+      sourceDomain: verified.sourceDomain,
+      actorHandle: verified.actorHandle,
+      did: verified.userAction.did,
     });
 
-    if (!existingFollow) {
-      return NextResponse.json({
-        success: true,
-        message: 'Not following',
+    const actorUrl = `swarm://${actorDomain}/${verified.actorHandle}`;
+    const outcome = await db.transaction(async (tx) => {
+      const [claim] = await tx.insert(swarmInboundActions).values({
+        sourceDomain: actorDomain,
+        action: 'unfollow',
+        interactionId: verified.replayId,
+      }).onConflictDoNothing().returning({ id: swarmInboundActions.id });
+      if (!claim) return 'replay' as const;
+
+      const ordered = await applyOrderedFederatedRelationshipState(tx, {
+        sourceDomain: actorDomain,
+        relationshipKind: 'follow',
+        target: targetUser.id,
+        state: false,
+        userAction: verified.userAction,
+      }, async () => {
+        const [deleted] = await tx.delete(remoteFollowers).where(and(
+          eq(remoteFollowers.userId, targetUser.id),
+          eq(remoteFollowers.actorUrl, actorUrl),
+        )).returning({ id: remoteFollowers.id });
+        if (deleted) {
+          await tx.update(users)
+            .set({ followersCount: sql`max(0, ${users.followersCount} - 1)` })
+            .where(eq(users.id, targetUser.id));
+        }
+        return deleted ? 'deleted' as const : 'unchanged' as const;
       });
-    }
-
-    // Remove the follow
-    await db.delete(remoteFollowers).where(eq(remoteFollowers.id, existingFollow.id));
-
-    // Update follower count
-    await db.update(users)
-      .set({ followersCount: sql`max(0, ${users.followersCount} - 1)` })
-      .where(eq(users.id, targetUser.id));
-
-    console.log(`[Swarm] Received unfollow from ${data.unfollow.followerHandle}@${data.unfollow.followerNodeDomain} for @${data.targetHandle}`);
+      if (!ordered.applied) {
+        return ordered.reason === 'duplicate' ? 'replay' as const : 'stale' as const;
+      }
+      return ordered.value;
+    });
 
     return NextResponse.json({
       success: true,
-      message: 'Unfollow received',
+      message: outcome === 'replay' ? 'Interaction already processed' : 'Unfollow received',
     });
   } catch (error) {
     if (error instanceof FederationRequestBodyError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (error instanceof FederatedIdentityContinuityError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid request', details: error.issues }, { status: 400 });

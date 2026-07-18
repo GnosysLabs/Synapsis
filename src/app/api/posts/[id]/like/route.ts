@@ -5,32 +5,7 @@ import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signat
 import { eq, and, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import crypto from 'crypto';
-import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
-import { signedFederationRead } from '@/lib/swarm/signed-read';
-
-type SwarmPostSnapshotResponse = {
-    post?: {
-        author?: { handle?: string; displayName?: string; avatarUrl?: string | null };
-        content?: string;
-        createdAt?: string;
-        likesCount?: number;
-        repostsCount?: number;
-        repliesCount?: number;
-        linkPreviewUrl?: string | null;
-        linkPreviewTitle?: string | null;
-        linkPreviewDescription?: string | null;
-        linkPreviewImage?: string | null;
-        linkPreviewType?: string | null;
-        linkPreviewVideoUrl?: string | null;
-        linkPreviewMedia?: Array<{
-            url: string;
-            width?: number | null;
-            height?: number | null;
-            mimeType?: string | null;
-        }> | null;
-        media?: unknown[];
-    };
-};
+import { fetchRemotePostSnapshot } from '@/lib/swarm/remote-post-snapshot';
 import { normalizeSameNodePostId, parseSwarmPostId } from '@/lib/swarm/post-id';
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -87,48 +62,6 @@ function extractSwarmPostId(apId: string): string | null {
     return apId.substring(lastColonIndex + 1);
 }
 
-async function fetchSwarmPostSnapshot(domain: string, originalPostId: string) {
-    try {
-        const protocol = domain.includes('localhost') ? 'http' : 'https';
-        const res = await signedFederationRead(`${protocol}://${domain}/api/swarm/posts/${originalPostId}`, {
-            headers: { Accept: 'application/json' },
-            timeoutMs: 5_000,
-            maxResponseBytes: 1024 * 1024,
-        });
-
-        if (res.status < 200 || res.status >= 300) {
-            return null;
-        }
-
-        const data = res.json() as SwarmPostSnapshotResponse;
-        const post = data.post;
-        if (!post) {
-            return null;
-        }
-
-        return {
-            authorHandle: post.author?.handle || 'unknown',
-            authorDisplayName: post.author?.displayName || post.author?.handle || 'Unknown',
-            authorAvatarUrl: post.author?.avatarUrl || null,
-            content: post.content || '',
-            postCreatedAt: new Date(post.createdAt || new Date().toISOString()),
-            likesCount: post.likesCount || 0,
-            repostsCount: post.repostsCount || 0,
-            repliesCount: post.repliesCount || 0,
-            linkPreviewUrl: post.linkPreviewUrl || null,
-            linkPreviewTitle: post.linkPreviewTitle || null,
-            linkPreviewDescription: post.linkPreviewDescription || null,
-            linkPreviewImage: post.linkPreviewImage || null,
-            linkPreviewType: post.linkPreviewType || null,
-            linkPreviewVideoUrl: post.linkPreviewVideoUrl || null,
-            linkPreviewMediaJson: serializeLinkPreviewMedia(post.linkPreviewMedia),
-            mediaJson: post.media ? JSON.stringify(post.media) : null,
-        };
-    } catch {
-        return null;
-    }
-}
-
 // Like a post
 export async function POST(request: Request, context: RouteContext) {
     try {
@@ -136,11 +69,12 @@ export async function POST(request: Request, context: RouteContext) {
         const { id: paramId } = await context.params;
         const decodedParamId = decodeURIComponent(paramId);
 
-        const user = isSignedActionPayload(body)
-            ? await requireSignedAction(body)
+        const signedAction = isSignedActionPayload(body) ? body : null;
+        const user = signedAction
+            ? await requireSignedAction(signedAction, 'like')
             : await requireAuth();
 
-        if (isSignedActionPayload(body) && body.data?.postId && body.data.postId !== decodedParamId) {
+        if (signedAction && signedAction.data?.postId !== decodedParamId) {
             return NextResponse.json({ error: 'Post ID mismatch' }, { status: 400 });
         }
 
@@ -155,6 +89,12 @@ export async function POST(request: Request, context: RouteContext) {
 
         // Handle swarm posts (format: swarm:domain:uuid)
         if (postId.startsWith('swarm:')) {
+            if (!signedAction) {
+                return NextResponse.json(
+                    { error: 'Remote likes require a signed user action' },
+                    { status: 428 },
+                );
+            }
             const parsedSwarmId = parseSwarmPostId(postId);
             if (!parsedSwarmId) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
@@ -165,6 +105,7 @@ export async function POST(request: Request, context: RouteContext) {
             const { deliverSwarmLike } = await import('@/lib/swarm/interactions');
 
             const result = await deliverSwarmLike(targetDomain, {
+                userAction: signedAction,
                 postId: originalPostId,
                 like: {
                     actorHandle: user.handle,
@@ -181,7 +122,7 @@ export async function POST(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: 'Failed to deliver like to remote node' }, { status: 502 });
             }
 
-            const snapshot = await fetchSwarmPostSnapshot(targetDomain, originalPostId);
+            const snapshot = await fetchRemotePostSnapshot(targetDomain, originalPostId);
             if (snapshot) {
                 await db.insert(userSwarmLikes).values({
                     userId: user.id,
@@ -261,12 +202,16 @@ export async function POST(request: Request, context: RouteContext) {
             const targetDomain = extractSwarmDomain(post.apId);
             const originalPostId = extractSwarmPostId(post.apId!);
 
-            if (targetDomain && originalPostId) {
+            const canonicalTarget = targetDomain && originalPostId
+                ? `swarm:${targetDomain}:${originalPostId}`
+                : null;
+            if (targetDomain && originalPostId && signedAction?.data?.postId === canonicalTarget) {
                 (async () => {
                     try {
                         const { deliverSwarmLike } = await import('@/lib/swarm/interactions');
 
                         const result = await deliverSwarmLike(targetDomain, {
+                            userAction: signedAction,
                             postId: originalPostId,
                             like: {
                                 actorHandle: user.handle,
@@ -322,11 +267,12 @@ export async function DELETE(request: Request, context: RouteContext) {
         const { id: paramId } = await context.params;
         const decodedParamId = decodeURIComponent(paramId);
 
-        const user = isSignedActionPayload(body)
-            ? await requireSignedAction(body)
+        const signedAction = isSignedActionPayload(body) ? body : null;
+        const user = signedAction
+            ? await requireSignedAction(signedAction, 'unlike')
             : await requireAuth();
 
-        if (isSignedActionPayload(body) && body.data?.postId && body.data.postId !== decodedParamId) {
+        if (signedAction && signedAction.data?.postId !== decodedParamId) {
             return NextResponse.json({ error: 'Post ID mismatch' }, { status: 400 });
         }
 
@@ -341,6 +287,12 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Handle swarm posts (format: swarm:domain:uuid)
         if (postId.startsWith('swarm:')) {
+            if (!signedAction) {
+                return NextResponse.json(
+                    { error: 'Remote unlikes require a signed user action' },
+                    { status: 428 },
+                );
+            }
             const parsedSwarmId = parseSwarmPostId(postId);
             if (!parsedSwarmId) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
@@ -351,6 +303,7 @@ export async function DELETE(request: Request, context: RouteContext) {
             const { deliverSwarmUnlike } = await import('@/lib/swarm/interactions');
 
             const result = await deliverSwarmUnlike(targetDomain, {
+                userAction: signedAction,
                 postId: originalPostId,
                 unlike: {
                     actorHandle: user.handle,
@@ -427,12 +380,16 @@ export async function DELETE(request: Request, context: RouteContext) {
             const targetDomain = extractSwarmDomain(post.apId);
             const originalPostId = extractSwarmPostId(post.apId!);
 
-            if (targetDomain && originalPostId) {
+            const canonicalTarget = targetDomain && originalPostId
+                ? `swarm:${targetDomain}:${originalPostId}`
+                : null;
+            if (targetDomain && originalPostId && signedAction?.data?.postId === canonicalTarget) {
                 (async () => {
                     try {
                         const { deliverSwarmUnlike } = await import('@/lib/swarm/interactions');
 
                         const result = await deliverSwarmUnlike(targetDomain, {
+                            userAction: signedAction,
                             postId: originalPostId,
                             unlike: {
                                 actorHandle: user.handle,

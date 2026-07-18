@@ -62,6 +62,20 @@ describe('refreshFederatedReplyCounts', () => {
     expect(post.repliesCount).toBe(2);
   });
 
+  it('keeps the cached count when a hostile node returns an oversized reply list', async () => {
+    mocks.signedFederationRead.mockResolvedValue({
+      status: 200,
+      json: () => ({ replies: Array.from({ length: 51 }, (_, id) => ({ id })) }),
+    });
+
+    const [post] = await refreshFederatedReplyCounts([{
+      id: `swarm:origin.social:${remotePostId}`,
+      repliesCount: 7,
+    }]);
+
+    expect(post.repliesCount).toBe(7);
+  });
+
   it('does not make federation requests for local posts', async () => {
     const posts = [{ id: remotePostId, repliesCount: 4 }];
 

@@ -21,8 +21,6 @@ export function formatVideoTime(seconds: number): string {
 export default function BlurredVideo({ src }: BlurredVideoProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const mainVideoRef = useRef<HTMLVideoElement>(null);
-    const bgVideoRef = useRef<HTMLVideoElement>(null);
-    const [isLoaded, setIsLoaded] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isMuted, setIsMuted] = useState(true);
     const [currentTime, setCurrentTime] = useState(0);
@@ -30,39 +28,26 @@ export default function BlurredVideo({ src }: BlurredVideoProps) {
 
     useEffect(() => {
         const mainVideo = mainVideoRef.current;
-        const bgVideo = bgVideoRef.current;
-
-        if (mainVideo && bgVideo) {
-            const syncTime = () => {
-                if (Math.abs(mainVideo.currentTime - bgVideo.currentTime) > 0.1) {
-                    bgVideo.currentTime = mainVideo.currentTime;
-                }
-            };
-
+        if (mainVideo) {
             const handlePlay = () => {
                 setIsPlaying(true);
-                bgVideo.play().catch(() => {});
             };
             const handlePause = () => {
                 setIsPlaying(false);
-                bgVideo.pause();
             };
             const handleLoaded = () => {
-                setIsLoaded(true);
                 setDuration(Number.isFinite(mainVideo.duration) ? mainVideo.duration : 0);
                 setCurrentTime(mainVideo.currentTime);
                 setIsPlaying(!mainVideo.paused);
             };
             const handleTimeUpdate = () => {
                 setCurrentTime(mainVideo.currentTime);
-                syncTime();
             };
             const handleDurationChange = () => {
                 setDuration(Number.isFinite(mainVideo.duration) ? mainVideo.duration : 0);
             };
             const handleVolumeChange = () => setIsMuted(mainVideo.muted);
 
-            mainVideo.addEventListener('seeked', syncTime);
             mainVideo.addEventListener('play', handlePlay);
             mainVideo.addEventListener('pause', handlePause);
             mainVideo.addEventListener('loadeddata', handleLoaded);
@@ -71,7 +56,6 @@ export default function BlurredVideo({ src }: BlurredVideoProps) {
             mainVideo.addEventListener('volumechange', handleVolumeChange);
 
             return () => {
-                mainVideo.removeEventListener('seeked', syncTime);
                 mainVideo.removeEventListener('play', handlePlay);
                 mainVideo.removeEventListener('pause', handlePause);
                 mainVideo.removeEventListener('loadeddata', handleLoaded);
@@ -102,14 +86,10 @@ export default function BlurredVideo({ src }: BlurredVideoProps) {
 
     const seek = (value: number) => {
         const mainVideo = mainVideoRef.current;
-        const bgVideo = bgVideoRef.current;
         if (!mainVideo) return;
 
         const nextTime = Math.min(Math.max(value, 0), duration || 0);
         mainVideo.currentTime = nextTime;
-        if (bgVideo) {
-            bgVideo.currentTime = nextTime;
-        }
         setCurrentTime(nextTime);
     };
 
@@ -119,28 +99,14 @@ export default function BlurredVideo({ src }: BlurredVideoProps) {
             className="blurred-video-container"
             onClick={(event) => event.stopPropagation()}
         >
-            {/* Background blurred video */}
-            <video
-                ref={bgVideoRef}
-                src={src}
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="metadata"
-                className="blurred-video-bg"
-                aria-hidden="true"
-                style={{ opacity: isLoaded ? 1 : 0 }}
-            />
             {/* Main video */}
             <video
                 ref={mainVideoRef}
                 src={src}
-                autoPlay
                 muted
                 loop
                 playsInline
-                preload="metadata"
+                preload="none"
                 className="blurred-video-main"
                 onClick={togglePlayback}
                 onKeyDown={(event) => {

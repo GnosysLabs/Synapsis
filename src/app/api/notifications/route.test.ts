@@ -3,15 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
   findNotifications: vi.fn(),
-  fetchSwarmUserProfile: vi.fn(),
 }));
 
 vi.mock('@/lib/auth', () => ({ requireAuth: mocks.requireAuth }));
 vi.mock('@/lib/node/local-node', () => ({
   requireLocalNodeNsfwClassification: vi.fn().mockResolvedValue(false),
-}));
-vi.mock('@/lib/swarm/interactions', () => ({
-  fetchSwarmUserProfile: mocks.fetchSwarmUserProfile,
 }));
 vi.mock('@/db', () => ({
   db: {
@@ -54,24 +50,11 @@ describe('GET /api/notifications sensitive data enforcement', () => {
   });
 
   it('withholds an NSFW remote actor avatar and post preview', async () => {
-    mocks.fetchSwarmUserProfile.mockResolvedValue({
-      profile: {
-        handle: 'adult',
-        displayName: 'Adult',
-        avatarUrl: 'https://adult.example/fresh-private-avatar.jpg',
-        isNsfw: true,
-        nodeIsNsfw: true,
-      },
-      posts: [],
-      nodeDomain: 'adult.example',
-      timestamp: '2026-07-17T00:00:00.000Z',
-    });
-
     const response = await GET(new Request('https://local.example/api/notifications'));
     const body = await response.json();
 
     expect(body.notifications[0]).toMatchObject({
-      actor: { avatarUrl: null, isNsfw: true, nodeIsNsfw: true },
+      actor: { avatarUrl: null, handle: 'adult@adult.example', displayName: 'adult' },
       post: { content: null, media: [], sensitiveRestricted: true },
     });
     const serialized = JSON.stringify(body);
@@ -81,8 +64,6 @@ describe('GET /api/notifications sensitive data enforcement', () => {
   });
 
   it('fails closed when the remote profile cannot be classified', async () => {
-    mocks.fetchSwarmUserProfile.mockResolvedValue(null);
-
     const response = await GET(new Request('https://local.example/api/notifications'));
     const body = await response.json();
 
@@ -92,4 +73,3 @@ describe('GET /api/notifications sensitive data enforcement', () => {
     expect(JSON.stringify(body)).not.toContain('PRIVATE NOTIFICATION BODY');
   });
 });
-

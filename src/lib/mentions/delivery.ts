@@ -14,6 +14,10 @@ import {
 } from '@/lib/swarm/interactions';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { parseMentions, uniqueMentions } from './parser';
+import {
+  signedUserActionSchema,
+  type SignedUserAction,
+} from '@/lib/e2ee/protocol';
 
 const MAX_DELIVERY_ATTEMPTS = 12;
 const PROCESSING_LEASE_MS = 2 * 60 * 1000;
@@ -33,6 +37,7 @@ export interface RegisterPostMentionsInput {
   content: string;
   actor: MentionActor;
   nodeDomain?: string;
+  userAction?: SignedUserAction;
 }
 
 export interface RegisterPostMentionsResult {
@@ -125,12 +130,19 @@ export async function registerPostMentions(
       result.skipped += 1;
       continue;
     }
+    if (!input.userAction) {
+      // Session/CLI posts cannot be attributed to a user key on another node.
+      // Publish locally, but never substitute a node assertion for user proof.
+      result.skipped += 1;
+      continue;
+    }
 
     const inserted = await db.insert(mentionDeliveries).values({
       interactionId: randomUUID(),
       postId: input.postId,
       targetHandle: mention.handle,
       targetDomain: normalizeNodeDomain(mention.domain),
+      userActionJson: JSON.stringify(input.userAction),
       status: 'pending',
       nextAttemptAt: new Date(),
     }).onConflictDoNothing().returning({ id: mentionDeliveries.id });
@@ -177,6 +189,17 @@ async function attemptMentionDelivery(
     });
   }
 
+  let userAction: SignedUserAction;
+  try {
+    userAction = signedUserActionSchema.parse(JSON.parse(delivery.userActionJson || 'null'));
+  } catch {
+    return markDeliveryFailure(delivery, {
+      success: false,
+      retryable: false,
+      error: 'Mention delivery is missing its original user authorization',
+    });
+  }
+
   let knownNode = await isSwarmNode(delivery.targetDomain);
   if (!knownNode) knownNode = (await discoverNode(delivery.targetDomain)).success;
   if (!knownNode) {
@@ -188,6 +211,7 @@ async function attemptMentionDelivery(
   }
 
   const response = await deliverSwarmMention(delivery.targetDomain, {
+    userAction,
     mentionedHandle: delivery.targetHandle,
     mention: {
       actorHandle: post.author.handle,
@@ -199,7 +223,7 @@ async function attemptMentionDelivery(
       postId: post.id,
       postContent: post.content,
       interactionId: delivery.interactionId,
-      timestamp: post.createdAt.toISOString(),
+      timestamp: new Date().toISOString(),
     },
   });
 

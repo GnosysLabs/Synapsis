@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/db';
 import { discoverNode } from '@/lib/swarm/discovery';
-import { getRemoteBaseUrl, mapRemoteProfilePost, type RemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
+import { getRemoteBaseUrl, mapRemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
@@ -14,6 +14,8 @@ import {
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
+import { parseBoundedInteger } from '@/lib/http/query';
+import { parseRemotePostListResponse } from '@/lib/swarm/remote-post-payload';
 
 const embeddedPostRelations = {
   author: true,
@@ -48,7 +50,11 @@ export async function GET(request: Request, context: RouteContext) {
     const resolvedHandle = resolveUserHandle(handle);
     const cleanHandle = resolvedHandle.canonicalHandle;
     const { searchParams } = new URL(request.url);
-    const limit = Math.min(parseInt(searchParams.get('limit') || '25'), 50);
+    const limit = parseBoundedInteger(searchParams.get('limit'), {
+      defaultValue: 25,
+      min: 1,
+      max: 50,
+    });
     const cursor = searchParams.get('cursor');
     const remote = resolvedHandle.remote;
     const viewerAccess = await getSensitiveContentViewerAccess();
@@ -94,11 +100,11 @@ export async function GET(request: Request, context: RouteContext) {
         return NextResponse.json({ posts: [], nextCursor: null });
       }
 
-      const data = res.json() as { posts?: RemoteProfilePost[] };
+      const remotePosts = parseRemotePostListResponse(res.json(), remote.domain, limit);
       const { getSession } = await import('@/lib/auth');
       const session = await getSession();
       const viewer = session?.user;
-      const mappedPosts = (data.posts || []).map((post) => mapRemoteProfilePost(post, remote.domain));
+      const mappedPosts = remotePosts.map((post) => mapRemoteProfilePost(post, remote.domain));
       const repostedIds = viewer
         ? await getViewerSwarmRepostedPostIds(
             mappedPosts.map((post) => ({

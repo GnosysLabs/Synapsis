@@ -245,7 +245,6 @@ export async function getTrustedSwarmReadPeerPublicKey(domain: string): Promise<
     && !node.isBlocked
     && directlyEstablished
     && node.nsfwClassificationKnown
-    && node.trustScore >= SWARM_CONFIG.defaultTrustScore
     && node.publicKey
   )) return null;
   return node.publicKey;
@@ -307,7 +306,7 @@ export async function pinSwarmNodePublicKey(domain: string, publicKey: string): 
   }
 }
 
-/** Only established, healthy swarm peers may request unredacted federation reads. */
+/** Only exact-origin established, healthy peers may make classified reads. */
 export async function isTrustedSwarmReadPeer(domain: string): Promise<boolean> {
   return Boolean(await getTrustedSwarmReadPeerPublicKey(domain));
 }

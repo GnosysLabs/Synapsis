@@ -18,8 +18,21 @@ import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node
 import { getPublicSwarmDomain } from './node-domain';
 import { signedFederationRead } from './signed-read';
 import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
-import { parseMentions, uniqueMentions } from '@/lib/mentions/parser';
+import { parseMentions } from '@/lib/mentions/parser';
 import { safeFederationRequest } from './safe-federation-http';
+import { mapWithConcurrency } from '@/lib/async/concurrency';
+import type { FederatedUserAction } from './federated-action';
+import { createFederationActionContext } from './federated-action';
+import {
+  parseRemotePostDetailResponse,
+  parseRemoteProfileResponse,
+  type RemoteSwarmPost,
+  type RemoteSwarmProfile,
+  type RemoteSwarmProfileResponse,
+} from './remote-post-payload';
+
+const MAX_POST_DELIVERY_DESTINATIONS = 24;
+const MAX_CONCURRENT_POST_DELIVERIES = 6;
 
 // ============================================
 // TYPES
@@ -60,6 +73,7 @@ export interface SwarmInteractionResponse {
 }
 
 export interface SwarmLikePayload {
+  userAction: FederatedUserAction;
   postId: string;
   like: {
     actorHandle: string;
@@ -72,6 +86,7 @@ export interface SwarmLikePayload {
 }
 
 export interface SwarmUnlikePayload {
+  userAction: FederatedUserAction;
   postId: string;
   unlike: {
     actorHandle: string;
@@ -82,6 +97,7 @@ export interface SwarmUnlikePayload {
 }
 
 export interface SwarmRepostPayload {
+  userAction: FederatedUserAction;
   postId: string;
   repost: {
     actorHandle: string;
@@ -96,6 +112,7 @@ export interface SwarmRepostPayload {
 }
 
 export interface SwarmFollowPayload {
+  userAction: FederatedUserAction;
   targetHandle: string;
   follow: {
     followerHandle: string;
@@ -109,6 +126,7 @@ export interface SwarmFollowPayload {
 }
 
 export interface SwarmUnfollowPayload {
+  userAction: FederatedUserAction;
   targetHandle: string;
   unfollow: {
     followerHandle: string;
@@ -119,6 +137,7 @@ export interface SwarmUnfollowPayload {
 }
 
 export interface SwarmUnrepostPayload {
+  userAction: FederatedUserAction;
   postId: string;
   unrepost: {
     actorHandle: string;
@@ -129,6 +148,7 @@ export interface SwarmUnrepostPayload {
 }
 
 export interface SwarmMentionPayload {
+  userAction: FederatedUserAction;
   mentionedHandle: string;
   mention: {
     actorHandle: string;
@@ -273,7 +293,7 @@ export async function deliverSwarmMention(
 async function deliverSwarmInteraction(
   targetDomain: string,
   endpoint: string,
-  payload: unknown
+  payload: object
 ): Promise<SwarmInteractionResponse> {
   try {
     const normalizedTargetDomain = normalizeNodeDomain(targetDomain);
@@ -294,12 +314,23 @@ async function deliverSwarmInteraction(
 
     const url = `${baseUrl}${endpoint}`;
 
-    // SECURITY: Sign the payload with the node's private key
+    // Bind every node signature to the exact protocol, destination, method,
+    // and route. State-changing receivers additionally require `userAction`.
+    const authorizedPayload = {
+      ...payload,
+      federation: createFederationActionContext({
+        destinationDomain: normalizedTargetDomain,
+        method: 'POST',
+        path: endpoint,
+      }),
+    };
+
+    // SECURITY: Sign the complete destination-bound envelope with the node key.
     const { signPayload, getNodePrivateKey } = await import('./signature');
     const privateKey = await getNodePrivateKey();
 
-    const signature = signPayload(payload, privateKey);
-    const signedPayload = { ...payload as object, signature };
+    const signature = signPayload(authorizedPayload, privateKey);
+    const signedPayload = { ...authorizedPayload, signature };
 
     const response = await safeFederationRequest(url, {
       method: 'POST',
@@ -341,117 +372,12 @@ async function deliverSwarmInteraction(
 // PROFILE FETCHING
 // ============================================
 
-export interface SwarmUserProfile {
-  handle: string;
-  displayName: string;
-  bio?: string;
-  avatarUrl?: string;
-  headerUrl?: string;
-  website?: string;
-  followersCount: number;
-  followingCount: number;
-  postsCount: number;
-  createdAt: string;
-  isNsfw: boolean;
-  nodeIsNsfw: boolean;
-  nodeDomain: string;
-  chatPublicKey?: string;
-  publicKey?: string;
-  did?: string;
-}
-
-export interface SwarmUserPost {
-  id: string;
-  originalPostId?: string;
-  content: string;
-  createdAt: string;
-  isReply?: boolean;
-  replyToId?: string | null;
-  swarmReplyToId?: string | null;
-  isNsfw: boolean;
-  likesCount: number;
-  repostsCount: number;
-  repliesCount: number;
-  nodeDomain?: string;
-  author?: {
-    handle: string;
-    displayName?: string;
-    avatarUrl?: string;
-    isNsfw?: boolean;
-    nodeIsNsfw?: boolean;
-    nodeDomain?: string;
-  };
-  media?: { url: string; mimeType?: string; altText?: string }[];
-  linkPreviewUrl?: string;
-  linkPreviewTitle?: string;
-  linkPreviewDescription?: string;
-  linkPreviewImage?: string;
-  linkPreviewType?: 'card' | 'image' | 'gallery' | 'video';
-  linkPreviewVideoUrl?: string;
-  linkPreviewMedia?: Array<{ url: string; width?: number | null; height?: number | null; mimeType?: string | null }>;
-  repostOfId?: string;
-  repostOf?: SwarmUserPost | null;
-  repostedBy?: Array<{
-    id?: string;
-    handle: string;
-    displayName?: string | null;
-    avatarUrl?: string | null;
-    isNsfw?: boolean;
-    nodeIsNsfw?: boolean;
-    nodeDomain?: string | null;
-  }>;
-  repostedByCount?: number;
-}
-
-export interface SwarmProfileResponse {
-  profile: SwarmUserProfile;
-  posts: SwarmUserPost[];
-  nodeDomain: string;
-  timestamp: string;
-}
+export type SwarmUserProfile = RemoteSwarmProfile;
+export type SwarmUserPost = RemoteSwarmPost;
+export type SwarmProfileResponse = RemoteSwarmProfileResponse;
 
 const DEVELOPMENT_LOOPBACK_DOMAIN =
   /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isSwarmUserPost(value: unknown): value is SwarmUserPost {
-  if (!isRecord(value)) return false;
-
-  return (
-    typeof value.id === 'string' &&
-    typeof value.content === 'string' &&
-    typeof value.createdAt === 'string' &&
-    typeof value.isNsfw === 'boolean' &&
-    typeof value.likesCount === 'number' &&
-    typeof value.repostsCount === 'number' &&
-    typeof value.repliesCount === 'number'
-  );
-}
-
-function isSwarmProfileResponse(value: unknown): value is SwarmProfileResponse {
-  if (!isRecord(value) || !isRecord(value.profile) || !Array.isArray(value.posts)) {
-    return false;
-  }
-
-  const profile = value.profile;
-  return (
-    typeof profile.handle === 'string' &&
-    typeof profile.displayName === 'string' &&
-    typeof profile.followersCount === 'number' &&
-    typeof profile.followingCount === 'number' &&
-    typeof profile.postsCount === 'number' &&
-    typeof profile.createdAt === 'string' &&
-    typeof profile.isNsfw === 'boolean' &&
-    typeof profile.nodeIsNsfw === 'boolean' &&
-    typeof profile.nodeDomain === 'string' &&
-    typeof value.nodeDomain === 'string' &&
-    typeof value.timestamp === 'string' &&
-    value.posts.every(isSwarmUserPost)
-  );
-}
 
 /**
  * Fetch a user profile from a swarm node
@@ -500,13 +426,15 @@ export async function fetchSwarmUserProfile(
       return null;
     }
 
-    const payload = response.json();
-    if (
-      !isSwarmProfileResponse(payload) ||
-      payload.profile.handle.toLowerCase() !== cleanHandle
-    ) {
-      return null;
-    }
+    const effectivePostsLimit = Number.isSafeInteger(postsLimit)
+      ? Math.min(Math.max(postsLimit, 0), 50)
+      : 25;
+    const payload = parseRemoteProfileResponse(
+      response.json(),
+      targetDomain,
+      cleanHandle,
+      effectivePostsLimit,
+    );
 
     const knownNodeIsNsfw = await getKnownSwarmNodeNsfw(normalizedDomain);
     if (knownNodeIsNsfw === true && payload.profile.nodeIsNsfw !== true) {
@@ -558,12 +486,13 @@ export async function cacheSwarmUserPosts(
     const profile = profileData.profile;
 
     for (const post of profileData.posts) {
-      // Generate a unique AP-style ID for the post
-      const apId = `swarm://${domain}/posts/${post.id}`;
+      const canonicalDomain = normalizeNodeDomain(domain);
+      const apId = `swarm:${canonicalDomain}:${post.id}`;
+      const legacyApId = `swarm://${canonicalDomain}/posts/${post.id}`;
 
       // Check if we already have this post
       const existing = await db.query.remotePosts.findFirst({
-        where: { apId: apId },
+        where: { OR: [{ apId }, { apId: legacyApId }] },
       });
 
       if (existing) {
@@ -631,7 +560,11 @@ export async function fetchSwarmPost(
       return null;
     }
 
-    return response.json() as SwarmUserPost;
+    return parseRemotePostDetailResponse(
+      response.json(),
+      normalizedDomain,
+      postId,
+    ).post;
   } catch (error) {
     console.error(`[Swarm] Failed to fetch post ${postId} from ${domain}:`, error);
     return null;
@@ -649,57 +582,6 @@ export async function fetchSwarmPost(
 export function extractMentions(content: string): { handle: string; domain: string | null }[] {
   return parseMentions(content).map(({ handle, domain }) => ({ handle, domain }));
 }
-
-/**
- * Deliver mention notifications to swarm nodes
- */
-export async function deliverSwarmMentions(
-  content: string,
-  postId: string,
-  actor: {
-    handle: string;
-    displayName: string;
-    avatarUrl?: string;
-    nodeDomain: string;
-  }
-): Promise<{ delivered: number; failed: number }> {
-  const mentions = uniqueMentions(parseMentions(content, actor.nodeDomain));
-  let delivered = 0;
-  let failed = 0;
-
-  for (const mention of mentions) {
-    // Local and same-node-qualified mentions are handled synchronously.
-    if (mention.isLocal || !mention.domain) continue;
-
-    // Check if it's a swarm node
-    const isSwarm = await isSwarmNode(mention.domain);
-    if (!isSwarm) continue;
-
-    // Deliver the mention
-    const result = await deliverSwarmMention(mention.domain, {
-      mentionedHandle: mention.handle,
-      mention: {
-        actorHandle: actor.handle,
-        actorDisplayName: actor.displayName,
-        actorAvatarUrl: actor.avatarUrl,
-        actorNodeDomain: actor.nodeDomain,
-        postId,
-        postContent: content,
-        interactionId: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-      },
-    });
-
-    if (result.success) {
-      delivered++;
-    } else {
-      failed++;
-    }
-  }
-
-  return { delivered, failed };
-}
-
 
 // ============================================
 // POST DELIVERY TO SWARM FOLLOWERS
@@ -839,16 +721,19 @@ export async function deliverPostToSwarmFollowers(
     timestamp: new Date().toISOString(),
   };
 
+  const targetDomains = swarmDomains.slice(0, MAX_POST_DELIVERY_DESTINATIONS);
   let delivered = 0;
-  let failed = 0;
-
-  // Deliver to all swarm domains in parallel
-  const results = await Promise.allSettled(
-    swarmDomains.map(domain => deliverSwarmPost(domain, payload))
+  // Federation feeds are pull-based. Legacy push is a bounded best effort and
+  // must never turn a popular account into unbounded synchronous fan-out.
+  let failed = swarmDomains.length - targetDomains.length;
+  const results = await mapWithConcurrency(
+    targetDomains,
+    MAX_CONCURRENT_POST_DELIVERIES,
+    domain => deliverSwarmPost(domain, payload),
   );
 
   for (const result of results) {
-    if (result.status === 'fulfilled' && result.value.success) {
+    if (result.success) {
       delivered++;
     } else {
       failed++;

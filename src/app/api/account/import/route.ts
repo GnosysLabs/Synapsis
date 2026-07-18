@@ -837,7 +837,11 @@ export async function POST(req: NextRequest) {
             did: manifest.did,
             nodeDomain,
             updatedAt: new Date().toISOString(),
-        }], { authoritativeDomain: nodeDomain, allowIdentityChange: true });
+        }], {
+            authoritativeDomain: nodeDomain,
+            allowIdentityChange: true,
+            identityVerified: true,
+        });
 
         // Import following list
         let importedFollowing = 0;

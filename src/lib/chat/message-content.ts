@@ -2,19 +2,13 @@ import { z } from 'zod';
 
 import { ALLOWED_MEDIA_TYPES, getMaxMediaSize } from '@/lib/media/upload-policy';
 import { E2EE_MAX_MESSAGE_PLAINTEXT_BYTES } from '@/lib/e2ee/protocol';
+import { federationMediaUrlSchema } from '@/lib/utils/federation';
 
 export const CHAT_ATTACHMENT_LIMIT = 4;
 export const CHAT_MESSAGE_TEXT_MAX_BYTES = 8_000;
 
 const chatAttachmentSchema = z.strictObject({
-  url: z.string().url().max(4_096).refine((value) => {
-    try {
-      const protocol = new URL(value).protocol;
-      return protocol === 'https:' || protocol === 'http:';
-    } catch {
-      return false;
-    }
-  }, 'Attachment URLs must use HTTP or HTTPS'),
+  url: federationMediaUrlSchema,
   filename: z.string().trim().min(1).max(255),
   mimeType: z.enum(ALLOWED_MEDIA_TYPES),
   size: z.number().int().positive().max(100 * 1024 * 1024),

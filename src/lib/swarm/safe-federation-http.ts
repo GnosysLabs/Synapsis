@@ -9,6 +9,7 @@ import {
 import { request as httpsRequest } from 'node:https';
 import { isIP, type LookupFunction } from 'node:net';
 import { parse as parseDomain } from 'tldts';
+import { isNodeBlocked } from './node-blocklist';
 
 export const E2EE_FEDERATION_TIMEOUT_MS = 8_000;
 export const E2EE_FEDERATION_MAX_RESPONSE_BYTES = 256 * 1024;
@@ -36,6 +37,7 @@ const FORBIDDEN_REQUEST_HEADERS = new Set([
 
 export type SafeFederationErrorCode =
   | 'ABORTED'
+  | 'BLOCKED_DOMAIN'
   | 'DNS_RESOLUTION_FAILED'
   | 'INVALID_HEADER'
   | 'INVALID_JSON'
@@ -673,4 +675,24 @@ export function createSafeFederationRequester(
   };
 }
 
-export const safeFederationRequest = createSafeFederationRequester();
+const unrestrictedSafeFederationRequest = createSafeFederationRequester();
+
+/** Production requester with the local node blocklist as a hard boundary. */
+export async function safeFederationRequest(
+  url: string,
+  options: SafeFederationRequestOptions = {},
+): Promise<SafeFederationResponse> {
+  let host: string;
+  try {
+    host = new URL(url).host;
+  } catch (error) {
+    throw new SafeFederationError('INVALID_URL', 'Federation URL is invalid', error);
+  }
+  if (await isNodeBlocked(host)) {
+    throw new SafeFederationError(
+      'BLOCKED_DOMAIN',
+      `Federation requests to blocked node ${host} are not permitted`,
+    );
+  }
+  return unrestrictedSafeFederationRequest(url, options);
+}

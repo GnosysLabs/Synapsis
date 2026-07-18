@@ -1,30 +1,39 @@
-/**
- * Swarm Follow Endpoint
- * 
- * POST: Receive a follow from another swarm node
- * 
- * This enables swarm-native follows between Synapsis nodes
- * with instant delivery and real-time updates.
- * 
- * SECURITY: All requests must be cryptographically signed by the sender.
- */
-
 import { NextRequest, NextResponse } from 'next/server';
-import { db, users, notifications, remoteFollowers } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
+
+import {
+  db,
+  notifications,
+  remoteFollowers,
+  swarmInboundActions,
+  users,
+} from '@/db';
+import { signedUserActionSchema } from '@/lib/e2ee/protocol';
+import {
+  FederatedIdentityContinuityError,
+  federationActionContextSchema,
+  federationActionDomain,
+  pinVerifiedFederatedActorIdentity,
+  verifyFederatedUserAction,
+} from '@/lib/swarm/federated-action';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { applyOrderedFederatedRelationshipState } from '@/lib/swarm/relationship-ordering';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { isFreshFederationTimestamp } from '@/lib/swarm/signature';
 import {
   federationMediaUrlSchema,
   localHandleSchema,
   nodeDomainSchema,
 } from '@/lib/utils/federation';
-import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
-import { claimInboundFederationAction } from '@/lib/swarm/replay';
 
-const swarmFollowSchema = z.object({
+const PATH = '/api/swarm/interactions/follow' as const;
+
+const swarmFollowSchema = z.strictObject({
+  federation: federationActionContextSchema,
+  userAction: signedUserActionSchema,
   targetHandle: localHandleSchema,
-  follow: z.object({
+  follow: z.strictObject({
     followerHandle: localHandleSchema,
     followerDisplayName: z.string().min(1).max(50),
     followerAvatarUrl: federationMediaUrlSchema.optional(),
@@ -36,108 +45,114 @@ const swarmFollowSchema = z.object({
   signature: z.string().min(1).max(16_384),
 });
 
-/**
- * POST /api/swarm/interactions/follow
- * 
- * Receives a follow from another swarm node.
- */
+const followActionDataSchema = z.strictObject({ targetHandle: z.string().min(3).max(320) });
+
 export async function POST(request: NextRequest) {
   try {
-    if (!db) {
-      return NextResponse.json({ error: 'Database not available' }, { status: 503 });
-    }
-
-    const body = await readLimitedJson(request);
-    const data = swarmFollowSchema.parse(body);
+    const data = swarmFollowSchema.parse(await readLimitedJson(request));
     if (!isFreshFederationTimestamp(data.follow.timestamp)) {
       return NextResponse.json({ error: 'Stale interaction' }, { status: 400 });
     }
 
-    // SECURITY: Verify the signature
+    const actorDomain = federationActionDomain(data.follow.followerNodeDomain);
+    if (!actorDomain) {
+      return NextResponse.json({ error: 'Invalid source node' }, { status: 400 });
+    }
     const { signature, ...payload } = data;
-    const isValid = await verifySwarmRequest(payload, signature, data.follow.followerNodeDomain);
-
-    if (!isValid) {
-      console.warn(`[Swarm] Invalid signature for follow from ${data.follow.followerHandle}@${data.follow.followerNodeDomain}`);
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
-    }
-    if (!await claimInboundFederationAction(
-      data.follow.followerNodeDomain,
-      'follow',
-      data.follow.interactionId,
-    )) {
-      return NextResponse.json({ success: true, message: 'Interaction already processed' });
-    }
-
-    // Find the target user (local user being followed)
-    const targetUser = await db.query.users.findFirst({
-      where: { handle: data.targetHandle.toLowerCase() },
+    const verified = await verifyFederatedUserAction({
+      payload,
+      nodeSignature: signature,
+      sourceDomain: actorDomain,
+      expectedMethod: 'POST',
+      expectedPath: PATH,
+      expectedAction: 'follow',
+      actorHandle: data.follow.followerHandle,
+      replayBinding: { targetHandle: data.targetHandle.toLowerCase() },
+      maxActionsPerMinute: 30,
     });
+    if (!verified.ok) {
+      return NextResponse.json({ error: verified.error }, { status: verified.status });
+    }
 
-    if (!targetUser) {
+    const targetHandle = data.targetHandle.toLowerCase();
+    const actionData = followActionDataSchema.safeParse(verified.userAction.data);
+    if (!actionData.success
+      || actionData.data.targetHandle.toLowerCase()
+        !== `${targetHandle}@${verified.destinationDomain}`) {
+      return NextResponse.json({ error: 'Follow target is not user-authorized' }, { status: 403 });
+    }
+    const targetUser = await db.query.users.findFirst({ where: { handle: targetHandle } });
+    if (!targetUser || targetUser.isSuspended || !hasStrictLocalUserOrigin(targetUser)) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
-
-    if (targetUser.isSuspended) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    // Construct the remote follower's actor URL (swarm-style)
-    const actorUrl = `swarm://${data.follow.followerNodeDomain}/${data.follow.followerHandle}`;
-    const inboxUrl = `https://${data.follow.followerNodeDomain}/api/swarm/interactions/inbox`;
-
-    // Check if this follow already exists
-    const existingFollow = await db.query.remoteFollowers.findFirst({
-      where: { AND: [{ userId: targetUser.id }, { actorUrl: actorUrl }] },
+    await pinVerifiedFederatedActorIdentity({
+      sourceDomain: verified.sourceDomain,
+      actorHandle: verified.actorHandle,
+      did: verified.userAction.did,
     });
-
-    if (existingFollow) {
-      return NextResponse.json({
-        success: true,
-        message: 'Already following',
-      });
-    }
-
-    // Create the remote follower record
-    await db.insert(remoteFollowers).values({
-      userId: targetUser.id,
-      actorUrl,
-      inboxUrl,
-      handle: `${data.follow.followerHandle}@${data.follow.followerNodeDomain}`,
-      activityId: data.follow.interactionId,
+    const nodeMute = await db.query.mutedNodes.findFirst({
+      where: { AND: [{ userId: targetUser.id }, { nodeDomain: actorDomain }] },
+      columns: { id: true },
     });
-
-    // Update follower count
-    await db.update(users)
-      .set({ followersCount: sql`${users.followersCount} + 1` })
-      .where(eq(users.id, targetUser.id));
-
-    // Create notification with actor info stored directly
-    try {
-      await db.insert(notifications).values({
-        userId: targetUser.id,
-        actorHandle: data.follow.followerHandle,
-        actorDisplayName: data.follow.followerDisplayName,
-        actorAvatarUrl: data.follow.followerAvatarUrl || null,
-        actorNodeDomain: data.follow.followerNodeDomain,
-        type: 'follow',
-      });
-      console.log(`[Swarm] Created follow notification for @${data.targetHandle} from ${data.follow.followerHandle}@${data.follow.followerNodeDomain}`);
-    } catch (notifError) {
-      // Log error with context but don't fail the request - notification creation is best-effort
-      console.error('[Swarm Follow] Failed to create notification:', notifError);
-      console.error('[Swarm Follow] Context:', { targetHandle: data.targetHandle, userId: targetUser.id, actor: data.follow.followerHandle });
+    if (nodeMute) {
+      return NextResponse.json({ success: true, message: 'Follow received' });
     }
 
-    console.log(`[Swarm] Received follow from ${data.follow.followerHandle}@${data.follow.followerNodeDomain} for @${data.targetHandle}`);
+    const actorUrl = `swarm://${actorDomain}/${verified.actorHandle}`;
+    const outcome = await db.transaction(async (tx) => {
+      const [claim] = await tx.insert(swarmInboundActions).values({
+        sourceDomain: actorDomain,
+        action: 'follow',
+        interactionId: verified.replayId,
+      }).onConflictDoNothing().returning({ id: swarmInboundActions.id });
+      if (!claim) return 'replay' as const;
+
+      const ordered = await applyOrderedFederatedRelationshipState(tx, {
+        sourceDomain: actorDomain,
+        relationshipKind: 'follow',
+        target: targetUser.id,
+        state: true,
+        userAction: verified.userAction,
+      }, async () => {
+        const [inserted] = await tx.insert(remoteFollowers).values({
+          userId: targetUser.id,
+          actorUrl,
+          inboxUrl: `https://${actorDomain}/api/swarm/interactions/inbox`,
+          handle: `${verified.actorHandle}@${actorDomain}`,
+          activityId: verified.replayId,
+        }).onConflictDoNothing().returning({ id: remoteFollowers.id });
+        if (!inserted) return 'unchanged' as const;
+
+        await tx.update(users)
+          .set({ followersCount: sql`${users.followersCount} + 1` })
+          .where(eq(users.id, targetUser.id));
+        await tx.insert(notifications).values({
+          userId: targetUser.id,
+          actorHandle: verified.actorHandle,
+          actorDisplayName: verified.actorHandle,
+          actorAvatarUrl: null,
+          actorNodeDomain: actorDomain,
+          interactionId: `follow:remote:${actorDomain}:${verified.replayId}`,
+          type: 'follow',
+        }).onConflictDoNothing();
+        return 'created' as const;
+      });
+      if (!ordered.applied) {
+        return ordered.reason === 'duplicate' ? 'replay' as const : 'stale' as const;
+      }
+      return ordered.value;
+    });
 
     return NextResponse.json({
       success: true,
-      message: 'Follow received',
+      message: outcome === 'replay' ? 'Interaction already processed' : 'Follow received',
     });
   } catch (error) {
     if (error instanceof FederationRequestBodyError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (error instanceof FederatedIdentityContinuityError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid request', details: error.issues }, { status: 400 });

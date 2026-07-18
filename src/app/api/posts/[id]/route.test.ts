@@ -80,10 +80,11 @@ describe('GET /api/posts/[id] federated threads', () => {
             isNsfw: false,
             nodeIsNsfw: false,
             author: {
-              handle: 'origin-author',
+              handle: 'origin_author',
               displayName: 'Origin Author',
               isNsfw: false,
               nodeIsNsfw: false,
+              nodeDomain: 'origin.social',
             },
             media: [],
           },
@@ -93,7 +94,7 @@ describe('GET /api/posts/[id] federated threads', () => {
     });
   });
 
-  it('loads delivered cross-node replies and redacts them for the current viewer', async () => {
+  it('drops a cross-node reply relayed without its original user/node proof', async () => {
     const swarmId = `swarm:origin.social:${originPostId}`;
     const response = await GET(
       new Request(`https://viewer.social/api/posts/${encodeURIComponent(swarmId)}`),
@@ -106,20 +107,8 @@ describe('GET /api/posts/[id] federated threads', () => {
       `https://origin.social/api/swarm/replies?postId=${originPostId}`,
       expect.any(Object),
     );
-    expect(body.post.repliesCount).toBe(1);
-    expect(body.replies).toHaveLength(1);
-    expect(body.replies[0]).toMatchObject({
-      id: `swarm:adult.social:${remoteReplyId}`,
-      originalPostId: remoteReplyId,
-      content: '',
-      likesCount: 2,
-      repostsCount: 3,
-      repliesCount: 4,
-      sensitiveContentRestricted: true,
-      nodeDomain: 'adult.social',
-      author: {
-        handle: 'alice@adult.social',
-      },
-    });
+    expect(body.post.repliesCount).toBe(0);
+    expect(body.replies).toEqual([]);
+    expect(JSON.stringify(body)).not.toContain('Sensitive reply body');
   });
 });

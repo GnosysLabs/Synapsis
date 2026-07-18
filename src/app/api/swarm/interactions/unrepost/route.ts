@@ -1,23 +1,29 @@
-/**
- * Swarm Unrepost Endpoint
- * 
- * POST: Receive an unrepost from another swarm node
- * 
- * SECURITY: All requests must be cryptographically signed by the sender.
- */
-
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, remoteReposts } from '@/db';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
-import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
-import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
-import { claimInboundFederationAction } from '@/lib/swarm/replay';
 
-const swarmUnrepostSchema = z.object({
+import { db, posts, remoteReposts, swarmInboundActions } from '@/db';
+import { signedUserActionSchema } from '@/lib/e2ee/protocol';
+import {
+  FederatedIdentityContinuityError,
+  federationActionContextSchema,
+  federationActionDomain,
+  pinVerifiedFederatedActorIdentity,
+  verifyFederatedUserAction,
+} from '@/lib/swarm/federated-action';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { applyOrderedFederatedRelationshipState } from '@/lib/swarm/relationship-ordering';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { isFreshFederationTimestamp } from '@/lib/swarm/signature';
+import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+
+const PATH = '/api/swarm/interactions/unrepost' as const;
+
+const swarmUnrepostSchema = z.strictObject({
+  federation: federationActionContextSchema,
+  userAction: signedUserActionSchema,
   postId: z.string().uuid(),
-  unrepost: z.object({
+  unrepost: z.strictObject({
     actorHandle: localHandleSchema,
     actorNodeDomain: nodeDomainSchema,
     interactionId: z.string().uuid(),
@@ -26,79 +32,96 @@ const swarmUnrepostSchema = z.object({
   signature: z.string().min(1).max(16_384),
 });
 
-/**
- * POST /api/swarm/interactions/unrepost
- * 
- * Receives an unrepost from another swarm node.
- */
+const unrepostActionDataSchema = z.strictObject({ postId: z.string().min(1).max(512) });
+
 export async function POST(request: NextRequest) {
   try {
-    if (!db) {
-      return NextResponse.json({ error: 'Database not available' }, { status: 503 });
-    }
-
-    const body = await readLimitedJson(request);
-    const data = swarmUnrepostSchema.parse(body);
+    const data = swarmUnrepostSchema.parse(await readLimitedJson(request));
     if (!isFreshFederationTimestamp(data.unrepost.timestamp)) {
       return NextResponse.json({ error: 'Stale interaction' }, { status: 400 });
     }
 
-    // SECURITY: Verify the signature
+    const actorDomain = federationActionDomain(data.unrepost.actorNodeDomain);
+    if (!actorDomain) {
+      return NextResponse.json({ error: 'Invalid source node' }, { status: 400 });
+    }
     const { signature, ...payload } = data;
-    const isValid = await verifySwarmRequest(payload, signature, data.unrepost.actorNodeDomain);
-
-    if (!isValid) {
-      console.warn(`[Swarm] Invalid signature for unrepost from ${data.unrepost.actorHandle}@${data.unrepost.actorNodeDomain}`);
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
+    const verified = await verifyFederatedUserAction({
+      payload,
+      nodeSignature: signature,
+      sourceDomain: actorDomain,
+      expectedMethod: 'POST',
+      expectedPath: PATH,
+      expectedAction: 'unrepost',
+      actorHandle: data.unrepost.actorHandle,
+      replayBinding: { postId: data.postId },
+      maxActionsPerMinute: 30,
+    });
+    if (!verified.ok) {
+      return NextResponse.json({ error: verified.error }, { status: verified.status });
     }
-    if (!await claimInboundFederationAction(
-      data.unrepost.actorNodeDomain,
-      'unrepost',
-      data.unrepost.interactionId,
-    )) {
-      return NextResponse.json({ success: true, message: 'Interaction already processed' });
-    }
 
-    // Find the target post
+    const actionData = unrepostActionDataSchema.safeParse(verified.userAction.data);
+    if (!actionData.success
+      || actionData.data.postId !== `swarm:${verified.destinationDomain}:${data.postId}`) {
+      return NextResponse.json({ error: 'Unrepost target is not user-authorized' }, { status: 403 });
+    }
     const post = await db.query.posts.findFirst({
-      where: { id: data.postId },
+      where: { AND: [{ id: data.postId }, { isRemoved: false }] },
+      with: { author: true },
     });
-
-    if (!post) {
+    if (!post || !hasStrictLocalUserOrigin(post.author)) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
-
-    if (post.isRemoved) {
-      return NextResponse.json({ error: 'Post not found' }, { status: 404 });
-    }
-
-    const existingRepost = await db.query.remoteReposts.findFirst({
-      where: { AND: [{ postId: data.postId }, { actorHandle: data.unrepost.actorHandle }, { actorNodeDomain: data.unrepost.actorNodeDomain }] },
+    await pinVerifiedFederatedActorIdentity({
+      sourceDomain: verified.sourceDomain,
+      actorHandle: verified.actorHandle,
+      did: verified.userAction.did,
     });
 
-    if (!existingRepost) {
-      return NextResponse.json({
-        success: true,
-        message: 'Repost already removed',
+    const outcome = await db.transaction(async (tx) => {
+      const [claim] = await tx.insert(swarmInboundActions).values({
+        sourceDomain: actorDomain,
+        action: 'unrepost',
+        interactionId: verified.replayId,
+      }).onConflictDoNothing().returning({ id: swarmInboundActions.id });
+      if (!claim) return 'replay' as const;
+
+      const ordered = await applyOrderedFederatedRelationshipState(tx, {
+        sourceDomain: actorDomain,
+        relationshipKind: 'repost',
+        target: data.postId,
+        state: false,
+        userAction: verified.userAction,
+      }, async () => {
+        const [deleted] = await tx.delete(remoteReposts).where(and(
+          eq(remoteReposts.postId, data.postId),
+          eq(remoteReposts.actorHandle, verified.actorHandle),
+          eq(remoteReposts.actorNodeDomain, actorDomain),
+        )).returning({ id: remoteReposts.id });
+        if (deleted) {
+          await tx.update(posts)
+            .set({ repostsCount: sql`max(0, ${posts.repostsCount} - 1)` })
+            .where(and(eq(posts.id, data.postId), eq(posts.isRemoved, false)));
+        }
+        return deleted ? 'deleted' as const : 'unchanged' as const;
       });
-    }
-
-    // Decrement repost count
-    await db.update(posts)
-      .set({ repostsCount: sql`max(0, ${posts.repostsCount} - 1)` })
-      .where(eq(posts.id, data.postId));
-
-    await db.delete(remoteReposts).where(eq(remoteReposts.id, existingRepost.id));
-
-    console.log(`[Swarm] Received unrepost from ${data.unrepost.actorHandle}@${data.unrepost.actorNodeDomain} on post ${data.postId}`);
+      if (!ordered.applied) {
+        return ordered.reason === 'duplicate' ? 'replay' as const : 'stale' as const;
+      }
+      return ordered.value;
+    });
 
     return NextResponse.json({
       success: true,
-      message: 'Unrepost received',
+      message: outcome === 'replay' ? 'Interaction already processed' : 'Unrepost received',
     });
   } catch (error) {
     if (error instanceof FederationRequestBodyError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (error instanceof FederatedIdentityContinuityError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid request', details: error.issues }, { status: 400 });

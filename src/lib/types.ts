@@ -30,6 +30,14 @@ export interface MediaItem {
     mimeType?: string | null;
 }
 
+/** Browser-signed media identity used when a post crosses a hostile node. */
+export interface SignedMediaDescriptor {
+    id: string;
+    url: string;
+    altText?: string | null;
+    mimeType?: string | null;
+}
+
 export interface Attachment {
     id: string;
     url: string;

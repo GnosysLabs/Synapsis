@@ -361,7 +361,11 @@ export async function registerUser(
         did: user.did,
         nodeDomain,
         updatedAt: new Date().toISOString(),
-    }], { authoritativeDomain: nodeDomain, allowIdentityChange: true });
+    }], {
+        authoritativeDomain: nodeDomain,
+        allowIdentityChange: true,
+        identityVerified: true,
+    });
 
     return user;
 }
@@ -443,6 +447,7 @@ export async function authenticateUser(
             }], {
                 authoritativeDomain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
                 allowIdentityChange: true,
+                identityVerified: true,
             });
         }
     }

@@ -9,12 +9,18 @@ const mocks = vi.hoisted(() => ({
   joinedWhere: vi.fn(),
   orderBy: vi.fn(),
   limit: vi.fn(),
-  delete: vi.fn(),
-  deleteWhere: vi.fn(),
   update: vi.fn(),
   updateSet: vi.fn(),
   updateWhere: vi.fn(),
-  verifySwarmRequest: vi.fn(),
+  transaction: vi.fn(),
+  txInsert: vi.fn(),
+  txInsertValues: vi.fn(),
+  txInsertOnConflict: vi.fn(),
+  txInsertReturning: vi.fn(),
+  txDelete: vi.fn(),
+  txDeleteWhere: vi.fn(),
+  verifyFederatedUserAction: vi.fn(),
+  pinVerifiedFederatedActorIdentity: vi.fn(),
   isTrustedFederationRead: vi.fn(),
   requireClassification: vi.fn(),
 }));
@@ -23,8 +29,8 @@ vi.mock('@/db', () => ({
   db: {
     query: { posts: { findFirst: mocks.findFirst } },
     select: mocks.select,
-    delete: mocks.delete,
     update: mocks.update,
+    transaction: mocks.transaction,
   },
   posts: {
     id: 'posts.id',
@@ -49,19 +55,30 @@ vi.mock('@/db', () => ({
   },
   media: {},
   notifications: {},
+  swarmInboundActions: {
+    id: 'swarmInboundActions.id',
+    sourceDomain: 'swarmInboundActions.sourceDomain',
+    action: 'swarmInboundActions.action',
+    interactionId: 'swarmInboundActions.interactionId',
+  },
+  handleRegistry: {},
 }));
 
 vi.mock('drizzle-orm', () => ({
-  eq: vi.fn(() => ({})),
+  eq: vi.fn((field, value) => ({ op: 'eq', field, value })),
   desc: vi.fn(() => ({})),
   and: vi.fn(() => ({})),
   sql: vi.fn(() => ({})),
 }));
 
-vi.mock('@/lib/swarm/signature', () => ({
-  verifySwarmRequest: mocks.verifySwarmRequest,
-  isFreshFederationTimestamp: vi.fn(() => true),
-}));
+vi.mock('@/lib/swarm/federated-action', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/swarm/federated-action')>();
+  return {
+    ...actual,
+    verifyFederatedUserAction: mocks.verifyFederatedUserAction,
+    pinVerifiedFederatedActorIdentity: mocks.pinVerifiedFederatedActorIdentity,
+  };
+});
 vi.mock('@/lib/swarm/signed-read', () => ({
   isTrustedFederationRead: mocks.isTrustedFederationRead,
 }));
@@ -74,13 +91,46 @@ import { DELETE, GET } from './route';
 
 const replyId = '15f11861-693a-4f70-8480-5d82bb8d14a7';
 const parentId = '25f11861-693a-4f70-8480-5d82bb8d14a7';
+const authorDid = 'did:key:zAliceSigningKey';
+const actionIssuedAt = Date.now();
 const deletionTimestamp = new Date().toISOString();
+
+function deletionUserAction(postId = replyId) {
+  return {
+    action: 'delete',
+    data: { postId },
+    did: authorDid,
+    handle: 'alice',
+    ts: actionIssuedAt,
+    nonce: 'delete_nonce_123',
+    sig: 'delete_signature_123',
+  };
+}
+
+function deletionPayload(nodeDomain = 'source.social') {
+  return {
+    federation: {
+      protocol: 'synapsis-federation-action-v2' as const,
+      sourceDomain: 'source.social',
+      destinationDomain: 'target.social',
+      method: 'DELETE' as const,
+      path: '/api/swarm/replies',
+      issuedAt: actionIssuedAt,
+      expiresAt: actionIssuedAt + 60_000,
+    },
+    userAction: deletionUserAction(),
+    replyId,
+    nodeDomain,
+    authorHandle: 'alice',
+    timestamp: deletionTimestamp,
+  };
+}
 
 function deleteRequest(headers: Record<string, string> = {}, nodeDomain = 'source.social') {
   return new Request('https://target.social/api/swarm/replies', {
     method: 'DELETE',
     headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify({ replyId, nodeDomain, authorHandle: 'alice', timestamp: deletionTimestamp }),
+    body: JSON.stringify(deletionPayload(nodeDomain)),
   });
 }
 
@@ -89,7 +139,17 @@ describe('swarm reply authorization and sensitivity', () => {
     vi.clearAllMocks();
     mocks.requireClassification.mockResolvedValue(false);
     mocks.isTrustedFederationRead.mockResolvedValue(false);
-    mocks.verifySwarmRequest.mockResolvedValue(false);
+    mocks.verifyFederatedUserAction.mockResolvedValue({
+      ok: false,
+      status: 403,
+      error: 'Invalid user signature',
+    });
+    mocks.pinVerifiedFederatedActorIdentity.mockResolvedValue({
+      sourceDomain: 'source.social',
+      actorHandle: 'alice',
+      qualifiedHandle: 'alice@source.social',
+      did: authorDid,
+    });
     mocks.findFirst.mockResolvedValue(null);
     mocks.limit.mockResolvedValue([]);
     mocks.orderBy.mockReturnValue({ limit: mocks.limit });
@@ -101,55 +161,149 @@ describe('swarm reply authorization and sensitivity', () => {
       where: mocks.selectWhere,
     });
     mocks.select.mockReturnValue({ from: mocks.selectFrom });
-    mocks.deleteWhere.mockResolvedValue(undefined);
-    mocks.delete.mockReturnValue({ where: mocks.deleteWhere });
     mocks.updateWhere.mockResolvedValue(undefined);
     mocks.updateSet.mockReturnValue({ where: mocks.updateWhere });
     mocks.update.mockReturnValue({ set: mocks.updateSet });
+    mocks.txInsertReturning.mockResolvedValue([{ id: 'inbound-claim' }]);
+    mocks.txInsertOnConflict.mockReturnValue({ returning: mocks.txInsertReturning });
+    mocks.txInsertValues.mockReturnValue({ onConflictDoNothing: mocks.txInsertOnConflict });
+    mocks.txInsert.mockReturnValue({ values: mocks.txInsertValues });
+    mocks.txDeleteWhere.mockResolvedValue(undefined);
+    mocks.txDelete.mockReturnValue({ where: mocks.txDeleteWhere });
+    mocks.transaction.mockImplementation(async (callback) => callback({
+      insert: mocks.txInsert,
+      delete: mocks.txDelete,
+    }));
   });
 
   it('rejects unsigned deletion before reading or mutating a reply', async () => {
     const response = await DELETE(deleteRequest() as never);
 
     expect(response.status).toBe(401);
+    expect(mocks.verifyFederatedUserAction).not.toHaveBeenCalled();
     expect(mocks.findFirst).not.toHaveBeenCalled();
-    expect(mocks.delete).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
-  it('rejects bad signatures and source-domain mismatches', async () => {
-    const badSignature = await DELETE(deleteRequest({
+  it('rejects an invalid double-signed deletion proof', async () => {
+    const response = await DELETE(deleteRequest({
       'X-Swarm-Source-Domain': 'source.social',
       'X-Swarm-Signature': 'bad',
     }) as never);
-    expect(badSignature.status).toBe(403);
 
-    const mismatch = await DELETE(deleteRequest({
+    expect(response.status).toBe(403);
+    expect(mocks.verifyFederatedUserAction).toHaveBeenCalledWith({
+      payload: deletionPayload(),
+      nodeSignature: 'bad',
+      sourceDomain: 'source.social',
+      expectedMethod: 'DELETE',
+      expectedPath: '/api/swarm/replies',
+      expectedAction: 'delete',
+      actorHandle: 'alice',
+      replayBinding: { replyId },
+      maxActionsPerMinute: 30,
+    });
+    expect(mocks.findFirst).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a deletion whose node header and payload source disagree', async () => {
+    const response = await DELETE(deleteRequest({
       'X-Swarm-Source-Domain': 'other.social',
       'X-Swarm-Signature': 'signed',
     }) as never);
-    expect(mismatch.status).toBe(400);
+
+    expect(response.status).toBe(403);
+    expect(mocks.verifyFederatedUserAction).not.toHaveBeenCalled();
     expect(mocks.findFirst).not.toHaveBeenCalled();
   });
 
+  it('rejects deletion when the verified DID does not own the stored reply', async () => {
+    mocks.verifyFederatedUserAction.mockResolvedValue({
+      ok: true,
+      actorHandle: 'alice',
+      sourceDomain: 'source.social',
+      destinationDomain: 'target.social',
+      userAction: deletionUserAction(),
+      replayId: 'deletion-replay-id',
+    });
+    mocks.findFirst.mockResolvedValue({
+      id: 'stored-reply',
+      replyToId: parentId,
+      author: {
+        did: 'did:key:zDifferentSigningKey',
+        handle: 'alice@source.social',
+      },
+    });
+
+    const response = await DELETE(deleteRequest({
+      'X-Swarm-Source-Domain': 'source.social',
+      'X-Swarm-Signature': 'signed',
+    }) as never);
+
+    expect(response.status).toBe(403);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.txDelete).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
   it('deletes only the signed source namespace and resynchronizes its parent', async () => {
-    mocks.verifySwarmRequest.mockResolvedValue(true);
-    mocks.findFirst.mockResolvedValue({ id: 'stored-reply', replyToId: parentId });
+    mocks.verifyFederatedUserAction.mockResolvedValue({
+      ok: true,
+      actorHandle: 'alice',
+      sourceDomain: 'source.social',
+      destinationDomain: 'target.social',
+      userAction: deletionUserAction(),
+      replayId: 'deletion-replay-id',
+    });
+    mocks.findFirst.mockResolvedValue({
+      id: 'stored-reply',
+      replyToId: parentId,
+      author: {
+        did: authorDid,
+        handle: 'alice@source.social',
+      },
+    });
+    mocks.selectWhere.mockResolvedValue([{ count: 4 }]);
+
     const response = await DELETE(deleteRequest({
       'X-Swarm-Source-Domain': 'source.social',
       'X-Swarm-Signature': 'signed',
     }) as never);
 
     expect(response.status).toBe(200);
-    expect(mocks.verifySwarmRequest).toHaveBeenCalledWith(
-      { replyId, nodeDomain: 'source.social', authorHandle: 'alice', timestamp: deletionTimestamp },
-      'signed',
-      'source.social',
-    );
+    await expect(response.json()).resolves.toEqual({ success: true, replayed: false });
+    expect(mocks.verifyFederatedUserAction).toHaveBeenCalledWith(expect.objectContaining({
+      payload: deletionPayload(),
+      nodeSignature: 'signed',
+      sourceDomain: 'source.social',
+      expectedMethod: 'DELETE',
+      expectedPath: '/api/swarm/replies',
+      expectedAction: 'delete',
+      actorHandle: 'alice',
+      replayBinding: { replyId },
+    }));
     expect(mocks.findFirst).toHaveBeenCalledWith({
       where: { apId: `swarm:source.social:${replyId}` },
+      with: { author: true },
     });
-    expect(mocks.delete).toHaveBeenCalled();
-    expect(mocks.update).toHaveBeenCalled();
+    expect(mocks.txInsertValues).toHaveBeenCalledWith({
+      sourceDomain: 'source.social',
+      action: 'delete_reply',
+      interactionId: 'deletion-replay-id',
+    });
+    expect(mocks.txDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 'posts.id' }));
+    expect(mocks.txDeleteWhere).toHaveBeenCalledWith({
+      op: 'eq',
+      field: 'posts.id',
+      value: 'stored-reply',
+    });
+    expect(mocks.updateSet).toHaveBeenCalledWith({ repliesCount: 4 });
+    expect(mocks.updateWhere).toHaveBeenCalledWith({
+      op: 'eq',
+      field: 'posts.id',
+      value: parentId,
+    });
   });
 
   it('denies an unsigned sensitive parent thread', async () => {

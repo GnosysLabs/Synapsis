@@ -7,37 +7,15 @@
 import { getActiveSwarmNodes } from './registry';
 import type { SwarmPost } from '@/app/api/swarm/timeline/route';
 import { filterBlockedDomains, isNodeBlocked, normalizeNodeDomain } from './node-blocklist';
-import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import { feedActivityDate, getSourceContinuationDate } from '@/lib/posts/feed-pagination';
 import { isPostSensitive } from '@/lib/nsfw/content-visibility';
 import { signedFederationRead } from './signed-read';
 import { parseRemoteTimelineResponse } from './remote-timeline-payload';
+import { mapWithConcurrency } from '@/lib/async/concurrency';
 
 const MAX_FEDERATION_NODES_PER_TIMELINE = 24;
 const MAX_CONCURRENT_TIMELINE_FETCHES = 6;
-const MAX_PREVIEW_ENRICHMENTS = 20;
-const MAX_CONCURRENT_PREVIEW_FETCHES = 4;
-
-async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  mapper: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        results[index] = await mapper(items[index], index);
-      }
-    },
-  );
-  await Promise.all(workers);
-  return results;
-}
+const MAX_AGGREGATED_TIMELINE_POSTS = 200;
 
 interface TimelineResult {
   posts: SwarmPost[];
@@ -84,88 +62,6 @@ function isSensitiveSwarmPost(
   }
   const legacyReply = (post as SwarmPost & { replyTo?: SwarmPost | null }).replyTo;
   return Boolean(legacyReply && isSensitiveSwarmPost(legacyReply, legacyReply.nodeIsNsfw));
-}
-
-/**
- * Extract the first URL from post content
- */
-function extractFirstUrl(content: string): string | null {
-  const urlMatch = content.match(/https?:\/\/[^\s<>"{}|\\^`[\]]+/);
-  if (!urlMatch) return null;
-  // Clean trailing punctuation
-  return urlMatch[0].replace(/[)\].,!?;:]+$/, '');
-}
-
-/**
- * Fetch link preview for a URL
- */
-async function fetchLinkPreview(url: string): Promise<LinkPreviewData | null> {
-  try {
-    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
-    const protocol = nodeDomain === 'localhost' ? 'http' : 'https';
-    const previewUrl = `${protocol}://${nodeDomain}/api/media/preview?url=${encodeURIComponent(url)}`;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000); // 3s timeout for previews
-
-    const response = await fetch(previewUrl, {
-      headers: { 'Accept': 'application/json' },
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    return {
-      url: data.url || url,
-      title: data.title || null,
-      description: data.description || null,
-      image: data.image || null,
-      type: data.type || null,
-      videoUrl: data.videoUrl || null,
-      media: data.media || null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Enrich swarm posts with link previews if they have URLs but no preview data
- */
-async function enrichPostsWithPreviews(posts: SwarmPost[]): Promise<SwarmPost[]> {
-  let remainingEnrichments = MAX_PREVIEW_ENRICHMENTS;
-  return mapWithConcurrency(posts, MAX_CONCURRENT_PREVIEW_FETCHES, async (post) => {
-    // Skip if already has link preview data
-    if (post.linkPreviewUrl) return post;
-
-    // Extract URL from content
-    const url = extractFirstUrl(post.content);
-    if (!url) return post;
-
-    // Skip video URLs (handled by VideoEmbed component)
-    if (url.match(/(youtube\.com|youtu\.be|vimeo\.com)/)) return post;
-
-    if (remainingEnrichments <= 0) return post;
-    remainingEnrichments -= 1;
-
-    // Fetch preview
-    const preview = await fetchLinkPreview(url);
-    if (!preview) return post;
-
-    return {
-      ...post,
-      linkPreviewUrl: preview.url,
-      linkPreviewTitle: preview.title || undefined,
-      linkPreviewDescription: preview.description || undefined,
-      linkPreviewImage: preview.image || undefined,
-      linkPreviewType: preview.type || undefined,
-      linkPreviewVideoUrl: preview.videoUrl || undefined,
-      linkPreviewMedia: preview.media || undefined,
-    };
-  });
 }
 
 /**
@@ -314,13 +210,14 @@ export async function fetchSwarmTimeline(
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    });
-
-  // Enrich posts that have URLs but no link preview data
-  const enrichedPosts = await enrichPostsWithPreviews(uniquePosts);
+    })
+    .slice(0, MAX_AGGREGATED_TIMELINE_POSTS);
 
   return {
-    posts: enrichedPosts,
+    // Never background-fetch arbitrary URLs embedded by a hostile peer. A
+    // remote post may supply bounded preview metadata, or clients render its
+    // ordinary link without disclosing this node's IP/timing to that target.
+    posts: uniquePosts,
     sources,
     fetchedAt: new Date().toISOString(),
     continuationDate: getSourceContinuationDate(results, effectivePostsPerNode)?.toISOString() || null,

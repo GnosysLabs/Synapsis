@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { db, posts, users } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
@@ -10,10 +11,23 @@ import {
 import { isPostSensitive, redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
-import { getKnownSwarmNodeNsfw } from '@/lib/swarm/registry';
+import {
+    getKnownSwarmNodeNsfw,
+    getPinnedSwarmNodePublicKey,
+} from '@/lib/swarm/registry';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
-import { createSignedPayload } from '@/lib/swarm/signature';
+import { createSignedPayload, verifySwarmRequest } from '@/lib/swarm/signature';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import { requireSignedAction } from '@/lib/auth/verify-signature';
+import { signedUserActionSchema, type SignedUserAction } from '@/lib/e2ee/protocol';
+import {
+    createFederationActionContext,
+    pinVerifiedFederatedActorIdentity,
+} from '@/lib/swarm/federated-action';
+import {
+    parseRemotePostDetailResponse,
+    parseRemoteRepliesResponse,
+} from '@/lib/swarm/remote-post-payload';
 
 interface SwarmReplyDeletionPayload {
     replyId: string;
@@ -24,9 +38,19 @@ interface SwarmReplyDeletionPayload {
 async function sendSignedSwarmReplyDeletion(
     originDomain: string,
     deletion: SwarmReplyDeletionPayload,
+    userAction: SignedUserAction,
 ) {
     const protocol = originDomain.includes('localhost') ? 'http' : 'https';
-    const signedDeletion = { ...deletion, timestamp: new Date().toISOString() };
+    const signedDeletion = {
+        federation: createFederationActionContext({
+            destinationDomain: originDomain,
+            method: 'DELETE',
+            path: '/api/swarm/replies',
+        }),
+        userAction,
+        ...deletion,
+        timestamp: new Date().toISOString(),
+    };
     const { payload, signature } = await createSignedPayload(signedDeletion);
     return safeFederationRequest(`${protocol}://${originDomain}/api/swarm/replies`, {
         method: 'DELETE',
@@ -262,7 +286,15 @@ export async function GET(
                     const res = postResult.value;
 
                     if (res.status >= 200 && res.status < 300) {
-                        const data = res.json() as { post: SwarmDetailPostInput; replies?: SwarmDetailPostInput[] };
+                        const validatedDetail = parseRemotePostDetailResponse(
+                            res.json(),
+                            originDomain,
+                            originalPostId,
+                        );
+                        const data = validatedDetail as unknown as {
+                            post: SwarmDetailPostInput;
+                            replies: SwarmDetailPostInput[];
+                        };
                         const knownAdultNode = await getKnownSwarmNodeNsfw(originDomain) === true;
                         const classifyOriginPost = (post: SwarmDetailPostInput): SwarmDetailPostInput => knownAdultNode
                             ? {
@@ -293,8 +325,38 @@ export async function GET(
                         if (repliesResult.status === 'fulfilled'
                             && repliesResult.value.status >= 200
                             && repliesResult.value.status < 300) {
-                            const threadData = repliesResult.value.json() as { replies?: SwarmDetailPostInput[] };
-                            originReplies = threadData.replies || originReplies;
+                            try {
+                                // A hostile relay can name arbitrary provenance
+                                // source domains. Already-pinned node identities
+                                // are cheap; cap first-contact DNS/key discovery
+                                // per thread load to prevent callback amplification.
+                                const unpinnedProvenanceSources = new Set<string>();
+                                originReplies = await parseRemoteRepliesResponse(
+                                    repliesResult.value.json(),
+                                    originDomain,
+                                    originalPostId,
+                                    {
+                                        verifyNodeProof: async (payload, signature, senderDomain) => {
+                                            const pinned = await getPinnedSwarmNodePublicKey(senderDomain);
+                                            if (!pinned && !unpinnedProvenanceSources.has(senderDomain)) {
+                                                if (unpinnedProvenanceSources.size >= 4) return false;
+                                                unpinnedProvenanceSources.add(senderDomain);
+                                            }
+                                            return verifySwarmRequest(payload, signature, senderDomain);
+                                        },
+                                        verifyIdentityContinuity: async (identity) => {
+                                            try {
+                                                await pinVerifiedFederatedActorIdentity(identity);
+                                                return true;
+                                            } catch {
+                                                return false;
+                                            }
+                                        },
+                                    },
+                                ) as unknown as SwarmDetailPostInput[];
+                            } catch (error) {
+                                console.warn(`[Posts] Ignoring invalid thread response from ${originDomain}`, error);
+                            }
                         }
 
                         replyPosts = originReplies.map((reply) => mapSwarmDetailPost({
@@ -503,11 +565,17 @@ export async function DELETE(
     { params }: { params: Promise<{ id: string }> }
 ) {
     try {
-        const { requireAuth } = await import('@/lib/auth');
-        const user = await requireAuth();
+        const signedAction = signedUserActionSchema.parse(await request.json());
+        const user = await requireSignedAction(signedAction, 'delete');
         const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const { id: rawId } = await params;
-        const id = normalizeSameNodePostId(decodeURIComponent(rawId), nodeDomain);
+        const decodedId = decodeURIComponent(rawId);
+        const deleteData = z.strictObject({ postId: z.string().min(1).max(512) })
+            .parse(signedAction.data);
+        if (deleteData.postId !== decodedId) {
+            return NextResponse.json({ error: 'Post ID mismatch' }, { status: 403 });
+        }
+        const id = normalizeSameNodePostId(decodedId, nodeDomain);
 
         // Handle swarm post IDs (format: swarm:domain:uuid)
         if (id.startsWith('swarm:')) {
@@ -590,7 +658,7 @@ export async function DELETE(
                             replyId: deliveredReplyId.originalPostId,
                             nodeDomain: normalizedLocalDomain,
                             authorHandle: user.handle,
-                        });
+                        }, signedAction);
 
                         if (deleteRes.status >= 200 && deleteRes.status < 300) {
                             return NextResponse.json({ success: true });
@@ -654,7 +722,7 @@ export async function DELETE(
                         replyId: post.id,
                         nodeDomain: normalizeNodeDomain(nodeDomain),
                         authorHandle: user.handle,
-                    });
+                    }, signedAction);
 
                     if (res.status >= 200 && res.status < 300) {
                         console.log(`[Swarm] Deletion propagated to ${originDomain}`);
@@ -678,8 +746,8 @@ export async function DELETE(
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error('Delete post error:', error);
-        if (error instanceof Error && error.message === 'Authentication required') {
-            return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+        if (error instanceof z.ZodError) {
+            return NextResponse.json({ error: 'Invalid signed deletion' }, { status: 400 });
         }
         return NextResponse.json(
             { error: 'Failed to delete post' },

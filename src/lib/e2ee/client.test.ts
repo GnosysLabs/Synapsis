@@ -124,7 +124,7 @@ describe('stored encrypted messages', () => {
     const sender = await generateE2EEKeyMaterial();
     const recipient = await generateE2EEKeyMaterial();
     const attachments = [{
-      url: 'https://media.example/chat/photo.png',
+      url: 'https://stuffbox.xyz/chat/photo.png',
       filename: 'photo.png',
       mimeType: 'image/png' as const,
       size: 1_024,

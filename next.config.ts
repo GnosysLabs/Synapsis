@@ -39,7 +39,7 @@ export const contentSecurityPolicy = [
   "media-src 'self' blob: https:",
   "font-src 'self' data:",
   "connect-src 'self' https: wss:",
-  "frame-src https://challenges.cloudflare.com",
+  "frame-src https://challenges.cloudflare.com https://www.youtube-nocookie.com https://player.vimeo.com",
   "worker-src 'self' blob:",
 ].join('; ');
 
@@ -55,7 +55,10 @@ const nextConfig: NextConfig = {
   
   // Turbopack configuration
   turbopack: {
-    root: process.cwd(),
+    // Hop workspaces intentionally share the parent checkout's dependencies.
+    // Normal builds retain process.cwd(); isolated verification may point at
+    // that containing checkout so Turbopack can resolve Next.js.
+    root: process.env.SYNAPSIS_TURBOPACK_ROOT || process.cwd(),
   },
 
   async headers() {
@@ -66,7 +69,7 @@ const nextConfig: NextConfig = {
           { key: 'Content-Security-Policy', value: contentSecurityPolicy },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'DENY' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Referrer-Policy', value: 'no-referrer' },
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
           { key: 'Cross-Origin-Opener-Policy', value: 'same-origin-allow-popups' },
         ],

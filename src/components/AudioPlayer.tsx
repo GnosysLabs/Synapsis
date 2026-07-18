@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Music2, Pause, Play } from 'lucide-react';
 
 import { loadAudioMetadata, type AudioTrackMetadata } from '@/lib/media/audio-metadata';
@@ -28,26 +28,33 @@ export function AudioPlayer({ src, title = 'Audio track' }: AudioPlayerProps) {
         metadata: AudioTrackMetadata;
         artworkUrl: string | null;
     } | null>(null);
+    const metadataRequestSrcRef = useRef<string | null>(null);
+    const artworkUrlRef = useRef<string | null>(null);
 
     useEffect(() => {
-        let active = true;
-        let nextArtworkUrl: string | null = null;
+        metadataRequestSrcRef.current = null;
+        return () => {
+            metadataRequestSrcRef.current = null;
+            if (artworkUrlRef.current) URL.revokeObjectURL(artworkUrlRef.current);
+            artworkUrlRef.current = null;
+        };
+    }, [src]);
 
+    const ensureMetadata = useCallback(() => {
+        if (metadataRequestSrcRef.current === src) return;
+        metadataRequestSrcRef.current = src;
         void loadAudioMetadata(src).then((nextMetadata) => {
-            if (!active || !nextMetadata) return;
-            if (nextMetadata.artwork) {
-                nextArtworkUrl = URL.createObjectURL(new Blob(
+            if (metadataRequestSrcRef.current !== src || !nextMetadata) return;
+            const artworkUrl = nextMetadata.artwork
+                ? URL.createObjectURL(new Blob(
                     [nextMetadata.artwork.data as BlobPart],
                     { type: nextMetadata.artwork.mimeType }
-                ));
-            }
-            setResolvedMetadata({ src, metadata: nextMetadata, artworkUrl: nextArtworkUrl });
+                ))
+                : null;
+            if (artworkUrlRef.current) URL.revokeObjectURL(artworkUrlRef.current);
+            artworkUrlRef.current = artworkUrl;
+            setResolvedMetadata({ src, metadata: nextMetadata, artworkUrl });
         });
-
-        return () => {
-            active = false;
-            if (nextArtworkUrl) URL.revokeObjectURL(nextArtworkUrl);
-        };
     }, [src]);
 
     const metadata = resolvedMetadata?.src === src ? resolvedMetadata.metadata : null;
@@ -58,6 +65,7 @@ export function AudioPlayer({ src, title = 'Audio track' }: AudioPlayerProps) {
     const togglePlayback = async () => {
         const audio = audioRef.current;
         if (!audio) return;
+        ensureMetadata();
         if (audio.paused) {
             await audio.play();
         } else {
@@ -77,7 +85,7 @@ export function AudioPlayer({ src, title = 'Audio track' }: AudioPlayerProps) {
             <audio
                 ref={audioRef}
                 src={src}
-                preload="metadata"
+                preload="none"
                 onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
                 onDurationChange={(event) => setDuration(event.currentTarget.duration)}
                 onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}

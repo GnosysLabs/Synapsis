@@ -8,7 +8,7 @@
 
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { processGossip } from '@/lib/swarm/gossip';
+import { establishDirectGossipPeer, processGossip } from '@/lib/swarm/gossip';
 import { markNodeSuccess } from '@/lib/swarm/registry';
 import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
 import type { SwarmGossipPayload } from '@/lib/swarm/types';
@@ -68,8 +68,7 @@ export async function POST(request: Request) {
     if (!isFreshFederationTimestamp(data.timestamp)) {
       return NextResponse.json({ error: 'Stale gossip payload' }, { status: 400 });
     }
-    if (isRateLimited('swarm-gossip-global', 120, 60 * 1_000)
-      || isRateLimited(`swarm-gossip-node:${getPublicSwarmDomain(data.sender) || data.sender}`, 30, 60 * 1_000)) {
+    if (isRateLimited('swarm-gossip-global', 120, 60 * 1_000)) {
       return NextResponse.json({ error: 'Too many gossip requests' }, { status: 429 });
     }
     
@@ -108,12 +107,23 @@ export async function POST(request: Request) {
         { status: 403 }
       );
     }
+    if (isRateLimited(`swarm-gossip-node:${getPublicSwarmDomain(data.sender)}`, 30, 60 * 1_000)) {
+      return NextResponse.json({ error: 'Too many gossip requests' }, { status: 429 });
+    }
 
     console.log(`[Swarm] Gossip from ${data.sender}: ${data.nodes.length} nodes, ${data.handles?.length || 0} handles`);
 
-    // Process the incoming gossip and build our response
+    if (!await establishDirectGossipPeer(payload.nodes, data.sender)) {
+      return NextResponse.json(
+        { error: 'Gossip sender did not provide a complete exact-origin identity' },
+        { status: 400 },
+      );
+    }
+
+    // Process the incoming gossip and build our response. The sender has
+    // already been established above; relayed entries remain hints only.
     const response = await processGossip(payload as SwarmGossipPayload, {
-      senderAuthenticated: true,
+      senderAuthenticated: false,
     });
     
     // Mark the sender as successfully contacted

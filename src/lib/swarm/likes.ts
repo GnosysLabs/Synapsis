@@ -1,4 +1,10 @@
 import { signedFederationRead } from './signed-read';
+import { mapWithConcurrency } from '@/lib/async/concurrency';
+import { z } from 'zod';
+
+const MAX_LIKE_STATUS_TARGETS = 50;
+const MAX_CONCURRENT_LIKE_STATUS_REQUESTS = 6;
+const likeStatusResponseSchema = z.strictObject({ isLiked: z.boolean() });
 
 export interface SwarmLikeTarget {
   id: string;
@@ -17,8 +23,10 @@ export async function getViewerSwarmLikedPostIds(
     return likedIds;
   }
 
-  await Promise.all(
-    targets.map(async (target) => {
+  await mapWithConcurrency(
+    targets.slice(0, MAX_LIKE_STATUS_TARGETS),
+    MAX_CONCURRENT_LIKE_STATUS_REQUESTS,
+    async (target) => {
       try {
         const protocol = target.nodeDomain.includes('localhost') ? 'http' : 'https';
         const res = await signedFederationRead(
@@ -34,13 +42,13 @@ export async function getViewerSwarmLikedPostIds(
           return;
         }
 
-        const data = res.json() as { isLiked?: boolean };
-        if (data.isLiked) {
+        const data = likeStatusResponseSchema.safeParse(res.json());
+        if (data.success && data.data.isLiked) {
           likedIds.add(target.id);
         }
       } catch {
       }
-    })
+    },
   );
 
   return likedIds;

@@ -1,27 +1,39 @@
-/**
- * Swarm Repost Endpoint
- * 
- * POST: Receive a repost from another swarm node
- * 
- * SECURITY: All requests must be cryptographically signed by the sender.
- */
-
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, notifications, remoteReposts } from '@/db';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
+
+import {
+  db,
+  notifications,
+  posts,
+  remoteReposts,
+  swarmInboundActions,
+} from '@/db';
+import { signedUserActionSchema } from '@/lib/e2ee/protocol';
+import {
+  FederatedIdentityContinuityError,
+  federationActionContextSchema,
+  federationActionDomain,
+  pinVerifiedFederatedActorIdentity,
+  verifyFederatedUserAction,
+} from '@/lib/swarm/federated-action';
+import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { applyOrderedFederatedRelationshipState } from '@/lib/swarm/relationship-ordering';
+import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { isFreshFederationTimestamp } from '@/lib/swarm/signature';
 import {
   federationMediaUrlSchema,
   localHandleSchema,
   nodeDomainSchema,
 } from '@/lib/utils/federation';
-import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
-import { claimInboundFederationAction } from '@/lib/swarm/replay';
 
-const swarmRepostSchema = z.object({
+const PATH = '/api/swarm/interactions/repost' as const;
+
+const swarmRepostSchema = z.strictObject({
+  federation: federationActionContextSchema,
+  userAction: signedUserActionSchema,
   postId: z.string().uuid(),
-  repost: z.object({
+  repost: z.strictObject({
     actorHandle: localHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
     actorAvatarUrl: federationMediaUrlSchema.optional(),
@@ -34,111 +46,121 @@ const swarmRepostSchema = z.object({
   signature: z.string().min(1).max(16_384),
 });
 
-/**
- * POST /api/swarm/interactions/repost
- * 
- * Receives a repost notification from another swarm node.
- */
+const repostActionDataSchema = z.strictObject({ postId: z.string().min(1).max(512) });
+
 export async function POST(request: NextRequest) {
   try {
-    if (!db) {
-      return NextResponse.json({ error: 'Database not available' }, { status: 503 });
-    }
-
-    const body = await readLimitedJson(request);
-    const data = swarmRepostSchema.parse(body);
+    const data = swarmRepostSchema.parse(await readLimitedJson(request));
     if (!isFreshFederationTimestamp(data.repost.timestamp)) {
       return NextResponse.json({ error: 'Stale interaction' }, { status: 400 });
     }
 
-    // SECURITY: Verify the signature
+    const actorDomain = federationActionDomain(data.repost.actorNodeDomain);
+    if (!actorDomain) {
+      return NextResponse.json({ error: 'Invalid source node' }, { status: 400 });
+    }
     const { signature, ...payload } = data;
-    const isValid = await verifySwarmRequest(payload, signature, data.repost.actorNodeDomain);
-
-    if (!isValid) {
-      console.warn(`[Swarm] Invalid signature for repost from ${data.repost.actorHandle}@${data.repost.actorNodeDomain}`);
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
+    const verified = await verifyFederatedUserAction({
+      payload,
+      nodeSignature: signature,
+      sourceDomain: actorDomain,
+      expectedMethod: 'POST',
+      expectedPath: PATH,
+      expectedAction: 'repost',
+      actorHandle: data.repost.actorHandle,
+      replayBinding: { postId: data.postId },
+      maxActionsPerMinute: 30,
+    });
+    if (!verified.ok) {
+      return NextResponse.json({ error: verified.error }, { status: verified.status });
     }
-    if (!await claimInboundFederationAction(
-      data.repost.actorNodeDomain,
-      'repost',
-      data.repost.interactionId,
-    )) {
-      return NextResponse.json({ success: true, message: 'Interaction already processed' });
-    }
 
-    // Find the target post
+    const actionData = repostActionDataSchema.safeParse(verified.userAction.data);
+    if (!actionData.success
+      || actionData.data.postId !== `swarm:${verified.destinationDomain}:${data.postId}`) {
+      return NextResponse.json({ error: 'Repost target is not user-authorized' }, { status: 403 });
+    }
     const post = await db.query.posts.findFirst({
-      where: { id: data.postId },
+      where: { AND: [{ id: data.postId }, { isRemoved: false }] },
       with: { author: true },
     });
-
-    if (!post) {
+    if (!post || !hasStrictLocalUserOrigin(post.author)) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
-
-    if (post.isRemoved) {
-      return NextResponse.json({ error: 'Post not found' }, { status: 404 });
-    }
-
-    const existingRepost = await db.query.remoteReposts.findFirst({
-      where: { AND: [{ postId: data.postId }, { actorHandle: data.repost.actorHandle }, { actorNodeDomain: data.repost.actorNodeDomain }] },
+    await pinVerifiedFederatedActorIdentity({
+      sourceDomain: verified.sourceDomain,
+      actorHandle: verified.actorHandle,
+      did: verified.userAction.did,
     });
-
-    if (existingRepost) {
-      await db.update(remoteReposts)
-        .set({
-          actorDisplayName: data.repost.actorDisplayName,
-          actorAvatarUrl: data.repost.actorAvatarUrl || null,
-          actorIsNsfw: data.repost.actorIsNsfw,
-        })
-        .where(eq(remoteReposts.id, existingRepost.id));
-      return NextResponse.json({
-        success: true,
-        message: 'Repost already recorded',
-      });
-    }
-
-    // Increment repost count
-    await db.update(posts)
-      .set({ repostsCount: sql`${posts.repostsCount} + 1` })
-      .where(eq(posts.id, data.postId));
-
-    await db.insert(remoteReposts).values({
-      postId: data.postId,
-      actorHandle: data.repost.actorHandle,
-      actorDisplayName: data.repost.actorDisplayName,
-      actorAvatarUrl: data.repost.actorAvatarUrl || null,
-      actorIsNsfw: data.repost.actorIsNsfw,
-      actorNodeDomain: data.repost.actorNodeDomain,
+    const nodeMute = await db.query.mutedNodes.findFirst({
+      where: { AND: [{ userId: post.userId }, { nodeDomain: actorDomain }] },
+      columns: { id: true },
     });
-
-    // Create notification with actor info stored directly
-    try {
-      await db.insert(notifications).values({
-        userId: post.userId,
-        actorHandle: data.repost.actorHandle,
-        actorDisplayName: data.repost.actorDisplayName,
-        actorAvatarUrl: data.repost.actorAvatarUrl || null,
-        actorNodeDomain: data.repost.actorNodeDomain,
-        postId: data.postId,
-        postContent: post.content?.slice(0, 200) || null,
-        type: 'repost',
-      });
-      console.log(`[Swarm] Created repost notification for post ${data.postId} from ${data.repost.actorHandle}@${data.repost.actorNodeDomain}`);
-    } catch (notifError) {
-      console.error(`[Swarm] Failed to create repost notification:`, notifError);
+    if (nodeMute) {
+      return NextResponse.json({ success: true, message: 'Repost received' });
     }
 
-    console.log(`[Swarm] Received repost from ${data.repost.actorHandle}@${data.repost.actorNodeDomain} on post ${data.postId}`);
+    const outcome = await db.transaction(async (tx) => {
+      const [claim] = await tx.insert(swarmInboundActions).values({
+        sourceDomain: actorDomain,
+        action: 'repost',
+        interactionId: verified.replayId,
+      }).onConflictDoNothing().returning({ id: swarmInboundActions.id });
+      if (!claim) return 'replay' as const;
+
+      const ordered = await applyOrderedFederatedRelationshipState(tx, {
+        sourceDomain: actorDomain,
+        relationshipKind: 'repost',
+        target: data.postId,
+        state: true,
+        userAction: verified.userAction,
+      }, async () => {
+        const [inserted] = await tx.insert(remoteReposts).values({
+          postId: data.postId,
+          actorHandle: verified.actorHandle,
+          actorDisplayName: verified.actorHandle,
+          actorAvatarUrl: null,
+          // A hostile node cannot authoritatively downgrade an account to safe.
+          actorIsNsfw: true,
+          actorNodeDomain: actorDomain,
+        }).onConflictDoNothing().returning({ id: remoteReposts.id });
+        if (!inserted) return 'unchanged' as const;
+
+        const [updatedPost] = await tx.update(posts)
+          .set({ repostsCount: sql`${posts.repostsCount} + 1` })
+          .where(and(eq(posts.id, data.postId), eq(posts.isRemoved, false)))
+          .returning({ id: posts.id });
+        if (!updatedPost) throw new Error('Repost target disappeared');
+
+        await tx.insert(notifications).values({
+          userId: post.userId,
+          actorHandle: verified.actorHandle,
+          actorDisplayName: verified.actorHandle,
+          actorAvatarUrl: null,
+          actorNodeDomain: actorDomain,
+          postId: data.postId,
+          postContent: post.content?.slice(0, 200) || null,
+          interactionId: `repost:remote:${actorDomain}:${verified.replayId}`,
+          type: 'repost',
+        }).onConflictDoNothing();
+        return 'created' as const;
+      });
+      if (!ordered.applied) {
+        return ordered.reason === 'duplicate' ? 'replay' as const : 'stale' as const;
+      }
+      return ordered.value;
+    });
 
     return NextResponse.json({
       success: true,
-      message: 'Repost received',
+      message: outcome === 'replay' ? 'Interaction already processed' : 'Repost received',
     });
   } catch (error) {
     if (error instanceof FederationRequestBodyError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (error instanceof FederatedIdentityContinuityError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: 'Invalid request', details: error.issues }, { status: 400 });
