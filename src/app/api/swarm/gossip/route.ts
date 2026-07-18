@@ -15,7 +15,7 @@ import type { SwarmGossipPayload } from '@/lib/swarm/types';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import { isRateLimited } from '@/lib/rate-limit';
-import { federationMediaUrlSchema } from '@/lib/utils/federation';
+import { strictSwarmNodeInfoSchema } from '@/lib/swarm/node-payload';
 
 const handleSchema = z.strictObject({
   handle: z.string().min(3).max(640),
@@ -24,25 +24,9 @@ const handleSchema = z.strictObject({
   updatedAt: z.string().datetime().optional(),
 });
 
-const boundedCount = z.number().int().nonnegative().max(1_000_000_000);
-const nodeInfoSchema = z.strictObject({
-  domain: z.string().min(1).max(253),
-  name: z.string().max(100).optional(),
-  description: z.string().max(1_000).optional(),
-  logoUrl: federationMediaUrlSchema.optional(),
-  publicKey: z.string().max(16_384).optional(),
-  softwareVersion: z.string().max(100).optional(),
-  userCount: boundedCount.optional(),
-  postCount: boundedCount.optional(),
-  mediaCount: boundedCount.optional(),
-  isNsfw: z.boolean().optional(),
-  capabilities: z.array(z.enum(['handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1'])).max(6).optional(),
-  lastSeenAt: z.string().datetime().optional(),
-});
-
 const gossipPayloadSchema = z.strictObject({
   sender: z.string().min(1).max(253),
-  nodes: z.array(nodeInfoSchema).max(100),
+  nodes: z.array(strictSwarmNodeInfoSchema).max(100),
   handles: z.array(handleSchema).max(500).optional(),
   timestamp: z.string().datetime(),
   since: z.string().datetime().optional(),
