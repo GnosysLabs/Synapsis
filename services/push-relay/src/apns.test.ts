@@ -8,6 +8,7 @@ const event: PushEvent = {
   type: 'mention',
   actorName: 'Alice',
   postId: 'post-1',
+  subscriptionId: '00000000-0000-4000-8000-000000000003',
 };
 
 describe('APNs payload', () => {
@@ -18,6 +19,7 @@ describe('APNs payload', () => {
       notificationId: event.notificationId,
       type: 'mention',
       postId: 'post-1',
+      subscriptionId: event.subscriptionId,
     });
     expect(JSON.stringify(payload)).not.toContain('postContent');
   });

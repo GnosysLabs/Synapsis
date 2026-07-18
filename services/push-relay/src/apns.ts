@@ -11,6 +11,7 @@ export interface PushEvent {
   type: 'follow' | 'reply' | 'mention' | 'like' | 'repost';
   actorName: string;
   postId?: string;
+  subscriptionId?: string;
 }
 
 export interface ApnsResponse {
@@ -54,6 +55,7 @@ export function buildApnsPayload(event: PushEvent): string {
       notificationId: event.notificationId,
       type: event.type,
       ...(event.postId ? { postId: event.postId } : {}),
+      ...(event.subscriptionId ? { subscriptionId: event.subscriptionId } : {}),
     },
   });
 }
