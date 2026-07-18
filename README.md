@@ -37,9 +37,10 @@ Every node pins `origin` to [`GnosysLabs/Synapsis`](https://github.com/GnosysLab
 
 While an update is being installed, `synapsis-maintenance.service` temporarily serves a maintenance page on the node's configured `PORT`, using that node's logo and accent color. Existing reverse proxies continue receiving an HTTP response instead of showing a gateway error, and browsers automatically reload when Synapsis is ready.
 
-For a node installed before automatic updates existed, bootstrap the timer once with:
+For a node installed before the GitHub updater migration (or before automatic updates existed), bootstrap it once with:
 
 ```bash
+sudo -u synapsis git -C /opt/synapsis remote set-url origin https://github.com/GnosysLabs/Synapsis.git
 sudo -u synapsis git -C /opt/synapsis pull --ff-only
 sudo /opt/synapsis/deploy/update.sh
 ```
