@@ -1624,6 +1624,12 @@ a.btn-primary:visited {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.chat-post-card .post.embedded .post-media-item:not(.audio):only-child {
+  grid-column: 1 / -1;
+  justify-self: center;
+  width: calc(50% - 4px);
+}
+
 .chat-post-card-loading,
 .chat-post-card-fallback {
   display: flex;
