@@ -131,7 +131,13 @@ export function PostCard(props: PostCardProps) {
 }
 
 function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId }: PostCardProps) {
-    const { user: currentUser, did, handle: currentUserHandle, isIdentityUnlocked } = useAuth();
+    const {
+        user: currentUser,
+        did,
+        handle: currentUserHandle,
+        isIdentityUnlocked,
+        setShowUnlockPrompt,
+    } = useAuth();
     const { showToast } = useToast();
     const { showConfirm, showPrompt } = useAppDialog();
     const router = useRouter();
@@ -440,6 +446,12 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         e.preventDefault();
         e.stopPropagation();
         if (deleting) return;
+        if (!isIdentityUnlocked) {
+            setShowMenu(false);
+            setShowUnlockPrompt(true);
+            showToast('Unlock your identity, then try deleting the post again.', 'info');
+            return;
+        }
         const confirmed = await showConfirm({
             title: 'Delete post?',
             message: 'This post will be permanently deleted. This action cannot be undone.',
@@ -457,8 +469,8 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                 const data = await res.json();
                 showToast(data.error || 'Failed to delete post', 'error');
             }
-        } catch {
-            showToast('Failed to delete post', 'error');
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : 'Failed to delete post', 'error');
         } finally {
             setDeleting(false);
         }

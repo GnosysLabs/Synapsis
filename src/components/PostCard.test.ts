@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     nodeIsNsfw: false,
+    setShowUnlockPrompt: vi.fn(),
     user: null as null | {
         id: string;
         handle: string;
@@ -19,6 +20,7 @@ vi.mock('@/lib/contexts/AuthContext', () => ({
         did: mocks.user ? 'did:key:viewer' : null,
         handle: mocks.user?.handle || null,
         isIdentityUnlocked: Boolean(mocks.user),
+        setShowUnlockPrompt: mocks.setShowUnlockPrompt,
     }),
 }));
 
@@ -82,6 +84,7 @@ describe('PostCard', () => {
     beforeEach(() => {
         mocks.nodeIsNsfw = false;
         mocks.user = null;
+        mocks.setShowUnlockPrompt.mockReset();
     });
 
     it('ignores a malformed post without an author instead of crashing the feed', () => {

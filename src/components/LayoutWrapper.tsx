@@ -9,9 +9,16 @@ import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { isAppBootstrapReady } from '@/lib/bootstrap/readiness';
 import { GlobalPostComposer } from './GlobalPostComposer';
 import { BrowserNotificationBridge } from './BrowserNotificationBridge';
+import { IdentityUnlockPrompt } from './IdentityUnlockPrompt';
 
 export function LayoutWrapper({ children }: { children: React.ReactNode }) {
-    const { loading, user, activeAccountId } = useAuth();
+    const {
+        loading,
+        user,
+        activeAccountId,
+        showUnlockPrompt,
+        setShowUnlockPrompt,
+    } = useAuth();
     const { config, isLoading: configLoading } = useRuntimeConfig();
     const pathname = usePathname();
 
@@ -70,7 +77,11 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
                 <GlobalPostComposer />
                 <BrowserNotificationBridge />
             </Fragment>
-
+            {showUnlockPrompt && (
+                <IdentityUnlockPrompt
+                    onCancel={() => setShowUnlockPrompt(false)}
+                />
+            )}
         </div>
     );
 }

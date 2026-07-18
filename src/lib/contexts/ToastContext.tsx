@@ -2,8 +2,9 @@
 
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import { useAccentColor } from './AccentColorContext';
+import { getToastBackground, type ToastPresentationType } from '@/lib/ui/toast-presentation';
 
-type ToastType = 'success' | 'error' | 'info';
+type ToastType = ToastPresentationType;
 
 interface Toast {
     id: string;
@@ -86,11 +87,7 @@ function ToastContainer({ toasts, removeToast }: { toasts: Toast[]; removeToast:
                         cursor: 'pointer',
                         padding: '12px 16px',
                         borderRadius: '8px',
-                        background: toast.type === 'error' 
-                            ? 'var(--danger)' 
-                            : toast.type === 'success' 
-                                ? 'var(--accent)' 
-                                : 'var(--background-secondary)',
+                        background: getToastBackground(toast.type),
                         color: toast.type === 'error'
                             ? '#fff'
                             : toast.type === 'success' 

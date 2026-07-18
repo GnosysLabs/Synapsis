@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { shouldFailClosedBeforeConfigRefresh } from '@/lib/node/config-refresh-policy';
 
 const NODE_CONFIG_SYNC_CHANNEL = 'synapsis-node-config';
 const NODE_CONFIG_STORAGE_KEY = 'synapsis:node-config-changed';
@@ -101,8 +102,15 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refreshConfig();
-    const periodicRefresh = () => void refreshConfig();
-    const secureRefresh = () => void refreshConfig(true);
+    const periodicRefresh = () => void refreshConfig(
+      shouldFailClosedBeforeConfigRefresh('periodic')
+    );
+    const secureRefresh = () => void refreshConfig(
+      shouldFailClosedBeforeConfigRefresh('sync')
+    );
+    const focusRefresh = () => void refreshConfig(
+      shouldFailClosedBeforeConfigRefresh('focus')
+    );
     const interval = window.setInterval(periodicRefresh, NODE_CONFIG_REFRESH_MS);
     const channel = typeof BroadcastChannel !== 'undefined'
       ? new BroadcastChannel(NODE_CONFIG_SYNC_CHANNEL)
@@ -112,7 +120,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       if (event.key === NODE_CONFIG_STORAGE_KEY) secureRefresh();
     };
     window.addEventListener('storage', onStorage);
-    window.addEventListener('focus', secureRefresh);
+    // Refresh in the background when returning to the tab. A focus event does
+    // not mean the node classification changed, so invalidating the current
+    // classification here needlessly remounts and reloads every feed.
+    window.addEventListener('focus', focusRefresh);
 
     return () => {
       window.clearInterval(interval);
@@ -120,7 +131,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       channel?.removeEventListener('message', secureRefresh);
       channel?.close();
       window.removeEventListener('storage', onStorage);
-      window.removeEventListener('focus', secureRefresh);
+      window.removeEventListener('focus', focusRefresh);
     };
   }, [refreshConfig]);
 
