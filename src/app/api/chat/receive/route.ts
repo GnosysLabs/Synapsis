@@ -23,6 +23,7 @@ import { enqueueMessagePushDeliveries } from '@/lib/push/messages';
 import { isNodeBlocked } from '@/lib/swarm/node-blocklist';
 import {
   FederatedIdentityContinuityError,
+  federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
   pinVerifiedFederatedActorIdentity,
@@ -101,7 +102,7 @@ export async function POST(request: NextRequest) {
       maxNodeActionsPerMinute: 600,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, { status: verified.status });
+      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
     }
 
     const signedAction = verified.userAction;

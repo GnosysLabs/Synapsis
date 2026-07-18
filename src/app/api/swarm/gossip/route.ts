@@ -10,7 +10,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { establishDirectGossipPeer, processGossip } from '@/lib/swarm/gossip';
 import { markNodeSuccess } from '@/lib/swarm/registry';
-import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
+import { isFreshFederationTimestamp, verifySwarmRequestDetailed } from '@/lib/swarm/signature';
 import type { SwarmGossipPayload } from '@/lib/swarm/types';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
@@ -94,13 +94,20 @@ export async function POST(request: Request) {
 
     // SECURITY: Verify the node signature before processing
     const { signature, ...payload } = data;
-    const isValid = await verifySwarmRequest(payload, signature, data.sender);
+    const verification = await verifySwarmRequestDetailed(payload, signature, data.sender);
 
-    if (!isValid) {
-      console.warn(`[Swarm] Invalid signature for gossip from ${data.sender}`);
+    if (!verification.ok) {
+      console.warn(`[Swarm] Rejected gossip from ${data.sender}: ${verification.reason}`);
       return NextResponse.json(
-        { error: 'Invalid signature' },
-        { status: 403 }
+        { error: verification.reason === 'overloaded'
+          ? 'Signature verification is temporarily overloaded'
+          : 'Invalid signature' },
+        {
+          status: verification.status,
+          headers: verification.retryAfterSeconds
+            ? { 'Retry-After': String(verification.retryAfterSeconds) }
+            : undefined,
+        }
       );
     }
     if (isRateLimited('swarm-gossip-authenticated-global', 600, 60 * 1_000)) {

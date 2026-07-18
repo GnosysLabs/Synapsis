@@ -41,6 +41,7 @@ async function upsertVerifiedRemoteUser(
                 { handle: profile.handle },
                 { did: profile.did },
                 { identityVerified: true },
+                { deletedAt: { isNull: true } },
             ],
         },
     });

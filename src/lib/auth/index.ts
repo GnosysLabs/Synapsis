@@ -2,7 +2,7 @@
  * Authentication Utilities
  */
 
-import { db, follows, users, sessions } from '@/db';
+import { db, follows, users, sessions, swarmAccountTombstones } from '@/db';
 import { eq, inArray, sql } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
@@ -300,6 +300,12 @@ export async function registerUser(
 
     if (existingHandle) {
         throw new Error('Handle is already taken');
+    }
+    const deletedHandle = await db.query.swarmAccountTombstones.findFirst({
+        where: { handle: handle.toLowerCase() },
+    });
+    if (deletedHandle) {
+        throw new Error('Handle is permanently reserved after account deletion');
     }
 
     // Check if email is taken

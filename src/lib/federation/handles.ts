@@ -1,5 +1,5 @@
 import { db, handleRegistry } from '@/db';
-import { and, eq, gte, lt, or, sql } from 'drizzle-orm';
+import { and, eq, gte, isNull, lt, or, sql } from 'drizzle-orm';
 import { withSqliteLockRetry } from '@/lib/db/sqlite-lock-retry';
 import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
 
@@ -38,9 +38,12 @@ type HandleHintMaintenanceDatabase = Pick<typeof db, 'run'>;
 
 /** Verified identities do not expire; unverified routing hints do. */
 export function liveHandleRegistryEntryWhere(now = Date.now()) {
-    return or(
-        eq(handleRegistry.identityVerified, true),
-        gte(handleRegistry.updatedAt, new Date(now - REMOTE_HANDLE_HINT_TTL_MS)),
+    return and(
+        isNull(handleRegistry.deletedAt),
+        or(
+            eq(handleRegistry.identityVerified, true),
+            gte(handleRegistry.updatedAt, new Date(now - REMOTE_HANDLE_HINT_TTL_MS)),
+        ),
     );
 }
 
@@ -65,6 +68,7 @@ export async function pruneExpiredRemoteHandleHints(options: {
                 SELECT rowid
                 FROM ${handleRegistry}
                 WHERE ${handleRegistry.identityVerified} = false
+                  AND ${handleRegistry.deletedAt} IS NULL
                   AND ${handleRegistry.updatedAt} < ${new Date(now - REMOTE_HANDLE_HINT_TTL_MS)}
                 ORDER BY ${handleRegistry.updatedAt} ASC
                 LIMIT ${REMOTE_HANDLE_HINT_PRUNE_BATCH_SIZE}
@@ -166,21 +170,25 @@ export async function upsertHandleEntries(
         const canRotateVerifiedLocalIdentity = incomingVerified
             && options.allowIdentityChange === true;
         const updateWhere = canRotateVerifiedLocalIdentity
-            ? undefined
+            ? isNull(handleRegistry.deletedAt)
             : incomingVerified
-                ? or(
-                    eq(handleRegistry.identityVerified, false),
-                    and(
-                        eq(handleRegistry.identityVerified, true),
-                        sameIdentity,
-                        isNewer,
+                ? and(
+                    isNull(handleRegistry.deletedAt),
+                    or(
+                        eq(handleRegistry.identityVerified, false),
+                        and(
+                            eq(handleRegistry.identityVerified, true),
+                            sameIdentity,
+                            isNewer,
+                        ),
                     ),
-                )
+                  )
                 : and(
+                    isNull(handleRegistry.deletedAt),
                     eq(handleRegistry.identityVerified, false),
                     sameIdentity,
                     isNewer,
-                );
+                  );
 
         const statement = database.insert(handleRegistry).values({
             handle: entry.handle,
@@ -196,7 +204,7 @@ export async function upsertHandleEntries(
                 identityVerified: incomingVerified,
                 updatedAt: incomingUpdatedAt,
             },
-            ...(updateWhere ? { setWhere: updateWhere } : {}),
+            setWhere: updateWhere,
         }).returning({
             did: handleRegistry.did,
             nodeDomain: handleRegistry.nodeDomain,
@@ -245,10 +253,14 @@ export async function upsertRemoteHandleHints(
             .where(and(
                 eq(handleRegistry.identityVerified, false),
                 eq(handleRegistry.nodeDomain, authority),
+                isNull(handleRegistry.deletedAt),
             )),
         db.select({ count: sql<number>`count(*)` })
             .from(handleRegistry)
-            .where(eq(handleRegistry.identityVerified, false)),
+            .where(and(
+                eq(handleRegistry.identityVerified, false),
+                isNull(handleRegistry.deletedAt),
+            )),
     ]);
     const remainingForNode = Math.max(
         0,

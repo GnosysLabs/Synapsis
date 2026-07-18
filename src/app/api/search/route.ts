@@ -6,7 +6,7 @@ import { probeTransientNode } from '@/lib/swarm/transient-node-probe';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import type { SwarmDirectoryUser } from '@/lib/swarm/user-directory';
 import { searchKnownSwarmUsers } from '@/lib/swarm/user-directory-search';
-import { fetchSwarmTimeline } from '@/lib/swarm/timeline';
+import { getCachedSwarmTimeline } from '@/lib/swarm/content-cache';
 import { mapSwarmPostToPost } from '@/lib/swarm/feed-post';
 import { canCurrentViewerAccessSensitiveRemoteProfile } from '@/lib/nsfw/remote-profile-access';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
@@ -16,6 +16,7 @@ import {
     redactSensitiveUserSummary,
 } from '@/lib/nsfw/content-visibility';
 import { parseBoundedInteger } from '@/lib/http/query';
+import { searchIndexedPostIds } from '@/lib/search/post-index';
 
 const embeddedPostRelations = {
     author: true,
@@ -291,16 +292,19 @@ export async function GET(request: Request) {
 
         // Search posts
         if (type === 'posts' || (type === 'all' && !isHandleSearch)) {
-            const postResults = await db.query.posts.findMany({
-                where: {
-                    content: { like: searchPattern },
-                    isRemoved: false,
-                    ...(moderatedIds.length ? { userId: { notIn: moderatedIds } } : {}),
-                },
-                with: searchPostRelations,
-                orderBy: (posts, { desc }) => [desc(posts.createdAt)],
-                limit,
-            });
+            const indexedPostIds = await searchIndexedPostIds('local', localSearchQuery);
+            const postResults = indexedPostIds.length
+                ? await db.query.posts.findMany({
+                    where: {
+                        id: { in: indexedPostIds },
+                        isRemoved: false,
+                        ...(moderatedIds.length ? { userId: { notIn: moderatedIds } } : {}),
+                    },
+                    with: searchPostRelations,
+                    orderBy: (posts, { desc }) => [desc(posts.createdAt)],
+                    limit,
+                })
+                : [];
             searchPosts = postResults;
             if (!canViewSensitive) {
                 searchPosts = searchPosts.filter((post) => !isPostSensitive({
@@ -337,14 +341,14 @@ export async function GET(request: Request) {
                 }
             }
 
-            // Search every known active peer for matching post text. Each peer searches
-            // its own database, so this covers the swarm without downloading timelines
-            // or imposing a node-count ceiling.
+            // Search the continuously refreshed, validated cache. Search latency and
+            // availability therefore do not grow with the peer count.
             if (localSearchQuery.length >= 2) {
                 const normalizedLocalDomain = normalizeNodeDomain(localDomain || 'localhost:43821');
                 const excludedDomains = new Set(mutedDomains);
                 excludedDomains.add(normalizedLocalDomain);
-                const swarmResults = await fetchSwarmTimeline(undefined, limit, {
+                const swarmResults = await getCachedSwarmTimeline({
+                    limit,
                     includeNsfw: canViewSensitive,
                     query: localSearchQuery,
                     excludeDomains: excludedDomains,

@@ -8,9 +8,9 @@
 
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { upsertSwarmNode } from '@/lib/swarm/registry';
+import { markNodeSuccess, upsertSwarmNode } from '@/lib/swarm/registry';
 import { buildAnnouncement } from '@/lib/swarm/discovery';
-import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
+import { isFreshFederationTimestamp, verifySwarmRequestDetailed } from '@/lib/swarm/signature';
 import type { SwarmNodeInfo } from '@/lib/swarm/types';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
@@ -37,6 +37,7 @@ const announcementSchema = z.strictObject({
   userCount: boundedCount,
   postCount: boundedCount,
   mediaCount: boundedCount,
+  contentSequence: boundedCount.optional(),
   // A direct, signed announcement is authoritative. Classification is
   // mandatory so old payloads cannot silently become `safe`.
   isNsfw: z.boolean(),
@@ -90,13 +91,20 @@ export async function POST(request: Request) {
 
     // SECURITY: Verify the node signature before processing
     const { signature, ...payload } = data;
-    const isValid = await verifySwarmRequest(payload, signature, data.domain);
+    const verification = await verifySwarmRequestDetailed(payload, signature, data.domain);
 
-    if (!isValid) {
-      console.warn(`[Swarm] Invalid signature for announcement from ${data.domain}`);
+    if (!verification.ok) {
+      console.warn(`[Swarm] Rejected announcement from ${data.domain}: ${verification.reason}`);
       return NextResponse.json(
-        { error: 'Invalid signature' },
-        { status: 403 }
+        { error: verification.reason === 'overloaded'
+          ? 'Signature verification is temporarily overloaded'
+          : 'Invalid signature' },
+        {
+          status: verification.status,
+          headers: verification.retryAfterSeconds
+            ? { 'Retry-After': String(verification.retryAfterSeconds) }
+            : undefined,
+        }
       );
     }
     if (isRateLimited('swarm-announce-authenticated-global', 600, 60 * 1_000)) {
@@ -117,12 +125,17 @@ export async function POST(request: Request) {
       userCount: data.userCount,
       postCount: data.postCount,
       mediaCount: data.mediaCount,
+      contentSequence: data.contentSequence,
       isNsfw: data.isNsfw,
       capabilities: data.capabilities,
       lastSeenAt: new Date().toISOString(),
     };
 
     const { isNew } = await upsertSwarmNode(nodeInfo, 'announcement');
+    // A fresh, signed payload from the node's exact HTTPS origin establishes
+    // reachability and key ownership. Reputation never means its content is
+    // safe; all remote content remains untrusted and independently validated.
+    await markNodeSuccess(data.domain);
 
     console.log(`[Swarm] ${isNew ? 'New' : 'Known'} node announced: ${data.domain}`);
 
@@ -139,6 +152,7 @@ export async function POST(request: Request) {
       userCount: ourAnnouncement.userCount,
       postCount: ourAnnouncement.postCount,
       mediaCount: ourAnnouncement.mediaCount,
+      contentSequence: ourAnnouncement.contentSequence,
       isNsfw: ourAnnouncement.isNsfw,
       capabilities: ourAnnouncement.capabilities,
       lastSeenAt: new Date().toISOString(),

@@ -16,6 +16,7 @@ import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 import { upsertRemoteUser } from '@/lib/swarm/user-cache';
 import {
   FederatedIdentityContinuityError,
+  federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
   pinVerifiedFederatedActorIdentity,
@@ -123,7 +124,7 @@ export async function POST(request: NextRequest) {
       maxActionsPerMinute: 30,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, { status: verified.status });
+      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
     }
 
     const actionData = replyActionDataSchema.safeParse(verified.userAction.data);
@@ -332,7 +333,7 @@ export async function DELETE(request: NextRequest) {
       maxActionsPerMinute: 30,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, { status: verified.status });
+      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
     }
     const actionData = deleteReplyActionDataSchema.safeParse(verified.userAction.data);
     if (!actionData.success

@@ -698,19 +698,8 @@ export async function DELETE(
             return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
         }
 
-        // 1. If it's a reply, decrement parent's repliesCount
-        if (post.replyToId) {
-            const parentPost = await db.query.posts.findFirst({
-                where: { id: post.replyToId },
-            });
-            if (parentPost && parentPost.repliesCount > 0) {
-                await db.update(posts)
-                    .set({ repliesCount: parentPost.repliesCount - 1 })
-                    .where(eq(posts.id, post.replyToId));
-            }
-        }
-
-        // 2. If this is a reply to a swarm post, notify the origin node to delete it
+        // If this is a reply to a swarm post, notify the origin before making
+        // the local half of the deletion irreversible.
         if (post.swarmReplyToId) {
             const parsedParentId = parseSwarmPostId(post.swarmReplyToId);
             if (parsedParentId) {
@@ -727,21 +716,34 @@ export async function DELETE(
                     if (res.status >= 200 && res.status < 300) {
                         console.log(`[Swarm] Deletion propagated to ${originDomain}`);
                     } else {
-                        console.error(`[Swarm] Failed to propagate deletion: ${res.status}`);
+                        return NextResponse.json(
+                            { error: 'The reply could not be removed from its origin node. Nothing was deleted locally.' },
+                            { status: 502 },
+                        );
                     }
                 } catch (err) {
                     console.error('[Swarm] Error propagating deletion:', err);
+                    return NextResponse.json(
+                        { error: 'The reply origin is unavailable. Nothing was deleted locally.' },
+                        { status: 502 },
+                    );
                 }
             }
         }
 
-        // 3. Delete the post (cascades to media, likes, notifications)
-        await db.delete(posts).where(eq(posts.id, id));
-
-        // 4. Decrement the post author's postsCount (atomic decrement, clamped to 0)
-        await db.update(users)
-            .set({ postsCount: sql`max(0, ${users.postsCount} - 1)` })
-            .where(eq(users.id, post.userId));
+        // The local post, parent counter, and author counter are one mutation.
+        // A process crash cannot leave a deleted row with stale counters.
+        await db.transaction(async (tx) => {
+            if (post.replyToId) {
+                await tx.update(posts)
+                    .set({ repliesCount: sql`max(0, ${posts.repliesCount} - 1)` })
+                    .where(eq(posts.id, post.replyToId));
+            }
+            await tx.delete(posts).where(eq(posts.id, id));
+            await tx.update(users)
+                .set({ postsCount: sql`max(0, ${users.postsCount} - 1)` })
+                .where(eq(users.id, post.userId));
+        });
 
         return NextResponse.json({ success: true });
     } catch (error) {

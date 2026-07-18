@@ -1,9 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ signedFederationRead: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  select: vi.fn(),
+  from: vi.fn(),
+  where: vi.fn(),
+}));
 
-vi.mock('./signed-read', () => ({
-  signedFederationRead: mocks.signedFederationRead,
+vi.mock('@/db', () => ({
+  db: { select: mocks.select },
+  userSwarmLikes: {
+    userId: 'user_id',
+    nodeDomain: 'node_domain',
+    originalPostId: 'original_post_id',
+  },
+}));
+
+vi.mock('drizzle-orm', () => ({
+  and: vi.fn((...values) => values),
+  eq: vi.fn((...values) => values),
+  inArray: vi.fn((...values) => values),
 }));
 
 import { getViewerSwarmLikedPostIds } from './likes';
@@ -15,25 +30,25 @@ const target = {
 };
 
 describe('getViewerSwarmLikedPostIds', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.select.mockReturnValue({ from: mocks.from });
+    mocks.from.mockReturnValue({ where: mocks.where });
+    mocks.where.mockResolvedValue([]);
+  });
 
-  it('accepts only an actual boolean true from the origin', async () => {
-    mocks.signedFederationRead.mockResolvedValue({
-      status: 200,
-      json: () => ({ isLiked: true }),
-    });
+  it('maps only rows in the local durable interaction ledger', async () => {
+    mocks.where.mockResolvedValue([{
+      nodeDomain: target.nodeDomain,
+      originalPostId: target.originalPostId,
+    }]);
 
-    await expect(getViewerSwarmLikedPostIds([target], 'alice', 'home.social'))
+    await expect(getViewerSwarmLikedPostIds([target], 'viewer-id'))
       .resolves.toEqual(new Set([target.id]));
   });
 
-  it('rejects truthy attacker-controlled values', async () => {
-    mocks.signedFederationRead.mockResolvedValue({
-      status: 200,
-      json: () => ({ isLiked: 'yes' }),
-    });
-
-    await expect(getViewerSwarmLikedPostIds([target], 'alice', 'home.social'))
+  it('does not infer a like when the ledger has no matching row', async () => {
+    await expect(getViewerSwarmLikedPostIds([target], 'viewer-id'))
       .resolves.toEqual(new Set());
   });
 });

@@ -35,7 +35,12 @@ vi.mock('@/lib/rate-limit', () => ({
 }));
 
 import crypto from 'node:crypto';
-import { getNodePublicKey, signPayload, verifySwarmRequest } from './signature';
+import {
+  getNodePublicKey,
+  signPayload,
+  verifySwarmRequest,
+  verifySwarmRequestDetailed,
+} from './signature';
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
   namedCurve: 'prime256v1',
@@ -113,6 +118,23 @@ describe('node public key discovery', () => {
     )).resolves.toBe(false);
     expect(mocks.getPinnedSwarmNodePublicKey).not.toHaveBeenCalled();
     expect(mocks.safeFederationRequest).not.toHaveBeenCalled();
+  });
+
+  it('reports capacity exhaustion as retryable overload instead of an invalid signature', async () => {
+    mocks.isRateLimited.mockImplementation((key: string) => (
+      key === 'swarm-signature-preauth-global'
+    ));
+
+    await expect(verifySwarmRequestDetailed(
+      { hello: 'world' },
+      'irrelevant-while-overloaded',
+      'busy.example',
+    )).resolves.toEqual({
+      ok: false,
+      reason: 'overloaded',
+      status: 429,
+      retryAfterSeconds: 60,
+    });
   });
 
   it('rejects unsupported key algorithms without persisting them', async () => {

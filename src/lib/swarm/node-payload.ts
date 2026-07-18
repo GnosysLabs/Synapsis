@@ -15,6 +15,7 @@ export const swarmNodeInfoSchema = z.object({
   userCount: boundedCount.optional(),
   postCount: boundedCount.optional(),
   mediaCount: boundedCount.optional(),
+  contentSequence: boundedCount.optional(),
   isNsfw: z.boolean().optional(),
   capabilities: z.array(z.enum([
     'handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1',

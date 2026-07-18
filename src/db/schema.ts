@@ -201,6 +201,8 @@ export const posts = sqliteTable('posts', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
   index('posts_user_id_idx').on(table.userId),
+  index('posts_user_created_idx').on(table.userId, table.createdAt),
+  index('posts_feed_filter_idx').on(table.isRemoved, table.replyToId, table.swarmReplyToId, table.createdAt),
   index('posts_created_at_idx').on(table.createdAt),
   index('posts_reply_to_idx').on(table.replyToId),
   index('posts_removed_idx').on(table.isRemoved),
@@ -245,6 +247,7 @@ export const follows = sqliteTable('follows', {
 }, (table) => [
   index('follows_follower_idx').on(table.followerId),
   index('follows_following_idx').on(table.followingId),
+  uniqueIndex('follows_user_pair_unique_idx').on(table.followerId, table.followingId),
 ]);
 
 
@@ -267,6 +270,7 @@ export const remoteFollows = sqliteTable('remote_follows', {
 }, (table) => [
   index('remote_follows_follower_idx').on(table.followerId),
   index('remote_follows_target_idx').on(table.targetHandle),
+  uniqueIndex('remote_follows_user_target_unique_idx').on(table.followerId, table.targetHandle),
 ]);
 
 // ============================================
@@ -301,6 +305,19 @@ export const remotePosts = sqliteTable('remote_posts', {
   authorAvatarUrl: text('author_avatar_url'),
   content: text('content').notNull(),
   publishedAt: integer('published_at', { mode: 'timestamp' }).notNull(), // Original publish time
+  // Validated Synapsis swarm snapshot. The decomposed columns below keep
+  // indexed feed/search queries cheap while this preserves the full card.
+  nodeDomain: text('node_domain'),
+  originalPostId: text('original_post_id'),
+  postJson: text('post_json'),
+  feedActivityAt: integer('feed_activity_at', { mode: 'timestamp' }),
+  isReply: integer('is_reply', { mode: 'boolean' }).default(false).notNull(),
+  isNsfw: integer('is_nsfw', { mode: 'boolean' }),
+  authorIsNsfw: integer('author_is_nsfw', { mode: 'boolean' }),
+  nodeIsNsfw: integer('node_is_nsfw', { mode: 'boolean' }),
+  likesCount: integer('likes_count').default(0).notNull(),
+  repostsCount: integer('reposts_count').default(0).notNull(),
+  repliesCount: integer('replies_count').default(0).notNull(),
   // Link preview
   linkPreviewUrl: text('link_preview_url'),
   linkPreviewTitle: text('link_preview_title'),
@@ -318,6 +335,10 @@ export const remotePosts = sqliteTable('remote_posts', {
   index('remote_posts_author_idx').on(table.authorHandle),
   index('remote_posts_published_idx').on(table.publishedAt),
   index('remote_posts_ap_id_idx').on(table.apId),
+  uniqueIndex('remote_posts_node_post_unique_idx').on(table.nodeDomain, table.originalPostId),
+  index('remote_posts_node_activity_idx').on(table.nodeDomain, table.feedActivityAt),
+  index('remote_posts_author_activity_idx').on(table.authorHandle, table.feedActivityAt),
+  index('remote_posts_fetched_idx').on(table.fetchedAt),
 ]);
 
 // ============================================
@@ -332,6 +353,7 @@ export const likes = sqliteTable('likes', {
   createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
   index('likes_user_post_idx').on(table.userId, table.postId),
+  uniqueIndex('likes_user_post_unique_idx').on(table.userId, table.postId),
 ]);
 
 
@@ -434,6 +456,64 @@ export const remoteReposts = sqliteTable('remote_reposts', {
   uniqueIndex('remote_reposts_unique').on(table.postId, table.actorHandle, table.actorNodeDomain),
 ]);
 
+/** Materialized activity head for each local post/repost story. */
+export const feedStories = sqliteTable('feed_stories', {
+  storyId: text('story_id').primaryKey(),
+  latestActivityAt: integer('latest_activity_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  index('feed_stories_activity_idx').on(table.latestActivityAt, table.storyId),
+]);
+
+/** Materialized local-repost activity for stories whose origin is remote. */
+export const remoteFeedStories = sqliteTable('remote_feed_stories', {
+  nodeDomain: text('node_domain').notNull(),
+  originalPostId: text('original_post_id').notNull(),
+  latestActivityAt: integer('latest_activity_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  primaryKey({
+    name: 'remote_feed_stories_pk',
+    columns: [table.nodeDomain, table.originalPostId],
+  }),
+  index('remote_feed_stories_activity_idx').on(table.latestActivityAt, table.nodeDomain, table.originalPostId),
+]);
+
+/** Monotonic clock for the origin-authoritative post change stream. */
+export const swarmContentClock = sqliteTable('swarm_content_clock', {
+  id: integer('id').primaryKey(),
+  sequence: integer('sequence').default(0).notNull(),
+});
+
+/**
+ * One coalesced latest event per local story. A delete row is a durable
+ * tombstone; later likes/reposts/restoration replace it with a newer upsert.
+ */
+export const swarmPostChanges = sqliteTable('swarm_post_changes', {
+  storyId: text('story_id').primaryKey(),
+  sequence: integer('sequence').notNull(),
+  changeType: text('change_type', { enum: ['upsert', 'delete'] }).notNull(),
+  changedAt: integer('changed_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('swarm_post_changes_sequence_idx').on(table.sequence),
+  index('swarm_post_changes_changed_idx').on(table.changedAt),
+]);
+
+/** Normalized word-prefix index used because embedded libSQL omits FTS5. */
+export const localPostSearchTerms = sqliteTable('local_post_search_terms', {
+  postId: text('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
+  term: text('term').notNull(),
+}, (table) => [
+  primaryKey({ name: 'local_post_search_terms_pk', columns: [table.postId, table.term] }),
+  index('local_post_search_terms_term_idx').on(table.term, table.postId),
+]);
+
+export const remotePostSearchTerms = sqliteTable('remote_post_search_terms', {
+  postId: text('post_id').notNull().references(() => remotePosts.id, { onDelete: 'cascade' }),
+  term: text('term').notNull(),
+}, (table) => [
+  primaryKey({ name: 'remote_post_search_terms_pk', columns: [table.postId, table.term] }),
+  index('remote_post_search_terms_term_idx').on(table.term, table.postId),
+]);
+
 // ============================================
 // NOTIFICATIONS
 // ============================================
@@ -459,6 +539,8 @@ export const notifications = sqliteTable('notifications', {
 }, (table) => [
   index('notifications_user_idx').on(table.userId),
   index('notifications_created_idx').on(table.createdAt),
+  index('notifications_user_created_idx').on(table.userId, table.createdAt),
+  index('notifications_user_read_created_idx').on(table.userId, table.readAt, table.createdAt),
   uniqueIndex('notifications_interaction_unique_idx').on(table.interactionId),
 ]);
 
@@ -551,6 +633,9 @@ export const handleRegistry = sqliteTable('handle_registry', {
   // authorization. Only local account ownership or a valid self-certifying
   // user signature may make this binding an immutable identity pin.
   identityVerified: integer('identity_verified', { mode: 'boolean' }).default(false).notNull(),
+  // A verified deletion is permanent. Keeping the identity row prevents a
+  // malicious origin from reusing the same handle with a different DID.
+  deletedAt: integer('deleted_at', { mode: 'timestamp' }),
   registeredAt: integer('registered_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
@@ -558,6 +643,17 @@ export const handleRegistry = sqliteTable('handle_registry', {
   uniqueIndex('handle_registry_verified_node_did_unique_idx')
     .on(table.nodeDomain, table.did)
     .where(sql`${table.identityVerified} = 1`),
+]);
+
+/** Durable local-account deletion marker; also prevents identity reuse. */
+export const swarmAccountTombstones = sqliteTable('swarm_account_tombstones', {
+  handle: text('handle').primaryKey(),
+  did: text('did').notNull(),
+  sequence: integer('sequence').notNull(),
+  deletedAt: integer('deleted_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  uniqueIndex('swarm_account_tombstones_sequence_idx').on(table.sequence),
+  index('swarm_account_tombstones_deleted_idx').on(table.deletedAt),
 ]);
 
 // ============================================
@@ -588,6 +684,7 @@ export const blocks = sqliteTable('blocks', {
 }, (table) => [
   index('blocks_user_idx').on(table.userId),
   index('blocks_blocked_user_idx').on(table.blockedUserId),
+  uniqueIndex('blocks_user_target_unique_idx').on(table.userId, table.blockedUserId),
 ]);
 
 
@@ -599,6 +696,7 @@ export const mutes = sqliteTable('mutes', {
 }, (table) => [
   index('mutes_user_idx').on(table.userId),
   index('mutes_muted_user_idx').on(table.mutedUserId),
+  uniqueIndex('mutes_user_target_unique_idx').on(table.userId, table.mutedUserId),
 ]);
 
 
@@ -611,6 +709,7 @@ export const mutedNodes = sqliteTable('muted_nodes', {
 }, (table) => [
   index('muted_nodes_user_idx').on(table.userId),
   index('muted_nodes_domain_idx').on(table.nodeDomain),
+  uniqueIndex('muted_nodes_user_domain_unique_idx').on(table.userId, table.nodeDomain),
 ]);
 
 
@@ -660,6 +759,7 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
   userCount: integer('user_count'),
   postCount: integer('post_count'),
   mediaCount: integer('media_count'),
+  contentSequence: integer('content_sequence'),
 
   // NSFW flag (synced from remote node)
   isNsfw: integer('is_nsfw', { mode: 'boolean' }).default(false).notNull(),
@@ -696,6 +796,7 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
   index('swarm_nodes_trust_idx').on(table.trustScore),
   index('swarm_nodes_nsfw_idx').on(table.isNsfw),
   index('swarm_nodes_blocked_idx').on(table.isBlocked),
+  index('swarm_nodes_eligible_seen_idx').on(table.isActive, table.isBlocked, table.trustScore, table.lastSeenAt),
 ]);
 
 /** Durable replay ledger for signed, state-changing federation requests. */
@@ -807,6 +908,49 @@ export const swarmSyncLog = sqliteTable('swarm_sync_log', {
   index('swarm_sync_log_created_idx').on(table.createdAt),
 ]);
 
+/**
+ * Persistent, cross-process scheduling state for bounded timeline ingestion.
+ * A short lease prevents multiple web workers from synchronizing the same
+ * peer while failures back off without removing that peer from discovery.
+ */
+export const swarmContentSyncStates = sqliteTable('swarm_content_sync_states', {
+  domain: text('domain').primaryKey().references(() => swarmNodes.domain, { onDelete: 'cascade' }),
+  failures: integer('failures').default(0).notNull(),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  lastAttemptAt: integer('last_attempt_at', { mode: 'timestamp' }),
+  lastSuccessAt: integer('last_success_at', { mode: 'timestamp' }),
+  highWaterAt: integer('high_water_at', { mode: 'timestamp' }),
+  highWaterId: text('high_water_id'),
+  changeCursor: integer('change_cursor'),
+  accountChangeCursor: integer('account_change_cursor'),
+  legacyReconcileCursor: text('legacy_reconcile_cursor'),
+  legacyReconcileComplete: integer('legacy_reconcile_complete', { mode: 'boolean' }).default(false).notNull(),
+  leaseOwner: text('lease_owner'),
+  leaseExpiresAt: integer('lease_expires_at', { mode: 'timestamp' }),
+  lastError: text('last_error'),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  index('swarm_content_sync_due_idx').on(table.nextAttemptAt, table.leaseExpiresAt),
+  index('swarm_content_sync_success_idx').on(table.lastSuccessAt),
+]);
+
+/** Persistent fair scheduling for followed-account profile refreshes. */
+export const remoteFollowSyncStates = sqliteTable('remote_follow_sync_states', {
+  targetHandle: text('target_handle').primaryKey(),
+  nodeDomain: text('node_domain').notNull(),
+  failures: integer('failures').default(0).notNull(),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  lastAttemptAt: integer('last_attempt_at', { mode: 'timestamp' }),
+  lastSuccessAt: integer('last_success_at', { mode: 'timestamp' }),
+  leaseOwner: text('lease_owner'),
+  leaseExpiresAt: integer('lease_expires_at', { mode: 'timestamp' }),
+  lastError: text('last_error'),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  index('remote_follow_sync_due_idx').on(table.nextAttemptAt, table.leaseExpiresAt),
+  index('remote_follow_sync_domain_idx').on(table.nodeDomain),
+]);
+
 // ============================================
 // SWARM CHAT
 // ============================================
@@ -840,6 +984,7 @@ export const chatConversations = sqliteTable('chat_conversations', {
 }, (table) => [
   index('chat_conversations_participant1_idx').on(table.participant1Id),
   index('chat_conversations_last_message_idx').on(table.lastMessageAt),
+  index('chat_conversations_participant_activity_idx').on(table.participant1Id, table.lastMessageAt),
   // Ensure unique conversation between two users
   uniqueIndex('chat_conversations_unique').on(table.participant1Id, table.participant2Handle),
 ]);
@@ -908,6 +1053,7 @@ export const chatMessages = sqliteTable('chat_messages', {
 }, (table) => [
   index('chat_messages_conversation_idx').on(table.conversationId),
   index('chat_messages_created_idx').on(table.createdAt),
+  index('chat_messages_conversation_created_idx').on(table.conversationId, table.createdAt),
   index('chat_messages_swarm_id_idx').on(table.swarmMessageId),
   uniqueIndex('chat_messages_conversation_client_id_unique').on(table.conversationId, table.clientMessageId),
 ]);

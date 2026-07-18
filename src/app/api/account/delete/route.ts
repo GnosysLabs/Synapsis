@@ -1,6 +1,20 @@
 import { NextResponse } from 'next/server';
-import { db, users, posts, sessions, likes, follows, notifications, chatMessages, chatConversations } from '@/db';
-import { eq, or } from 'drizzle-orm';
+import {
+    chatConversations,
+    chatMessages,
+    db,
+    follows,
+    handleRegistry,
+    likes,
+    notifications,
+    posts,
+    reports,
+    sessions,
+    swarmAccountTombstones,
+    swarmContentClock,
+    users,
+} from '@/db';
+import { and, eq, or, sql } from 'drizzle-orm';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { verifyPassword } from '@/lib/auth';
 import { cookies } from 'next/headers';
@@ -41,66 +55,71 @@ export async function POST(request: Request) {
         const userId = user.id;
         const userDid = user.did;
 
-        // Delete all user data in proper order to respect foreign keys
-        
-        // 1. Delete chat messages sent by this user
-        await db.delete(chatMessages)
-            .where(eq(chatMessages.senderDid, userDid));
+        const nodeDomain = (process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821').toLowerCase();
+        const qualifiedHandle = `${user.handle.toLowerCase()}@${nodeDomain}`;
 
-        // 2. Find and delete conversations where user is a participant
-        // First get conversation IDs where user is participant1 (local user)
-        // For participant2, we need to check by handle since it's stored as text (can be remote)
-        const conversations = await db.query.chatConversations.findMany({
-            where: { OR: [{ participant1Id: userId }, { participant2Handle: user.handle }] },
-        });
+        // The deletion marker, all post tombstones, and all local removal happen
+        // in one transaction. A crash can therefore leave either the complete
+        // account or the complete deletion, never a half-deleted identity.
+        await db.transaction(async (tx) => {
+            await tx.delete(chatMessages).where(eq(chatMessages.senderDid, userDid));
 
-        const conversationIds = conversations.map(c => c.id);
-
-        // Delete messages in those conversations
-        if (conversationIds.length > 0) {
-            for (const convId of conversationIds) {
-                await db.delete(chatMessages)
-                    .where(eq(chatMessages.conversationId, convId));
+            const conversations = await tx.query.chatConversations.findMany({
+                where: {
+                    OR: [
+                        { participant1Id: userId },
+                        { participant2Handle: user.handle },
+                        { participant2Handle: qualifiedHandle },
+                    ],
+                },
+            });
+            for (const conversation of conversations) {
+                await tx.delete(chatConversations).where(eq(chatConversations.id, conversation.id));
             }
-        }
 
-        // 3. Delete the conversations themselves
-        if (conversationIds.length > 0) {
-            for (const convId of conversationIds) {
-                await db.delete(chatConversations)
-                    .where(eq(chatConversations.id, convId));
-            }
-        }
-
-        // 4. Delete notifications
-        await db.delete(notifications)
-            .where(or(
+            await tx.delete(notifications).where(or(
                 eq(notifications.userId, userId),
-                eq(notifications.actorId, userId)
+                eq(notifications.actorId, userId),
             ));
-
-        // 5. Delete likes
-        await db.delete(likes)
-            .where(eq(likes.userId, userId));
-
-        // 6. Delete follows (both directions)
-        await db.delete(follows)
-            .where(or(
+            await tx.delete(likes).where(eq(likes.userId, userId));
+            await tx.delete(follows).where(or(
                 eq(follows.followerId, userId),
-                eq(follows.followingId, userId)
+                eq(follows.followingId, userId),
             ));
 
-        // 7. Delete posts (this will cascade delete reposts and post likes via triggers if set up)
-        await db.delete(posts)
-            .where(eq(posts.userId, userId));
+            // These two foreign keys intentionally preserve moderation history,
+            // so release their nullable moderator reference before deleting the
+            // account instead of letting SQLite reject the deletion.
+            await tx.update(posts).set({ removedBy: null }).where(eq(posts.removedBy, userId));
+            await tx.update(reports).set({ resolvedBy: null }).where(eq(reports.resolvedBy, userId));
 
-        // 8. Delete sessions
-        await db.delete(sessions)
-            .where(eq(sessions.userId, userId));
+            // Delete posts while the author row still exists. The database
+            // triggers use that row to emit durable post tombstones.
+            await tx.delete(posts).where(eq(posts.userId, userId));
+            await tx.delete(sessions).where(eq(sessions.userId, userId));
 
-        // 9. Finally, delete the user
-        await db.delete(users)
-            .where(eq(users.id, userId));
+            const [clock] = await tx.update(swarmContentClock).set({
+                sequence: sql`${swarmContentClock.sequence} + 1`,
+            }).where(eq(swarmContentClock.id, 1)).returning({
+                sequence: swarmContentClock.sequence,
+            });
+            if (!clock) throw new Error('Federation change clock is unavailable');
+
+            await tx.insert(swarmAccountTombstones).values({
+                handle: user.handle.toLowerCase(),
+                did: userDid,
+                sequence: clock.sequence,
+                deletedAt: new Date(),
+            });
+            await tx.update(handleRegistry).set({
+                deletedAt: new Date(),
+                updatedAt: new Date(),
+            }).where(and(
+                eq(handleRegistry.did, userDid),
+                eq(handleRegistry.nodeDomain, nodeDomain),
+            ));
+            await tx.delete(users).where(eq(users.id, userId));
+        });
 
         // Clear session cookie
         const cookieStore = await cookies();
