@@ -1614,7 +1614,7 @@ export default function ChatPage() {
                 </div>
 
                 {/* Input */}
-                <div className="compose" style={{ borderTop: '1px solid var(--border)', background: 'var(--background)', flexShrink: 0 }}>
+                <div className="compose" style={{ border: 'none', background: 'transparent', flexShrink: 0 }}>
                     <StorageConfigurationPrompt
                         open={showStorageConfiguration}
                         onConfigured={async () => {
