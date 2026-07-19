@@ -790,6 +790,7 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
   createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
+  uniqueIndex('swarm_nodes_domain_unique_idx').on(table.domain),
   index('swarm_nodes_domain_idx').on(table.domain),
   index('swarm_nodes_active_idx').on(table.isActive),
   index('swarm_nodes_last_seen_idx').on(table.lastSeenAt),

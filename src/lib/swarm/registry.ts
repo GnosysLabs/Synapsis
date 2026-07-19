@@ -298,7 +298,14 @@ export async function getKnownSwarmNodeNsfw(domain: string): Promise<boolean | u
   return node.nsfwClassificationKnown ? false : undefined;
 }
 
-/** Return the pinned key only for directly established, healthy peers. */
+/**
+ * Authenticate a directly established peer for bounded read-only federation.
+ *
+ * Availability reputation controls whether we ingest that peer's content; it
+ * must not control whether the peer can prove its identity to read our public
+ * timeline. Coupling those concerns creates a recovery deadlock after an
+ * outage: the peer cannot make the successful request needed to regain trust.
+ */
 export async function getTrustedSwarmReadPeerPublicKey(domain: string): Promise<string | null> {
   if (!db) return null;
   const normalizedDomain = getPublicSwarmDomain(domain);
@@ -308,9 +315,7 @@ export async function getTrustedSwarmReadPeerPublicKey(domain: string): Promise<
     || node?.discoveredVia === 'announcement';
   if (!(
     node
-    && node.isActive
     && !node.isBlocked
-    && node.trustScore > SWARM_CONFIG.quarantineTrustScore
     && directlyEstablished
     && node.nsfwClassificationKnown
     && node.publicKey
@@ -547,7 +552,10 @@ export async function markNodeFailure(domain: string): Promise<void> {
  * 
  * @throws Error if database operation fails (after logging)
  */
-export async function markNodeSuccess(domain: string): Promise<void> {
+export async function markNodeSuccess(
+  domain: string,
+  options: { verifiedContent?: boolean } = {},
+): Promise<void> {
   if (!db) return;
 
   try {
@@ -559,10 +567,16 @@ export async function markNodeSuccess(domain: string): Promise<void> {
 
     const now = new Date();
     const lastTrustIncrease = node.lastSyncAt?.getTime() ?? 0;
-    const mayIncreaseTrust = now.getTime() - lastTrustIncrease >= SWARM_CONFIG.gossipIntervalMs;
+    const recoversAvailabilityQuarantine = options.verifiedContent === true
+      && node.trustScore <= SWARM_CONFIG.quarantineTrustScore;
+    const mayIncreaseTrust = recoversAvailabilityQuarantine
+      || now.getTime() - lastTrustIncrease >= SWARM_CONFIG.gossipIntervalMs;
+    const trustBaseline = recoversAvailabilityQuarantine
+      ? SWARM_CONFIG.quarantineTrustScore
+      : node.trustScore;
     const newTrust = Math.min(
       SWARM_CONFIG.maxTrustScore,
-      node.trustScore + (mayIncreaseTrust ? SWARM_CONFIG.trustScoreOnSuccess : 0)
+      trustBaseline + (mayIncreaseTrust ? SWARM_CONFIG.trustScoreOnSuccess : 0)
     );
 
     await db.update(swarmNodes)
