@@ -111,7 +111,7 @@ export async function POST(request: Request, context: RouteContext) {
                 where: { AND: [{ followerId: currentUser.id }, { targetHandle: targetHandle }] },
             });
             if (existingRemoteFollow) {
-                return NextResponse.json({ error: 'Already following' }, { status: 400 });
+                return NextResponse.json({ success: true, following: true, remote: true, swarm: true });
             }
 
             // Only allow following swarm nodes
@@ -199,7 +199,7 @@ export async function POST(request: Request, context: RouteContext) {
         });
 
         if (existingFollow) {
-            return NextResponse.json({ error: 'Already following' }, { status: 400 });
+            return NextResponse.json({ success: true, following: true });
         }
 
         // Create follow
@@ -269,9 +269,6 @@ export async function DELETE(request: Request, context: RouteContext) {
             const existingRemoteFollow = await db.query.remoteFollows.findFirst({
                 where: { AND: [{ followerId: currentUser.id }, { targetHandle: targetHandle }] },
             });
-            if (!existingRemoteFollow) {
-                return NextResponse.json({ error: 'Not following' }, { status: 400 });
-            }
 
             // Use swarm protocol for unfollow
             const result = await deliverSwarmUnfollow(remote.domain, {
@@ -292,13 +289,13 @@ export async function DELETE(request: Request, context: RouteContext) {
                 }, { status: 502 });
             }
 
-            // Remove the follow record
-            await db.delete(remoteFollows).where(eq(remoteFollows.id, existingRemoteFollow.id));
-
-            // Update the user's following count (atomic decrement, clamped to 0)
-            await db.update(users)
-                .set({ followingCount: sql`max(0, ${users.followingCount} - 1)` })
-                .where(eq(users.id, currentUser.id));
+            if (existingRemoteFollow) {
+                // Only change local counts when this node actually held the relationship.
+                await db.delete(remoteFollows).where(eq(remoteFollows.id, existingRemoteFollow.id));
+                await db.update(users)
+                    .set({ followingCount: sql`max(0, ${users.followingCount} - 1)` })
+                    .where(eq(users.id, currentUser.id));
+            }
 
             console.log(`[Swarm] Unfollow delivered to ${remote.domain}`);
             return NextResponse.json({ success: true, following: false, remote: true, swarm: true });
@@ -326,7 +323,7 @@ export async function DELETE(request: Request, context: RouteContext) {
         });
 
         if (!existingFollow) {
-            return NextResponse.json({ error: 'Not following' }, { status: 400 });
+            return NextResponse.json({ success: true, following: false });
         }
 
         // Remove follow
