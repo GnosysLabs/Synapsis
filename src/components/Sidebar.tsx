@@ -117,6 +117,24 @@ export function Sidebar() {
     // Home is exact match
     const isHome = pathname === '/';
 
+    const handleHomeClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+        if (
+            !isHome
+            || event.button !== 0
+            || event.metaKey
+            || event.ctrlKey
+            || event.shiftKey
+            || event.altKey
+        ) return;
+
+        event.preventDefault();
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        window.scrollTo({
+            top: 0,
+            behavior: reduceMotion ? 'auto' : 'smooth',
+        });
+    };
+
     const handleLogout = async () => {
         if (loggingOut || !user) return;
 
@@ -223,7 +241,12 @@ export function Sidebar() {
                 )}
             </Link>
             <nav>
-                <Link href="/" className={`nav-item ${isHome ? 'active' : ''}`} title={user ? 'Home' : 'Node feed'}>
+                <Link
+                    href="/"
+                    className={`nav-item ${isHome ? 'active' : ''}`}
+                    title={user ? 'Home' : 'Node feed'}
+                    onClick={handleHomeClick}
+                >
                     <HomeIcon />
                     <span>{user ? 'Home' : 'Node feed'}</span>
                 </Link>
