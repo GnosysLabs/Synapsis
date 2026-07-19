@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Image from 'next/image';
 import { Images } from 'lucide-react';
 
@@ -13,9 +14,16 @@ interface CollectionCoverProps {
 }
 
 export function CollectionCover({ coverUrl, previewImages = [], title, className = '' }: CollectionCoverProps) {
-  const candidates = [coverUrl, ...previewImages]
-    .filter((value): value is string => Boolean(value))
+  const [failedImages, setFailedImages] = useState<Set<string>>(() => new Set());
+  const trustedCover = coverUrl && isTrustedFederationMediaUrl(coverUrl) ? coverUrl : null;
+  const trustedPreviews = previewImages
     .filter((value) => isTrustedFederationMediaUrl(value));
+  // An explicit cover is the complete cover, not the first tile in an
+  // automatically generated collage. Only fall back to post media if the
+  // chosen cover cannot be loaded.
+  const candidates = trustedCover && !failedImages.has(trustedCover)
+    ? [trustedCover]
+    : trustedPreviews.filter((url) => !failedImages.has(url));
   const images = [...new Set(candidates)].slice(0, 4);
 
   if (images.length === 0) {
@@ -37,6 +45,12 @@ export function CollectionCover({ coverUrl, previewImages = [], title, className
           width={640}
           height={360}
           loading="lazy"
+          onError={() => setFailedImages((current) => {
+            if (current.has(url)) return current;
+            const next = new Set(current);
+            next.add(url);
+            return next;
+          })}
         />
       ))}
     </div>

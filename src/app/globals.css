@@ -4393,6 +4393,87 @@ a.btn-primary:visited {
   font-size: 13px;
 }
 
+/* Collection dialogs share the Create Post modal's near-black surface,
+   restrained accent border, controls, and button treatment. */
+.collection-modal-backdrop {
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: globalComposeFadeIn 0.16s ease-out;
+}
+
+.collection-modal-backdrop .app-dialog {
+  isolation: isolate;
+  overflow: visible;
+  border-color: color-mix(in srgb, var(--accent) 16%, #242424);
+  background: #050505;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.72);
+  animation: globalComposeRiseIn 0.2s ease-out;
+}
+
+.collection-editor {
+  width: min(620px, 100%);
+  max-height: min(760px, 88dvh);
+  overflow-y: auto !important;
+}
+
+.collection-modal-backdrop .app-dialog-heading h2 {
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.collection-modal-backdrop .app-dialog-heading p,
+.collection-modal-backdrop .app-dialog-field > span,
+.collection-modal-backdrop .app-dialog-field small {
+  color: var(--foreground-secondary);
+}
+
+.collection-modal-backdrop .app-dialog-icon {
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, #242424);
+  background: color-mix(in srgb, var(--accent) 7%, #050505);
+  color: var(--accent);
+}
+
+.collection-modal-backdrop .app-dialog-close {
+  color: var(--foreground-secondary);
+}
+
+.collection-modal-backdrop .app-dialog-close:hover {
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent);
+}
+
+.collection-modal-backdrop .input {
+  border-color: color-mix(in srgb, var(--accent) 12%, #242424);
+  background: #080808;
+  caret-color: var(--accent);
+}
+
+.collection-modal-backdrop .input:focus {
+  border-color: color-mix(in srgb, var(--accent) 46%, #242424);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.collection-modal-backdrop .btn-ghost {
+  border-color: #242424;
+  background: #0a0a0a;
+}
+
+.collection-modal-backdrop .btn-ghost:hover {
+  border-color: color-mix(in srgb, var(--accent) 20%, #242424);
+  background: #101010;
+}
+
+.collection-modal-backdrop .btn-primary {
+  min-width: 88px;
+  padding-inline: 20px;
+  border-radius: 999px;
+  font-weight: 600;
+  box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
 .post-collection-picker {
   display: flex;
   flex-direction: column;
@@ -4420,11 +4501,18 @@ a.btn-primary:visited {
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 12px;
+  background: #080808;
   cursor: pointer;
 }
 
 .post-collection-option:hover {
-  background: var(--background-tertiary);
+  border-color: color-mix(in srgb, var(--accent) 22%, #242424);
+  background: #0d0d0d;
+}
+
+.post-collection-option:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 46%, #242424);
+  background: color-mix(in srgb, var(--accent) 6%, #080808);
 }
 
 .post-collection-option input {
