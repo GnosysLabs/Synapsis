@@ -44,7 +44,7 @@ export default function PostDetailPage() {
         fetchPostDetail();
     }, [fetchPostDetail]);
 
-    const handlePost = async (content: string, mediaIds: string[], linkPreview?: LinkPreviewData, replyToId?: string, isNsfw?: boolean, mediaManifest: import('@/lib/types').SignedMediaDescriptor[] = []) => {
+    const handlePost = async (content: string, mediaIds: string[], linkPreview?: LinkPreviewData, replyToId?: string, isNsfw?: boolean, mediaManifest: import('@/lib/types').SignedMediaDescriptor[] = [], collectionIds: string[] = []) => {
         // Check if we're replying to a swarm post
         let swarmReplyTo: { postId: string; nodeDomain: string; content?: string; author?: Post['author'] } | undefined;
         let localReplyToId: string | undefined = replyToId;
@@ -71,7 +71,8 @@ export default function PostDetailPage() {
             isNsfw || false,
             mediaManifest,
             did,
-            userHandle
+            userHandle,
+            collectionIds,
         );
 
         if (res.ok) {

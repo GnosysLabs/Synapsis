@@ -47,6 +47,7 @@ export function GlobalPostComposer() {
         _replyToId?: string,
         isNsfw?: boolean,
         mediaManifest: import('@/lib/types').SignedMediaDescriptor[] = [],
+        collectionIds: string[] = [],
     ): Promise<boolean> => {
         if (!did || !handle) {
             showToast('Your identity is still loading. Try again in a moment.', 'error');
@@ -64,6 +65,7 @@ export function GlobalPostComposer() {
                 mediaManifest,
                 did,
                 handle,
+                collectionIds,
             );
 
             if (!response.ok) {

@@ -15,6 +15,7 @@ import { registerPostMentions } from '@/lib/mentions/delivery';
 
 const mocks = vi.hoisted(() => ({
   insertValues: vi.fn(),
+  findCollections: vi.fn(),
   deliverPostToSwarmFollowers: vi.fn().mockResolvedValue({ delivered: 0, failed: 0 }),
 }));
 
@@ -61,19 +62,20 @@ vi.mock('@/lib/swarm/interactions', () => ({
   deliverPostToSwarmFollowers: mocks.deliverPostToSwarmFollowers,
 }));
 
-vi.mock('@/db', () => ({
-  db: {
+vi.mock('@/db', () => {
+  const database = {
     insert: vi.fn(() => ({
-      values: vi.fn((values: Record<string, unknown>) => {
+      values: vi.fn((values: Record<string, unknown> | Array<Record<string, unknown>>) => {
         mocks.insertValues(values);
+        const row: Record<string, unknown> = Array.isArray(values) ? {} : values;
         return {
           returning: vi.fn(() => Promise.resolve([{
-            id: values.id || 'test-post-id',
-            userId: values.userId || 'test-user-id',
-            content: values.content || '',
+            id: row.id || 'test-post-id',
+            userId: row.userId || 'test-user-id',
+            content: row.content || '',
             createdAt: new Date(),
             isRemoved: false,
-            isNsfw: values.isNsfw || false,
+            isNsfw: row.isNsfw || false,
             likesCount: 0,
             repostsCount: 0,
             repliesCount: 0,
@@ -93,12 +95,23 @@ vi.mock('@/db', () => ({
       posts: {
         findFirst: vi.fn(() => Promise.resolve(null)),
       },
+      collections: {
+        findMany: mocks.findCollections,
+      },
     },
-  },
-  posts: {},
-  users: {},
-  media: {},
-}));
+  };
+
+  return {
+    db: {
+      ...database,
+      transaction: vi.fn((callback: (tx: typeof database) => unknown) => callback(database)),
+    },
+    posts: {},
+    users: {},
+    media: {},
+    collectionPosts: {},
+  };
+});
 
 const clientPostId = '8d42ce12-7ba0-4c4f-841b-a0d7669fe652';
 
@@ -115,6 +128,7 @@ function signedPostData(content = 'Test post content') {
 describe('POST /api/posts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.findCollections.mockResolvedValue([]);
   });
 
   it('should accept a valid signed action and create a post', async () => {
@@ -174,6 +188,91 @@ describe('POST /api/posts', () => {
       content: 'Test post content',
       userAction: signedAction,
     }));
+  });
+
+  it('creates collection memberships with the post in one transaction', async () => {
+    const collectionIds = [
+      '22222222-2222-4222-8222-222222222222',
+      '33333333-3333-4333-8333-333333333333',
+    ];
+    const mockUser = {
+      id: 'test-user-id',
+      did: 'did:synapsis:test123',
+      handle: 'testuser',
+      publicKey: 'test-public-key',
+      isSuspended: false,
+      isSilenced: false,
+      isNsfw: false,
+      postsCount: 0,
+    };
+    vi.mocked(requireSignedAction).mockResolvedValue(mockUser as Awaited<ReturnType<typeof requireSignedAction>>);
+    mocks.findCollections.mockResolvedValue(collectionIds.map((id) => ({ id })));
+    const signedAction = {
+      action: 'post',
+      data: { ...signedPostData('Collected post'), collectionIds },
+      did: 'did:synapsis:test123',
+      handle: 'testuser',
+      ts: Date.now(),
+      nonce: 'nonce-collections',
+      sig: 'test-signature',
+    };
+
+    const response = await POST(new Request('http://localhost:43821/api/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedAction),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.findCollections).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        AND: [
+          { id: { in: collectionIds } },
+          { userId: 'test-user-id' },
+        ],
+      },
+    }));
+    expect(mocks.insertValues).toHaveBeenCalledWith(collectionIds.map((collectionId) => ({
+      collectionId,
+      postId: clientPostId,
+    })));
+  });
+
+  it('rejects collection IDs that are not owned by the posting user', async () => {
+    const collectionId = '22222222-2222-4222-8222-222222222222';
+    const mockUser = {
+      id: 'test-user-id',
+      did: 'did:synapsis:test123',
+      handle: 'testuser',
+      publicKey: 'test-public-key',
+      isSuspended: false,
+      isSilenced: false,
+      isNsfw: false,
+      postsCount: 0,
+    };
+    vi.mocked(requireSignedAction).mockResolvedValue(mockUser as Awaited<ReturnType<typeof requireSignedAction>>);
+    mocks.findCollections.mockResolvedValue([]);
+    const signedAction = {
+      action: 'post',
+      data: { ...signedPostData('Collected post'), collectionIds: [collectionId] },
+      did: 'did:synapsis:test123',
+      handle: 'testuser',
+      ts: Date.now(),
+      nonce: 'nonce-wrong-collection',
+      sig: 'test-signature',
+    };
+
+    const response = await POST(new Request('http://localhost:43821/api/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedAction),
+    }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'A selected collection is not available',
+    });
+    expect(mocks.insertValues).not.toHaveBeenCalled();
   });
 
   it('accepts a delegated CLI action with post scope', async () => {

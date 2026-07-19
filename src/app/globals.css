@@ -1989,6 +1989,48 @@ a.btn-primary:visited {
   color: var(--accent);
 }
 
+.compose-collection-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--foreground-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.compose-collection-button:hover,
+.compose-collection-button.selected {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  color: var(--accent);
+}
+
+.compose-collection-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.compose-collection-count {
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--background);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .compose-media-input {
   display: none;
 }
@@ -3298,6 +3340,10 @@ a.btn-primary:visited {
   .compose-media-button {
     width: 44px;
     height: 44px;
+  }
+
+  .compose-collection-button {
+    min-height: 44px;
   }
 
   /* Improve menu dropdown positioning on mobile */

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, media, follows, mutes, blocks, mutedNodes, remoteReposts, userSwarmReposts, notifications, feedStories, remoteFeedStories } from '@/db';
+import { db, posts, users, media, follows, mutes, blocks, mutedNodes, remoteReposts, userSwarmReposts, notifications, feedStories, remoteFeedStories, collectionPosts } from '@/db';
 import { getSession, requireAuth } from '@/lib/auth';
 import { requireSignedAction, SignedActionError, type SignedAction } from '@/lib/auth/verify-signature';
 import {
@@ -375,6 +375,7 @@ const createPostSchema = z.object({
         }).optional(),
     }).optional(),
     mediaIds: z.array(z.string().uuid()).max(4).optional(),
+    collectionIds: z.array(z.string().uuid()).max(200).optional().default([]),
     mediaManifest: z.array(z.strictObject({
         id: z.string().uuid(),
         url: federationMediaUrlSchema,
@@ -509,23 +510,52 @@ export async function POST(request: Request) {
             );
         }
 
-        const [post] = await db.insert(posts).values({
-            id: data.clientPostId,
-            userId: user.id,
-            content: postContent,
-            replyToId: data.replyToId,
-            ...swarmReplyFields,
-            isNsfw: data.isNsfw || user.isNsfw || false, // Inherit from account if account is NSFW
-            apId: `https://${nodeDomain}/posts/${data.clientPostId || crypto.randomUUID()}`,
-            apUrl: `https://${nodeDomain}/posts/${data.clientPostId || crypto.randomUUID()}`,
-            linkPreviewUrl: data.linkPreview?.url,
-            linkPreviewTitle: data.linkPreview?.title,
-            linkPreviewDescription: data.linkPreview?.description,
-            linkPreviewImage: data.linkPreview?.image,
-            linkPreviewType: data.linkPreview?.type,
-            linkPreviewVideoUrl: data.linkPreview?.videoUrl,
-            linkPreviewMediaJson: serializeLinkPreviewMedia(data.linkPreview?.media),
-        }).returning();
+        const selectedCollectionIds = [...new Set(data.collectionIds)];
+        if (selectedCollectionIds.length > 0) {
+            const ownedCollections = await db.query.collections.findMany({
+                where: {
+                    AND: [
+                        { id: { in: selectedCollectionIds } },
+                        { userId: user.id },
+                    ],
+                },
+                columns: { id: true },
+                limit: 200,
+            });
+            if (ownedCollections.length !== selectedCollectionIds.length) {
+                return NextResponse.json(
+                    { error: 'A selected collection is not available' },
+                    { status: 400 },
+                );
+            }
+        }
+
+        const post = await db.transaction(async (tx) => {
+            const [createdPost] = await tx.insert(posts).values({
+                id: data.clientPostId,
+                userId: user.id,
+                content: postContent,
+                replyToId: data.replyToId,
+                ...swarmReplyFields,
+                isNsfw: data.isNsfw || user.isNsfw || false, // Inherit from account if account is NSFW
+                apId: `https://${nodeDomain}/posts/${data.clientPostId || crypto.randomUUID()}`,
+                apUrl: `https://${nodeDomain}/posts/${data.clientPostId || crypto.randomUUID()}`,
+                linkPreviewUrl: data.linkPreview?.url,
+                linkPreviewTitle: data.linkPreview?.title,
+                linkPreviewDescription: data.linkPreview?.description,
+                linkPreviewImage: data.linkPreview?.image,
+                linkPreviewType: data.linkPreview?.type,
+                linkPreviewVideoUrl: data.linkPreview?.videoUrl,
+                linkPreviewMediaJson: serializeLinkPreviewMedia(data.linkPreview?.media),
+            }).returning();
+            if (selectedCollectionIds.length > 0) {
+                await tx.insert(collectionPosts).values(selectedCollectionIds.map((collectionId) => ({
+                    collectionId,
+                    postId: createdPost.id,
+                })));
+            }
+            return createdPost;
+        });
         await indexLocalPostContent(post.id, post.content).catch((error) => {
             console.error('[Search] Failed to index new post:', error);
         });

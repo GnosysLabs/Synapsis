@@ -162,7 +162,8 @@ export const signedAPI = {
     isNsfw: boolean,
     mediaManifest: SignedMediaDescriptor[],
     userDid: string,
-    userHandle: string
+    userHandle: string,
+    collectionIds: string[] = [],
   ) {
     const clientPostId = crypto.randomUUID();
     const canonicalReplyTarget = canonicalSwarmReplyTarget(swarmReplyTo);
@@ -178,6 +179,7 @@ export const signedAPI = {
         replyToId,
         swarmReplyTo: canonicalReplyTarget,
         isNsfw,
+        collectionIds,
       },
       userDid,
       userHandle

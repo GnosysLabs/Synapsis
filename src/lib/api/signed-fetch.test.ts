@@ -74,4 +74,31 @@ describe('signed post payloads', () => {
       'alice',
     );
   });
+
+  it('includes selected collections in the signed post payload', async () => {
+    const collectionIds = [
+      '22222222-2222-4222-8222-222222222222',
+      '33333333-3333-4333-8333-333333333333',
+    ];
+
+    await signedAPI.createPost(
+      'Collected post',
+      [],
+      undefined,
+      undefined,
+      undefined,
+      false,
+      [],
+      'did:key:alice',
+      'alice',
+      collectionIds,
+    );
+
+    expect(mocks.createSignedAction).toHaveBeenCalledWith(
+      'post',
+      expect.objectContaining({ collectionIds }),
+      'did:key:alice',
+      'alice',
+    );
+  });
 });

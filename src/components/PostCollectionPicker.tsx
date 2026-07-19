@@ -11,12 +11,18 @@ import type { CollectionSummary, PostCollectionChoice } from '@/lib/collections/
 import { useAuth } from '@/lib/contexts/AuthContext';
 
 interface PostCollectionPickerProps {
-  postId: string;
+  postId?: string;
+  selectedCollectionIds?: string[];
   onClose: () => void;
   onSaved?: (collectionIds: string[]) => void;
 }
 
-export function PostCollectionPicker({ postId, onClose, onSaved }: PostCollectionPickerProps) {
+export function PostCollectionPicker({
+  postId,
+  selectedCollectionIds,
+  onClose,
+  onSaved,
+}: PostCollectionPickerProps) {
   const { did, handle, isIdentityUnlocked } = useAuth();
   const [collections, setCollections] = useState<PostCollectionChoice[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -27,12 +33,32 @@ export function PostCollectionPicker({ postId, onClose, onSaved }: PostCollectio
   const titleId = useId();
 
   useEffect(() => {
+    const endpoint = postId
+      ? `/api/posts/${postId}/collections`
+      : handle
+        ? `/api/users/${encodeURIComponent(handle)}/collections`
+        : null;
+    if (!endpoint) {
+      setError('Your collections could not be loaded yet.');
+      setLoading(false);
+      return;
+    }
+
     const controller = new AbortController();
-    void fetch(`/api/posts/${postId}/collections`, { signal: controller.signal, cache: 'no-store' })
+    void fetch(endpoint, { signal: controller.signal, cache: 'no-store' })
       .then(async (response) => {
-        const data = await response.json().catch(() => ({})) as { collections?: PostCollectionChoice[]; error?: string };
+        const data = await response.json().catch(() => ({})) as {
+          collections?: Array<PostCollectionChoice | CollectionSummary>;
+          error?: string;
+        };
         if (!response.ok) throw new Error(data.error || 'Could not load collections');
-        const choices = data.collections || [];
+        const initiallySelected = new Set(selectedCollectionIds || []);
+        const choices = (data.collections || []).map((collection) => ({
+          ...collection,
+          containsPost: 'containsPost' in collection
+            ? collection.containsPost
+            : initiallySelected.has(collection.id),
+        }));
         setCollections(choices);
         setSelected(new Set(choices.filter((choice) => choice.containsPost).map((choice) => choice.id)));
       })
@@ -45,20 +71,22 @@ export function PostCollectionPicker({ postId, onClose, onSaved }: PostCollectio
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [postId]);
+  }, [handle, postId, selectedCollectionIds]);
 
   const save = async () => {
     if (saving) return;
-    if (!isIdentityUnlocked || !did || !handle) {
+    if (postId && (!isIdentityUnlocked || !did || !handle)) {
       setError('Your session expired. Please sign in again.');
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      const response = await signedAPI.updatePostCollections(postId, [...selected], did, handle);
-      const data = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(data.error || 'Could not update collections');
+      if (postId) {
+        const response = await signedAPI.updatePostCollections(postId, [...selected], did!, handle!);
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        if (!response.ok) throw new Error(data.error || 'Could not update collections');
+      }
       onSaved?.([...selected]);
       onClose();
     } catch (saveError) {
@@ -82,8 +110,10 @@ export function PostCollectionPicker({ postId, onClose, onSaved }: PostCollectio
             <div className="app-dialog-heading">
               <div className="app-dialog-icon"><FolderPlus size={20} /></div>
               <div>
-                <h2 id={titleId}>Add to collection</h2>
-                <p>A post can appear in more than one collection.</p>
+                <h2 id={titleId}>{postId ? 'Add to collection' : 'Choose collections'}</h2>
+                <p>{postId
+                  ? 'A post can appear in more than one collection.'
+                  : 'Publish this post in one or more profile collections.'}</p>
               </div>
             </div>
 
@@ -130,7 +160,7 @@ export function PostCollectionPicker({ postId, onClose, onSaved }: PostCollectio
               <span className="post-collection-picker-spacer" />
               <button type="button" className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
               <button type="button" className="btn btn-primary" onClick={save} disabled={saving || loading}>
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? 'Saving…' : postId ? 'Save' : 'Done'}
               </button>
             </div>
           </div>
@@ -141,13 +171,16 @@ export function PostCollectionPicker({ postId, onClose, onSaved }: PostCollectio
       {creating && handle && (
         <CollectionEditorModal
           handle={handle}
-          initialPostId={postId}
+          initialPostId={postId || undefined}
           onClose={() => setCreating(false)}
           onSaved={(created: CollectionSummary) => {
             setCollections((current) => [...current, { ...created, containsPost: true }]);
-            setSelected((current) => new Set(current).add(created.id));
+            setSelected((current) => {
+              const next = new Set(current).add(created.id);
+              if (postId) onSaved?.([...next]);
+              return next;
+            });
             setCreating(false);
-            onSaved?.([...selected, created.id]);
           }}
         />
       )}

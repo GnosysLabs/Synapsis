@@ -4,7 +4,7 @@ import { useState, useEffect, useId, useRef } from 'react';
 import Image from 'next/image';
 import AutoTextarea from '@/components/AutoTextarea';
 import { Post, Attachment, type SignedMediaDescriptor } from '@/lib/types';
-import { AlertTriangle, Music2, Paperclip } from 'lucide-react';
+import { AlertTriangle, FolderPlus, Music2, Paperclip } from 'lucide-react';
 import { VideoEmbed } from '@/components/VideoEmbed';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -21,6 +21,7 @@ import {
     type ActiveMentionQuery,
 } from '@/lib/mentions/parser';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
+import { PostCollectionPicker } from '@/components/PostCollectionPicker';
 
 interface MediaAttachment extends Attachment {
     clientId?: string;
@@ -55,6 +56,7 @@ interface ComposeProps {
         replyToId?: string,
         isNsfw?: boolean,
         mediaManifest?: SignedMediaDescriptor[],
+        collectionIds?: string[],
     ) => void | boolean | Promise<void | boolean>;
     onPosted?: () => void;
     replyingTo?: Post | null;
@@ -65,7 +67,7 @@ interface ComposeProps {
 }
 
 export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placeholder = "What's happening?", isReply, autoFocus = false }: ComposeProps) {
-    const { isIdentityUnlocked } = useAuth();
+    const { isIdentityUnlocked, handle: currentHandle } = useAuth();
     const { showAlert } = useAppDialog();
     const replyToHandle = useFormattedHandle(replyingTo?.author.handle || '');
     const [content, setContent] = useState('');
@@ -81,6 +83,8 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     const [isNsfw, setIsNsfw] = useState(false);
     const [canPostNsfw, setCanPostNsfw] = useState(false);
     const [isNsfwNode, setIsNsfwNode] = useState(false);
+    const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([]);
+    const [showCollectionPicker, setShowCollectionPicker] = useState(false);
     const mediaInputRef = useRef<HTMLInputElement>(null);
     const storageCheckInFlightRef = useRef(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -101,6 +105,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
             : [];
     const previewImage = previewMedia[0]?.url || linkPreview?.image || null;
     const isEmbeddedVideo = Boolean(linkPreview?.url?.match(/(youtube\.com|youtu\.be|vimeo\.com)/));
+    const canChooseCollections = !isReply && !replyingTo;
 
     // Check if user can post NSFW content and if node is NSFW
     useEffect(() => {
@@ -271,6 +276,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                     altText: item.altText ?? null,
                     mimeType: item.mimeType ?? null,
                 })),
+                canChooseCollections ? selectedCollectionIds : [],
             );
             if (posted === false) {
                 setIsPosting(false);
@@ -285,6 +291,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
             setLinkPreview(null);
             setLastDetectedUrl(null);
             setIsNsfw(false);
+            setSelectedCollectionIds([]);
             setIsPosting(false);
             onPosted?.();
         } catch (error) {
@@ -442,6 +449,13 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                     setPendingStorageUploads([]);
                 }}
             />
+            {showCollectionPicker && currentHandle && (
+                <PostCollectionPicker
+                    selectedCollectionIds={selectedCollectionIds}
+                    onClose={() => setShowCollectionPicker(false)}
+                    onSaved={setSelectedCollectionIds}
+                />
+            )}
             {replyingTo && !isReply && (
                 <div className="compose-reply-target">
                     <div className="compose-reply-info">
@@ -646,6 +660,21 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                     )}
                 </div>
                 <div className="compose-actions">
+                    {canChooseCollections && (
+                        <button
+                            type="button"
+                            className={`compose-collection-button ${selectedCollectionIds.length > 0 ? 'selected' : ''}`}
+                            title="Choose collections"
+                            onClick={() => setShowCollectionPicker(true)}
+                            disabled={!currentHandle || isPosting}
+                        >
+                            <FolderPlus size={18} />
+                            <span>Collections</span>
+                            {selectedCollectionIds.length > 0 && (
+                                <span className="compose-collection-count">{selectedCollectionIds.length}</span>
+                            )}
+                        </button>
+                    )}
                     <button
                         type="button"
                         className="compose-media-button"
