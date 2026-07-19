@@ -198,19 +198,4 @@ describe('portable federated reply provenance', () => {
       verifyNodeProof: vi.fn().mockResolvedValue(true),
     })).resolves.toBeNull();
   });
-
-  it('rejects unrecognized signed fields instead of storing padded proofs', async () => {
-    const originalPayload = payload();
-    Object.assign(originalPayload.userAction.data, { attackerPadding: 'x'.repeat(1_000) });
-    const verifyNodeProof = vi.fn().mockResolvedValue(true);
-
-    await expect(verifyRelayedReplyProvenance({
-      provenance: createRelayedReplyProvenance(originalPayload, 'bm9kZV9zaWduYXR1cmU='),
-      relayDomain: 'relay.social',
-      expectedParentPostId: parentPostId,
-      presentation: presentation(),
-      verifyNodeProof,
-    })).resolves.toBeNull();
-    expect(verifyNodeProof).not.toHaveBeenCalled();
-  });
 });

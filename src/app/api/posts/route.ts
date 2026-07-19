@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, media, follows, mutes, blocks, mutedNodes, remoteReposts, userSwarmReposts, notifications, feedStories, remoteFeedStories } from '@/db';
+import { db, posts, users, media, follows, mutes, blocks, remotePosts, remoteReposts, userSwarmReposts, notifications } from '@/db';
 import { getSession, requireAuth } from '@/lib/auth';
 import { requireSignedAction, SignedActionError, type SignedAction } from '@/lib/auth/verify-signature';
 import {
@@ -7,13 +7,13 @@ import {
     requireCliSignedAction,
     signedActionErrorStatus,
 } from '@/lib/auth/cli-credentials';
-import { eq, and, desc, inArray, isNull, lt, ne, notLike, or, sql } from 'drizzle-orm';
+import { eq, and, desc, inArray, isNull, lt, ne, notLike, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { hasPublishablePostContent } from '@/lib/posts/content-policy';
-import { decodeFeedCursor, decodeFeedCursorPosition, encodeFeedCursor, newestDate, selectFeedWindow } from '@/lib/posts/feed-pagination';
+import { decodeFeedCursor, encodeFeedCursor, newestDate, selectFeedWindow } from '@/lib/posts/feed-pagination';
 import { mapSwarmPostToPost } from '@/lib/swarm/feed-post';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { parseBoundedInteger } from '@/lib/http/query';
@@ -26,6 +26,7 @@ import { registerPostMentions } from '@/lib/mentions/delivery';
 import {
     assembleNodeFeedStories,
     collapseSharedFeedPosts,
+    mergeNodeFeedActivities,
     setReposterInSummary,
     type NodeFeedReposter,
 } from '@/lib/posts/node-feed';
@@ -37,17 +38,19 @@ import {
 } from '@/lib/nsfw/remote-profile-access';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
+import { signedFederationRead } from '@/lib/swarm/signed-read';
 import { refreshFederatedReplyCounts } from '@/lib/swarm/reply-counts';
+import { mapWithConcurrency } from '@/lib/async/concurrency';
 import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 import { federationMediaUrlSchema } from '@/lib/utils/federation';
-import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
-import { getCachedSwarmTimeline } from '@/lib/swarm/content-cache';
-import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
-import { indexLocalPostContent } from '@/lib/search/post-index';
+import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import { parseSwarmPostId } from '@/lib/swarm/post-id';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_SEED_MULTIPLIER = 5;
 const CURATION_SEED_CAP = 200;
+const MAX_REMOTE_FOLLOWS_PER_HOME_REQUEST = 50;
+const MAX_CONCURRENT_REMOTE_PROFILE_FETCHES = 6;
 
 type FeedPostWithChildren = {
     id: string;
@@ -225,32 +228,73 @@ const feedPostRelations = {
 
 async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<FeedPostWithChildren[]> {
     const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
-    const cursorPosition = decodeFeedCursorPosition(cursor);
-    const cursorCondition = cursorPosition
-        ? or(
-            lt(feedStories.latestActivityAt, cursorPosition.at),
-            ...(cursorPosition.id ? [and(
-                eq(feedStories.latestActivityAt, cursorPosition.at),
-                lt(feedStories.storyId, cursorPosition.id),
-            )] : []),
-        )
-        : undefined;
-    const activityRows = await db.select({
-        storyId: feedStories.storyId,
-        latestActivityAt: feedStories.latestActivityAt,
-    }).from(feedStories)
-        .innerJoin(posts, eq(posts.id, feedStories.storyId))
-        .innerJoin(users, eq(users.id, posts.userId))
+    const storyId = sql<string>`coalesce(${posts.repostOfId}, ${posts.id})`;
+    const latestActivityAt = sql<Date>`max(${posts.createdAt})`.mapWith(posts.createdAt);
+    const latestRemoteActivityAt = sql<Date>`max(
+        max(${remoteReposts.createdAt}),
+        coalesce((
+            select max("activity_posts"."created_at")
+            from "posts" "activity_posts"
+            inner join "users" "activity_users"
+              on "activity_posts"."user_id" = "activity_users"."id"
+            where coalesce("activity_posts"."repost_of_id", "activity_posts"."id") = ${remoteReposts.postId}
+              and "activity_posts"."is_removed" = 0
+              and "activity_posts"."reply_to_id" is null
+              and "activity_posts"."swarm_reply_to_id" is null
+              and "activity_users"."node_id" is null
+              and "activity_users"."handle" not like '%@%'
+        ), 0)
+    )`.mapWith(posts.createdAt);
+    const cursorDate = decodeFeedCursor(cursor);
+
+    const activityQuery = db.select({
+        storyId,
+        latestActivityAt,
+    })
+        .from(posts)
+        .innerJoin(users, eq(posts.userId, users.id))
         .where(and(
             eq(posts.isRemoved, false),
             isNull(posts.replyToId),
             isNull(posts.swarmReplyToId),
             isNull(users.nodeId),
             notLike(users.handle, '%@%'),
-            cursorCondition,
+            sql`not exists (
+                select 1 from ${remoteReposts}
+                where ${remoteReposts.postId} = ${storyId}
+            )`,
         ))
-        .orderBy(desc(feedStories.latestActivityAt), desc(feedStories.storyId))
+        .groupBy(storyId)
+        .orderBy(desc(latestActivityAt))
         .limit(limit);
+
+    const localActivityRows = cursorDate
+        ? await activityQuery.having(lt(latestActivityAt, cursorDate))
+        : await activityQuery;
+    const remoteActivityQuery = db.select({
+        storyId: remoteReposts.postId,
+        latestActivityAt: latestRemoteActivityAt,
+    })
+        .from(remoteReposts)
+        .innerJoin(posts, eq(remoteReposts.postId, posts.id))
+        .innerJoin(users, eq(posts.userId, users.id))
+        .where(and(
+            eq(posts.isRemoved, false),
+            isNull(posts.replyToId),
+            isNull(posts.swarmReplyToId),
+            isNull(users.nodeId),
+            notLike(users.handle, '%@%'),
+        ))
+        .groupBy(remoteReposts.postId)
+        .orderBy(desc(latestRemoteActivityAt))
+        .limit(limit);
+    const remoteActivityRows = cursorDate
+        ? await remoteActivityQuery.having(lt(latestRemoteActivityAt, cursorDate))
+        : await remoteActivityQuery;
+    const activityRows = mergeNodeFeedActivities(
+        [localActivityRows, remoteActivityRows],
+        limit,
+    );
     const storyIds = activityRows.map((row) => row.storyId);
 
     if (storyIds.length === 0) {
@@ -302,33 +346,22 @@ async function getLocallyRepostedRemoteStories(
     cursor: string | null,
     limit: number,
 ): Promise<FeedPostWithChildren[]> {
-    const cursorPosition = decodeFeedCursorPosition(cursor);
+    const latestActivityAt = sql<Date>`max(${userSwarmReposts.repostedAt})`.mapWith(userSwarmReposts.repostedAt);
+    const cursorDate = decodeFeedCursor(cursor);
     const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
-    const remoteStoryFeedId = sql<string>`'swarm:' || ${remoteFeedStories.nodeDomain} || ':' || ${remoteFeedStories.originalPostId}`;
-    const cursorCondition = cursorPosition
-        ? or(
-            lt(remoteFeedStories.latestActivityAt, cursorPosition.at),
-            ...(cursorPosition.id ? [and(
-                eq(remoteFeedStories.latestActivityAt, cursorPosition.at),
-                lt(remoteStoryFeedId, cursorPosition.id),
-            )] : []),
-        )
-        : undefined;
-    const activityRows = await db.select({
-        nodeDomain: remoteFeedStories.nodeDomain,
-        originalPostId: remoteFeedStories.originalPostId,
-        latestActivityAt: remoteFeedStories.latestActivityAt,
-    }).from(remoteFeedStories)
-        .where(and(
-            ne(remoteFeedStories.nodeDomain, localDomain),
-            cursorCondition,
-        ))
-        .orderBy(
-            desc(remoteFeedStories.latestActivityAt),
-            desc(remoteFeedStories.nodeDomain),
-            desc(remoteFeedStories.originalPostId),
-        )
+    const activityQuery = db.select({
+        nodeDomain: userSwarmReposts.nodeDomain,
+        originalPostId: userSwarmReposts.originalPostId,
+        latestActivityAt,
+    })
+        .from(userSwarmReposts)
+        .where(ne(userSwarmReposts.nodeDomain, localDomain))
+        .groupBy(userSwarmReposts.nodeDomain, userSwarmReposts.originalPostId)
+        .orderBy(desc(latestActivityAt))
         .limit(limit);
+    const activityRows = cursorDate
+        ? await activityQuery.having(lt(latestActivityAt, cursorDate))
+        : await activityQuery;
 
     if (activityRows.length === 0) return [];
 
@@ -526,9 +559,6 @@ export async function POST(request: Request) {
             linkPreviewVideoUrl: data.linkPreview?.videoUrl,
             linkPreviewMediaJson: serializeLinkPreviewMedia(data.linkPreview?.media),
         }).returning();
-        await indexLocalPostContent(post.id, post.content).catch((error) => {
-            console.error('[Search] Failed to index new post:', error);
-        });
 
         try {
             if (data.swarmReplyTo) {
@@ -672,8 +702,36 @@ export async function POST(request: Request) {
             console.error('[Posts] Context:', { postId: post.id, userId: user.id, content: postContent.slice(0, 100) });
         }
 
-        // Swarm post federation is pull-based. Do not fan new posts out to the
-        // retired /api/swarm/inbox endpoint on every active node.
+        // Federate the post to remote followers (non-blocking)
+        (async () => {
+            try {
+                // SWARM-FIRST: Deliver to swarm followers directly
+                const { deliverPostToSwarmFollowers } = await import('@/lib/swarm/interactions');
+
+                const swarmResult = await deliverPostToSwarmFollowers(
+                    user.id,
+                    post,
+                    {
+                        handle: user.handle,
+                        displayName: user.displayName,
+                        avatarUrl: user.avatarUrl,
+                        isNsfw: user.isNsfw,
+                    },
+                    attachedMedia,
+                    nodeDomain
+                );
+
+                if (swarmResult.delivered > 0) {
+                    console.log(`[Swarm] Post ${post.id} delivered to ${swarmResult.delivered} swarm nodes (${swarmResult.failed} failed)`);
+                }
+            } catch (err) {
+                // Log error with context but don't fail the request - swarm delivery is best-effort
+                console.error('[Posts] Error delivering post to swarm followers:', err);
+                console.error('[Posts] Context:', { postId: post.id, userId: user.id, nodeDomain });
+            }
+        })();
+
+
         return NextResponse.json({ success: true, post: { ...post, media: attachedMedia } });
     } catch (error) {
         console.error('Create post error:', error);
@@ -716,6 +774,132 @@ export async function POST(request: Request) {
     }
 }
 
+// Normalize content for deduplication (strip HTML entities, URLs, whitespace, category suffixes)
+const normalizeForDedup = (content: string): string => {
+    return content
+        .replace(/Posted into [\w\s-]+/gi, '') // Remove "Posted into [Category]" patterns
+        .replace(/&[a-z]+;/gi, '') // Remove HTML entities like &lsquo;
+        .replace(/&#\d+;/g, '') // Remove numeric entities
+        .replace(/https?:\/\/[^\s]+/gi, '') // Remove URLs
+        .replace(/[^\w\s]/g, '') // Remove punctuation
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .toLowerCase()
+        .trim()
+        .slice(0, 50); // Compare first 50 chars (article title)
+};
+
+// Helper to transform cached remote posts to match local post format
+// Deduplicates by apId AND by similar content from same author
+const cachedRemoteMediaSchema = z.array(z.object({
+    url: federationMediaUrlSchema,
+    altText: z.string().max(2_000).nullish(),
+})).max(4);
+
+const CACHED_REMOTE_POST_UUID =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function canonicalCachedRemotePostIdentity(apId: string): { id: string; domain: string } | null {
+    const canonical = parseSwarmPostId(apId);
+    if (canonical) {
+        return { id: `swarm:${canonical.domain}:${canonical.originalPostId}`, domain: canonical.domain };
+    }
+
+    // Upgrade only the exact historical cache format. General actor URLs are
+    // not accepted as authoritative post identities.
+    try {
+        const legacy = new URL(apId);
+        const path = legacy.pathname.match(/^\/posts\/([0-9a-f-]+)$/i);
+        const normalizedDomain = normalizeNodeDomain(legacy.host);
+        const publicDomain = getPublicSwarmDomain(normalizedDomain);
+        const developmentDomain = process.env.NODE_ENV !== 'production'
+            && /^(?:localhost|127\.0\.0\.1)(?::\d{1,5})?$/i.test(normalizedDomain)
+            ? normalizedDomain
+            : null;
+        const domain = publicDomain ?? developmentDomain;
+        if (legacy.protocol !== 'swarm:' || !domain || !path || !CACHED_REMOTE_POST_UUID.test(path[1])) {
+            return null;
+        }
+        return { id: `swarm:${domain}:${path[1].toLowerCase()}`, domain };
+    } catch {
+        return null;
+    }
+}
+
+const transformRemotePosts = (
+    remotePostsData: typeof remotePosts.$inferSelect[],
+    blockedDomains: ReadonlySet<string>,
+) => {
+    const seenApIds = new Set<string>();
+    const seenContentKeys = new Set<string>(); // author+normalizedContent
+    const uniquePosts: Array<{
+        row: typeof remotePosts.$inferSelect;
+        identity: { id: string; domain: string };
+    }> = [];
+
+    for (const rp of remotePostsData) {
+        const identity = canonicalCachedRemotePostIdentity(rp.apId);
+        if (!identity) continue;
+        const handleDomain = rp.authorHandle.includes('@')
+            ? rp.authorHandle.slice(rp.authorHandle.lastIndexOf('@') + 1).toLowerCase()
+            : null;
+        if (blockedDomains.has(identity.domain)
+            || (handleDomain && handleDomain !== identity.domain)) continue;
+        if (seenApIds.has(identity.id)) continue;
+
+        // Content-based dedup: same author + similar content = skip
+        const contentKey = `${rp.authorHandle}:${normalizeForDedup(rp.content)}`;
+        if (seenContentKeys.has(contentKey)) continue;
+
+        seenApIds.add(identity.id);
+        seenContentKeys.add(contentKey);
+        uniquePosts.push({ row: rp, identity });
+    }
+
+    return uniquePosts.map(({ row: rp, identity }) => {
+        let mediaData: z.infer<typeof cachedRemoteMediaSchema> = [];
+        if (rp.mediaJson) {
+            try {
+                const parsed = cachedRemoteMediaSchema.safeParse(JSON.parse(rp.mediaJson));
+                if (parsed.success) mediaData = parsed.data;
+            } catch {
+                mediaData = [];
+            }
+        }
+        return {
+            // User signatures must bind the immutable origin object, not a
+            // node-local cache UUID that could be remapped after signing.
+            id: identity.id,
+            content: rp.content,
+            createdAt: rp.publishedAt,
+            likesCount: 0,
+            repostsCount: 0,
+            repliesCount: 0,
+            isRemote: true,
+            apId: rp.apId,
+            linkPreviewUrl: rp.linkPreviewUrl,
+            linkPreviewTitle: rp.linkPreviewTitle,
+            linkPreviewDescription: rp.linkPreviewDescription,
+            linkPreviewImage: rp.linkPreviewImage,
+            linkPreviewType: rp.linkPreviewType,
+            linkPreviewVideoUrl: rp.linkPreviewVideoUrl,
+            linkPreviewMedia: parseLinkPreviewMediaJson(rp.linkPreviewMediaJson) || null,
+            author: {
+                id: rp.authorActorUrl,
+                handle: rp.authorHandle,
+                displayName: rp.authorDisplayName,
+                avatarUrl: rp.authorAvatarUrl,
+                isRemote: true,
+            },
+            media: mediaData.map((m, idx) => ({
+                id: `${identity.id}-media-${idx}`,
+                url: m.url,
+                altText: m.altText || null,
+            })),
+            replyTo: null,
+        };
+    });
+};
+
 // Get timeline / feed
 export async function GET(request: Request) {
     try {
@@ -743,13 +927,6 @@ export async function GET(request: Request) {
                 error: 'Sign in to this node to view its adult content feed',
                 code: 'LOCAL_AUTH_REQUIRED',
             }, { status: 401 });
-        }
-        const excludedRemoteDomains = new Set(await getBlockedNodeDomains());
-        if (requestSession?.user) {
-            const viewerMutedNodes = await db.select({ nodeDomain: mutedNodes.nodeDomain })
-                .from(mutedNodes)
-                .where(eq(mutedNodes.userId, requestSession.user.id));
-            viewerMutedNodes.forEach((row) => excludedRemoteDomains.add(normalizeNodeDomain(row.nodeDomain)));
         }
 
         let feedPosts;
@@ -805,15 +982,16 @@ export async function GET(request: Request) {
                 limit: limit * 2,
             });
 
-            const remoteTimeline = await getCachedSwarmTimeline({
+            // Get all cached remote posts
+            const remotePostsData = await db.query.remotePosts.findMany({
+                orderBy: (remotePosts, { desc }) => [desc(remotePosts.publishedAt)],
                 limit: Math.min(limit * 4, 200),
-                includeNsfw: true,
-                excludeDomains: excludedRemoteDomains,
             });
-            const transformedRemote = remoteTimeline.posts.map((post) =>
-                mapSwarmPostToPost(post, {
-                    localDomain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
-                }));
+
+            const transformedRemote = transformRemotePosts(
+                remotePostsData,
+                await getBlockedNodeDomains(),
+            );
 
             // Merge and sort by date
             feedPosts = [...localPosts, ...transformedRemote]
@@ -875,12 +1053,12 @@ export async function GET(request: Request) {
                 localNodeIsNsfw,
             });
 
+            // Fetch swarm posts with user's NSFW preference
+            const { fetchSwarmTimeline } = await import('@/lib/swarm/timeline');
             const cursorDate = await getMixedFeedCursorDate(cursor);
-            const swarmResult = await getCachedSwarmTimeline({
-                limit: Math.min(limit * CURATION_SEED_MULTIPLIER, CURATION_SEED_CAP),
+            const swarmResult = await fetchSwarmTimeline(undefined, 30, {
                 includeNsfw,
-                cursor: decodeFeedCursorPosition(cursor) || cursorDate,
-                excludeDomains: excludedRemoteDomains,
+                cursor: cursorDate?.toISOString(),
             });
 
             console.log('[Curated Feed] Swarm result:', {
@@ -922,14 +1100,9 @@ export async function GET(request: Request) {
                 swarmResult.continuationDate ? new Date(swarmResult.continuationDate) : null,
                 localRepostContinuation,
             ]);
-            explicitNextCursor = pageWindow.hasOverflow && pageWindow.oldestActivityAt && pageWindow.oldestPostId
-                ? encodeFeedCursor({
-                    at: pageWindow.oldestActivityAt,
-                    id: pageWindow.oldestPostId,
-                })
-                : sourceContinuation
-                    ? encodeFeedCursor({ at: sourceContinuation, id: '\uffff' })
-                    : null;
+            explicitNextCursor = encodeFeedCursor(
+                pageWindow.hasOverflow ? pageWindow.oldestActivityAt : sourceContinuation,
+            );
 
             console.log('[Curated Feed] After ranking:', {
                 swarmPostsCount: swarmPosts.length,
@@ -999,25 +1172,83 @@ export async function GET(request: Request) {
                     })
                     .filter((post): post is FeedPostWithChildren => post !== null);
 
-                // Let the database join cached authors to the viewer's remote
-                // follows. Feed cost stays page-sized even with 5,000+ follows.
-                const cachedRemoteTimeline = await getCachedSwarmTimeline({
-                    limit: cursor ? limit : limit * 2,
-                    cursor: decodeFeedCursorPosition(cursor) || cursorDate,
-                    includeNsfw: true,
-                    followedByUserId: user.id,
-                    excludeDomains: excludedRemoteDomains,
+                // Get handles of remote users we follow
+                const followedRemoteUsers = await db.query.remoteFollows.findMany({
+                    where: { followerId: user.id },
+                    orderBy: (remoteFollows, { desc }) => [desc(remoteFollows.createdAt)],
+                    limit: MAX_REMOTE_FOLLOWS_PER_HOME_REQUEST,
                 });
-                const cachedRemotePosts = cachedRemoteTimeline.posts.map((post) =>
-                    mapSwarmPostToPost(post, {
-                        localDomain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
-                    }));
+
+                // Fetch posts LIVE from followed remote users (in parallel, with timeout)
+                let liveRemotePosts: import('@/lib/swarm/remote-profile-posts').RemoteProfilePost[] = [];
+                if (followedRemoteUsers.length > 0) {
+                    const { fetchSwarmUserProfile, isSwarmNode } = await import('@/lib/swarm/interactions');
+                    const { mapRemoteProfilePost } = await import('@/lib/swarm/remote-profile-posts');
+
+                    // Wrap each fetch with a timeout to prevent slow nodes from blocking
+                    const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T | null> => {
+                        return Promise.race([
+                            promise,
+                            new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))
+                        ]);
+                    };
+
+                    const results = await mapWithConcurrency(
+                        followedRemoteUsers,
+                        MAX_CONCURRENT_REMOTE_PROFILE_FETCHES,
+                        async (follow) => {
+                        try {
+                            const atIndex = follow.targetHandle.lastIndexOf('@');
+                            if (atIndex === -1) return [];
+
+                            const handle = follow.targetHandle.slice(0, atIndex);
+                            const domain = follow.targetHandle.slice(atIndex + 1);
+
+                            // Only fetch from swarm nodes
+                            const isSwarm = await isSwarmNode(domain);
+                            if (!isSwarm) return [];
+
+                            const profileData = await withTimeout(
+                                fetchSwarmUserProfile(handle, domain, limit, cursorDate?.toISOString()),
+                                5000 // 5s timeout per node
+                            );
+                            if (!profileData?.posts) return [];
+
+                            const profileIsNsfw = profileData.profile.isNsfw;
+                            const profileNodeIsNsfw = profileData.profile.nodeIsNsfw;
+
+                            return profileData.posts
+                                .filter((post) => !post.replyToId && !post.swarmReplyToId && !post.isReply)
+                                .filter((post) => !cursorDate || new Date(post.createdAt) < cursorDate)
+                                .map((post) => mapRemoteProfilePost({
+                                    ...post,
+                                    isNsfw: post.isNsfw || profileIsNsfw || profileNodeIsNsfw,
+                                    nodeDomain: post.nodeDomain || domain,
+                                    author: {
+                                        ...(post.author || {
+                                            handle,
+                                            displayName: follow.displayName || profileData.profile?.displayName || handle,
+                                            avatarUrl: follow.avatarUrl || profileData.profile?.avatarUrl,
+                                        }),
+                                        isNsfw: post.author?.isNsfw ?? profileIsNsfw,
+                                        nodeIsNsfw: post.author?.nodeIsNsfw ?? profileNodeIsNsfw,
+                                        nodeDomain: post.author?.nodeDomain || domain,
+                                    },
+                                } as unknown as import('@/lib/swarm/remote-profile-posts').RemoteProfilePost, domain));
+                        } catch (error) {
+                            console.error(`[Home] Error fetching posts from ${follow.targetHandle}:`, error);
+                            return [];
+                        }
+                        },
+                    );
+                    liveRemotePosts = results.flat();
+                }
 
                 // Merge and sort by date
                 const allPosts = collapseSharedFeedPosts([
                     ...localPosts,
                     ...localRepostEvents,
-                    ...cachedRemotePosts,
+                    ...liveRemotePosts,
                 ] as unknown as Post[], process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821')
                     .slice(0, limit);
 
@@ -1088,19 +1319,33 @@ export async function GET(request: Request) {
                     viewerReposts.forEach(r => { if (r.repostOfId) repostedPostIds.add(r.repostOfId); });
                 }
 
-                // Local interaction ledgers are authoritative for this viewer.
-                // Never add per-post federation calls to feed rendering.
+                // Check swarm likes in real-time (query origin nodes)
                 if (swarmPosts.length > 0) {
                     const { getViewerSwarmRepostedPostIds } = await import('@/lib/swarm/reposts');
-                    const swarmLikedIds = await getViewerSwarmLikedPostIds(
-                        swarmPosts.map((sp) => ({
-                            id: sp.id,
-                            nodeDomain: sp.domain,
-                            originalPostId: sp.originalId,
-                        })),
-                        viewer.id,
-                    );
-                    swarmLikedIds.forEach((id) => likedPostIds.add(id));
+
+                    const checkPromises = swarmPosts.map(async (sp) => {
+                        try {
+                            const protocol = sp.domain.includes('localhost') ? 'http' : 'https';
+                            const url = `${protocol}://${sp.domain}/api/swarm/posts/${sp.originalId}/likes?checkHandle=${viewer.handle}&checkDomain=${nodeDomain}`;
+
+                            const res = await signedFederationRead(url, {
+                                headers: { 'Accept': 'application/json' },
+                                timeoutMs: 3_000,
+                                maxResponseBytes: 32 * 1024,
+                            });
+
+                            if (res.status >= 200 && res.status < 300) {
+                                const data = res.json() as { isLiked?: boolean };
+                                if (data.isLiked) {
+                                    likedPostIds.add(sp.id);
+                                }
+                            }
+                        } catch {
+                            // Timeout or error - just skip
+                        }
+                    });
+
+                    await Promise.all(checkPromises);
 
                     const swarmRepostedIds = await getViewerSwarmRepostedPostIds(
                         swarmPosts.map((sp) => ({
@@ -1160,12 +1405,7 @@ export async function GET(request: Request) {
                 ? explicitNextCursor
                 : (feedPosts?.length === limit)
                 ? (type === 'home' || type === 'curated' || type === 'local'
-                    ? (lastFeedPost
-                        ? encodeFeedCursor({
-                            at: lastFeedPost.feedActivityAt || lastFeedPost.createdAt,
-                            id: lastFeedPost.id,
-                        })
-                        : null)
+                    ? encodeFeedCursor(lastFeedPost?.feedActivityAt || lastFeedPost?.createdAt)
                     : lastFeedPost?.id)
                 : null,
         });

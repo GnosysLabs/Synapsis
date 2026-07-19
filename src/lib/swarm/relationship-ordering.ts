@@ -7,10 +7,7 @@ import {
   signedUserActionSchema,
   type SignedUserAction,
 } from '@/lib/e2ee/protocol';
-import {
-  federationActionDomain,
-  unsignedFederatedUserAction,
-} from './federated-action';
+import { federationActionDomain } from './federated-action';
 
 export const FEDERATED_RELATIONSHIP_ORDERING_PROTOCOL =
   'synapsis-federated-relationship-ordering-v1' as const;
@@ -76,7 +73,7 @@ export function canonicalFederatedRelationshipTarget(target: string): string {
 }
 
 /**
- * Hash the unsigned action together with its canonical relationship
+ * Hash the complete signed action together with its canonical relationship
  * identity. Equal timestamps therefore converge on the same winner regardless
  * of delivery order, without trusting a node-provided interaction ID.
  */
@@ -113,7 +110,7 @@ export function federatedRelationshipTieBreaker(
     relationshipKind,
     target: canonicalFederatedRelationshipTarget(input.target),
     state: input.state,
-    userAction: unsignedFederatedUserAction(userAction),
+    userAction,
   })).digest('hex');
 }
 

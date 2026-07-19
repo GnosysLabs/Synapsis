@@ -5,11 +5,7 @@ import { drizzle } from 'drizzle-orm/tursodatabase/database';
 import { relations } from './relations';
 
 const configuredPath = process.env.DATABASE_PATH || './data/synapsis.db';
-// DATABASE_PATH belongs to the runtime operator; it is not a build asset for
-// Next.js/Turbopack to discover and copy into the server bundle.
-const databasePath = configuredPath === ':memory:'
-    ? configuredPath
-    : resolve(/* turbopackIgnore: true */ configuredPath);
+const databasePath = configuredPath === ':memory:' ? configuredPath : resolve(configuredPath);
 
 if (databasePath !== ':memory:') {
     mkdirSync(dirname(databasePath), { recursive: true });

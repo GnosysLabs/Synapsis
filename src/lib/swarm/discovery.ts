@@ -35,7 +35,6 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
   let userCount = 0;
   let postCount = 0;
   let mediaCount = 0;
-  let contentSequence = 0;
   // Announcements are authoritative and signed. Never publish a guessed
   // `false` classification when local configuration cannot be read.
   const isNsfw = await requireLocalNodeNsfwClassification();
@@ -65,7 +64,6 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     userCount = Number(userResult[0]?.count ?? 0);
     postCount = Number(postResult[0]?.count ?? 0);
     mediaCount = Number(mediaResult[0]?.count ?? 0);
-    contentSequence = Number((await db.query.swarmContentClock.findFirst({ where: { id: 1 } }))?.sequence ?? 0);
   }
 
   const capabilities: SwarmCapability[] = ['handles', 'gossip', 'interactions', 'e2ee_dm_v1'];
@@ -82,7 +80,6 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     userCount,
     postCount,
     mediaCount,
-    contentSequence,
     capabilities,
     isNsfw,
     timestamp: new Date().toISOString(),
@@ -249,10 +246,6 @@ export async function discoverNode(
   // This metadata was fetched directly from the origin over its own domain,
   // so its classification is authoritative regardless of who triggered discovery.
   const result = await upsertSwarmNode(info, 'direct');
-  // Successful exact-origin discovery must advance the peer beyond the
-  // admission boundary; otherwise an active peer at the boundary is never
-  // selected for gossip or content synchronization again.
-  await markNodeSuccess(publicDomain);
   
   return { success: true, isNew: result.isNew };
 }

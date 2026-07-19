@@ -291,7 +291,6 @@ export async function POST(request: NextRequest) {
       where: { handle: fullRecipientHandle },
     });
     if (!registryEntry
-      || registryEntry.deletedAt
       || !registryEntry.identityVerified
       || registryEntry.did !== envelope.recipientDid
       || normalizeNodeDomain(registryEntry.nodeDomain) !== targetDomain) {

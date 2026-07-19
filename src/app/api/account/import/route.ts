@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, users, posts, media, follows, remoteFollows, chatConversations, chatMessages, e2eeKeyBundles, e2eeMessageReceipts, swarmAccountTombstones } from '@/db';
+import { db, users, posts, media, follows, remoteFollows, chatConversations, chatMessages, e2eeKeyBundles, e2eeMessageReceipts } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { z } from 'zod';
@@ -756,14 +756,6 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({
                 error: 'Handle is already taken on this node',
                 suggestedHandle: `${handleClean}_${Math.floor(Math.random() * 1000)}`,
-            }, { status: 409 });
-        }
-        const deletedHandle = await db.query.swarmAccountTombstones.findFirst({
-            where: { handle: handleClean },
-        });
-        if (deletedHandle) {
-            return NextResponse.json({
-                error: 'Handle is permanently reserved after account deletion',
             }, { status: 409 });
         }
 

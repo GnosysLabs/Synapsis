@@ -104,6 +104,10 @@ export async function POST(request: Request, context: RouteContext) {
                 where: { AND: [{ userId: user.id }, { nodeDomain: targetDomain }, { originalPostId: originalPostId }] },
             });
 
+            if (existingRepost) {
+                return NextResponse.json({ error: 'Already reposted' }, { status: 400 });
+            }
+
             // Deliver repost directly to the origin node
             const { deliverSwarmRepost } = await import('@/lib/swarm/interactions');
 
@@ -144,11 +148,9 @@ export async function POST(request: Request, context: RouteContext) {
                 });
             }
 
-            if (!existingRepost) {
-                await db.update(users)
-                    .set({ postsCount: sql`${users.postsCount} + 1` })
-                    .where(eq(users.id, user.id));
-            }
+            await db.update(users)
+                .set({ postsCount: sql`${users.postsCount} + 1` })
+                .where(eq(users.id, user.id));
 
             console.log(`[Swarm] Repost delivered to ${targetDomain} for post ${originalPostId}`);
             return NextResponse.json({ success: true, reposted: true });
@@ -172,14 +174,14 @@ export async function POST(request: Request, context: RouteContext) {
         });
 
         if (existingRepost) {
-            return NextResponse.json({ success: true, repost: existingRepost, reposted: true });
+            return NextResponse.json({ error: 'Already reposted' }, { status: 400 });
         }
 
         const legacySameNodeRepost = await db.query.userSwarmReposts.findFirst({
             where: { AND: [{ userId: user.id }, { nodeDomain }, { originalPostId: postId }] },
         });
         if (legacySameNodeRepost) {
-            return NextResponse.json({ success: true, reposted: true });
+            return NextResponse.json({ error: 'Already reposted' }, { status: 400 });
         }
 
         // Create repost
@@ -314,6 +316,10 @@ export async function DELETE(request: Request, context: RouteContext) {
                 where: { AND: [{ userId: user.id }, { nodeDomain: targetDomain }, { originalPostId: originalPostId }] },
             });
 
+            if (!existingRepost) {
+                return NextResponse.json({ error: 'Not reposted' }, { status: 400 });
+            }
+
             // Deliver unrepost directly to the origin node
             const { deliverSwarmUnrepost } = await import('@/lib/swarm/interactions');
 
@@ -339,11 +345,9 @@ export async function DELETE(request: Request, context: RouteContext) {
                 eq(userSwarmReposts.originalPostId, originalPostId),
             ));
 
-            if (existingRepost) {
-                await db.update(users)
-                    .set({ postsCount: sql`max(0, ${users.postsCount} - 1)` })
-                    .where(eq(users.id, user.id));
-            }
+            await db.update(users)
+                .set({ postsCount: sql`max(0, ${users.postsCount} - 1)` })
+                .where(eq(users.id, user.id));
 
             console.log(`[Swarm] Unrepost delivered to ${targetDomain} for post ${originalPostId}`);
             return NextResponse.json({ success: true, reposted: false });
@@ -364,7 +368,7 @@ export async function DELETE(request: Request, context: RouteContext) {
                 where: { AND: [{ userId: user.id }, { nodeDomain }, { originalPostId: postId }] },
             });
             if (!legacySameNodeRepost) {
-                return NextResponse.json({ success: true, reposted: false });
+                return NextResponse.json({ error: 'Not reposted' }, { status: 400 });
             }
 
             await Promise.all([

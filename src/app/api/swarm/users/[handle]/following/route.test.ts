@@ -27,6 +27,10 @@ vi.mock('@/lib/swarm/signed-read', () => ({
   isTrustedFederationRead: mocks.trustedRead,
 }));
 
+vi.mock('@/lib/swarm/user-hydration', () => ({
+  hydrateSwarmUsers: vi.fn(),
+}));
+
 import { GET } from './route';
 
 describe('GET /api/swarm/users/[handle]/following local origin boundary', () => {

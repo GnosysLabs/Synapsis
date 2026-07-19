@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/db';
-import { probeTransientNode } from '@/lib/swarm/transient-node-probe';
+import { discoverNode } from '@/lib/swarm/discovery';
 import { getRemoteBaseUrl, mapRemoteProfilePost } from '@/lib/swarm/remote-profile-posts';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
@@ -131,7 +131,8 @@ export async function GET(request: Request, context: RouteContext) {
 
       let swarm = await isSwarmNode(remote.domain);
       if (!swarm) {
-        swarm = Boolean(await probeTransientNode(remote.domain));
+        const discovery = await discoverNode(remote.domain);
+        swarm = discovery.success;
       }
 
       if (!swarm) {
@@ -153,7 +154,8 @@ export async function GET(request: Request, context: RouteContext) {
 
       let swarm = await isSwarmNode(remote.domain);
       if (!swarm) {
-        swarm = Boolean(await probeTransientNode(remote.domain));
+        const discovery = await discoverNode(remote.domain);
+        swarm = discovery.success;
       }
 
       if (!swarm) {

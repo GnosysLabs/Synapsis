@@ -27,7 +27,6 @@ export async function GET() {
       userCount: announcement.userCount,
       postCount: announcement.postCount,
       mediaCount: announcement.mediaCount,
-      contentSequence: announcement.contentSequence,
       isNsfw: announcement.isNsfw,
       capabilities: announcement.capabilities,
       lastSeenAt: new Date().toISOString(),

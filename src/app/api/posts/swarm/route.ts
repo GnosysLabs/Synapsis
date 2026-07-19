@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getCachedSwarmTimeline } from '@/lib/swarm/content-cache';
+import { fetchSwarmTimeline } from '@/lib/swarm/timeline';
 import { getSession } from '@/lib/auth';
 import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
 import { getViewerSwarmRepostedPostIds } from '@/lib/swarm/reposts';
@@ -85,11 +85,8 @@ export async function GET(request: NextRequest) {
       localNodeIsNsfw,
     });
 
-    const timeline = await getCachedSwarmTimeline({
-      limit: 15,
-      includeNsfw,
-      cursor,
-    });
+    // Fetch swarm timeline (no caching - user preferences vary)
+    const timeline = await fetchSwarmTimeline(10, 15, { includeNsfw, cursor });
 
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
     const allTimelinePosts = collectNestedSwarmPosts(timeline.posts as SwarmFeedPost[]);
@@ -106,7 +103,8 @@ export async function GET(request: NextRequest) {
             nodeDomain: post.nodeDomain,
             originalPostId: post.id,
           })),
-          viewer.id,
+          viewer.handle,
+          nodeDomain
         )
       : new Set<string>();
     const repostedPostIds = viewer
@@ -186,7 +184,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       posts: serializedPosts,
       sources: timeline.sources,
-      cached: true,
+      cached: false,
       fetchedAt: timeline.fetchedAt,
       // Debug info
       debug: {

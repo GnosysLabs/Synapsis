@@ -58,15 +58,25 @@ export default function ProfilePage() {
     const params = useParams();
     const router = useRouter();
     const handle = (params.handle as string)?.replace(/^@/, '') || '';
-    const { user: authenticatedViewer, did, handle: currentHandle, isIdentityUnlocked, signUserAction, updateUserProfile } = useAuth();
+    const {
+        user: authenticatedViewer,
+        loading: authLoading,
+        isIdentityUnlocked,
+        isRestoring,
+        did,
+        handle: currentHandle,
+        signUserAction,
+        updateUserProfile,
+    } = useAuth();
     const { showAlert } = useAppDialog();
 
     const [user, setUser] = useState<User | null>(null);
     const userFullHandle = useFormattedHandle(user?.handle || '');
     const [posts, setPosts] = useState<Post[]>([]);
     const [likedPosts, setLikedPosts] = useState<Post[]>([]);
-    const [currentUser, setCurrentUser] = useState<{ id: string; handle: string } | null>(null);
     const [isFollowing, setIsFollowing] = useState(false);
+    const [followStatusLoading, setFollowStatusLoading] = useState(true);
+    const [followPending, setFollowPending] = useState(false);
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<'posts' | 'replies' | 'likes' | 'followers' | 'following'>('posts');
     const [followers, setFollowers] = useState<UserSummary[]>([]);
@@ -110,11 +120,8 @@ export default function ProfilePage() {
         setFollowing([]);
         setLikedPosts([]);
         setRepliesPosts([]);
-        // Get current user
-        fetch('/api/auth/me')
-            .then(res => res.json())
-            .then(data => setCurrentUser(data.user))
-            .catch(() => { });
+        setFollowStatusLoading(true);
+        setFollowPending(false);
 
         // Get profile
         fetch(`/api/users/${handle}`)
@@ -241,7 +248,7 @@ export default function ProfilePage() {
     };
 
     useEffect(() => {
-        if (user && currentUser?.handle === user.handle && !isEditing) {
+        if (user && authenticatedViewer?.handle === user.handle && !isEditing) {
             setProfileForm({
                 displayName: user.displayName || '',
                 bio: user.bio || '',
@@ -250,25 +257,47 @@ export default function ProfilePage() {
                 website: user.website || '',
             });
         }
-    }, [user, currentUser, isEditing]);
+    }, [user, authenticatedViewer?.handle, isEditing]);
 
     useEffect(() => {
-        if (!currentUser || !user || currentUser.handle === user.handle) {
+        let cancelled = false;
+
+        if (!authenticatedViewer || !user || authenticatedViewer.handle === user.handle) {
             setIsFollowing(false);
+            setFollowStatusLoading(false);
             setIsBlocked(false);
             return;
         }
 
+        setFollowStatusLoading(true);
         fetch(`/api/users/${handle}/follow`)
-            .then(res => res.json())
-            .then(data => setIsFollowing(!!data.following))
-            .catch(() => setIsFollowing(false));
+            .then(res => {
+                if (!res.ok) throw new Error('Failed to load follow status');
+                return res.json();
+            })
+            .then(data => {
+                if (!cancelled) setIsFollowing(!!data.following);
+            })
+            .catch(() => {
+                if (!cancelled) setIsFollowing(false);
+            })
+            .finally(() => {
+                if (!cancelled) setFollowStatusLoading(false);
+            });
 
         fetch(`/api/users/${handle}/block`)
             .then(res => res.json())
-            .then(data => setIsBlocked(!!data.blocked))
-            .catch(() => setIsBlocked(false));
-    }, [currentUser, user, handle]);
+            .then(data => {
+                if (!cancelled) setIsBlocked(!!data.blocked);
+            })
+            .catch(() => {
+                if (!cancelled) setIsBlocked(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [authenticatedViewer, user, handle]);
 
     useEffect(() => {
         if (activeTab === 'followers') {
@@ -313,7 +342,7 @@ export default function ProfilePage() {
             }, [activeTab, handle, user]);
 
     const handleFollow = async () => {
-        if (!currentUser) return;
+        if (!authenticatedViewer || authLoading || isRestoring || followStatusLoading || followPending) return;
 
         if (!isIdentityUnlocked) {
             await showAlert({
@@ -331,21 +360,51 @@ export default function ProfilePage() {
             return;
         }
 
-        const res = isFollowing
-            ? await signedAPI.unfollowUser(handle, did, currentHandle)
-            : await signedAPI.followUser(handle, did, currentHandle);
+        const wasFollowing = isFollowing;
+        setFollowPending(true);
 
-        if (res.ok && user) {
-            setIsFollowing(!isFollowing);
-            setUser({
-                ...user,
-                followersCount: isFollowing ? (user.followersCount || 0) - 1 : (user.followersCount || 0) + 1,
+        try {
+            const res = wasFollowing
+                ? await signedAPI.unfollowUser(handle, did, currentHandle)
+                : await signedAPI.followUser(handle, did, currentHandle);
+            const data = await res.json().catch(() => ({})) as {
+                error?: string;
+                following?: boolean;
+                changed?: boolean;
+            };
+
+            if (!res.ok) {
+                throw new Error(data.error || (wasFollowing ? 'Failed to unfollow user' : 'Failed to follow user'));
+            }
+
+            const nextFollowing = typeof data.following === 'boolean'
+                ? data.following
+                : !wasFollowing;
+            setIsFollowing(nextFollowing);
+
+            const relationshipChanged = data.changed ?? (nextFollowing !== wasFollowing);
+            if (relationshipChanged && nextFollowing !== wasFollowing) {
+                setUser(current => current ? {
+                    ...current,
+                    followersCount: nextFollowing
+                        ? (current.followersCount || 0) + 1
+                        : Math.max(0, (current.followersCount || 0) - 1),
+                } : current);
+            }
+        } catch (error) {
+            await showAlert({
+                title: wasFollowing ? 'Unfollow failed' : 'Follow failed',
+                message: error instanceof Error
+                    ? error.message
+                    : 'Please try again.',
             });
+        } finally {
+            setFollowPending(false);
         }
     };
 
     const handleBlock = async () => {
-        if (!currentUser) return;
+        if (!authenticatedViewer) return;
 
         if (!isIdentityUnlocked) {
             await showAlert({
@@ -503,7 +562,8 @@ export default function ProfilePage() {
         );
     }
 
-    const isOwnProfile = currentUser?.handle === user.handle;
+    const isOwnProfile = authenticatedViewer?.handle === user.handle;
+    const followUnavailable = authLoading || isRestoring || followStatusLoading || followPending;
     const visibleTabs = ['posts', 'replies', 'likes', 'followers', 'following'] as const;
 
     return (
@@ -591,14 +651,20 @@ export default function ProfilePage() {
                         </div>
 
                         <div style={{ paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            {!isOwnProfile && currentUser && (
+                            {!isOwnProfile && authenticatedViewer && (
                                 <>
                                     {!isBlocked && (
                                         <button
                                             className={`btn ${isFollowing ? '' : 'btn-primary'}`}
                                             onClick={handleFollow}
+                                            disabled={followUnavailable}
+                                            aria-busy={followPending}
                                         >
-                                            {isFollowing ? 'Following' : 'Follow'}
+                                            {followStatusLoading
+                                                ? 'Loading…'
+                                                : followPending
+                                                    ? (isFollowing ? 'Unfollowing…' : 'Following…')
+                                                    : (isFollowing ? 'Following' : 'Follow')}
                                         </button>
                                     )}
                                     {/* Message Button (V2 Chat) - Respect privacy settings */}

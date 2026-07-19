@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, follows, users } from '@/db';
 import { and, eq, isNull, notLike } from 'drizzle-orm';
+import { hydrateSwarmUsers } from '@/lib/swarm/user-hydration';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
@@ -115,9 +116,36 @@ export async function GET(request: NextRequest, context: RouteContext) {
       nodeDomain: f.handle?.split('@').pop(),
     }));
 
-    // Federation ingress must remain local-data-only. Hydrating these entries here
-    // would let an unauthenticated caller fan one request out to many remote nodes.
-    const finalFollowers = [...localFollowers, ...remoteFollowersList].slice(0, limit);
+    // Merge all followers
+    const allFollowers = [...localFollowers, ...remoteFollowersList].slice(0, limit);
+
+    // Hydrate remote users (from 3rd party nodes)
+    // We need to map to the HydratedUser interface temporarily for the helper
+    const toHydrate = allFollowers.map(f => ({
+      id: f.handle,
+      handle: f.handle,
+      displayName: f.displayName,
+      avatarUrl: f.avatarUrl,
+      bio: f.bio,
+      isRemote: f.isRemote || false,
+      nodeDomain: undefined,
+      isNsfw: f.isNsfw,
+      nodeIsNsfw: f.nodeIsNsfw,
+    }));
+
+    const hydrated = await hydrateSwarmUsers(toHydrate);
+
+    // Map back to SwarmFollowerUser
+    const finalFollowers: SwarmFollowerUser[] = hydrated.map(u => ({
+      handle: u.handle,
+      displayName: u.displayName || u.handle.split('@')[0], // Ensure non-null
+      avatarUrl: u.avatarUrl || undefined, // Map null to undefined
+      bio: u.bio || undefined,
+      isRemote: u.isRemote,
+      isNsfw: u.isNsfw,
+      nodeIsNsfw: u.nodeIsNsfw,
+      nodeDomain: u.nodeDomain,
+    }));
     const profileRestricted = !trustedRead && (user.isNsfw || nodeIsNsfw);
     const responseFollowers = profileRestricted
       ? []

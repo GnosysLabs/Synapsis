@@ -242,16 +242,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
 
     if (!user || !hasStrictLocalUserOrigin(user)) {
-      const tombstone = await db.query.swarmAccountTombstones.findFirst({
-        where: { handle: cleanHandle },
-      });
-      if (tombstone && trustedRead) {
-        return NextResponse.json({
-          deleted: true,
-          handle: tombstone.handle,
-          deletedAt: tombstone.deletedAt.toISOString(),
-        }, { status: 410 });
-      }
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 

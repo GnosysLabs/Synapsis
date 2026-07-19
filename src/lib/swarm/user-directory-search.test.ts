@@ -12,17 +12,14 @@ vi.mock('drizzle-orm', () => {
         and: expression('and'),
         asc: expression('asc'),
         eq: expression('eq'),
-        gte: expression('gte'),
         inArray: mocks.inArray,
-        isNull: expression('isNull'),
         like: expression('like'),
-        or: expression('or'),
     };
 });
 
 vi.mock('@/db', () => ({
     db: { select: mocks.select },
-    handleRegistry: { handle: 'handle', nodeDomain: 'nodeDomain', deletedAt: 'deletedAt' },
+    handleRegistry: { handle: 'handle', nodeDomain: 'nodeDomain' },
     swarmNodes: {
         domain: 'swarmNodes.domain',
         isActive: 'swarmNodes.isActive',

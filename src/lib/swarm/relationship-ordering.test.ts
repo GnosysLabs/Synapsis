@@ -206,24 +206,6 @@ describe('ordered federated relationship state', () => {
     expect(reverseDeliveryStates).toEqual([winningState]);
   });
 
-  it('does not include signature representation in the ordering tie-breaker', () => {
-    const original = likeState({
-      state: true,
-      nonce: 'same_unsigned_action_01',
-    });
-    const remalleated = {
-      ...original,
-      userAction: {
-        ...original.userAction,
-        sig: 'different_signature_representation',
-      },
-    };
-
-    expect(federatedRelationshipTieBreaker(remalleated)).toBe(
-      federatedRelationshipTieBreaker(original),
-    );
-  });
-
   it('keeps source, actor DID, relationship kind, and target as independent keys', async () => {
     const materialize = vi.fn();
     const base = likeState({ state: true, nonce: 'base_identity_nonce_01' });

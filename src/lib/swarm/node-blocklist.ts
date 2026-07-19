@@ -1,24 +1,13 @@
 import { db, swarmNodes } from '@/db';
 import { eq } from 'drizzle-orm';
-import { getPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
+import { normalizeNodeDomain } from './node-domain';
 
 export { normalizeNodeDomain } from './node-domain';
-
-function canonicalBlockedNodeDomain(value: string): string | null {
-  const publicDomain = getPublicSwarmDomain(value);
-  if (publicDomain) return publicDomain;
-
-  const normalized = normalizeNodeDomain(value).replace(/\.$/, '');
-  return process.env.NODE_ENV !== 'production'
-    && /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i.test(normalized)
-    ? normalized
-    : null;
-}
 
 export async function isNodeBlocked(domain: string | null | undefined): Promise<boolean> {
   if (!db || !domain) return false;
 
-  const normalized = canonicalBlockedNodeDomain(domain);
+  const normalized = normalizeNodeDomain(domain);
   if (!normalized) return false;
 
   const node = await db.query.swarmNodes.findFirst({
@@ -47,11 +36,7 @@ export async function getBlockedNodeDomains(): Promise<Set<string>> {
 export async function filterBlockedDomains(domains: string[]): Promise<string[]> {
   if (!db || domains.length === 0) return domains;
 
-  const normalized = Array.from(new Set(
-    domains
-      .map(canonicalBlockedNodeDomain)
-      .filter((domain): domain is string => Boolean(domain)),
-  ));
+  const normalized = Array.from(new Set(domains.map(normalizeNodeDomain).filter(Boolean)));
   if (normalized.length === 0) return [];
 
   const blocked = await db.query.swarmNodes.findMany({
@@ -68,7 +53,7 @@ export async function filterBlockedDomains(domains: string[]): Promise<string[]>
 export async function upsertBlockedNode(domain: string, reason?: string | null) {
   if (!db) return null;
 
-  const normalized = canonicalBlockedNodeDomain(domain);
+  const normalized = normalizeNodeDomain(domain);
   if (!normalized) return null;
 
   const existing = await db.query.swarmNodes.findFirst({
@@ -107,7 +92,7 @@ export async function upsertBlockedNode(domain: string, reason?: string | null) 
 export async function unblockNode(domain: string) {
   if (!db) return null;
 
-  const normalized = canonicalBlockedNodeDomain(domain);
+  const normalized = normalizeNodeDomain(domain);
   if (!normalized) return null;
 
   const existing = await db.query.swarmNodes.findFirst({

@@ -3,13 +3,10 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   upsertSwarmNode: vi.fn(),
   upsertSwarmNodes: vi.fn().mockResolvedValue({ added: 0, updated: 0 }),
-  upsertRemoteHandleHints: vi.fn().mockResolvedValue({ added: 0, updated: 0, rejected: 0 }),
-  pruneExpiredRemoteHandleHints: vi.fn().mockResolvedValue(false),
+  upsertHandleEntries: vi.fn().mockResolvedValue({ added: 0, updated: 0 }),
   getActiveSwarmNodes: vi.fn().mockResolvedValue([]),
   getNodesSince: vi.fn().mockResolvedValue([]),
   getNodesForGossip: vi.fn().mockResolvedValue([]),
-  getNodesForPeerExchange: vi.fn().mockResolvedValue([]),
-  getSwarmDiscoveryCandidates: vi.fn().mockResolvedValue([]),
   markNodeSuccess: vi.fn(),
   markNodeFailure: vi.fn(),
   logSync: vi.fn(),
@@ -26,7 +23,6 @@ const mocks = vi.hoisted(() => ({
     timestamp: '2026-07-18T00:00:00.000Z',
   }),
   safeFederationRequest: vi.fn(),
-  discoverNode: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
@@ -39,8 +35,6 @@ vi.mock('@/db', () => ({
 
 vi.mock('./registry', () => ({
   getNodesForGossip: mocks.getNodesForGossip,
-  getNodesForPeerExchange: mocks.getNodesForPeerExchange,
-  getSwarmDiscoveryCandidates: mocks.getSwarmDiscoveryCandidates,
   getActiveSwarmNodes: mocks.getActiveSwarmNodes,
   getNodesSince: mocks.getNodesSince,
   upsertSwarmNode: mocks.upsertSwarmNode,
@@ -51,13 +45,11 @@ vi.mock('./registry', () => ({
 }));
 
 vi.mock('@/lib/federation/handles', () => ({
-  upsertRemoteHandleHints: mocks.upsertRemoteHandleHints,
-  pruneExpiredRemoteHandleHints: mocks.pruneExpiredRemoteHandleHints,
+  upsertHandleEntries: mocks.upsertHandleEntries,
 }));
 
 vi.mock('./discovery', () => ({
   buildAnnouncement: mocks.buildAnnouncement,
-  discoverNode: mocks.discoverNode,
 }));
 
 vi.mock('./safe-federation-http', () => ({
@@ -70,12 +62,9 @@ vi.mock('./signature', () => ({
 }));
 
 import {
-  boundGossipContent,
   establishDirectGossipPeer,
-  GOSSIP_MAX_PAYLOAD_BYTES,
   gossipToNode,
   processGossip,
-  runGossipRound,
 } from './gossip';
 import type { SwarmGossipPayload, SwarmNodeInfo } from './types';
 
@@ -91,7 +80,7 @@ describe('direct peer trust through authenticated gossip', () => {
     vi.clearAllMocks();
     vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'local.social');
     mocks.upsertSwarmNodes.mockResolvedValue({ added: 0, updated: 0 });
-    mocks.upsertRemoteHandleHints.mockResolvedValue({ added: 0, updated: 0, rejected: 0 });
+    mocks.upsertHandleEntries.mockResolvedValue({ added: 0, updated: 0 });
   });
 
   afterAll(() => {
@@ -125,7 +114,6 @@ describe('direct peer trust through authenticated gossip', () => {
 
     expect(mocks.upsertSwarmNode).toHaveBeenCalledWith(peer, 'direct');
     expect(mocks.upsertSwarmNodes).toHaveBeenCalledWith(payload.nodes, 'peer.social');
-    expect(mocks.upsertRemoteHandleHints).toHaveBeenCalledWith([], 'peer.social');
   });
 
   it('establishes the target after a successful direct HTTPS gossip response', async () => {
@@ -141,63 +129,5 @@ describe('direct peer trust through authenticated gossip', () => {
     await expect(gossipToNode('peer.social')).resolves.toMatchObject({ success: true });
 
     expect(mocks.upsertSwarmNode).toHaveBeenCalledWith(peer, 'direct');
-    expect(mocks.upsertRemoteHandleHints).toHaveBeenCalledWith([], 'peer.social');
-  });
-
-  it('runs bounded handle-hint maintenance even without gossip targets', async () => {
-    mocks.getSwarmDiscoveryCandidates.mockResolvedValue([]);
-    mocks.getNodesForGossip.mockResolvedValue([]);
-
-    await expect(runGossipRound()).resolves.toMatchObject({ contacted: 0 });
-
-    expect(mocks.pruneExpiredRemoteHandleHints).toHaveBeenCalledOnce();
-  });
-});
-
-describe('bounded gossip payloads', () => {
-  it('keeps self and never emits more than the protocol limit', () => {
-    const candidates = Array.from({ length: 125 }, (_, index) => ({
-      domain: `peer-${index}.social`,
-      publicKey: `KEY ${index}`,
-      isNsfw: false,
-    }));
-
-    const result = boundGossipContent(
-      'local.social',
-      { domain: 'local.social', publicKey: 'LOCAL KEY', isNsfw: false },
-      candidates,
-      [],
-      '2026-07-18T00:00:00.000Z',
-    );
-
-    expect(result.nodes).toHaveLength(100);
-    expect(result.nodes[0]?.domain).toBe('local.social');
-  });
-
-  it('deduplicates domains and enforces the serialized byte ceiling', () => {
-    const oversizedDescription = 'x'.repeat(48 * 1024);
-    const result = boundGossipContent(
-      'local.social',
-      { domain: 'local.social', publicKey: 'LOCAL KEY', isNsfw: false },
-      [
-        { domain: 'peer.social', publicKey: 'KEY', isNsfw: false },
-        { domain: 'PEER.SOCIAL', publicKey: 'KEY', isNsfw: false },
-        ...Array.from({ length: 8 }, (_, index) => ({
-          domain: `large-${index}.social`,
-          publicKey: `KEY ${index}`,
-          isNsfw: false,
-          description: oversizedDescription,
-        })),
-      ],
-      [],
-      '2026-07-18T00:00:00.000Z',
-    );
-
-    expect(result.nodes.filter((node) => node.domain === 'peer.social')).toHaveLength(1);
-    expect(Buffer.byteLength(JSON.stringify({
-      sender: 'local.social',
-      ...result,
-      timestamp: '2026-07-18T00:00:00.000Z',
-    }), 'utf8')).toBeLessThanOrEqual(GOSSIP_MAX_PAYLOAD_BYTES);
   });
 });

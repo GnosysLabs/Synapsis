@@ -12,11 +12,8 @@ const mocks = vi.hoisted(() => ({
   blockFindFirst: vi.fn(),
   receiptInsertResult: vi.fn(),
   conversationLookup: vi.fn(),
-  conversationInsertResult: vi.fn(),
-  quotaConsumeResult: vi.fn(),
   receiptValues: vi.fn(),
   conversationValues: vi.fn(),
-  quotaValues: vi.fn(),
   messageValues: vi.fn(),
   enqueueMessagePushDeliveries: vi.fn(),
   transaction: vi.fn(),
@@ -56,14 +53,6 @@ vi.mock('@/db', () => {
     nodeDomain: 'handleRegistry.nodeDomain',
   };
   const e2eeMessageReceipts = { id: 'e2eeMessageReceipts.id' };
-  const chatConversationIngressQuotaBuckets = {
-    recipientUserId: 'chatConversationIngressQuotaBuckets.recipientUserId',
-    sourceDomain: 'chatConversationIngressQuotaBuckets.sourceDomain',
-    bucketStartMs: 'chatConversationIngressQuotaBuckets.bucketStartMs',
-    conversationCount: 'chatConversationIngressQuotaBuckets.conversationCount',
-    messageCount: 'chatConversationIngressQuotaBuckets.messageCount',
-    ciphertextBytes: 'chatConversationIngressQuotaBuckets.ciphertextBytes',
-  };
   const chatConversations = {
     id: 'chatConversations.id',
     participant1Id: 'chatConversations.participant1Id',
@@ -87,18 +76,11 @@ vi.mock('@/db', () => {
           mocks.transactionEvents.push('conversation');
           mocks.conversationValues(values);
           return {
-            onConflictDoNothing: () => ({
-              returning: () => mocks.conversationInsertResult(),
-            }),
-          };
-        }
-        if (table === chatConversationIngressQuotaBuckets) {
-          mocks.transactionEvents.push('quota');
-          mocks.quotaValues(values);
-          return {
-            onConflictDoUpdate: () => ({
-              returning: () => mocks.quotaConsumeResult(),
-            }),
+            returning: async () => [{
+              id: 'conversation-id',
+              lastMessageAt: null,
+              e2eeActivatedAt: null,
+            }],
           };
         }
 
@@ -126,7 +108,6 @@ vi.mock('@/db', () => {
   return {
     handleRegistry,
     e2eeMessageReceipts,
-    chatConversationIngressQuotaBuckets,
     chatConversations,
     chatMessages,
     db: {
@@ -277,12 +258,6 @@ describe('federated encrypted-message receiver', () => {
     mocks.blockFindFirst.mockResolvedValue(null);
     mocks.receiptInsertResult.mockResolvedValue([{ id: 'receipt-id' }]);
     mocks.conversationLookup.mockResolvedValue([]);
-    mocks.conversationInsertResult.mockResolvedValue([{
-      id: 'conversation-id',
-      lastMessageAt: null,
-      e2eeActivatedAt: null,
-    }]);
-    mocks.quotaConsumeResult.mockResolvedValue([{ messageCount: 1 }]);
     mocks.enqueueMessagePushDeliveries.mockResolvedValue(undefined);
   });
 
@@ -304,7 +279,7 @@ describe('federated encrypted-message receiver', () => {
         fullSenderHandle: 'alice@remote.social',
       },
     }));
-    expect(mocks.transactionEvents).toEqual(['identity', 'receipt', 'conversation', 'quota', 'message']);
+    expect(mocks.transactionEvents).toEqual(['identity', 'receipt', 'conversation', 'message']);
     expect(mocks.pinVerifiedFederatedActorIdentity).toHaveBeenCalledWith({
       sourceDomain: 'remote.social',
       actorHandle: 'alice',
@@ -327,65 +302,6 @@ describe('federated encrypted-message receiver', () => {
       'recipient-id',
       'message-row-id',
     );
-  });
-
-  it('rejects a new conversation when the durable recipient/source daily budget is exhausted', async () => {
-    mocks.quotaConsumeResult.mockResolvedValue([]);
-
-    const response = await POST(request() as never);
-
-    expect(response.status).toBe(429);
-    await expect(response.json()).resolves.toMatchObject({
-      code: 'E2EE_DAILY_INGRESS_LIMIT',
-    });
-    expect(response.headers.get('Retry-After')).toMatch(/^\d+$/);
-    expect(mocks.quotaValues).toHaveBeenCalledWith(expect.objectContaining({
-      recipientUserId: 'recipient-id',
-      sourceDomain: 'remote.social',
-      conversationCount: 1,
-      messageCount: 1,
-      ciphertextBytes: 17,
-    }));
-    expect(mocks.messageValues).not.toHaveBeenCalled();
-    expect(mocks.enqueueMessagePushDeliveries).not.toHaveBeenCalled();
-  });
-
-  it('charges message and byte budgets but not first-contact budget for an established conversation', async () => {
-    mocks.conversationLookup.mockResolvedValue([{
-      id: 'existing-conversation-id',
-      lastMessageAt: new Date(0),
-      e2eeActivatedAt: new Date(0),
-    }]);
-
-    const response = await POST(request() as never);
-
-    expect(response.status).toBe(200);
-    expect(mocks.quotaValues).toHaveBeenCalledWith(expect.objectContaining({
-      recipientUserId: 'recipient-id',
-      sourceDomain: 'remote.social',
-      conversationCount: 0,
-      messageCount: 1,
-      ciphertextBytes: 17,
-    }));
-    expect(mocks.messageValues).toHaveBeenCalledWith(expect.objectContaining({
-      conversationId: 'existing-conversation-id',
-    }));
-  });
-
-  it('rejects storage growth in an established conversation after its daily ingress budget is exhausted', async () => {
-    mocks.conversationLookup.mockResolvedValue([{
-      id: 'existing-conversation-id',
-      lastMessageAt: new Date(0),
-      e2eeActivatedAt: new Date(0),
-    }]);
-    mocks.quotaConsumeResult.mockResolvedValue([]);
-
-    const response = await POST(request() as never);
-
-    expect(response.status).toBe(429);
-    expect(mocks.conversationValues).not.toHaveBeenCalled();
-    expect(mocks.messageValues).not.toHaveBeenCalled();
-    expect(mocks.enqueueMessagePushDeliveries).not.toHaveBeenCalled();
   });
 
   it('rejects a failed node or user proof before resolving the recipient', async () => {
