@@ -17,6 +17,7 @@ import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
 import { ProfileBanner } from '@/components/ProfileBanner';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
+import { decodeDynamicRouteSegment } from '@/lib/navigation/route-params';
 
 interface UserSummary {
     id: string;
@@ -59,7 +60,7 @@ export default function ProfilePage() {
     const params = useParams();
     const router = useRouter();
     const searchParams = useSearchParams();
-    const handle = (params.handle as string)?.replace(/^@/, '') || '';
+    const handle = decodeDynamicRouteSegment(params.handle as string | undefined).replace(/^@/, '');
     const {
         user: authenticatedViewer,
         loading: authLoading,

@@ -12,12 +12,13 @@ import { signedAPI } from '@/lib/api/signed-fetch';
 import type { CollectionDetail, CollectionSummary } from '@/lib/collections/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
+import { decodeDynamicRouteSegment } from '@/lib/navigation/route-params';
 import type { Post } from '@/lib/types';
 
 export default function CollectionPage() {
   const params = useParams<{ handle: string; collectionId: string }>();
   const router = useRouter();
-  const handle = (params.handle || '').replace(/^@/, '');
+  const handle = decodeDynamicRouteSegment(params.handle).replace(/^@/, '');
   const collectionId = params.collectionId || '';
   const { user, did, handle: currentHandle, isIdentityUnlocked } = useAuth();
   const { showConfirm } = useAppDialog();
