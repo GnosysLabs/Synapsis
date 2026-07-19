@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import Image from 'next/image';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
-import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 
 interface UserStorageImageUploadProps {
     label: string;
@@ -27,6 +27,7 @@ export function UserStorageImageUpload({
     onError,
 }: UserStorageImageUploadProps) {
     const inputRef = useRef<HTMLInputElement>(null);
+    const storageCheckInFlightRef = useRef(false);
     const [isUploading, setIsUploading] = useState(false);
     const [storageNotice, setStorageNotice] = useState('');
     const [showConfigurationPrompt, setShowConfigurationPrompt] = useState(false);
@@ -66,10 +67,22 @@ export function UserStorageImageUpload({
         await uploadFile(file);
     };
 
-    const handleChooseFile = () => {
+    const handleChooseFile = async () => {
+        if (storageCheckInFlightRef.current) return;
+        storageCheckInFlightRef.current = true;
         setStorageNotice('');
         onError?.('');
-        inputRef.current?.click();
+        try {
+            if (!await getStorageProvider()) {
+                setShowConfigurationPrompt(true);
+                return;
+            }
+            inputRef.current?.click();
+        } catch (error) {
+            onError?.(error instanceof Error ? error.message : 'Unable to check media storage');
+        } finally {
+            storageCheckInFlightRef.current = false;
+        }
     };
 
     return (

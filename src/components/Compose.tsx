@@ -9,7 +9,7 @@ import { VideoEmbed } from '@/components/VideoEmbed';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
-import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { getMediaKind } from '@/lib/media/upload-policy';
 import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 import { AvatarImage } from '@/components/AvatarImage';
@@ -82,6 +82,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     const [canPostNsfw, setCanPostNsfw] = useState(false);
     const [isNsfwNode, setIsNsfwNode] = useState(false);
     const mediaInputRef = useRef<HTMLInputElement>(null);
+    const storageCheckInFlightRef = useRef(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const attachmentsRef = useRef<MediaAttachment[]>([]);
     const mentionListId = useId();
@@ -388,10 +389,22 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
         await uploadMediaFiles(files);
     };
 
-    const handleAddMedia = () => {
+    const handleAddMedia = async () => {
+        if (storageCheckInFlightRef.current) return;
+        storageCheckInFlightRef.current = true;
         setUploadError(null);
         setStorageNotice(null);
-        mediaInputRef.current?.click();
+        try {
+            if (!await getStorageProvider()) {
+                setShowStorageConfiguration(true);
+                return;
+            }
+            mediaInputRef.current?.click();
+        } catch (error) {
+            setUploadError(error instanceof Error ? error.message : 'Unable to check media storage');
+        } finally {
+            storageCheckInFlightRef.current = false;
+        }
     };
 
     const handleRemoveAttachment = (id: string) => {

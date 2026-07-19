@@ -7,7 +7,7 @@ import AutoTextarea from '@/components/AutoTextarea';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { useToast } from '@/lib/contexts/ToastContext';
 import { useAccentColor } from '@/lib/contexts/AccentColorContext';
-import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
@@ -46,6 +46,7 @@ export default function AdminPage() {
     const [isUploadingFavicon, setIsUploadingFavicon] = useState(false);
     const [faviconUploadError, setFaviconUploadError] = useState<string | null>(null);
     const bannerInputRef = useRef<HTMLInputElement>(null);
+    const bannerStorageCheckInFlightRef = useRef(false);
     useEffect(() => {
         fetch('/api/admin/me')
             .then((res) => res.json())
@@ -187,9 +188,21 @@ export default function AdminPage() {
         await uploadBannerFile(file);
     };
 
-    const handleChooseBanner = () => {
+    const handleChooseBanner = async () => {
+        if (bannerStorageCheckInFlightRef.current) return;
+        bannerStorageCheckInFlightRef.current = true;
         setBannerUploadError(null);
-        bannerInputRef.current?.click();
+        try {
+            if (!await getStorageProvider()) {
+                setShowBannerStorageConfiguration(true);
+                return;
+            }
+            bannerInputRef.current?.click();
+        } catch (error) {
+            setBannerUploadError(error instanceof Error ? error.message : 'Unable to check media storage');
+        } finally {
+            bannerStorageCheckInFlightRef.current = false;
+        }
     };
 
     const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {

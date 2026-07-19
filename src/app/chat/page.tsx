@@ -23,7 +23,7 @@ import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
 import { ChatMessageAttachments } from '@/components/ChatMessageAttachments';
 import { ChatPostCard } from '@/components/ChatPostCard';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
-import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { getMaxMediaSize, getMediaKind } from '@/lib/media/upload-policy';
 import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 import {
@@ -196,6 +196,7 @@ export default function ChatPage() {
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const messageInputRef = useRef<HTMLInputElement>(null);
     const mediaInputRef = useRef<HTMLInputElement>(null);
+    const storageCheckInFlightRef = useRef(false);
     const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
     const highlightTimeoutRef = useRef<number | null>(null);
     const attachmentDraftsRef = useRef<Record<string, ChatComposerAttachment[]>>({});
@@ -439,11 +440,26 @@ export default function ChatPage() {
         await uploadMediaFiles(conversationKey, files);
     };
 
-    const handleAddMedia = () => {
+    const handleAddMedia = async () => {
+        if (storageCheckInFlightRef.current) return;
         const conversationKey = selectedConversationKeyRef.current;
         if (!conversationKey) return;
+        storageCheckInFlightRef.current = true;
         setConversationAttachmentError(conversationKey, null);
-        mediaInputRef.current?.click();
+        try {
+            if (!await getStorageProvider()) {
+                setShowStorageConfiguration(true);
+                return;
+            }
+            mediaInputRef.current?.click();
+        } catch (error) {
+            setConversationAttachmentError(
+                conversationKey,
+                error instanceof Error ? error.message : 'Media storage could not be checked.',
+            );
+        } finally {
+            storageCheckInFlightRef.current = false;
+        }
     };
 
     const handleRemoveAttachment = (conversationKey: string, id: string) => {
@@ -1714,7 +1730,7 @@ export default function ChatPage() {
                                     className="compose-media-button"
                                     title={`Attach media (${selectedAttachments.length}/${CHAT_ATTACHMENT_LIMIT})`}
                                     aria-label="Attach image, video, or audio"
-                                    onClick={handleAddMedia}
+                                    onClick={() => void handleAddMedia()}
                                     disabled={sending || selectedAttachments.length >= CHAT_ATTACHMENT_LIMIT}
                                 >
                                     <Paperclip size={20} aria-hidden="true" />
