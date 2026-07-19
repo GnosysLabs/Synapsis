@@ -5,6 +5,7 @@ export const relations = defineRelations(schema, (r) => ({
   users: {
     node: r.one.nodes({ from: r.users.nodeId, to: r.nodes.id }),
     posts: r.many.posts({ from: r.users.id, to: r.posts.userId }),
+    collections: r.many.collections({ from: r.users.id, to: r.collections.userId }),
     stuffboxConnection: r.one.stuffboxConnections({
       from: r.users.id,
       to: r.stuffboxConnections.userId,
@@ -49,7 +50,27 @@ export const relations = defineRelations(schema, (r) => ({
     }),
     likes: r.many.likes({ from: r.posts.id, to: r.likes.postId }),
     media: r.many.media({ from: r.posts.id, to: r.media.postId }),
+    collectionMemberships: r.many.collectionPosts({ from: r.posts.id, to: r.collectionPosts.postId }),
     mentionDeliveries: r.many.mentionDeliveries({ from: r.posts.id, to: r.mentionDeliveries.postId }),
+  },
+  collections: {
+    owner: r.one.users({ from: r.collections.userId, to: r.users.id, optional: false }),
+    memberships: r.many.collectionPosts({
+      from: r.collections.id,
+      to: r.collectionPosts.collectionId,
+    }),
+  },
+  collectionPosts: {
+    collection: r.one.collections({
+      from: r.collectionPosts.collectionId,
+      to: r.collections.id,
+      optional: false,
+    }),
+    post: r.one.posts({
+      from: r.collectionPosts.postId,
+      to: r.posts.id,
+      optional: false,
+    }),
   },
   media: {
     user: r.one.users({ from: r.media.userId, to: r.users.id, optional: false }),

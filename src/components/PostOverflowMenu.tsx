@@ -1,5 +1,5 @@
 import type { CSSProperties, MouseEventHandler } from 'react';
-import { Globe, UserX, VolumeX } from 'lucide-react';
+import { FolderPlus, Globe, Trash2, UserX, VolumeX } from 'lucide-react';
 import { FlagIcon } from '@/components/Icons';
 
 interface PostOverflowMenuProps {
@@ -9,6 +9,10 @@ interface PostOverflowMenuProps {
     onReport: MouseEventHandler<HTMLButtonElement>;
     showMuteNode: boolean;
     reporting: boolean;
+    ownerMode?: boolean;
+    onAddToCollection?: MouseEventHandler<HTMLButtonElement>;
+    onDelete?: MouseEventHandler<HTMLButtonElement>;
+    deleting?: boolean;
 }
 
 const menuItemStyle: CSSProperties = {
@@ -32,6 +36,10 @@ export function PostOverflowMenu({
     onReport,
     showMuteNode,
     reporting,
+    ownerMode = false,
+    onAddToCollection,
+    onDelete,
+    deleting = false,
 }: PostOverflowMenuProps) {
     return (
         <div
@@ -52,6 +60,31 @@ export function PostOverflowMenu({
                 boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
             }}
         >
+            {ownerMode ? (
+                <>
+                    <button type="button" role="menuitem" onClick={onAddToCollection} style={menuItemStyle}>
+                        <FolderPlus size={16} />
+                        Add to collection
+                    </button>
+                    <button
+                        type="button"
+                        role="menuitem"
+                        onClick={onDelete}
+                        disabled={deleting}
+                        style={{
+                            ...menuItemStyle,
+                            borderTop: '1px solid var(--border)',
+                            color: 'var(--error)',
+                            cursor: deleting ? 'default' : 'pointer',
+                            opacity: deleting ? 0.65 : 1,
+                        }}
+                    >
+                        <Trash2 size={16} />
+                        {deleting ? 'Deleting…' : 'Delete post'}
+                    </button>
+                </>
+            ) : (
+                <>
             <button type="button" role="menuitem" onClick={onMuteUser} style={menuItemStyle}>
                 <VolumeX size={16} />
                 Mute
@@ -87,6 +120,8 @@ export function PostOverflowMenu({
                 <FlagIcon />
                 {reporting ? 'Reporting…' : 'Report post'}
             </button>
+                </>
+            )}
         </div>
     );
 }

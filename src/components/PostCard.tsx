@@ -26,7 +26,9 @@ import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
 import { buildChatShareHref, type ChatRecipient } from '@/lib/chat/recipients';
 import { shouldHideSensitivePost } from '@/lib/nsfw/content-visibility';
 import { PostOverflowMenu } from '@/components/PostOverflowMenu';
+import { PostCollectionPicker } from '@/components/PostCollectionPicker';
 import { isTrustedFederationMediaUrl } from '@/lib/utils/federation';
+import { normalizeSameNodePostId } from '@/lib/swarm/post-id';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -142,6 +144,7 @@ interface PostCardProps {
     isThreadParent?: boolean; // This post is being shown as a parent in a thread
     isEmbedded?: boolean;
     parentPostAuthorId?: string; // ID of the parent post's author (for allowing deletion of replies)
+    onCollectionsChanged?: (collectionIds: string[]) => void;
 }
 
 export function PostCard(props: PostCardProps) {
@@ -155,7 +158,7 @@ export function PostCard(props: PostCardProps) {
     return <AuthoredPostCard {...props} />;
 }
 
-function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId }: PostCardProps) {
+function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId, onCollectionsChanged }: PostCardProps) {
     const {
         user: currentUser,
         did,
@@ -192,6 +195,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     const [showMenu, setShowMenu] = useState(false);
     const [showShareMenu, setShowShareMenu] = useState(false);
     const [showRecipientPicker, setShowRecipientPicker] = useState(false);
+    const [showCollectionPicker, setShowCollectionPicker] = useState(false);
     const [downloading, setDownloading] = useState(false);
     const [hydratedPreview, setHydratedPreview] = useState<LinkPreviewData | null>(null);
     const [sensitiveContentRevealed, setSensitiveContentRevealed] = useState(false);
@@ -239,6 +243,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
             ))
         )
     );
+    const localCollectionPostId = normalizeSameNodePostId(post.id, domain);
     const canDeletePost = Boolean(
         currentUser && (
             isOwnPost ||
@@ -495,6 +500,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         e.preventDefault();
         e.stopPropagation();
         if (deleting) return;
+        setShowMenu(false);
         if (!isIdentityUnlocked) {
             setShowMenu(false);
             showToast('Your session expired. Please sign in again.', 'error');
@@ -523,6 +529,13 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         } finally {
             setDeleting(false);
         }
+    };
+
+    const handleAddToCollection = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowMenu(false);
+        setShowCollectionPicker(true);
     };
 
     const handleBlockUser = async (e: React.MouseEvent) => {
@@ -1153,7 +1166,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                         </div>
                         <span className="post-time">{authorHandle} · {formatTime(post.createdAt)}</span>
                     </div>
-                    {currentUser && !isOwnPost && (
+                    {currentUser && (
                         <div style={{ position: 'relative', marginLeft: 'auto' }}>
                             <button
                                 type="button"
@@ -1201,6 +1214,10 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                                         onReport={handleReport}
                                         showMuteNode={Boolean(post.nodeDomain || post.author.handle.includes('@'))}
                                         reporting={reporting}
+                                        ownerMode={isOwnPost}
+                                        onAddToCollection={handleAddToCollection}
+                                        onDelete={handleDelete}
+                                        deleting={deleting}
                                     />
                                 </>
                             )}
@@ -1265,7 +1282,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                             <HeartIcon filled={liked} />
                             <span>{likesCount || ''}</span>
                         </button>
-                        {canDeletePost && (
+                        {canDeletePost && !isOwnPost && (
                             <button className="post-action delete-action" onClick={handleDelete} disabled={deleting} title="Delete post">
                                 <TrashIcon />
                                 <span>{deleting ? '...' : ''}</span>
@@ -1328,6 +1345,13 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     currentUserHandle={currentUserHandle}
                     onClose={() => setShowRecipientPicker(false)}
                     onSelect={handleRecipientSelected}
+                />
+            )}
+            {showCollectionPicker && isOwnPost && (
+                <PostCollectionPicker
+                    postId={localCollectionPostId}
+                    onClose={() => setShowCollectionPicker(false)}
+                    onSaved={onCollectionsChanged}
                 />
             )}
         </>

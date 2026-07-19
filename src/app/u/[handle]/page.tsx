@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { CalendarIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
 import { User, Post } from '@/lib/types';
 import AutoTextarea from '@/components/AutoTextarea';
 import { UserStorageImageUpload } from '@/components/UserStorageImageUpload';
+import { CollectionGrid } from '@/components/CollectionGrid';
 import { Rocket, MoreHorizontal, Mail, ShieldAlert } from 'lucide-react';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -57,6 +58,7 @@ function UserRow({ user }: { user: UserSummary }) {
 export default function ProfilePage() {
     const params = useParams();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const handle = (params.handle as string)?.replace(/^@/, '') || '';
     const {
         user: authenticatedViewer,
@@ -78,7 +80,9 @@ export default function ProfilePage() {
     const [followStatusLoading, setFollowStatusLoading] = useState(true);
     const [followPending, setFollowPending] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState<'posts' | 'replies' | 'likes' | 'followers' | 'following'>('posts');
+    const [activeTab, setActiveTab] = useState<'posts' | 'collections' | 'replies' | 'likes' | 'followers' | 'following'>(
+        searchParams.get('tab') === 'collections' ? 'collections' : 'posts',
+    );
     const [followers, setFollowers] = useState<UserSummary[]>([]);
     const [following, setFollowing] = useState<UserSummary[]>([]);
     const [repliesPosts, setRepliesPosts] = useState<Post[]>([]);
@@ -564,7 +568,7 @@ export default function ProfilePage() {
 
     const isOwnProfile = authenticatedViewer?.handle === user.handle;
     const followUnavailable = authLoading || isRestoring || followStatusLoading || followPending;
-    const visibleTabs = ['posts', 'replies', 'likes', 'followers', 'following'] as const;
+    const visibleTabs = ['posts', 'collections', 'replies', 'likes', 'followers', 'following'] as const;
 
     return (
         <div style={{ maxWidth: '600px', margin: '0 auto', minHeight: '100vh' }}>
@@ -878,14 +882,15 @@ export default function ProfilePage() {
                 )}
 
                 {/* Tabs */}
-                <div style={{ display: 'flex', borderTop: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', borderTop: '1px solid var(--border)', overflowX: 'auto' }}>
                     {visibleTabs.map(tab => (
                         <button
                             key={tab}
                             onClick={() => setActiveTab(tab)}
                             style={{
                                 flex: 1,
-                                padding: '16px',
+                                minWidth: 'max-content',
+                                padding: '16px 12px',
                                 background: 'none',
                                 border: 'none',
                                 borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
@@ -930,6 +935,10 @@ export default function ProfilePage() {
                         </div>
                     </>
                 )
+            )}
+
+            {activeTab === 'collections' && (
+                <CollectionGrid handle={handle} />
             )}
 
             {activeTab === 'replies' && (

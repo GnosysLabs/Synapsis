@@ -176,6 +176,70 @@ export const signedAPI = {
     );
   },
 
+  async createCollection(
+    handle: string,
+    fields: { title: string; description: string | null; coverUrl: string | null; postIds?: string[] },
+    userDid: string,
+    userHandle: string,
+  ) {
+    return signedFetch(
+      `/api/users/${encodeURIComponent(handle)}/collections`,
+      'collection_create',
+      { handle, ...fields },
+      userDid,
+      userHandle,
+    );
+  },
+
+  async updateCollection(
+    handle: string,
+    collectionId: string,
+    fields: { title: string; description: string | null; coverUrl: string | null },
+    userDid: string,
+    userHandle: string,
+  ) {
+    return signedFetch(
+      `/api/users/${encodeURIComponent(handle)}/collections/${collectionId}`,
+      'collection_update',
+      { handle, collectionId, ...fields },
+      userDid,
+      userHandle,
+      { method: 'PATCH' },
+    );
+  },
+
+  async deleteCollection(
+    handle: string,
+    collectionId: string,
+    userDid: string,
+    userHandle: string,
+  ) {
+    return signedFetch(
+      `/api/users/${encodeURIComponent(handle)}/collections/${collectionId}`,
+      'collection_delete',
+      { handle, collectionId },
+      userDid,
+      userHandle,
+      { method: 'DELETE' },
+    );
+  },
+
+  async updatePostCollections(
+    postId: string,
+    collectionIds: string[],
+    userDid: string,
+    userHandle: string,
+  ) {
+    return signedFetch(
+      `/api/posts/${postId}/collections`,
+      'post_collections_update',
+      { postId, collectionIds },
+      userDid,
+      userHandle,
+      { method: 'PUT' },
+    );
+  },
+
   /**
    * Submit a report
    */

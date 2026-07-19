@@ -209,6 +209,38 @@ export const posts = sqliteTable('posts', {
 
 
 // ============================================
+// COLLECTIONS
+// ============================================
+
+export const collections = sqliteTable('collections', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  description: text('description'),
+  coverUrl: text('cover_url'),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  index('collections_user_idx').on(table.userId),
+  index('collections_user_sort_idx').on(table.userId, table.sortOrder),
+]);
+
+export const collectionPosts = sqliteTable('collection_posts', {
+  collectionId: text('collection_id').notNull().references(() => collections.id, { onDelete: 'cascade' }),
+  postId: text('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
+  addedAt: integer('added_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  primaryKey({
+    name: 'collection_posts_pk',
+    columns: [table.collectionId, table.postId],
+  }),
+  index('collection_posts_collection_idx').on(table.collectionId),
+  index('collection_posts_post_idx').on(table.postId),
+]);
+
+
+// ============================================
 // MEDIA
 // ============================================
 
