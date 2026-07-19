@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import Image from 'next/image';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
-import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 
 interface UserStorageImageUploadProps {
     label: string;
@@ -28,7 +28,6 @@ export function UserStorageImageUpload({
 }: UserStorageImageUploadProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const [isUploading, setIsUploading] = useState(false);
-    const [isCheckingStorage, setIsCheckingStorage] = useState(false);
     const [storageNotice, setStorageNotice] = useState('');
     const [showConfigurationPrompt, setShowConfigurationPrompt] = useState(false);
     const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -67,22 +66,10 @@ export function UserStorageImageUpload({
         await uploadFile(file);
     };
 
-    const handleChooseFile = async () => {
-        setIsCheckingStorage(true);
+    const handleChooseFile = () => {
         setStorageNotice('');
         onError?.('');
-        try {
-            const provider = await getStorageProvider();
-            if (!provider) {
-                setShowConfigurationPrompt(true);
-                return;
-            }
-            inputRef.current?.click();
-        } catch (error) {
-            onError?.(error instanceof Error ? error.message : 'Unable to check media storage');
-        } finally {
-            setIsCheckingStorage(false);
-        }
+        inputRef.current?.click();
     };
 
     return (
@@ -92,8 +79,8 @@ export function UserStorageImageUpload({
                     {label}
                 </label>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <button className="btn btn-ghost btn-sm" type="button" onClick={handleChooseFile} disabled={isUploading || isCheckingStorage}>
-                        {isUploading ? 'Uploading...' : isCheckingStorage ? 'Checking storage…' : 'Choose File'}
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={handleChooseFile} disabled={isUploading}>
+                        {isUploading ? 'Uploading...' : 'Choose File'}
                     </button>
                     <input
                         ref={inputRef}

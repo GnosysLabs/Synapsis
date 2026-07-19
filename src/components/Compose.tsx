@@ -9,7 +9,7 @@ import { VideoEmbed } from '@/components/VideoEmbed';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
-import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { getMediaKind } from '@/lib/media/upload-policy';
 import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 import { AvatarImage } from '@/components/AvatarImage';
@@ -72,7 +72,6 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     const [isPosting, setIsPosting] = useState(false);
     const [attachments, setAttachments] = useState<MediaAttachment[]>([]);
     const [isUploading, setIsUploading] = useState(false);
-    const [isCheckingStorage, setIsCheckingStorage] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
     const [storageNotice, setStorageNotice] = useState<string | null>(null);
     const [pendingStorageUploads, setPendingStorageUploads] = useState<PendingMediaUpload[]>([]);
@@ -389,22 +388,10 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
         await uploadMediaFiles(files);
     };
 
-    const handleAddMedia = async () => {
+    const handleAddMedia = () => {
         setUploadError(null);
         setStorageNotice(null);
-        setIsCheckingStorage(true);
-        try {
-            const provider = await getStorageProvider();
-            if (!provider) {
-                setShowStorageConfiguration(true);
-                return;
-            }
-            mediaInputRef.current?.click();
-        } catch (error) {
-            setUploadError(error instanceof Error ? error.message : 'Unable to check media storage');
-        } finally {
-            setIsCheckingStorage(false);
-        }
+        mediaInputRef.current?.click();
     };
 
     const handleRemoveAttachment = (id: string) => {
@@ -651,9 +638,9 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                         className="compose-media-button"
                         title="Attach media"
                         onClick={handleAddMedia}
-                        disabled={isUploading || isCheckingStorage || attachments.length >= 4}
+                        disabled={isUploading || attachments.length >= 4}
                     >
-                        {isUploading || isCheckingStorage ? '...' : <Paperclip size={20} />}
+                        {isUploading ? '...' : <Paperclip size={20} />}
                     </button>
                     <input
                         ref={mediaInputRef}

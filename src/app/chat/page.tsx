@@ -23,7 +23,7 @@ import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
 import { ChatMessageAttachments } from '@/components/ChatMessageAttachments';
 import { ChatPostCard } from '@/components/ChatPostCard';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
-import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { getMaxMediaSize, getMediaKind } from '@/lib/media/upload-policy';
 import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 import {
@@ -173,7 +173,6 @@ export default function ChatPage() {
     const [storageNotices, setStorageNotices] = useState<Record<string, string>>({});
     const [pendingStorageUploads, setPendingStorageUploads] = useState<PendingChatUpload[]>([]);
     const [showStorageConfiguration, setShowStorageConfiguration] = useState(false);
-    const [isCheckingStorage, setIsCheckingStorage] = useState(false);
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
     const [sendError, setSendError] = useState<string | null>(null);
@@ -440,25 +439,11 @@ export default function ChatPage() {
         await uploadMediaFiles(conversationKey, files);
     };
 
-    const handleAddMedia = async () => {
+    const handleAddMedia = () => {
         const conversationKey = selectedConversationKeyRef.current;
         if (!conversationKey) return;
         setConversationAttachmentError(conversationKey, null);
-        setIsCheckingStorage(true);
-        try {
-            if (!await getStorageProvider()) {
-                setShowStorageConfiguration(true);
-                return;
-            }
-            mediaInputRef.current?.click();
-        } catch (error) {
-            setConversationAttachmentError(
-                conversationKey,
-                error instanceof Error ? error.message : 'Media storage could not be checked.',
-            );
-        } finally {
-            setIsCheckingStorage(false);
-        }
+        mediaInputRef.current?.click();
     };
 
     const handleRemoveAttachment = (conversationKey: string, id: string) => {
@@ -1033,7 +1018,6 @@ export default function ChatPage() {
         setStorageNotices({});
         setPendingStorageUploads([]);
         setShowStorageConfiguration(false);
-        setIsCheckingStorage(false);
         setSendError(null);
         setConversationsError(null);
         setMessagesError(null);
@@ -1730,12 +1714,10 @@ export default function ChatPage() {
                                     className="compose-media-button"
                                     title={`Attach media (${selectedAttachments.length}/${CHAT_ATTACHMENT_LIMIT})`}
                                     aria-label="Attach image, video, or audio"
-                                    onClick={() => void handleAddMedia()}
-                                    disabled={sending || isCheckingStorage || selectedAttachments.length >= CHAT_ATTACHMENT_LIMIT}
+                                    onClick={handleAddMedia}
+                                    disabled={sending || selectedAttachments.length >= CHAT_ATTACHMENT_LIMIT}
                                 >
-                                    {isCheckingStorage
-                                        ? <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-                                        : <Paperclip size={20} aria-hidden="true" />}
+                                    <Paperclip size={20} aria-hidden="true" />
                                 </button>
                                 <input
                                     ref={mediaInputRef}
