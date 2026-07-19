@@ -161,14 +161,14 @@ export async function POST(request: Request, context: RouteContext) {
         });
 
         if (existingLike) {
-            return NextResponse.json({ error: 'Already liked' }, { status: 400 });
+            return NextResponse.json({ success: true, liked: true });
         }
 
         const legacySameNodeLike = await db.query.userSwarmLikes.findFirst({
             where: { AND: [{ userId: user.id }, { nodeDomain }, { originalPostId: postId }] },
         });
         if (legacySameNodeLike) {
-            return NextResponse.json({ error: 'Already liked' }, { status: 400 });
+            return NextResponse.json({ success: true, liked: true });
         }
 
         // Create like
@@ -350,7 +350,7 @@ export async function DELETE(request: Request, context: RouteContext) {
                 where: { AND: [{ userId: user.id }, { nodeDomain }, { originalPostId: postId }] },
             });
             if (!legacySameNodeLike) {
-                return NextResponse.json({ error: 'Not liked' }, { status: 400 });
+                return NextResponse.json({ success: true, liked: false });
             }
 
             await Promise.all([
