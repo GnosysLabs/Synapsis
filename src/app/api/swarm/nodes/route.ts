@@ -38,7 +38,13 @@ export async function GET(request: Request) {
     });
     const includeStats = searchParams.get('stats') === 'true';
 
-    const nodes = await getActiveSwarmNodes(limit);
+    const nodes = (await getActiveSwarmNodes(limit)).map((node) => {
+      // Reputation is a local defensive signal. Publishing it lets hostile
+      // peers measure exactly how close they are to quarantine thresholds.
+      const publicNode = { ...node };
+      delete publicNode.trustScore;
+      return publicNode;
+    });
     
     const response: {
       nodes: typeof nodes;

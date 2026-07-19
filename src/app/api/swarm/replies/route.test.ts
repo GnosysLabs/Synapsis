@@ -19,15 +19,22 @@ const mocks = vi.hoisted(() => ({
   txInsertReturning: vi.fn(),
   txDelete: vi.fn(),
   txDeleteWhere: vi.fn(),
+  txPostFindFirst: vi.fn(),
+  txUserFindFirst: vi.fn(),
   verifyFederatedUserAction: vi.fn(),
   pinVerifiedFederatedActorIdentity: vi.fn(),
+  shouldSuppressRemoteInteraction: vi.fn(),
+  upsertRemoteUser: vi.fn(),
+  signingPublicKeyFromDid: vi.fn(),
   isTrustedFederationRead: vi.fn(),
   requireClassification: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
   db: {
-    query: { posts: { findFirst: mocks.findFirst } },
+    query: {
+      posts: { findFirst: mocks.findFirst },
+    },
     select: mocks.select,
     update: mocks.update,
     transaction: mocks.transaction,
@@ -85,9 +92,19 @@ vi.mock('@/lib/swarm/signed-read', () => ({
 vi.mock('@/lib/node/local-node', () => ({
   requireLocalNodeNsfwClassification: mocks.requireClassification,
 }));
-vi.mock('@/lib/swarm/user-cache', () => ({ upsertRemoteUser: vi.fn() }));
+vi.mock('@/lib/swarm/user-cache', () => ({ upsertRemoteUser: mocks.upsertRemoteUser }));
+vi.mock('@/lib/swarm/remote-interaction-policy', () => ({
+  shouldSuppressRemoteInteraction: mocks.shouldSuppressRemoteInteraction,
+}));
+vi.mock('@/lib/crypto/did-key', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/crypto/did-key')>();
+  return {
+    ...actual,
+    signingPublicKeyFromDid: mocks.signingPublicKeyFromDid,
+  };
+});
 
-import { DELETE, GET } from './route';
+import { DELETE, GET, POST } from './route';
 
 const replyId = '15f11861-693a-4f70-8480-5d82bb8d14a7';
 const parentId = '25f11861-693a-4f70-8480-5d82bb8d14a7';
@@ -134,6 +151,69 @@ function deleteRequest(headers: Record<string, string> = {}, nodeDomain = 'sourc
   });
 }
 
+function replyUserAction() {
+  return {
+    action: 'post',
+    data: {
+      clientPostId: replyId,
+      content: 'Federated reply',
+      swarmReplyTo: {
+        postId: parentId,
+        nodeDomain: 'target.social',
+      },
+      isNsfw: false,
+    },
+    did: authorDid,
+    handle: 'alice',
+    ts: actionIssuedAt,
+    nonce: 'reply_nonce_123',
+    sig: 'reply_signature_123',
+  };
+}
+
+function replyPayload() {
+  return {
+    federation: {
+      protocol: 'synapsis-federation-action-v2' as const,
+      sourceDomain: 'source.social',
+      destinationDomain: 'target.social',
+      method: 'POST' as const,
+      path: '/api/swarm/replies',
+      issuedAt: actionIssuedAt,
+      expiresAt: actionIssuedAt + 60_000,
+    },
+    userAction: replyUserAction(),
+    postId: parentId,
+    reply: {
+      id: replyId,
+      content: 'Federated reply',
+      createdAt: new Date(actionIssuedAt).toISOString(),
+      author: {
+        handle: 'alice',
+        displayName: 'Alice',
+        did: authorDid,
+        isNsfw: false,
+      },
+      nodeDomain: 'source.social',
+      nodeIsNsfw: false,
+      isNsfw: false,
+      mediaUrls: [],
+    },
+  };
+}
+
+function replyRequest() {
+  return new Request('https://target.social/api/swarm/replies', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'X-Swarm-Source-Domain': 'source.social',
+      'X-Swarm-Signature': 'signed',
+    },
+    body: JSON.stringify(replyPayload()),
+  });
+}
+
 describe('swarm reply authorization and sensitivity', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -150,6 +230,9 @@ describe('swarm reply authorization and sensitivity', () => {
       qualifiedHandle: 'alice@source.social',
       did: authorDid,
     });
+    mocks.signingPublicKeyFromDid.mockReturnValue('verified-signing-public-key');
+    mocks.upsertRemoteUser.mockResolvedValue(undefined);
+    mocks.shouldSuppressRemoteInteraction.mockResolvedValue(false);
     mocks.findFirst.mockResolvedValue(null);
     mocks.limit.mockResolvedValue([]);
     mocks.orderBy.mockReturnValue({ limit: mocks.limit });
@@ -173,7 +256,82 @@ describe('swarm reply authorization and sensitivity', () => {
     mocks.transaction.mockImplementation(async (callback) => callback({
       insert: mocks.txInsert,
       delete: mocks.txDelete,
+      query: {
+        posts: { findFirst: mocks.txPostFindFirst },
+        users: { findFirst: mocks.txUserFindFirst },
+      },
     }));
+  });
+
+  it('rolls an authoritative reply-ID conflict back before materializing its actor', async () => {
+    mocks.verifyFederatedUserAction.mockResolvedValue({
+      ok: true,
+      actorHandle: 'alice',
+      sourceDomain: 'source.social',
+      destinationDomain: 'target.social',
+      userAction: replyUserAction(),
+      replayId: 'reply-replay-id',
+    });
+    mocks.findFirst
+      .mockResolvedValueOnce({
+        id: parentId,
+        userId: 'parent-user-id',
+        isRemoved: false,
+        author: { handle: 'owner', nodeId: null },
+      })
+      .mockResolvedValueOnce(null);
+    mocks.txPostFindFirst.mockResolvedValue({
+      id: 'winning-reply',
+      content: 'Federated reply',
+      author: { did: 'did:key:zWinningActor' },
+    });
+
+    const response = await POST(replyRequest() as never);
+
+    expect(response.status).toBe(409);
+    expect(mocks.transaction).toHaveBeenCalledOnce();
+    expect(mocks.pinVerifiedFederatedActorIdentity).not.toHaveBeenCalled();
+    expect(mocks.upsertRemoteUser).not.toHaveBeenCalled();
+  });
+
+  it('accepts a policy-suppressed remote reply without identity, replay, or state writes', async () => {
+    mocks.verifyFederatedUserAction.mockResolvedValue({
+      ok: true,
+      actorHandle: 'alice',
+      sourceDomain: 'source.social',
+      destinationDomain: 'target.social',
+      userAction: replyUserAction(),
+      replayId: 'reply-replay-id',
+    });
+    mocks.findFirst
+      .mockResolvedValueOnce({
+        id: parentId,
+        userId: 'parent-user-id',
+        isRemoved: false,
+        author: { handle: 'owner', nodeId: null },
+      })
+      .mockResolvedValueOnce(null);
+    mocks.shouldSuppressRemoteInteraction.mockResolvedValue(true);
+
+    const response = await POST(replyRequest() as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      message: 'Reply received',
+    });
+    expect(mocks.shouldSuppressRemoteInteraction).toHaveBeenCalledWith(
+      'parent-user-id',
+      {
+        did: authorDid,
+        handle: 'alice',
+        domain: 'source.social',
+      },
+    );
+    expect(mocks.signingPublicKeyFromDid).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.pinVerifiedFederatedActorIdentity).not.toHaveBeenCalled();
+    expect(mocks.upsertRemoteUser).not.toHaveBeenCalled();
   });
 
   it('rejects unsigned deletion before reading or mutating a reply', async () => {

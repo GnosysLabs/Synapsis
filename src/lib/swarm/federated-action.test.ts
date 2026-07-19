@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   verifyActionSignature: vi.fn(),
   signingPublicKeyFromDid: vi.fn(),
   isRateLimited: vi.fn(),
-  verifySwarmRequest: vi.fn(),
+  verifySwarmRequestDetailed: vi.fn(),
   consumeFederationNodeActionQuota: vi.fn(),
 }));
 
@@ -21,7 +21,7 @@ vi.mock('@/lib/rate-limit', () => ({
 }));
 
 vi.mock('./signature', () => ({
-  verifySwarmRequest: mocks.verifySwarmRequest,
+  verifySwarmRequestDetailed: mocks.verifySwarmRequestDetailed,
 }));
 
 vi.mock('./action-quota', () => ({
@@ -109,7 +109,7 @@ describe('federated user action verification', () => {
     vi.clearAllMocks();
     vi.stubEnv('NODE_ENV', 'test');
     vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', DESTINATION_DOMAIN);
-    mocks.verifySwarmRequest.mockResolvedValue(true);
+    mocks.verifySwarmRequestDetailed.mockResolvedValue({ ok: true, domain: SOURCE_DOMAIN });
     mocks.signingPublicKeyFromDid.mockReturnValue('DID-DERIVED USER PUBLIC KEY');
     mocks.verifyActionSignature.mockResolvedValue(true);
     mocks.isRateLimited.mockReturnValue(false);
@@ -135,7 +135,7 @@ describe('federated user action verification', () => {
       status: 403,
       error: 'Federation destination mismatch',
     });
-    expect(mocks.verifySwarmRequest).not.toHaveBeenCalled();
+    expect(mocks.verifySwarmRequestDetailed).not.toHaveBeenCalled();
   });
 
   it('rejects an envelope signed for another path before node verification', async () => {
@@ -148,7 +148,7 @@ describe('federated user action verification', () => {
       status: 403,
       error: 'Federation route mismatch',
     });
-    expect(mocks.verifySwarmRequest).not.toHaveBeenCalled();
+    expect(mocks.verifySwarmRequestDetailed).not.toHaveBeenCalled();
   });
 
   it('rejects an envelope signed for another method before node verification', async () => {
@@ -161,15 +161,17 @@ describe('federated user action verification', () => {
       status: 403,
       error: 'Federation route mismatch',
     });
-    expect(mocks.verifySwarmRequest).not.toHaveBeenCalled();
+    expect(mocks.verifySwarmRequestDetailed).not.toHaveBeenCalled();
   });
 
   it('rejects node-envelope tampering even when the altered context remains otherwise valid', async () => {
     const signedPayload = payload();
     const tamperedPayload = structuredClone(signedPayload);
     tamperedPayload.federation.expiresAt += 1;
-    mocks.verifySwarmRequest.mockImplementation(async (candidate: unknown) => (
+    mocks.verifySwarmRequestDetailed.mockImplementation(async (candidate: unknown) => (
       JSON.stringify(candidate) === JSON.stringify(signedPayload)
+        ? { ok: true, domain: SOURCE_DOMAIN }
+        : { ok: false, reason: 'invalid', status: 403 }
     ));
 
     const result = await verifyFederatedUserAction(verificationInput(tamperedPayload));
@@ -179,7 +181,7 @@ describe('federated user action verification', () => {
       status: 403,
       error: 'Invalid node signature',
     });
-    expect(mocks.verifySwarmRequest).toHaveBeenCalledWith(
+    expect(mocks.verifySwarmRequestDetailed).toHaveBeenCalledWith(
       tamperedPayload,
       'node_signature_123',
       SOURCE_DOMAIN,
@@ -203,7 +205,7 @@ describe('federated user action verification', () => {
       status: 429,
       error: 'Federation node is sending actions too quickly',
     });
-    expect(mocks.verifySwarmRequest).toHaveBeenCalledOnce();
+    expect(mocks.verifySwarmRequestDetailed).toHaveBeenCalledOnce();
     expect(mocks.consumeFederationNodeActionQuota).toHaveBeenCalledWith({
       sourceDomain: SOURCE_DOMAIN,
       limit: 600,
@@ -271,7 +273,7 @@ describe('federated user action verification', () => {
       status: 400,
       error: 'Federation envelope is stale',
     });
-    expect(mocks.verifySwarmRequest).not.toHaveBeenCalled();
+    expect(mocks.verifySwarmRequestDetailed).not.toHaveBeenCalled();
   });
 
   it('rejects a stale user action even when its node envelope is fresh', async () => {
@@ -285,7 +287,7 @@ describe('federated user action verification', () => {
       status: 400,
       error: 'Federated user action is stale',
     });
-    expect(mocks.verifySwarmRequest).toHaveBeenCalledOnce();
+    expect(mocks.verifySwarmRequestDetailed).toHaveBeenCalledOnce();
     expect(mocks.signingPublicKeyFromDid).not.toHaveBeenCalled();
   });
 
@@ -325,5 +327,17 @@ describe('federated user action verification', () => {
     expect(repeatedRoute.replayId).toBe(sameRoute.replayId);
     expect(otherPath.replayId).not.toBe(sameRoute.replayId);
     expect(otherMethod.replayId).not.toBe(sameRoute.replayId);
+  });
+
+  it('does not let signature representation change replay identity', async () => {
+    const original = await verifyFederatedUserAction(verificationInput());
+    const remalleated = await verifyFederatedUserAction(verificationInput(
+      payload({}, { sig: 'different_signature_value_456' }),
+    ));
+
+    if (!original.ok || !remalleated.ok) {
+      throw new Error('Expected both signed representations to verify');
+    }
+    expect(remalleated.replayId).toBe(original.replayId);
   });
 });

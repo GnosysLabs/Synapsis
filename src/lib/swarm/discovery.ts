@@ -35,6 +35,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
   let userCount = 0;
   let postCount = 0;
   let mediaCount = 0;
+  let contentSequence = 0;
   // Announcements are authoritative and signed. Never publish a guessed
   // `false` classification when local configuration cannot be read.
   const isNsfw = await requireLocalNodeNsfwClassification();
@@ -64,6 +65,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     userCount = Number(userResult[0]?.count ?? 0);
     postCount = Number(postResult[0]?.count ?? 0);
     mediaCount = Number(mediaResult[0]?.count ?? 0);
+    contentSequence = Number((await db.query.swarmContentClock.findFirst({ where: { id: 1 } }))?.sequence ?? 0);
   }
 
   const capabilities: SwarmCapability[] = ['handles', 'gossip', 'interactions', 'e2ee_dm_v1'];
@@ -80,6 +82,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     userCount,
     postCount,
     mediaCount,
+    contentSequence,
     capabilities,
     isNsfw,
     timestamp: new Date().toISOString(),
@@ -109,24 +112,37 @@ export async function announceToNode(targetDomain: string): Promise<{ success: b
     const privateKey = await getNodePrivateKey();
     const signature = signPayload(announcement, privateKey);
     
-    const signedAnnouncement = {
-      ...announcement,
-      signature,
-    };
-    
     const baseUrl = `https://${publicTargetDomain}`;
     const url = `${baseUrl}/api/swarm/announce`;
 
-    const response = await safeFederationRequest(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(signedAnnouncement),
-      timeoutMs: 8_000,
-      maxResponseBytes: 256 * 1024,
-    });
+    const sendAnnouncement = (payload: unknown, payloadSignature: string) => (
+      safeFederationRequest(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          ...(payload as Record<string, unknown>),
+          signature: payloadSignature,
+        }),
+        timeoutMs: 8_000,
+        maxResponseBytes: 256 * 1024,
+      })
+    );
+
+    let response = await sendAnnouncement(announcement, signature);
+    if (response.status === 400) {
+      // The previous receiver schema was strict and did not know about the
+      // content clock. Retry once with the legacy signed shape so mixed-version
+      // nodes can still announce during a rolling upgrade.
+      const legacyAnnouncement: Partial<SwarmAnnouncement> = { ...announcement };
+      delete legacyAnnouncement.contentSequence;
+      response = await sendAnnouncement(
+        legacyAnnouncement,
+        signPayload(legacyAnnouncement, privateKey),
+      );
+    }
 
     if (response.status < 200 || response.status >= 300) {
       const error = response.text();
@@ -246,6 +262,10 @@ export async function discoverNode(
   // This metadata was fetched directly from the origin over its own domain,
   // so its classification is authoritative regardless of who triggered discovery.
   const result = await upsertSwarmNode(info, 'direct');
+  // Successful exact-origin discovery must advance the peer beyond the
+  // admission boundary; otherwise an active peer at the boundary is never
+  // selected for gossip or content synchronization again.
+  await markNodeSuccess(publicDomain);
   
   return { success: true, isNew: result.isNew };
 }

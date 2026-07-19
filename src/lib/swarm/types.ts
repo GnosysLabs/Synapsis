@@ -14,6 +14,7 @@ export interface SwarmNodeInfo {
   userCount?: number;
   postCount?: number;
   mediaCount?: number;
+  contentSequence?: number;
   capabilities?: SwarmCapability[];
   isNsfw?: boolean;
   lastSeenAt?: string;
@@ -33,6 +34,7 @@ export interface SwarmAnnouncement {
   userCount: number;
   postCount: number;
   mediaCount: number;
+  contentSequence: number;
   capabilities: SwarmCapability[];
   isNsfw: boolean;
   timestamp: string;
@@ -123,7 +125,7 @@ export const SWARM_CONFIG = {
   maxStoredDiscoveryHints: 5_000,
   
   // Max handles to include in a single gossip message
-  maxHandlesPerGossip: 500,
+  maxHandlesPerGossip: 50,
   
   // How long before a node is considered inactive
   inactiveThresholdMs: 24 * 60 * 60 * 1000, // 24 hours

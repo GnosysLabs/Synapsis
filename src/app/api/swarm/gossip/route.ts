@@ -10,12 +10,12 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { establishDirectGossipPeer, processGossip } from '@/lib/swarm/gossip';
 import { markNodeSuccess } from '@/lib/swarm/registry';
-import { isFreshFederationTimestamp, verifySwarmRequest } from '@/lib/swarm/signature';
+import { isFreshFederationTimestamp, verifySwarmRequestDetailed } from '@/lib/swarm/signature';
 import type { SwarmGossipPayload } from '@/lib/swarm/types';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import { isRateLimited } from '@/lib/rate-limit';
-import { federationMediaUrlSchema } from '@/lib/utils/federation';
+import { strictSwarmNodeInfoSchema } from '@/lib/swarm/node-payload';
 
 const handleSchema = z.strictObject({
   handle: z.string().min(3).max(640),
@@ -24,25 +24,9 @@ const handleSchema = z.strictObject({
   updatedAt: z.string().datetime().optional(),
 });
 
-const boundedCount = z.number().int().nonnegative().max(1_000_000_000);
-const nodeInfoSchema = z.strictObject({
-  domain: z.string().min(1).max(253),
-  name: z.string().max(100).optional(),
-  description: z.string().max(1_000).optional(),
-  logoUrl: federationMediaUrlSchema.optional(),
-  publicKey: z.string().max(16_384).optional(),
-  softwareVersion: z.string().max(100).optional(),
-  userCount: boundedCount.optional(),
-  postCount: boundedCount.optional(),
-  mediaCount: boundedCount.optional(),
-  isNsfw: z.boolean().optional(),
-  capabilities: z.array(z.enum(['handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1'])).max(6).optional(),
-  lastSeenAt: z.string().datetime().optional(),
-});
-
 const gossipPayloadSchema = z.strictObject({
   sender: z.string().min(1).max(253),
-  nodes: z.array(nodeInfoSchema).max(100),
+  nodes: z.array(strictSwarmNodeInfoSchema).max(100),
   handles: z.array(handleSchema).max(500).optional(),
   timestamp: z.string().datetime(),
   since: z.string().datetime().optional(),
@@ -68,10 +52,6 @@ export async function POST(request: Request) {
     if (!isFreshFederationTimestamp(data.timestamp)) {
       return NextResponse.json({ error: 'Stale gossip payload' }, { status: 400 });
     }
-    if (isRateLimited('swarm-gossip-global', 120, 60 * 1_000)) {
-      return NextResponse.json({ error: 'Too many gossip requests' }, { status: 429 });
-    }
-    
     const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
 
     if (!isPublicSwarmDomain(ourDomain)) {
@@ -98,14 +78,24 @@ export async function POST(request: Request) {
 
     // SECURITY: Verify the node signature before processing
     const { signature, ...payload } = data;
-    const isValid = await verifySwarmRequest(payload, signature, data.sender);
+    const verification = await verifySwarmRequestDetailed(payload, signature, data.sender);
 
-    if (!isValid) {
-      console.warn(`[Swarm] Invalid signature for gossip from ${data.sender}`);
+    if (!verification.ok) {
+      console.warn(`[Swarm] Rejected gossip from ${data.sender}: ${verification.reason}`);
       return NextResponse.json(
-        { error: 'Invalid signature' },
-        { status: 403 }
+        { error: verification.reason === 'overloaded'
+          ? 'Signature verification is temporarily overloaded'
+          : 'Invalid signature' },
+        {
+          status: verification.status,
+          headers: verification.retryAfterSeconds
+            ? { 'Retry-After': String(verification.retryAfterSeconds) }
+            : undefined,
+        }
       );
+    }
+    if (isRateLimited('swarm-gossip-authenticated-global', 600, 60 * 1_000)) {
+      return NextResponse.json({ error: 'Too many gossip requests' }, { status: 429 });
     }
     if (isRateLimited(`swarm-gossip-node:${getPublicSwarmDomain(data.sender)}`, 30, 60 * 1_000)) {
       return NextResponse.json({ error: 'Too many gossip requests' }, { status: 429 });

@@ -36,6 +36,35 @@ describe('remote timeline payload validation', () => {
     }, 'source.social')).toThrow(/future-dated/);
   });
 
+  it('drops cross-node reposter claims and rewrites source-owned identities', () => {
+    const result = parseRemoteTimelineResponse({
+      posts: [post({
+        repostedBy: [
+          {
+            id: 'forged-victim-id',
+            handle: 'admin@victim.social',
+            displayName: 'Victim Admin',
+            nodeDomain: 'victim.social',
+          },
+          {
+            id: 'attacker-controlled-id',
+            handle: 'alice@source.social',
+            displayName: 'Alice',
+            nodeDomain: 'source.social',
+          },
+        ],
+      })],
+    }, 'source.social');
+
+    expect(result.posts[0].repostedBy).toEqual([expect.objectContaining({
+      id: 'swarm:source.social:alice',
+      handle: 'alice',
+      nodeDomain: 'source.social',
+      isRemote: true,
+      isSwarm: true,
+    })]);
+  });
+
   it('rejects unbounded post arrays and strips deeper recursive payloads', () => {
     expect(() => parseRemoteTimelineResponse({
       posts: Array.from({ length: 51 }, (_, index) => post({ id: `post-${index}` })),
@@ -65,5 +94,63 @@ describe('remote timeline payload validation', () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it('accepts bounded tombstones and rejects mismatched upsert identities', () => {
+    const parsed = parseRemoteTimelineResponse({
+      posts: [],
+      changes: [{
+        sequence: 8,
+        type: 'delete',
+        postId: 'post-8',
+        changedAt: new Date().toISOString(),
+      }],
+      changeCursor: 8,
+    }, 'source.social');
+    expect(parsed.changes).toEqual([expect.objectContaining({
+      type: 'delete',
+      postId: 'post-8',
+    })]);
+
+    expect(() => parseRemoteTimelineResponse({
+      posts: [],
+      changes: [{
+        sequence: 9,
+        type: 'upsert',
+        postId: 'different-id',
+        changedAt: new Date().toISOString(),
+        post: post({ id: 'post-9' }),
+      }],
+    }, 'source.social')).toThrow(/identity mismatch/);
+  });
+
+  it('accepts bounded account deletions and rejects future-dated ones', () => {
+    const deletedAt = new Date().toISOString();
+    const parsed = parseRemoteTimelineResponse({
+      posts: [],
+      accountChanges: [{
+        sequence: 11,
+        handle: 'alice',
+        did: 'did:key:alice-deleted-identity',
+        deletedAt,
+      }],
+      accountChangeCursor: 11,
+    }, 'source.social');
+    expect(parsed.accountChanges).toEqual([{
+      sequence: 11,
+      handle: 'alice',
+      did: 'did:key:alice-deleted-identity',
+      deletedAt,
+    }]);
+
+    expect(() => parseRemoteTimelineResponse({
+      posts: [],
+      accountChanges: [{
+        sequence: 12,
+        handle: 'alice',
+        did: 'did:key:alice-deleted-identity',
+        deletedAt: new Date(Date.now() + 10 * 60 * 1_000).toISOString(),
+      }],
+    }, 'source.social')).toThrow(/future-dated account deletion/);
   });
 });

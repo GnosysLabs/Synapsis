@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
     findUser: vi.fn(),
     fetchSwarmUserProfile: vi.fn(),
     isSwarmNode: vi.fn(),
-    discoverNode: vi.fn(),
+    fetchNodeInfo: vi.fn(),
     getSession: vi.fn(),
     isLocalNodeNsfw: vi.fn(),
 }));
@@ -33,8 +33,8 @@ vi.mock('@/lib/swarm/interactions', () => ({
     isSwarmNode: mocks.isSwarmNode,
 }));
 
-vi.mock('@/lib/swarm/discovery', () => ({
-    discoverNode: mocks.discoverNode,
+vi.mock('@/lib/swarm/transient-node-probe', () => ({
+    probeTransientNode: mocks.fetchNodeInfo,
 }));
 
 import { GET } from './route';
@@ -74,7 +74,7 @@ describe('remote profile posts NSFW access', () => {
         vi.clearAllMocks();
         mocks.findUser.mockResolvedValue(null);
         mocks.isSwarmNode.mockResolvedValue(true);
-        mocks.discoverNode.mockResolvedValue({ success: true });
+        mocks.fetchNodeInfo.mockResolvedValue({ domain: 'adult.example' });
         mocks.getSession.mockResolvedValue(null);
         mocks.isLocalNodeNsfw.mockResolvedValue(false);
     });

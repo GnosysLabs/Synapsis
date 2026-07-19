@@ -16,6 +16,9 @@ export interface RemoteProfile {
     isNsfw?: boolean;
 }
 
+type VerifiedRemoteProfile = RemoteProfile & { publicKey: string };
+export type RemoteUserCacheDatabase = Pick<typeof db, 'query' | 'insert' | 'update'>;
+
 function signingKeysEqual(left: string, right: string): boolean {
     const normalizedLeft = normalizeSigningPublicKey(left);
     const normalizedRight = normalizeSigningPublicKey(right);
@@ -24,14 +27,94 @@ function signingKeysEqual(left: string, right: string): boolean {
         : left === right;
 }
 
+async function upsertVerifiedRemoteUser(
+    profile: VerifiedRemoteProfile,
+    database: RemoteUserCacheDatabase,
+): Promise<void> {
+    // The durable verified registry is the identity authority. Legacy remote
+    // user rows were populated from node directory hints and may contain
+    // synthetic did:swarm:* values; a valid user proof may replace those hints
+    // only after this exact handle was pinned.
+    const pinned = await database.query.handleRegistry.findFirst({
+        where: {
+            AND: [
+                { handle: profile.handle },
+                { did: profile.did },
+                { identityVerified: true },
+                { deletedAt: { isNull: true } },
+            ],
+        },
+    });
+    if (!pinned) {
+        throw new Error('Remote user identity is not verified for this handle');
+    }
+
+    const [byDid, byHandle] = await Promise.all([
+        database.query.users.findFirst({ where: { did: profile.did } }),
+        database.query.users.findFirst({ where: { handle: profile.handle } }),
+    ]);
+    if (byDid && byHandle && byDid.id !== byHandle.id) {
+        throw new Error('Remote user identity conflicts with the existing cache');
+    }
+    if (byDid && byDid.handle !== profile.handle) {
+        throw new Error('Remote DID is already bound to another handle');
+    }
+    const existing = byHandle || byDid;
+
+    if (existing) {
+        if (!existing.handle.includes('@')) {
+            throw new Error('Federation cannot modify a local user');
+        }
+        if (existing.handle !== profile.handle) {
+            throw new Error('Remote user handle changed unexpectedly');
+        }
+
+        const replacingLegacyHint = existing.did !== profile.did;
+        if (!replacingLegacyHint
+            && existing.publicKey
+            && !signingKeysEqual(profile.publicKey, existing.publicKey)) {
+            throw new Error('Remote user signing key changed unexpectedly');
+        }
+
+        await database.update(users)
+            .set({
+                // A verified handle pin may replace a legacy, unverified remote
+                // DID/key cache. Once pinned, later conflicting proofs fail.
+                did: profile.did,
+                displayName: profile.displayName || existing.displayName,
+                avatarUrl: profile.avatarUrl || existing.avatarUrl,
+                publicKey: profile.publicKey,
+                isNsfw: profile.isNsfw ?? existing.isNsfw,
+                updatedAt: new Date(),
+            })
+            .where(and(
+                eq(users.id, existing.id),
+                eq(users.handle, profile.handle),
+                eq(users.did, existing.did),
+            ));
+    } else {
+        await database.insert(users).values({
+            did: profile.did,
+            handle: profile.handle,
+            displayName: profile.displayName || profile.handle,
+            avatarUrl: profile.avatarUrl || null,
+            publicKey: profile.publicKey,
+            // Missing federation classification is never equivalent to
+            // explicitly safe. Later profile hydration can set this false.
+            isNsfw: profile.isNsfw ?? true,
+        });
+    }
+}
+
 /**
  * Upsert a remote user into the local database for caching/display purposes.
- * 
- * @throws Error if database operation fails (after logging)
+ * Pass an existing transaction when identity materialization must be atomic
+ * with the federation mutation that first references it.
  */
 export async function upsertRemoteUser(
     profile: RemoteProfile,
     options: { identityVerified: true },
+    database?: RemoteUserCacheDatabase,
 ): Promise<void> {
     if (!db) return;
 
@@ -49,89 +132,19 @@ export async function upsertRemoteUser(
         if (!normalizedPublicKey || !didKeyMatchesPublicKey(profile.did, normalizedPublicKey)) {
             throw new Error('Remote DID must be self-certifying and match its signing key');
         }
-        const verifiedProfile = {
+        const verifiedProfile: VerifiedRemoteProfile = {
             ...profile,
             handle: profile.handle.toLowerCase().replace(/^@/, ''),
             publicKey: normalizedPublicKey,
         };
 
-        await withSqliteLockRetry(() => db.transaction(async (tx) => {
-            // The durable verified registry is the identity authority. Legacy
-            // remote user rows were populated from node directory hints and may
-            // contain synthetic did:swarm:* values; a valid user proof may
-            // replace those hints only after this exact handle was pinned.
-            const pinned = await tx.query.handleRegistry.findFirst({
-                where: {
-                    AND: [
-                        { handle: verifiedProfile.handle },
-                        { did: verifiedProfile.did },
-                        { identityVerified: true },
-                    ],
-                },
-            });
-            if (!pinned) {
-                throw new Error('Remote user identity is not verified for this handle');
-            }
-
-            const [byDid, byHandle] = await Promise.all([
-                tx.query.users.findFirst({ where: { did: verifiedProfile.did } }),
-                tx.query.users.findFirst({ where: { handle: verifiedProfile.handle } }),
-            ]);
-            if (byDid && byHandle && byDid.id !== byHandle.id) {
-                throw new Error('Remote user identity conflicts with the existing cache');
-            }
-            if (byDid && byDid.handle !== verifiedProfile.handle) {
-                throw new Error('Remote DID is already bound to another handle');
-            }
-            const existing = byHandle || byDid;
-
-            if (existing) {
-                if (!existing.handle.includes('@')) {
-                    throw new Error('Federation cannot modify a local user');
-                }
-                if (existing.handle !== verifiedProfile.handle) {
-                    throw new Error('Remote user handle changed unexpectedly');
-                }
-
-                const replacingLegacyHint = existing.did !== verifiedProfile.did;
-                if (!replacingLegacyHint
-                    && existing.publicKey
-                    && !signingKeysEqual(verifiedProfile.publicKey, existing.publicKey)) {
-                    throw new Error('Remote user signing key changed unexpectedly');
-                }
-
-                await tx.update(users)
-                    .set({
-                        // A verified handle pin may replace a legacy, unverified
-                        // remote DID/key cache. Once pinned, later conflicting
-                        // proofs fail before this function is reached.
-                        did: verifiedProfile.did,
-                        displayName: verifiedProfile.displayName || existing.displayName,
-                        avatarUrl: verifiedProfile.avatarUrl || existing.avatarUrl,
-                        publicKey: verifiedProfile.publicKey,
-                        isNsfw: verifiedProfile.isNsfw ?? existing.isNsfw,
-                        updatedAt: new Date(),
-                    })
-                    .where(and(
-                        eq(users.id, existing.id),
-                        eq(users.handle, verifiedProfile.handle),
-                        eq(users.did, existing.did),
-                    ));
-            } else {
-                // Create new placeholder user from the verified identity.
-                await tx.insert(users).values({
-                    did: verifiedProfile.did,
-                    handle: verifiedProfile.handle, // user@domain
-                    displayName: verifiedProfile.displayName || verifiedProfile.handle,
-                    avatarUrl: verifiedProfile.avatarUrl || null,
-                    publicKey: verifiedProfile.publicKey,
-                    // Missing federation classification is never equivalent to
-                    // explicitly safe. Later profile hydration can set this false.
-                    isNsfw: verifiedProfile.isNsfw ?? true,
-                    // Note: nodeId is null for remote placeholders unless we specifically link it
-                });
-            }
-        }));
+        if (database) {
+            await upsertVerifiedRemoteUser(verifiedProfile, database);
+        } else {
+            await withSqliteLockRetry(() => db.transaction(
+                tx => upsertVerifiedRemoteUser(verifiedProfile, tx),
+            ));
+        }
     } catch (error) {
         console.error(`[User Cache] Failed to upsert ${profile.handle}:`, error);
         throw error;

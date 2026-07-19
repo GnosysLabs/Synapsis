@@ -5,8 +5,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, posts, users, media, remoteReposts } from '@/db';
-import { eq, desc, and, isNull, lt, inArray, like, notLike, sql } from 'drizzle-orm';
+import {
+  db,
+  feedStories,
+  media,
+  posts,
+  remoteReposts,
+  swarmAccountTombstones,
+  swarmPostChanges,
+  users,
+} from '@/db';
+import { eq, asc, desc, and, gt, isNull, lt, inArray, notLike, or } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 import type { User } from '@/lib/types';
@@ -15,6 +24,7 @@ import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 import { parseBoundedInteger } from '@/lib/http/query';
+import { searchIndexedPostIds } from '@/lib/search/post-index';
 
 export interface SwarmPost {
   id: string;
@@ -49,6 +59,21 @@ export interface SwarmPost {
   linkPreviewType?: 'card' | 'image' | 'gallery' | 'video';
   linkPreviewVideoUrl?: string;
   linkPreviewMedia?: Array<{ url: string; width?: number | null; height?: number | null; mimeType?: string | null }>;
+}
+
+export interface SwarmPostChange {
+  sequence: number;
+  type: 'upsert' | 'delete';
+  postId: string;
+  changedAt: string;
+  post?: SwarmPost;
+}
+
+export interface SwarmAccountDeletion {
+  sequence: number;
+  handle: string;
+  did: string;
+  deletedAt: string;
 }
 
 interface TimelinePostRow {
@@ -187,6 +212,18 @@ export async function GET(request: NextRequest) {
     });
 
     const cursor = searchParams.get('cursor');
+    const since = searchParams.get('since');
+    const sinceId = searchParams.get('sinceId')?.slice(0, 512) || null;
+    const changesSinceRaw = searchParams.get('changesSince');
+    const changesSince = changesSinceRaw === null ? null : Number(changesSinceRaw);
+    if (changesSinceRaw !== null && (!Number.isSafeInteger(changesSince) || changesSince! < 0)) {
+      return NextResponse.json({ error: 'Invalid changes cursor' }, { status: 400 });
+    }
+    const accountsSinceRaw = searchParams.get('accountsSince');
+    const accountsSince = accountsSinceRaw === null ? null : Number(accountsSinceRaw);
+    if (accountsSinceRaw !== null && (!Number.isSafeInteger(accountsSince) || accountsSince! < 0)) {
+      return NextResponse.json({ error: 'Invalid account changes cursor' }, { status: 400 });
+    }
     const searchQuery = searchParams.get('q')?.trim() || '';
     if (searchQuery.length > 100) {
       return NextResponse.json({ error: 'Search query is too long' }, { status: 400 });
@@ -200,40 +237,61 @@ export async function GET(request: NextRequest) {
 
     const nodeIsNsfw = await requireLocalNodeNsfwClassification();
     const trustedRead = await isTrustedFederationRead(request);
+    if ((changesSince !== null || accountsSince !== null) && !trustedRead) {
+      return NextResponse.json({ error: 'Authenticated federation read required' }, { status: 401 });
+    }
+    // Capture the snapshot boundary before reading the snapshot. A concurrent
+    // later mutation will then be replayed (safe) rather than skipped.
+    const initialChangeCursor = changesSince === null && trustedRead
+      ? Number((await db.query.swarmContentClock.findFirst({ where: { id: 1 } }))?.sequence || 0)
+      : null;
+    const accountChangeBoundary = accountsSince !== null
+      ? Number((await db.query.swarmContentClock.findFirst({ where: { id: 1 } }))?.sequence || 0)
+      : null;
+    const accountChanges = accountsSince !== null
+      ? await db.select({
+          handle: swarmAccountTombstones.handle,
+          did: swarmAccountTombstones.did,
+          sequence: swarmAccountTombstones.sequence,
+          deletedAt: swarmAccountTombstones.deletedAt,
+        }).from(swarmAccountTombstones)
+          .where(gt(swarmAccountTombstones.sequence, accountsSince))
+          .orderBy(asc(swarmAccountTombstones.sequence))
+          .limit(50)
+      : [];
+    const changeRows = changesSince !== null
+      ? await db.select({
+          storyId: swarmPostChanges.storyId,
+          sequence: swarmPostChanges.sequence,
+          changeType: swarmPostChanges.changeType,
+          changedAt: swarmPostChanges.changedAt,
+        }).from(swarmPostChanges)
+          .where(gt(swarmPostChanges.sequence, changesSince))
+          .orderBy(asc(swarmPostChanges.sequence))
+          .limit(50)
+      : [];
+    const changedUpsertIds = Array.from(new Set(changeRows
+      .filter((change) => change.changeType === 'upsert')
+      .map((change) => change.storyId)));
 
-    // Use query builder for better conditional logic
-    // Only return posts from local users (not remote placeholder users)
-    // Local posts may have apId if they've been federated, so we check nodeId instead
-    const searchCondition = searchQuery
-      ? like(posts.content, `%${searchQuery}%`)
+    const indexedPostIds = searchQuery
+      ? await searchIndexedPostIds('local', searchQuery)
+      : null;
+    const searchCondition = indexedPostIds
+      ? inArray(posts.id, indexedPostIds)
       : undefined;
-    let whereCondition = and(
-      isNull(posts.replyToId), // Not a reply
-      isNull(posts.swarmReplyToId), // Not a swarm reply
-      eq(posts.isRemoved, false), // Not removed
-      isNull(users.nodeId), // Local user (not from another swarm node)
-      notLike(users.handle, '%@%'), // Cached remote placeholders may not have a nodeId
-      sql`not exists (
-        select 1 from ${remoteReposts}
-        where ${remoteReposts.postId} = coalesce(${posts.repostOfId}, ${posts.id})
-      )`,
-      searchCondition,
-    );
-
     const parsedCursorDate = cursor ? new Date(cursor) : null;
     const cursorDate = parsedCursorDate && !isNaN(parsedCursorDate.getTime())
       ? parsedCursorDate
       : null;
-
-    if (cursorDate) {
-      // Find the cursor post or use timestamp directly if passed as ISO string
-      // Actually, for swarm, passing ISO timestamp is safer than ID because IDs are local UUIDs
-      // Let's assume cursor is an ISO date string for swarm timeline
-      whereCondition = and(whereCondition, lt(posts.createdAt, cursorDate));
+    const parsedSinceDate = since ? new Date(since) : null;
+    const sinceDate = parsedSinceDate && !isNaN(parsedSinceDate.getTime())
+      ? parsedSinceDate
+      : null;
+    if (since && !sinceDate) {
+      return NextResponse.json({ error: 'Invalid since timestamp' }, { status: 400 });
     }
-
-    // Get recent public posts (not replies, local users only, not removed)
-    const recentPosts = await db
+    const selectedPosts = await db
       .select({
         id: posts.id,
         content: posts.content,
@@ -256,100 +314,35 @@ export async function GET(request: NextRequest) {
         authorDisplayName: users.displayName,
         authorAvatarUrl: users.avatarUrl,
         authorIsNsfw: users.isNsfw,
-        authorNodeId: users.nodeId,
+        feedActivityAt: feedStories.latestActivityAt,
       })
-      .from(posts)
-      .innerJoin(users, eq(posts.userId, users.id))
-      .where(whereCondition)
-      .orderBy(desc(posts.createdAt))
-      .limit(limit);
-
-    const latestRemoteActivityAt = sql<Date>`max(
-      max(${remoteReposts.createdAt}),
-      coalesce((
-        select max("activity_posts"."created_at")
-        from "posts" "activity_posts"
-        where coalesce("activity_posts"."repost_of_id", "activity_posts"."id") = ${remoteReposts.postId}
-          and "activity_posts"."is_removed" = 0
-          and "activity_posts"."reply_to_id" is null
-          and "activity_posts"."swarm_reply_to_id" is null
-      ), 0)
-    )`.mapWith(posts.createdAt);
-    const remoteActivityQuery = db.select({
-      postId: remoteReposts.postId,
-      latestActivityAt: latestRemoteActivityAt,
-    })
-      .from(remoteReposts)
-      .innerJoin(posts, eq(remoteReposts.postId, posts.id))
+      .from(feedStories)
+      .innerJoin(posts, eq(posts.id, feedStories.storyId))
       .innerJoin(users, eq(posts.userId, users.id))
       .where(and(
         isNull(posts.replyToId),
         isNull(posts.swarmReplyToId),
         eq(posts.isRemoved, false),
         isNull(users.nodeId),
+        eq(users.isSuspended, false),
         notLike(users.handle, '%@%'),
         searchCondition,
+        ...(changesSince !== null
+          ? [inArray(feedStories.storyId, changedUpsertIds)]
+          : []),
+        ...(changesSince === null && sinceDate ? [or(
+          gt(feedStories.latestActivityAt, sinceDate),
+          ...(sinceId ? [and(
+            eq(feedStories.latestActivityAt, sinceDate),
+            gt(feedStories.storyId, sinceId),
+          )] : []),
+        )] : []),
+        ...(changesSince === null && cursorDate ? [lt(feedStories.latestActivityAt, cursorDate)] : []),
       ))
-      .groupBy(remoteReposts.postId)
-      .orderBy(desc(latestRemoteActivityAt))
-      .limit(limit);
-    const remoteActivityRows = cursorDate
-      ? await remoteActivityQuery.having(lt(latestRemoteActivityAt, cursorDate))
-      : await remoteActivityQuery;
-    const remoteActivityByPostId = new Map(
-      remoteActivityRows.map((row) => [row.postId, row.latestActivityAt]),
-    );
-    const remoteStoryIds = remoteActivityRows.map((row) => row.postId);
-    const remoteStoryPosts = remoteStoryIds.length > 0
-      ? await db
-          .select({
-            id: posts.id,
-            content: posts.content,
-            createdAt: posts.createdAt,
-            replyToId: posts.replyToId,
-            swarmReplyToId: posts.swarmReplyToId,
-            repostOfId: posts.repostOfId,
-            isNsfw: posts.isNsfw,
-            likesCount: posts.likesCount,
-            repostsCount: posts.repostsCount,
-            repliesCount: posts.repliesCount,
-            linkPreviewUrl: posts.linkPreviewUrl,
-            linkPreviewTitle: posts.linkPreviewTitle,
-            linkPreviewDescription: posts.linkPreviewDescription,
-            linkPreviewImage: posts.linkPreviewImage,
-            linkPreviewType: posts.linkPreviewType,
-            linkPreviewVideoUrl: posts.linkPreviewVideoUrl,
-            linkPreviewMediaJson: posts.linkPreviewMediaJson,
-            authorHandle: users.handle,
-            authorDisplayName: users.displayName,
-            authorAvatarUrl: users.avatarUrl,
-            authorIsNsfw: users.isNsfw,
-          })
-          .from(posts)
-          .innerJoin(users, eq(posts.userId, users.id))
-          .where(and(
-            inArray(posts.id, remoteStoryIds),
-            isNull(users.nodeId),
-            notLike(users.handle, '%@%'),
-          ))
-      : [];
-    const selectedById = new Map<string, TimelinePostRow>();
-    for (const post of [
-      ...recentPosts.map((item) => ({ ...item, feedActivityAt: item.createdAt })),
-      ...remoteStoryPosts.map((item) => ({
-        ...item,
-        feedActivityAt: remoteActivityByPostId.get(item.id) || item.createdAt,
-      })),
-    ]) {
-      const existing = selectedById.get(post.id);
-      if (!existing || (post.feedActivityAt || post.createdAt) > (existing.feedActivityAt || existing.createdAt)) {
-        selectedById.set(post.id, post);
-      }
-    }
-    const selectedPosts = Array.from(selectedById.values())
-      .sort((a, b) =>
-        (b.feedActivityAt || b.createdAt).getTime() - (a.feedActivityAt || a.createdAt).getTime())
-      .slice(0, limit);
+      .orderBy(...(changesSince === null && sinceDate
+        ? [asc(feedStories.latestActivityAt), asc(feedStories.storyId)]
+        : [desc(feedStories.latestActivityAt), desc(feedStories.storyId)]))
+      .limit(changesSince !== null ? 50 : limit);
 
     console.log(`[Swarm Timeline API] Found ${selectedPosts.length} posts for ${nodeDomain}`);
 
@@ -395,8 +388,7 @@ export async function GET(request: NextRequest) {
       : [];
 
     const mediaPostIds = Array.from(new Set([
-      ...recentPosts.map(post => post.id),
-      ...remoteStoryPosts.map(post => post.id),
+      ...selectedPosts.map(post => post.id),
       ...repostTargets.map(post => post.id),
     ]));
 
@@ -478,8 +470,42 @@ export async function GET(request: NextRequest) {
           ))
           .filter((post) => post.sensitiveContentRestricted !== true);
 
+    const responsePostById = new Map(responsePosts.map((post) => [String(post.id), post as SwarmPost]));
+    const changes: SwarmPostChange[] | undefined = changesSince !== null
+      ? changeRows.map((change) => {
+          const post = responsePostById.get(change.storyId);
+          const type = change.changeType === 'upsert' && post ? 'upsert' : 'delete';
+          return {
+            sequence: change.sequence,
+            type,
+            postId: change.storyId,
+            changedAt: change.changedAt.toISOString(),
+            ...(type === 'upsert' ? { post } : {}),
+          };
+        })
+      : undefined;
+
     return NextResponse.json({
-      posts: responsePosts,
+      posts: changesSince === null ? responsePosts : [],
+      changes,
+      changeCursor: changesSince === null
+        ? initialChangeCursor
+        : changeRows.at(-1)?.sequence ?? changesSince,
+      hasMoreChanges: changesSince !== null ? changeRows.length === 50 : undefined,
+      accountChanges: accountsSince !== null
+        ? accountChanges.map((change): SwarmAccountDeletion => ({
+            sequence: change.sequence,
+            handle: change.handle,
+            did: change.did,
+            deletedAt: change.deletedAt.toISOString(),
+          }))
+        : undefined,
+      accountChangeCursor: accountsSince !== null
+        ? accountChanges.length === 50
+          ? accountChanges.at(-1)?.sequence ?? accountsSince
+          : accountChangeBoundary
+        : undefined,
+      hasMoreAccountChanges: accountsSince !== null ? accountChanges.length === 50 : undefined,
       nodeDomain,
       nodeIsNsfw,
       timestamp: new Date().toISOString(),

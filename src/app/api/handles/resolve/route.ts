@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/db';
-import { normalizeHandle, upsertHandleEntries } from '@/lib/federation/handles';
+import { db, handleRegistry } from '@/db';
+import {
+    liveHandleRegistryEntryWhere,
+    normalizeHandle,
+    upsertRemoteHandleHints,
+} from '@/lib/federation/handles';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
@@ -50,9 +55,20 @@ export async function GET(request: Request) {
         const localDomain = normalizeNodeDomain(
             process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
         );
-        const localEntry = await db.query.handleRegistry.findFirst({
-            where: { handle: lookupHandle },
-        });
+        const [localEntry] = await db.select().from(handleRegistry).where(and(
+            eq(handleRegistry.handle, lookupHandle),
+            liveHandleRegistryEntryWhere(),
+        )).limit(1);
+
+        const [deletedEntry] = await db.select({
+            deletedAt: handleRegistry.deletedAt,
+        }).from(handleRegistry).where(and(
+            eq(handleRegistry.handle, lookupHandle),
+            eq(handleRegistry.nodeDomain, canonicalDomain || localDomain),
+        )).limit(1);
+        if (deletedEntry?.deletedAt) {
+            return NextResponse.json({ error: 'Handle was deleted' }, { status: 410 });
+        }
 
         if (localEntry && normalizeNodeDomain(localEntry.nodeDomain)
             === (canonicalDomain || localDomain)) {
@@ -95,7 +111,7 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Handle not found' }, { status: 404 });
         }
 
-        await upsertHandleEntries([parsedEntry.data], { authoritativeDomain: canonicalDomain! });
+        await upsertRemoteHandleHints([parsedEntry.data], canonicalDomain!);
 
         return NextResponse.json({
             ...parsedEntry.data,

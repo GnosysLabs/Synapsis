@@ -4,7 +4,7 @@
  * Manages the local registry of known swarm nodes.
  */
 
-import { db, media, posts, swarmNodes, swarmSeeds, swarmSyncLog, users } from '@/db';
+import { db, media, posts, remotePosts, swarmContentSyncStates, swarmNodes, swarmSeeds, swarmSyncLog, users } from '@/db';
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { SwarmNodeInfo, SwarmSyncResult } from './types';
 import { SWARM_CONFIG, DEFAULT_SEED_NODES } from './types';
@@ -94,6 +94,7 @@ export async function upsertSwarmNode(
       userCount: classificationIsAuthoritative ? node.userCount : undefined,
       postCount: classificationIsAuthoritative ? node.postCount : undefined,
       mediaCount: classificationIsAuthoritative ? node.mediaCount : undefined,
+      contentSequence: classificationIsAuthoritative ? node.contentSequence : undefined,
       isNsfw: incomingIsNsfw,
       nsfwClassificationKnown: incomingClassificationKnown,
       discoveredVia,
@@ -104,6 +105,12 @@ export async function upsertSwarmNode(
         ? SWARM_CONFIG.quarantineTrustScore
         : SWARM_CONFIG.minTrustScore,
     });
+    if (classificationIsAuthoritative) {
+      await db.insert(swarmContentSyncStates).values({
+        domain: normalizedDomain,
+        nextAttemptAt: new Date(),
+      }).onConflictDoNothing();
+    }
     return { isNew: true };
   }
 
@@ -140,6 +147,7 @@ export async function upsertSwarmNode(
       userCount: node.userCount ?? existing.userCount,
       postCount: node.postCount ?? existing.postCount,
       mediaCount: node.mediaCount ?? existing.mediaCount,
+      contentSequence: node.contentSequence ?? existing.contentSequence,
       isNsfw: incomingClassificationKnown
         ? mergePermanentNodeNsfwClassification(existing.isNsfw, node.isNsfw)
         : existing.isNsfw,
@@ -152,6 +160,37 @@ export async function upsertSwarmNode(
       updatedAt: new Date(),
     })
     .where(eq(swarmNodes.domain, normalizedDomain));
+
+  // Adult classification is permanent and must affect already-cached rows
+  // immediately. Waiting for individual post changes could otherwise expose a
+  // node converted to NSFW through stale pre-conversion cache metadata.
+  if (incomingIsNsfw && !existing.isNsfw) {
+    await db.update(remotePosts).set({
+      nodeIsNsfw: true,
+      fetchedAt: new Date(),
+    }).where(eq(remotePosts.nodeDomain, normalizedDomain));
+  }
+
+  // A post-count change is a cheap, exact-origin activity hint. It only
+  // prioritizes that same peer, so a malicious node cannot make us fan out to
+  // third parties or crowd quiet peers out of the fair background sweep.
+  const exactOriginContentChanged = typeof node.contentSequence === 'number'
+    ? existing.contentSequence === null || node.contentSequence !== existing.contentSequence
+    : typeof node.postCount === 'number'
+      && (existing.postCount === null || node.postCount !== existing.postCount);
+  if (exactOriginContentChanged) {
+    const now = new Date();
+    await db.insert(swarmContentSyncStates).values({
+      domain: normalizedDomain,
+      nextAttemptAt: now,
+    }).onConflictDoUpdate({
+      target: swarmContentSyncStates.domain,
+      set: {
+        nextAttemptAt: sql`min(${swarmContentSyncStates.nextAttemptAt}, ${now})`,
+        updatedAt: now,
+      },
+    });
+  }
 
   return { isNew: false };
 }
@@ -217,12 +256,36 @@ export async function getActiveSwarmNodes(limit?: number): Promise<SwarmNodeInfo
   }
 
   const nodes = await db.query.swarmNodes.findMany({
-    where: { AND: [{ isActive: true }, { isBlocked: false }] },
+    // Exact-origin contact establishes identity, not good behavior. Keep a
+    // newly contacted node out of feeds and public discovery until at least
+    // one later successful exchange advances it beyond quarantine.
+    where: { AND: [
+      { isActive: true },
+      { isBlocked: false },
+      { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
+    ] },
     orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.lastSeenAt)],
     ...(limit === undefined ? {} : { limit }),
   });
 
   return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
+}
+
+/** Point lookup used by request paths; never scan an arbitrary peer prefix. */
+export async function getActiveSwarmNode(domain: string): Promise<SwarmNodeInfo | null> {
+  if (!db) return null;
+  const normalizedDomain = getPublicSwarmDomain(domain);
+  if (!normalizedDomain) return null;
+
+  const node = await db.query.swarmNodes.findFirst({
+    where: { AND: [
+      { domain: normalizedDomain },
+      { isActive: true },
+      { isBlocked: false },
+      { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
+    ] },
+  });
+  return node && isPublicSwarmDomain(node.domain) ? nodeToInfo(node) : null;
 }
 
 /** Return the permanent classifier recorded for a peer, active or not. */
@@ -235,7 +298,14 @@ export async function getKnownSwarmNodeNsfw(domain: string): Promise<boolean | u
   return node.nsfwClassificationKnown ? false : undefined;
 }
 
-/** Return the pinned key only for directly established, healthy peers. */
+/**
+ * Authenticate a directly established peer for bounded read-only federation.
+ *
+ * Availability reputation controls whether we ingest that peer's content; it
+ * must not control whether the peer can prove its identity to read our public
+ * timeline. Coupling those concerns creates a recovery deadlock after an
+ * outage: the peer cannot make the successful request needed to regain trust.
+ */
 export async function getTrustedSwarmReadPeerPublicKey(domain: string): Promise<string | null> {
   if (!db) return null;
   const normalizedDomain = getPublicSwarmDomain(domain);
@@ -245,7 +315,6 @@ export async function getTrustedSwarmReadPeerPublicKey(domain: string): Promise<
     || node?.discoveredVia === 'announcement';
   if (!(
     node
-    && node.isActive
     && !node.isBlocked
     && directlyEstablished
     && node.nsfwClassificationKnown
@@ -332,13 +401,41 @@ export async function getNodesForGossip(count: number): Promise<SwarmNodeInfo[]>
     return [];
   }
 
-  // Get active nodes with decent trust scores, ordered randomly
+  // Get active, post-quarantine nodes ordered randomly.
   const nodes = await db.query.swarmNodes.findMany({
-    where: { AND: [{ isActive: true }, { isBlocked: false }, { trustScore: { gt: 20 } }] },
+    where: { AND: [
+      { isActive: true },
+      { isBlocked: false },
+      { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
+    ] },
     orderBy: () => sql`RANDOM()`,
-    limit: count,
+    limit: Math.max(0, Math.min(count, SWARM_CONFIG.gossipFanout)),
   });
 
+  return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
+}
+
+/**
+ * Rotate origin-verified identities through gossip so a large registry does
+ * not permanently expose only its newest prefix. These entries are relayed as
+ * hints and still require exact-origin verification by the receiver.
+ */
+export async function getNodesForPeerExchange(count: number): Promise<SwarmNodeInfo[]> {
+  if (!db) return [];
+  const boundedCount = Math.max(0, Math.min(count, SWARM_CONFIG.maxNodesPerGossip - 1));
+  if (boundedCount === 0) return [];
+
+  const nodes = await db.query.swarmNodes.findMany({
+    where: { AND: [
+      { isBlocked: false },
+      { OR: [
+        { discoveredVia: 'direct' },
+        { discoveredVia: 'announcement' },
+      ] },
+    ] },
+    orderBy: () => sql`RANDOM()`,
+    limit: boundedCount,
+  });
   return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
 }
 
@@ -356,7 +453,7 @@ export async function getNodesSince(since: Date, limit = 100): Promise<SwarmNode
       { updatedAt: { gt: since } },
       { isActive: true },
       { isBlocked: false },
-      { trustScore: { gt: 20 } },
+      { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
     ] },
     orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.updatedAt)],
     limit,
@@ -455,7 +552,10 @@ export async function markNodeFailure(domain: string): Promise<void> {
  * 
  * @throws Error if database operation fails (after logging)
  */
-export async function markNodeSuccess(domain: string): Promise<void> {
+export async function markNodeSuccess(
+  domain: string,
+  options: { verifiedContent?: boolean } = {},
+): Promise<void> {
   if (!db) return;
 
   try {
@@ -467,10 +567,16 @@ export async function markNodeSuccess(domain: string): Promise<void> {
 
     const now = new Date();
     const lastTrustIncrease = node.lastSyncAt?.getTime() ?? 0;
-    const mayIncreaseTrust = now.getTime() - lastTrustIncrease >= SWARM_CONFIG.gossipIntervalMs;
+    const recoversAvailabilityQuarantine = options.verifiedContent === true
+      && node.trustScore <= SWARM_CONFIG.quarantineTrustScore;
+    const mayIncreaseTrust = recoversAvailabilityQuarantine
+      || now.getTime() - lastTrustIncrease >= SWARM_CONFIG.gossipIntervalMs;
+    const trustBaseline = recoversAvailabilityQuarantine
+      ? SWARM_CONFIG.quarantineTrustScore
+      : node.trustScore;
     const newTrust = Math.min(
       SWARM_CONFIG.maxTrustScore,
-      node.trustScore + (mayIncreaseTrust ? SWARM_CONFIG.trustScoreOnSuccess : 0)
+      trustBaseline + (mayIncreaseTrust ? SWARM_CONFIG.trustScoreOnSuccess : 0)
     );
 
     await db.update(swarmNodes)
@@ -523,8 +629,16 @@ export async function logSync(
  * Get seed nodes (with fallback to defaults)
  */
 export async function getSeedNodes(): Promise<string[]> {
+  const configuredSeeds = (process.env.SYNAPSIS_SEED_NODES || '')
+    .split(',')
+    .map((domain) => getCanonicalSwarmSeedDomain(domain))
+    .filter((domain): domain is string => domain !== null);
+  const fallbackSeeds = Array.from(new Set([
+    ...configuredSeeds,
+    ...DEFAULT_SEED_NODES.filter(isPublicSwarmDomain),
+  ]));
   if (!db) {
-    return [...DEFAULT_SEED_NODES];
+    return fallbackSeeds;
   }
 
   const seeds = await db.query.swarmSeeds.findMany({
@@ -538,9 +652,7 @@ export async function getSeedNodes(): Promise<string[]> {
       .filter((domain): domain is string => domain !== null)
   ));
 
-  return publicSeeds.length > 0
-    ? publicSeeds
-    : DEFAULT_SEED_NODES.filter(isPublicSwarmDomain);
+  return Array.from(new Set([...publicSeeds, ...fallbackSeeds]));
 }
 
 /**
@@ -576,10 +688,14 @@ export async function getSwarmStats() {
     };
   }
 
-  const allNodes = await db.query.swarmNodes.findMany();
-  const publicNodes = allNodes.filter(n => isPublicSwarmDomain(n.domain));
-
-  const [localUsers, localPosts, localMedia] = await Promise.all([
+  const [networkRows, localUsers, localPosts, localMedia] = await Promise.all([
+    db.select({
+      totalNodes: sql<number>`count(*)`,
+      activeNodes: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then 1 else 0 end), 0)`,
+      totalUsers: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.userCount}, 0) else 0 end), 0)`,
+      totalPosts: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.postCount}, 0) else 0 end), 0)`,
+      totalMedia: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.mediaCount}, 0) else 0 end), 0)`,
+    }).from(swarmNodes),
     db.select({ count: sql<number>`count(*)` }).from(users)
       .where(sql`${users.handle} NOT LIKE '%@%'`),
     db.select({ count: sql<number>`count(*)` }).from(posts),
@@ -587,11 +703,14 @@ export async function getSwarmStats() {
   ]);
 
   const hasPublicLocalNode = isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
-  return aggregateSwarmStats(publicNodes, {
-    users: Number(localUsers[0]?.count ?? 0),
-    posts: Number(localPosts[0]?.count ?? 0),
-    media: Number(localMedia[0]?.count ?? 0),
-  }, hasPublicLocalNode);
+  const network = networkRows[0];
+  return {
+    totalNodes: Number(network?.totalNodes ?? 0) + (hasPublicLocalNode ? 1 : 0),
+    activeNodes: Number(network?.activeNodes ?? 0),
+    totalUsers: Number(network?.totalUsers ?? 0) + (hasPublicLocalNode ? Number(localUsers[0]?.count ?? 0) : 0),
+    totalPosts: Number(network?.totalPosts ?? 0) + (hasPublicLocalNode ? Number(localPosts[0]?.count ?? 0) : 0),
+    totalMedia: Number(network?.totalMedia ?? 0) + (hasPublicLocalNode ? Number(localMedia[0]?.count ?? 0) : 0),
+  };
 }
 
 // Helper to convert DB node to SwarmNodeInfo
@@ -608,6 +727,7 @@ function nodeToInfo(node: typeof swarmNodes.$inferSelect): SwarmNodeInfo {
     userCount: node.userCount ?? undefined,
     postCount: node.postCount ?? undefined,
     mediaCount: node.mediaCount ?? undefined,
+    contentSequence: node.contentSequence ?? undefined,
     capabilities: node.capabilities ? JSON.parse(node.capabilities) : undefined,
     isNsfw: node.isNsfw
       ? true

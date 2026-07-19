@@ -10,8 +10,8 @@ import type { SwarmGossipPayload, SwarmGossipResponse, SwarmSyncResult, SwarmNod
 import { SWARM_CONFIG } from './types';
 import {
   getNodesForGossip,
-  getActiveSwarmNodes,
   getNodesSince,
+  getNodesForPeerExchange,
   getSwarmDiscoveryCandidates,
   upsertSwarmNode,
   upsertSwarmNodes,
@@ -19,10 +19,14 @@ import {
   markNodeFailure,
   logSync,
 } from './registry';
-import { upsertHandleEntries } from '@/lib/federation/handles';
+import {
+  pruneExpiredRemoteHandleHints,
+  upsertRemoteHandleHints,
+} from '@/lib/federation/handles';
 import { buildAnnouncement, discoverNode } from './discovery';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
 import { safeFederationRequest } from './safe-federation-http';
+import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { swarmNodeInfoSchema } from './node-payload';
 
@@ -41,6 +45,62 @@ const gossipResponseSchema = z.object({
     handles: z.number().int().nonnegative().max(SWARM_CONFIG.maxHandlesPerGossip),
   }),
 });
+
+export const GOSSIP_MAX_PAYLOAD_BYTES = 192 * 1024;
+
+type GossipHandle = NonNullable<SwarmGossipPayload['handles']>[number];
+
+function legacyGossipPayload(payload: SwarmGossipPayload): SwarmGossipPayload {
+  return {
+    ...payload,
+    nodes: payload.nodes.map((node) => {
+      const legacyNode = { ...node };
+      delete legacyNode.contentSequence;
+      return legacyNode;
+    }),
+  };
+}
+
+/** Reserve the first node slot for self, deduplicate peers, and cap bytes. */
+export function boundGossipContent(
+  sender: string,
+  selfNode: SwarmNodeInfo | null,
+  candidateNodes: SwarmNodeInfo[],
+  candidateHandles: GossipHandle[],
+  timestamp: string,
+  since?: string,
+): Pick<SwarmGossipPayload, 'nodes' | 'handles'> {
+  const nodes: SwarmNodeInfo[] = [];
+  const handles: GossipHandle[] = [];
+  const seenDomains = new Set<string>();
+  const fits = (nextNodes: SwarmNodeInfo[], nextHandles: GossipHandle[]) => (
+    Buffer.byteLength(JSON.stringify({
+      sender,
+      nodes: nextNodes,
+      handles: nextHandles,
+      timestamp,
+      since,
+    }), 'utf8') <= GOSSIP_MAX_PAYLOAD_BYTES
+  );
+
+  for (const node of [selfNode, ...candidateNodes]) {
+    if (!node) continue;
+    const domain = getPublicSwarmDomain(node.domain);
+    if (!domain || seenDomains.has(domain) || nodes.length >= SWARM_CONFIG.maxNodesPerGossip) continue;
+    const publicNode = { ...node, domain };
+    delete publicNode.trustScore;
+    if (!fits([...nodes, publicNode], handles)) break;
+    nodes.push(publicNode);
+    seenDomains.add(domain);
+  }
+
+  for (const handle of candidateHandles.slice(0, SWARM_CONFIG.maxHandlesPerGossip)) {
+    if (!fits(nodes, [...handles, handle])) break;
+    handles.push(handle);
+  }
+
+  return { nodes, handles };
+}
 
 /**
  * A successful gossip exchange is a direct peer handshake: incoming gossip is
@@ -76,9 +136,9 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
   // Get nodes to share
   let nodes: SwarmNodeInfo[];
   if (since) {
-    nodes = await getNodesSince(new Date(since), SWARM_CONFIG.maxNodesPerGossip);
+    nodes = await getNodesSince(new Date(since), SWARM_CONFIG.maxNodesPerGossip - 1);
   } else {
-    nodes = await getActiveSwarmNodes(SWARM_CONFIG.maxNodesPerGossip);
+    nodes = await getNodesForPeerExchange(SWARM_CONFIG.maxNodesPerGossip - 1);
   }
 
   // Include ourselves in the node list
@@ -93,6 +153,7 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
     userCount: announcement.userCount,
     postCount: announcement.postCount,
     mediaCount: announcement.mediaCount,
+    contentSequence: announcement.contentSequence,
     isNsfw: announcement.isNsfw,
     capabilities: announcement.capabilities,
     lastSeenAt: new Date().toISOString(),
@@ -107,10 +168,16 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
         AND: [
           { nodeDomain: ourDomain },
           { identityVerified: true },
+          { deletedAt: { isNull: true } },
           ...(sinceDate ? [{ updatedAt: { gt: sinceDate } }] : []),
         ],
       },
-      orderBy: (handleRegistry, { desc }) => [desc(handleRegistry.updatedAt)],
+      // Delta requests need deterministic newest-first ordering. Ordinary
+      // gossip rotates a random sample so accounts older than the first page
+      // remain discoverable when a node has thousands of users.
+      orderBy: sinceDate
+        ? (handleRegistry, { desc }) => [desc(handleRegistry.updatedAt)]
+        : () => sql`RANDOM()`,
       limit: SWARM_CONFIG.maxHandlesPerGossip,
     });
 
@@ -122,20 +189,21 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
     }));
   }
 
-  const sharedNodes = isPublicSwarmDomain(ourDomain)
-    ? [selfNode, ...nodes.filter((node) => getPublicSwarmDomain(node.domain) !== getPublicSwarmDomain(ourDomain))]
-    : nodes;
+  const timestamp = new Date().toISOString();
+  const bounded = boundGossipContent(
+    ourDomain,
+    isPublicSwarmDomain(ourDomain) ? selfNode : null,
+    nodes,
+    handles.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)),
+    timestamp,
+    since,
+  );
 
   return {
     sender: ourDomain,
-    nodes: sharedNodes.slice(0, SWARM_CONFIG.maxNodesPerGossip).map((node) => {
-      // Trust is a local observation, never federation metadata.
-      const publicNode = { ...node };
-      delete publicNode.trustScore;
-      return publicNode;
-    }),
-    handles: handles.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)),
-    timestamp: new Date().toISOString(),
+    nodes: bounded.nodes,
+    handles: bounded.handles,
+    timestamp,
     since,
   };
 }
@@ -155,13 +223,8 @@ export async function processGossip(
   const nodeResult = await upsertSwarmNodes(payload.nodes, payload.sender);
 
   // Process incoming handles
-  let handlesResult = { added: 0, updated: 0, rejected: 0 };
   const publicHandles = payload.handles?.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)) ?? [];
-  if (publicHandles.length > 0) {
-    handlesResult = await upsertHandleEntries(publicHandles, {
-      authoritativeDomain: payload.sender,
-    });
-  }
+  const handlesResult = await upsertRemoteHandleHints(publicHandles, payload.sender);
 
   // Build our response with nodes/handles to share back
   const responsePayload = await buildGossipPayload(payload.since);
@@ -208,24 +271,33 @@ export async function gossipToNode(
     const privateKey = await getNodePrivateKey();
     const signature = signPayload(payload, privateKey);
 
-    const signedPayload = {
-      ...payload,
-      signature,
-    };
-
     const baseUrl = `https://${publicTargetDomain}`;
     const url = `${baseUrl}/api/swarm/gossip`;
 
-    const response = await safeFederationRequest(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(signedPayload),
-      timeoutMs: 8_000,
-      maxResponseBytes: 256 * 1024,
-    });
+    const sendGossip = (outgoing: SwarmGossipPayload, outgoingSignature: string) => (
+      safeFederationRequest(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ ...outgoing, signature: outgoingSignature }),
+        timeoutMs: 8_000,
+        maxResponseBytes: 256 * 1024,
+      })
+    );
+
+    let response = await sendGossip(payload, signature);
+    if (response.status === 400 && payload.nodes.some((node) => node.contentSequence !== undefined)) {
+      // Older strict receivers reject the new content clock as an unknown
+      // field. A freshly signed legacy retry keeps gossip alive while nodes are
+      // upgraded, without hiding overload, auth, or transport failures.
+      const legacyPayload = legacyGossipPayload(payload);
+      response = await sendGossip(
+        legacyPayload,
+        signPayload(legacyPayload, privateKey),
+      );
+    }
 
     const durationMs = Date.now() - startTime;
 
@@ -263,13 +335,8 @@ export async function gossipToNode(
     // Process the response (nodes and handles they sent back)
     const nodeResult = await upsertSwarmNodes(gossipResponse.nodes, publicTargetDomain);
 
-    let handlesResult = { added: 0, updated: 0, rejected: 0 };
     const publicHandles = gossipResponse.handles?.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)) ?? [];
-    if (publicHandles.length > 0) {
-      handlesResult = await upsertHandleEntries(publicHandles, {
-        authoritativeDomain: publicTargetDomain,
-      });
-    }
+    const handlesResult = await upsertRemoteHandleHints(publicHandles, publicTargetDomain);
 
     await markNodeSuccess(publicTargetDomain);
 
@@ -314,6 +381,9 @@ export async function runGossipRound(): Promise<{
   totalNodesReceived: number;
   totalHandlesReceived: number;
 }> {
+  // Maintenance is periodic and bounded even when every peer returns an empty
+  // handle set or there are currently no gossip targets.
+  await pruneExpiredRemoteHandleHints();
   if (!isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN)) {
     return { contacted: 0, successful: 0, totalNodesReceived: 0, totalHandlesReceived: 0 };
   }

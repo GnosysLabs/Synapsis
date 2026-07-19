@@ -3,9 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   findPost: vi.fn(),
   findRemoteLike: vi.fn(),
-  findUser: vi.fn(),
-  findLike: vi.fn(),
-  trustedRead: vi.fn(),
+  trustedReadSource: vi.fn(),
   requireClassification: vi.fn(),
 }));
 
@@ -14,13 +12,11 @@ vi.mock('@/db', () => ({
     query: {
       posts: { findFirst: mocks.findPost },
       remoteLikes: { findFirst: mocks.findRemoteLike },
-      users: { findFirst: mocks.findUser },
-      likes: { findFirst: mocks.findLike },
     },
   },
 }));
 vi.mock('@/lib/swarm/signed-read', () => ({
-  isTrustedFederationRead: mocks.trustedRead,
+  getTrustedFederationReadSource: mocks.trustedReadSource,
 }));
 vi.mock('@/lib/node/local-node', () => ({
   requireLocalNodeNsfwClassification: mocks.requireClassification,
@@ -41,7 +37,7 @@ const safeLocalPost = {
 describe('swarm like-state visibility', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.trustedRead.mockResolvedValue(false);
+    mocks.trustedReadSource.mockResolvedValue(null);
     mocks.requireClassification.mockResolvedValue(false);
     mocks.findPost.mockResolvedValue(safeLocalPost);
   });
@@ -62,11 +58,11 @@ describe('swarm like-state visibility', () => {
     ) as never, context);
 
     expect(response.status).toBe(403);
-    expect(mocks.findUser).not.toHaveBeenCalled();
+    expect(mocks.findRemoteLike).not.toHaveBeenCalled();
   });
 
   it('allows an established signed peer to check remote like state', async () => {
-    mocks.trustedRead.mockResolvedValue(true);
+    mocks.trustedReadSource.mockResolvedValue('peer.social');
     mocks.findRemoteLike.mockResolvedValue({ id: 'like-id' });
     const response = await GET(new Request(
       `https://node.social/api/swarm/posts/${postId}/likes?checkHandle=alice&checkDomain=peer.social`,
@@ -79,6 +75,17 @@ describe('swarm like-state visibility', () => {
       checkedDomain: 'peer.social',
     });
     expect(response.headers.get('cache-control')).toContain('no-store');
+  });
+
+  it('does not let one signed peer enumerate another node\'s actors', async () => {
+    mocks.trustedReadSource.mockResolvedValue('evil.social');
+
+    const response = await GET(new Request(
+      `https://node.social/api/swarm/posts/${postId}/likes?checkHandle=alice&checkDomain=peer.social`,
+    ) as never, context);
+
+    expect(response.status).toBe(403);
+    expect(mocks.findRemoteLike).not.toHaveBeenCalled();
   });
 
   it('fails closed for a cached remote author with a bare handle and node id', async () => {

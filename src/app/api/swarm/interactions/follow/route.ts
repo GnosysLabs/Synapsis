@@ -12,12 +12,14 @@ import {
 import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import {
   FederatedIdentityContinuityError,
+  federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
   pinVerifiedFederatedActorIdentity,
   verifyFederatedUserAction,
 } from '@/lib/swarm/federated-action';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { shouldSuppressRemoteInteraction } from '@/lib/swarm/remote-interaction-policy';
 import { applyOrderedFederatedRelationshipState } from '@/lib/swarm/relationship-ordering';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import { isFreshFederationTimestamp } from '@/lib/swarm/signature';
@@ -71,7 +73,7 @@ export async function POST(request: NextRequest) {
       maxActionsPerMinute: 30,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, { status: verified.status });
+      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
     }
 
     const targetHandle = data.targetHandle.toLowerCase();
@@ -85,18 +87,18 @@ export async function POST(request: NextRequest) {
     if (!targetUser || targetUser.isSuspended || !hasStrictLocalUserOrigin(targetUser)) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
+    if (await shouldSuppressRemoteInteraction(targetUser.id, {
+      did: verified.userAction.did,
+      handle: verified.actorHandle,
+      domain: actorDomain,
+    })) {
+      return NextResponse.json({ success: true, message: 'Follow received' });
+    }
     await pinVerifiedFederatedActorIdentity({
       sourceDomain: verified.sourceDomain,
       actorHandle: verified.actorHandle,
       did: verified.userAction.did,
     });
-    const nodeMute = await db.query.mutedNodes.findFirst({
-      where: { AND: [{ userId: targetUser.id }, { nodeDomain: actorDomain }] },
-      columns: { id: true },
-    });
-    if (nodeMute) {
-      return NextResponse.json({ success: true, message: 'Follow received' });
-    }
 
     const actorUrl = `swarm://${actorDomain}/${verified.actorHandle}`;
     const outcome = await db.transaction(async (tx) => {

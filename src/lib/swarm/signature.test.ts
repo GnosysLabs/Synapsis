@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   safeFederationRequest: vi.fn(),
   getPinnedSwarmNodePublicKey: vi.fn(),
   pinSwarmNodePublicKey: vi.fn(),
+  isRateLimited: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
@@ -29,9 +30,17 @@ vi.mock('./registry', () => ({
   getPinnedSwarmNodePublicKey: mocks.getPinnedSwarmNodePublicKey,
   pinSwarmNodePublicKey: mocks.pinSwarmNodePublicKey,
 }));
+vi.mock('@/lib/rate-limit', () => ({
+  isRateLimited: mocks.isRateLimited,
+}));
 
 import crypto from 'node:crypto';
-import { getNodePublicKey, signPayload, verifySwarmRequest } from './signature';
+import {
+  getNodePublicKey,
+  signPayload,
+  verifySwarmRequest,
+  verifySwarmRequestDetailed,
+} from './signature';
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
   namedCurve: 'prime256v1',
@@ -48,6 +57,7 @@ describe('node public key discovery', () => {
     mocks.safeFederationRequest.mockReset();
     mocks.getPinnedSwarmNodePublicKey.mockReset().mockResolvedValue(null);
     mocks.pinSwarmNodePublicKey.mockReset().mockResolvedValue(undefined);
+    mocks.isRateLimited.mockReset().mockReturnValue(false);
   });
 
   it('uses a directly pinned key without following a remote key change', async () => {
@@ -92,6 +102,39 @@ describe('node public key discovery', () => {
       'verified.example',
     )).resolves.toBe(true);
     expect(mocks.pinSwarmNodePublicKey).toHaveBeenCalledWith('verified.example', publicKey.trim());
+  });
+
+  it('applies the global pre-authentication bound to pinned-domain claims', async () => {
+    mocks.getPinnedSwarmNodePublicKey.mockResolvedValue(publicKey.trim());
+    mocks.isRateLimited.mockImplementation((key: string) => (
+      key === 'swarm-signature-preauth-global'
+    ));
+    const payload = { hello: 'world' };
+
+    await expect(verifySwarmRequest(
+      payload,
+      signPayload(payload, privateKey),
+      'pinned.example',
+    )).resolves.toBe(false);
+    expect(mocks.getPinnedSwarmNodePublicKey).not.toHaveBeenCalled();
+    expect(mocks.safeFederationRequest).not.toHaveBeenCalled();
+  });
+
+  it('reports capacity exhaustion as retryable overload instead of an invalid signature', async () => {
+    mocks.isRateLimited.mockImplementation((key: string) => (
+      key === 'swarm-signature-preauth-global'
+    ));
+
+    await expect(verifySwarmRequestDetailed(
+      { hello: 'world' },
+      'irrelevant-while-overloaded',
+      'busy.example',
+    )).resolves.toEqual({
+      ok: false,
+      reason: 'overloaded',
+      status: 429,
+      retryAfterSeconds: 60,
+    });
   });
 
   it('rejects unsupported key algorithms without persisting them', async () => {

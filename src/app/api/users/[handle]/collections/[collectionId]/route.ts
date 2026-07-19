@@ -65,8 +65,7 @@ export async function GET(request: Request, context: RouteContext) {
           const [likedIds, repostedIds] = await Promise.all([
             getViewerSwarmLikedPostIds(
               targets,
-              session.user.handle,
-              process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+              session.user.id,
             ),
             getViewerSwarmRepostedPostIds(targets, session.user.id),
           ]);

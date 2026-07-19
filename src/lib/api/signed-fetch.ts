@@ -15,6 +15,45 @@ export interface SignedFetchOptions {
   headers?: Record<string, string>;
 }
 
+export interface SwarmReplyTargetInput {
+  postId: string;
+  nodeDomain: string;
+  content?: string;
+  author?: {
+    handle: string;
+    displayName?: string | null;
+    avatarUrl?: string | null;
+    nodeDomain?: string | null;
+  };
+}
+
+/** Keep the browser-signed parent snapshot aligned with the strict wire schema. */
+export function canonicalSwarmReplyTarget(
+  target: SwarmReplyTargetInput | undefined,
+): SwarmReplyTargetInput | undefined {
+  if (!target) return undefined;
+
+  return {
+    postId: target.postId,
+    nodeDomain: target.nodeDomain,
+    ...(target.content === undefined ? {} : { content: target.content }),
+    ...(target.author ? {
+      author: {
+        handle: target.author.handle,
+        ...(target.author.displayName === undefined
+          ? {}
+          : { displayName: target.author.displayName }),
+        ...(target.author.avatarUrl === undefined
+          ? {}
+          : { avatarUrl: target.author.avatarUrl }),
+        ...(target.author.nodeDomain === undefined
+          ? {}
+          : { nodeDomain: target.author.nodeDomain }),
+      },
+    } : {}),
+  };
+}
+
 /**
  * Make a signed API request
  * 
@@ -119,17 +158,27 @@ export const signedAPI = {
     mediaIds: string[],
     linkPreview: unknown,
     replyToId: string | undefined,
-    swarmReplyTo: unknown | undefined,
+    swarmReplyTo: SwarmReplyTargetInput | undefined,
     isNsfw: boolean,
     mediaManifest: SignedMediaDescriptor[],
     userDid: string,
     userHandle: string
   ) {
     const clientPostId = crypto.randomUUID();
+    const canonicalReplyTarget = canonicalSwarmReplyTarget(swarmReplyTo);
     return signedFetch(
       '/api/posts',
       'post',
-      { clientPostId, content, mediaIds, mediaManifest, linkPreview, replyToId, swarmReplyTo, isNsfw },
+      {
+        clientPostId,
+        content,
+        mediaIds,
+        mediaManifest,
+        linkPreview,
+        replyToId,
+        swarmReplyTo: canonicalReplyTarget,
+        isNsfw,
+      },
       userDid,
       userHandle
     );

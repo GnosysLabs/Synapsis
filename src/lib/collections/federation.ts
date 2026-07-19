@@ -106,7 +106,7 @@ export async function fetchRemoteCollectionDetail(
     if (cursor && z.string().uuid().safeParse(cursor).success) url.searchParams.set('cursor', cursor);
     const response = await signedFederationRead(
       url.toString(),
-      { headers: { Accept: 'application/json' }, maxResponseBytes: 2 * 1024 * 1024 },
+      { headers: { Accept: 'application/json' }, maxResponseBytes: 1024 * 1024 },
     );
     if (response.status < 200 || response.status >= 300) return null;
     const raw = response.json();

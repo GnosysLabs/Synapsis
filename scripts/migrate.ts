@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/tursodatabase/migrator';
 import { closeDb, db } from '../src/db';
+import { reconcilePostSearchIndex } from '../src/lib/search/post-index';
 
 interface DuplicateIdentityRow {
   field: 'did' | 'handle';
@@ -54,6 +55,19 @@ async function assertForeignKeyIntegrity(): Promise<void> {
   throw new Error(`Database foreign-key check failed after migration: ${sample}`);
 }
 
+async function backfillPostSearchIndex(): Promise<void> {
+  let indexed = 0;
+  while (true) {
+    const batchCount = await reconcilePostSearchIndex(500);
+    if (batchCount === 0) break;
+    indexed += batchCount;
+    if (indexed % 10_000 === 0) {
+      console.log(`Indexed ${indexed} existing posts for search...`);
+    }
+  }
+  if (indexed > 0) console.log(`Indexed ${indexed} existing posts for search.`);
+}
+
 async function main() {
   try {
     await assertIdentityUniqueness();
@@ -63,6 +77,7 @@ async function main() {
       throw new Error(`Database migration failed: ${JSON.stringify(result)}`);
     }
 
+    await backfillPostSearchIndex();
     await assertForeignKeyIntegrity();
     await db.run(sql.raw('PRAGMA wal_checkpoint(TRUNCATE)'));
     console.log('Database migrations are up to date.');
