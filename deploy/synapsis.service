@@ -13,8 +13,6 @@ Environment=NODE_ENV=production
 ExecStart=/usr/bin/env npm start
 Restart=on-failure
 RestartSec=5
-TimeoutStartSec=90
-TimeoutStopSec=30
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

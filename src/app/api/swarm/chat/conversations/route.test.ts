@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { NextRequest } from 'next/server';
 
 const mocks = vi.hoisted(() => ({
   findConversations: vi.fn(),
@@ -27,10 +26,6 @@ vi.mock('@/db', async () => {
 });
 
 import { GET } from './route';
-
-function request(query = '') {
-  return new NextRequest(`https://local.example/api/swarm/chat/conversations${query}`);
-}
 
 function selectResult(rows: unknown[], grouped = false) {
   const terminal = vi.fn().mockResolvedValue(rows);
@@ -92,16 +87,12 @@ describe('GET /api/swarm/chat/conversations', () => {
         },
       ]));
 
-    const response = await GET(request());
+    const response = await GET();
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(mocks.findConversations).toHaveBeenCalledWith(expect.not.objectContaining({
       with: expect.anything(),
-    }));
-    expect(mocks.findConversations).toHaveBeenCalledWith(expect.objectContaining({
-      limit: 51,
-      offset: 0,
     }));
     expect(mocks.select).toHaveBeenCalledTimes(3);
     expect(fetch).not.toHaveBeenCalled();
@@ -122,10 +113,10 @@ describe('GET /api/swarm/chat/conversations', () => {
   it('returns an empty inbox without issuing aggregate queries', async () => {
     mocks.findConversations.mockResolvedValue([]);
 
-    const response = await GET(request());
+    const response = await GET();
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ conversations: [], nextOffset: null });
+    await expect(response.json()).resolves.toEqual({ conversations: [] });
     expect(mocks.select).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -184,7 +175,7 @@ describe('GET /api/swarm/chat/conversations', () => {
         publicKey: 'alice-signing-key',
       }]));
 
-    const response = await GET(request());
+    const response = await GET();
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -229,7 +220,7 @@ describe('GET /api/swarm/chat/conversations', () => {
       ]))
       .mockReturnValueOnce(selectResult([]));
 
-    const response = await GET(request());
+    const response = await GET();
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -243,29 +234,5 @@ describe('GET /api/swarm/chat/conversations', () => {
         lastMessage: { protocolVersion: 0, content: 'second preview' },
       },
     ]);
-  });
-
-  it('caps all downstream inbox work to the requested page', async () => {
-    mocks.findConversations.mockResolvedValue([
-      { id: 'first', participant1Id: 'owner-id', participant2Handle: 'one@remote.example' },
-      { id: 'second', participant1Id: 'owner-id', participant2Handle: 'two@remote.example' },
-      { id: 'sentinel', participant1Id: 'owner-id', participant2Handle: 'three@remote.example' },
-    ]);
-    mocks.select
-      .mockReturnValueOnce(selectResult([], true))
-      .mockReturnValueOnce(selectResult([]))
-      .mockReturnValueOnce(selectResult([]));
-
-    const response = await GET(request('?limit=2'));
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(mocks.findConversations).toHaveBeenCalledWith(expect.objectContaining({
-      limit: 3,
-      offset: 0,
-    }));
-    expect(body.conversations.map((conversation: { id: string }) => conversation.id))
-      .toEqual(['first', 'second']);
-    expect(body.nextOffset).toBe(2);
   });
 });

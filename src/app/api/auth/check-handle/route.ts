@@ -40,12 +40,8 @@ export async function GET(req: NextRequest) {
             throw err;
         }
 
-        const deletedHandle = await db.query.swarmAccountTombstones.findFirst({
-            where: { handle },
-        });
-
         return NextResponse.json({
-            available: !existingUser && !deletedHandle,
+            available: !existingUser,
             handle
         });
     } catch (error) {

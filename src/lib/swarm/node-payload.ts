@@ -15,19 +15,12 @@ export const swarmNodeInfoSchema = z.object({
   userCount: boundedCount.optional(),
   postCount: boundedCount.optional(),
   mediaCount: boundedCount.optional(),
-  contentSequence: boundedCount.optional(),
   isNsfw: z.boolean().optional(),
   capabilities: z.array(z.enum([
     'handles', 'gossip', 'relay', 'search', 'interactions', 'e2ee_dm_v1',
   ])).max(6).optional(),
   lastSeenAt: z.string().datetime().optional(),
 });
-
-// Ingress routes must reject unknown peer-controlled fields, but they should
-// share the same canonical node shape as discovery and gossip clients. Keeping
-// a separate strict copy caused `contentSequence` to be emitted by every node
-// and rejected by every peer with HTTP 400.
-export const strictSwarmNodeInfoSchema = swarmNodeInfoSchema.strict();
 
 const directNodeInfoSchema = swarmNodeInfoSchema.extend({
   publicKey: z.string().min(1).max(16_384),

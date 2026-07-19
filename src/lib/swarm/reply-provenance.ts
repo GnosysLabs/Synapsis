@@ -16,48 +16,24 @@ import {
 import { verifySwarmRequest } from './signature';
 
 export const RELAYED_REPLY_PROVENANCE_PROTOCOL = 'synapsis-relayed-reply-v1' as const;
-const signedPresentationUrl = z.string().url().max(2_048);
 
-const replyMediaManifestItemSchema = z.strictObject({
+const replyMediaManifestItemSchema = z.object({
   id: z.string().uuid(),
   url: federationMediaUrlSchema,
   altText: z.string().max(2_000).nullish(),
   mimeType: z.string().max(255).nullish(),
-});
+}).passthrough();
 
-export const federatedReplyUserActionDataSchema = z.strictObject({
+export const federatedReplyUserActionDataSchema = z.object({
   clientPostId: z.string().uuid(),
   content: z.string().max(600),
-  replyToId: z.string().uuid().optional(),
-  swarmReplyTo: z.strictObject({
+  swarmReplyTo: z.object({
     postId: z.string().uuid(),
     nodeDomain: nodeDomainSchema,
-    content: z.string().max(600).optional(),
-    author: z.strictObject({
-      handle: z.string().min(1).max(320),
-      displayName: z.string().max(100).optional().nullable(),
-      avatarUrl: signedPresentationUrl.optional().nullable(),
-      nodeDomain: nodeDomainSchema.optional().nullable(),
-    }).optional(),
   }),
-  mediaIds: z.array(z.string().uuid()).max(4).optional(),
   mediaManifest: z.array(replyMediaManifestItemSchema).max(4).optional(),
   isNsfw: z.boolean().optional(),
-  linkPreview: z.strictObject({
-    url: signedPresentationUrl,
-    title: z.string().max(300).optional(),
-    description: z.string().max(1_000).optional(),
-    image: signedPresentationUrl.optional().nullable(),
-    type: z.enum(['card', 'image', 'gallery', 'video']).optional().nullable(),
-    videoUrl: signedPresentationUrl.optional().nullable(),
-    media: z.array(z.strictObject({
-      url: signedPresentationUrl,
-      width: z.number().nonnegative().max(100_000).optional().nullable(),
-      height: z.number().nonnegative().max(100_000).optional().nullable(),
-      mimeType: z.string().max(255).optional().nullable(),
-    })).max(4).optional().nullable(),
-  }).optional().nullable(),
-});
+}).passthrough();
 
 /**
  * The exact payload originally signed by the reply author's home node.
@@ -79,7 +55,7 @@ export const federatedReplyEnvelopeSchema = z.strictObject({
       displayName: z.string().max(50).optional().nullable(),
       avatarUrl: federationMediaUrlSchema.optional(),
       did: z.string().min(1).max(2_048),
-      publicKey: z.string().min(1).max(2_048).optional(),
+      publicKey: z.string().min(1).max(16_384).optional(),
       isNsfw: z.boolean().optional(),
     }),
     nodeDomain: nodeDomainSchema,

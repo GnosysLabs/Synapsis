@@ -6,7 +6,6 @@ import { db, posts, remoteReposts, swarmInboundActions } from '@/db';
 import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import {
   FederatedIdentityContinuityError,
-  federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
   pinVerifiedFederatedActorIdentity,
@@ -59,7 +58,7 @@ export async function POST(request: NextRequest) {
       maxActionsPerMinute: 30,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
+      return NextResponse.json({ error: verified.error }, { status: verified.status });
     }
 
     const actionData = unrepostActionDataSchema.safeParse(verified.userAction.data);

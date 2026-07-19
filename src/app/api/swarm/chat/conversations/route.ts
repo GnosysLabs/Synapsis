@@ -4,22 +4,16 @@
  * GET: List all conversations for the current user
  */
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { db, chatMessages, users } from '@/db';
 import { and, inArray, isNull, ne, or, sql } from 'drizzle-orm';
-import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { E2EE_CHAT_ACTION, E2EE_PROTOCOL_VERSION, e2eeMessageEnvelopeSchema } from '@/lib/e2ee/protocol';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 
-const conversationsQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  offset: z.coerce.number().int().min(0).max(10_000).default(0),
-});
-
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     if (!db) {
       return NextResponse.json({ conversations: [] });
@@ -34,31 +28,12 @@ export async function GET(request: NextRequest) {
       viewer: session.user,
       localNodeIsNsfw,
     });
-    const queryResult = conversationsQuerySchema.safeParse({
-      limit: request.nextUrl.searchParams.get('limit') || undefined,
-      offset: request.nextUrl.searchParams.get('offset') || undefined,
-    });
-    if (!queryResult.success) {
-      return NextResponse.json({
-        error: 'Invalid query parameters',
-        details: queryResult.error.issues,
-      }, { status: 400 });
-    }
-    const { limit, offset } = queryResult.data;
 
-    // Fetch one extra row to expose bounded pagination without materializing a
-    // maliciously large inbox or producing oversized SQL IN lists below.
-    const conversationRows = await db.query.chatConversations.findMany({
+    // Get all conversations for this user
+    const conversations = await db.query.chatConversations.findMany({
       where: { participant1Id: session.user.id },
-      orderBy: (chatConversations, { desc }) => [
-        desc(chatConversations.lastMessageAt),
-        desc(chatConversations.id),
-      ],
-      limit: limit + 1,
-      offset,
+      orderBy: (chatConversations, { desc }) => [desc(chatConversations.lastMessageAt)],
     });
-    const hasMore = conversationRows.length > limit;
-    const conversations = conversationRows.slice(0, limit);
 
     const conversationIds = conversations.map((conversation) => conversation.id);
     const participantLookupHandles = new Set<string>();
@@ -234,7 +209,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       conversations: conversationsWithUnread,
-      nextOffset: hasMore ? offset + conversations.length : null,
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('List conversations error:', error);

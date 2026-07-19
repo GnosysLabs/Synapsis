@@ -10,7 +10,6 @@ import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import { parseMentions, uniqueMentions } from '@/lib/mentions/parser';
 import {
   FederatedIdentityContinuityError,
-  federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
   pinVerifiedFederatedActorIdentity,
@@ -105,7 +104,7 @@ export async function POST(request: NextRequest) {
       maxActionsPerMinute: 120,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
+      return NextResponse.json({ error: verified.error }, { status: verified.status });
     }
 
     const actionData = postActionDataSchema.safeParse(verified.userAction.data);

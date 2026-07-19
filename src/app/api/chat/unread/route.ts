@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { chatConversations, chatMessages, db } from '@/db';
-import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import { db } from '@/db';
 import { getSession } from '@/lib/auth';
 
 export async function GET() {
@@ -10,23 +9,28 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Keep response work constant even if a hostile node has created a large
-    // inbox. The database returns one aggregate row instead of materializing
-    // every conversation ID and unread message in application memory.
-    const [row] = await db
-      .select({ unreadCount: sql<number>`count(*)` })
-      .from(chatMessages)
-      .innerJoin(
-        chatConversations,
-        eq(chatMessages.conversationId, chatConversations.id),
-      )
-      .where(and(
-        eq(chatConversations.participant1Id, session.user.id),
-        isNull(chatMessages.readAt),
-        ne(chatMessages.senderHandle, session.user.handle),
-      ));
+    // Get user's conversations
+    const conversations = await db.query.chatConversations.findMany({
+      where: { participant1Id: session.user.id },
+    });
 
-    return NextResponse.json({ unreadCount: Number(row?.unreadCount || 0) });
+    if (conversations.length === 0) {
+      return NextResponse.json({ unreadCount: 0 });
+    }
+
+    // Count unread messages across all conversations
+    const conversationIds = conversations.map(c => c.id);
+    
+    const unreadMessages = await db.query.chatMessages.findMany({
+      where: { AND: [{ conversationId: { in: conversationIds } }, { readAt: { isNull: true } }] },
+    });
+
+    // Filter out messages sent by the current user
+    const unreadCount = unreadMessages.filter(
+      msg => msg.senderHandle !== session.user.handle
+    ).length;
+
+    return NextResponse.json({ unreadCount });
   } catch (error) {
     console.error('Get unread chat count error:', error);
     return NextResponse.json({ error: 'Failed to get unread count' }, { status: 500 });

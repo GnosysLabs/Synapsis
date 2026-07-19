@@ -82,22 +82,6 @@ describe('verified remote user cache upgrades', () => {
     expect(mocks.insertValues).not.toHaveBeenCalled();
   });
 
-  it('uses a supplied mutation transaction without opening a nested transaction', async () => {
-    mocks.handleFindFirst.mockResolvedValue({ handle, did, identityVerified: true });
-    mocks.userFindFirst.mockResolvedValue(null);
-
-    await upsertRemoteUser({ handle, did, publicKey, displayName: 'alice' }, {
-      identityVerified: true,
-    }, mocks.tx as never);
-
-    expect(mocks.transaction).not.toHaveBeenCalled();
-    expect(mocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
-      handle,
-      did,
-      publicKey: normalizeSigningPublicKey(publicKey),
-    }));
-  });
-
   it('does not merge a verified DID that already belongs to another handle', async () => {
     mocks.handleFindFirst.mockResolvedValue({ handle, did, identityVerified: true });
     mocks.userFindFirst

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { db } from '@/db';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
-import { probeTransientNode } from '@/lib/swarm/transient-node-probe';
+import { discoverNode } from '@/lib/swarm/discovery';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import {
     canCurrentViewerAccessSensitiveRemoteProfile,
@@ -48,9 +48,8 @@ export async function GET(request: Request, context: RouteContext) {
                 // Only fetch from swarm nodes
                 let isSwarm = await isSwarmNode(remote.domain);
                 if (!isSwarm) {
-                    // Exact-handle reads may probe an origin, but must not let
-                    // an unauthenticated caller enroll that origin globally.
-                    isSwarm = Boolean(await probeTransientNode(remote.domain));
+                    const discovery = await discoverNode(remote.domain);
+                    isSwarm = discovery.success;
                 }
 
                 if (isSwarm) {

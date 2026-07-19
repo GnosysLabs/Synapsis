@@ -5,8 +5,7 @@ const mocks = vi.hoisted(() => ({
     searchKnownUsers: vi.fn(),
     viewerAccess: vi.fn(),
     postFindMany: vi.fn(),
-    getCachedSwarmTimeline: vi.fn(),
-    searchIndexedPostIds: vi.fn(),
+    fetchSwarmTimeline: vi.fn(),
 }));
 
 function queryBuilder(rows: unknown[]) {
@@ -65,17 +64,14 @@ vi.mock('@/lib/nsfw/remote-profile-access', () => ({
 vi.mock('@/lib/swarm/user-directory-search', () => ({
     searchKnownSwarmUsers: mocks.searchKnownUsers,
 }));
-vi.mock('@/lib/swarm/content-cache', () => ({
-    getCachedSwarmTimeline: mocks.getCachedSwarmTimeline,
-}));
-vi.mock('@/lib/search/post-index', () => ({
-    searchIndexedPostIds: mocks.searchIndexedPostIds,
+vi.mock('@/lib/swarm/timeline', () => ({
+    fetchSwarmTimeline: mocks.fetchSwarmTimeline,
 }));
 vi.mock('@/lib/swarm/interactions', () => ({
     fetchSwarmUserProfile: vi.fn(),
     isSwarmNode: vi.fn(),
 }));
-vi.mock('@/lib/swarm/transient-node-probe', () => ({ probeTransientNode: vi.fn() }));
+vi.mock('@/lib/swarm/discovery', () => ({ discoverNode: vi.fn() }));
 
 import { GET } from './route';
 
@@ -99,8 +95,7 @@ describe('GET /api/search swarm users', () => {
             nodeIsNsfw: true,
         }]);
         mocks.postFindMany.mockResolvedValue([]);
-        mocks.searchIndexedPostIds.mockResolvedValue([]);
-        mocks.getCachedSwarmTimeline.mockResolvedValue({
+        mocks.fetchSwarmTimeline.mockResolvedValue({
             posts: [],
             sources: [],
             fetchedAt: '2026-07-18T00:00:00.000Z',
@@ -132,11 +127,11 @@ describe('GET /api/search swarm users', () => {
             }),
         );
         expect(mocks.postFindMany).not.toHaveBeenCalled();
-        expect(mocks.getCachedSwarmTimeline).not.toHaveBeenCalled();
+        expect(mocks.fetchSwarmTimeline).not.toHaveBeenCalled();
     });
 
     it('finds matching post text on remote swarm nodes', async () => {
-        mocks.getCachedSwarmTimeline.mockResolvedValue({
+        mocks.fetchSwarmTimeline.mockResolvedValue({
             posts: [{
                 id: 'post-1',
                 content: 'Yolked!',
@@ -173,15 +168,16 @@ describe('GET /api/search swarm users', () => {
                 author: { handle: 'bubbabator@rprh.link' },
             }],
         });
-        expect(mocks.getCachedSwarmTimeline).toHaveBeenCalledWith(
+        expect(mocks.fetchSwarmTimeline).toHaveBeenCalledWith(
+            undefined,
+            20,
             expect.objectContaining({
-                limit: 20,
                 includeNsfw: true,
                 query: 'Yolked',
                 excludeDomains: expect.any(Set),
             }),
         );
-        const options = mocks.getCachedSwarmTimeline.mock.calls[0]?.[0] as {
+        const options = mocks.fetchSwarmTimeline.mock.calls[0]?.[2] as {
             excludeDomains: Set<string>;
         };
         expect(options.excludeDomains).toContain('local.com');

@@ -70,7 +70,6 @@ vi.mock('@/db', () => ({
             remoteFollows: { findMany: mocks.findRemoteFollows },
             chatConversations: { findMany: mocks.findConversations },
             e2eeKeyBundles: { findFirst: mocks.findE2EEKeyBundle },
-            swarmAccountTombstones: { findFirst: vi.fn().mockResolvedValue(undefined) },
         },
     },
 }));

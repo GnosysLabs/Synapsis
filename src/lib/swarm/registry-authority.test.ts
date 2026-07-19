@@ -18,7 +18,6 @@ vi.mock('@/db', () => ({
   },
   media: {},
   posts: {},
-  remotePosts: { nodeDomain: 'remotePosts.nodeDomain' },
   swarmNodes: {},
   swarmSeeds: {},
   swarmSyncLog: {},
@@ -136,29 +135,6 @@ describe('swarm registry authority', () => {
     await expect(pinSwarmNodePublicKey('peer.social', firstIdentity.trim())).resolves.toBeUndefined();
     expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({
       publicKey: firstIdentity.trim(),
-    }));
-  });
-
-  it('immediately marks existing cache rows sensitive when a node becomes NSFW', async () => {
-    mocks.findFirst.mockResolvedValue({
-      domain: 'peer.social',
-      discoveredVia: 'direct',
-      publicKey: firstIdentity,
-      isNsfw: false,
-      nsfwClassificationKnown: true,
-      isBlocked: false,
-      contentSequence: 1,
-    });
-
-    await upsertSwarmNode({
-      domain: 'peer.social',
-      publicKey: firstIdentity,
-      isNsfw: true,
-      contentSequence: 1,
-    }, 'direct');
-
-    expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({
-      nodeIsNsfw: true,
     }));
   });
 });

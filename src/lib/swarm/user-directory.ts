@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { probeTransientNode } from '@/lib/swarm/transient-node-probe';
+import { discoverNode } from '@/lib/swarm/discovery';
 import { isSwarmNode } from '@/lib/swarm/interactions';
 import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { getKnownSwarmNodeNsfw } from '@/lib/swarm/registry';
@@ -38,7 +38,7 @@ export async function fetchSwarmUserDirectory(
     } = {},
 ): Promise<SwarmDirectoryUser[]> {
     let known = options.knownNode === true || await isSwarmNode(domain);
-    if (!known) known = Boolean(await probeTransientNode(domain));
+    if (!known) known = (await discoverNode(domain)).success;
     if (!known) return [];
 
     const publicDomain = getPublicSwarmDomain(domain);

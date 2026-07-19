@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { z } from 'zod';
-import { getTrustedFederationReadSource } from '@/lib/swarm/signed-read';
+import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { isPostSensitive } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
@@ -70,8 +70,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
 
-    const trustedReadSource = await getTrustedFederationReadSource(request);
-    const trustedRead = trustedReadSource !== null;
+    const trustedRead = await isTrustedFederationRead(request);
     const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
     const authorIsLocal = Boolean(post.author && hasStrictLocalUserOrigin(post.author));
     const sensitive = !post.author || isPostSensitive({
@@ -90,26 +89,44 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     // If checking a specific handle
     if (checkHandle) {
-      // Actor-specific state may only be queried by that actor's home node.
-      // A node signature authenticates the peer; it does not authorize that
-      // peer to enumerate arbitrary local users' relationship state.
-      if (!checkDomain || checkDomain !== trustedReadSource) {
-        return NextResponse.json(
-          { error: 'Like-state checks must be scoped to the authenticated source node' },
-          { status: 403, headers: privateHeaders },
-        );
+      // If domain is provided, check remote likes
+      if (checkDomain) {
+        const remoteLike = await db.query.remoteLikes.findFirst({
+          where: { AND: [{ postId: postId }, { actorHandle: checkHandle }, { actorNodeDomain: checkDomain }] },
+        });
+
+        return NextResponse.json({
+          postId,
+          likesCount: post.likesCount,
+          isLiked: !!remoteLike,
+          checkedHandle: checkHandle,
+          checkedDomain: checkDomain,
+        }, { headers: privateHeaders });
       }
 
-      const remoteLike = await db.query.remoteLikes.findFirst({
-        where: { AND: [{ postId }, { actorHandle: checkHandle }, { actorNodeDomain: checkDomain }] },
+      // No domain = local user
+      const localUser = await db.query.users.findFirst({
+        where: { handle: checkHandle },
       });
+
+      if (localUser) {
+        const liked = await db.query.likes.findFirst({
+          where: { AND: [{ postId: postId }, { userId: localUser.id }] },
+        });
+
+        return NextResponse.json({
+          postId,
+          likesCount: post.likesCount,
+          isLiked: !!liked,
+          checkedHandle: checkHandle,
+        }, { headers: privateHeaders });
+      }
 
       return NextResponse.json({
         postId,
         likesCount: post.likesCount,
-        isLiked: !!remoteLike,
+        isLiked: false,
         checkedHandle: checkHandle,
-        checkedDomain: checkDomain,
       }, { headers: privateHeaders });
     }
 

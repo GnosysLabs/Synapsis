@@ -111,7 +111,13 @@ export async function POST(request: Request, context: RouteContext) {
                 where: { AND: [{ followerId: currentUser.id }, { targetHandle: targetHandle }] },
             });
             if (existingRemoteFollow) {
-                return NextResponse.json({ success: true, following: true, remote: true, swarm: true });
+                return NextResponse.json({
+                    success: true,
+                    following: true,
+                    changed: false,
+                    remote: true,
+                    swarm: true,
+                });
             }
 
             // Only allow following swarm nodes
@@ -146,22 +152,30 @@ export async function POST(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: result.error || 'Failed to follow user' }, { status: 502 });
             }
 
-            // Store the follow locally
-            await db.insert(remoteFollows).values({
-                followerId: currentUser.id,
-                targetHandle,
-                targetActorUrl: `swarm://${remote.domain}/${remote.handle}`,
-                inboxUrl: `https://${remote.domain}/api/swarm/interactions/inbox`,
-                activityId,
-                displayName: null,
-                bio: null,
-                avatarUrl: null,
-            });
+            // Commit the local relationship and count together. Re-check inside
+            // the transaction so concurrent clicks cannot count the same follow
+            // twice after both remote deliveries return.
+            const changed = await db.transaction(async (tx) => {
+                const alreadyStored = await tx.query.remoteFollows.findFirst({
+                    where: { AND: [{ followerId: currentUser.id }, { targetHandle }] },
+                });
+                if (alreadyStored) return false;
 
-            // Update the user's following count (atomic increment)
-            await db.update(users)
-                .set({ followingCount: sql`${users.followingCount} + 1` })
-                .where(eq(users.id, currentUser.id));
+                await tx.insert(remoteFollows).values({
+                    followerId: currentUser.id,
+                    targetHandle,
+                    targetActorUrl: `swarm://${remote.domain}/${remote.handle}`,
+                    inboxUrl: `https://${remote.domain}/api/swarm/interactions/inbox`,
+                    activityId,
+                    displayName: null,
+                    bio: null,
+                    avatarUrl: null,
+                });
+                await tx.update(users)
+                    .set({ followingCount: sql`${users.followingCount} + 1` })
+                    .where(eq(users.id, currentUser.id));
+                return true;
+            });
 
             // Cache the remote user's recent posts in the background
             cacheSwarmUserPosts(remote.handle, remote.domain, targetHandle, 20)
@@ -169,7 +183,7 @@ export async function POST(request: Request, context: RouteContext) {
                 .catch(err => console.error('[Swarm] Error caching remote posts:', err));
 
             console.log(`[Swarm] Follow delivered to ${remote.domain} for @${remote.handle}`);
-            return NextResponse.json({ success: true, following: true, remote: true, swarm: true });
+            return NextResponse.json({ success: true, following: true, changed, remote: true, swarm: true });
         }
 
         if (!db) {
@@ -193,24 +207,17 @@ export async function POST(request: Request, context: RouteContext) {
             return NextResponse.json({ error: 'Cannot follow yourself' }, { status: 400 });
         }
 
-        // Check if already following
-        const existingFollow = await db.query.follows.findFirst({
-            where: { AND: [{ followerId: currentUser.id }, { followingId: targetUser.id }] },
-        });
+        const changed = await db.transaction(async (tx) => {
+            const existingFollow = await tx.query.follows.findFirst({
+                where: { AND: [{ followerId: currentUser.id }, { followingId: targetUser.id }] },
+            });
+            if (existingFollow) return false;
 
-        if (existingFollow) {
-            return NextResponse.json({ success: true, following: true });
-        }
-
-        // Create follow
-        await db.insert(follows).values({
-            followerId: currentUser.id,
-            followingId: targetUser.id,
-        });
-
-        if (currentUser.id !== targetUser.id) {
-            // Create notification
-            await db.insert(notifications).values({
+            await tx.insert(follows).values({
+                followerId: currentUser.id,
+                followingId: targetUser.id,
+            });
+            await tx.insert(notifications).values({
                 userId: targetUser.id,
                 actorId: currentUser.id,
                 actorHandle: currentUser.handle,
@@ -219,18 +226,16 @@ export async function POST(request: Request, context: RouteContext) {
                 actorNodeDomain: null,
                 type: 'follow',
             });
-        }
+            await tx.update(users)
+                .set({ followingCount: sql`${users.followingCount} + 1` })
+                .where(eq(users.id, currentUser.id));
+            await tx.update(users)
+                .set({ followersCount: sql`${users.followersCount} + 1` })
+                .where(eq(users.id, targetUser.id));
+            return true;
+        });
 
-        // Update counts (atomic increments)
-        await db.update(users)
-            .set({ followingCount: sql`${users.followingCount} + 1` })
-            .where(eq(users.id, currentUser.id));
-
-        await db.update(users)
-            .set({ followersCount: sql`${users.followersCount} + 1` })
-            .where(eq(users.id, targetUser.id));
-
-        return NextResponse.json({ success: true, following: true });
+        return NextResponse.json({ success: true, following: true, changed });
     } catch (error) {
         if (error instanceof Error && error.message === 'Authentication required') {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
@@ -266,9 +271,6 @@ export async function DELETE(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: 'Database not available' }, { status: 503 });
             }
             const targetHandle = `${remote.handle}@${remote.domain}`;
-            const existingRemoteFollow = await db.query.remoteFollows.findFirst({
-                where: { AND: [{ followerId: currentUser.id }, { targetHandle: targetHandle }] },
-            });
 
             // Use swarm protocol for unfollow
             const result = await deliverSwarmUnfollow(remote.domain, {
@@ -289,16 +291,21 @@ export async function DELETE(request: Request, context: RouteContext) {
                 }, { status: 502 });
             }
 
-            if (existingRemoteFollow) {
-                // Only change local counts when this node actually held the relationship.
-                await db.delete(remoteFollows).where(eq(remoteFollows.id, existingRemoteFollow.id));
-                await db.update(users)
+            const changed = await db.transaction(async (tx) => {
+                const storedFollow = await tx.query.remoteFollows.findFirst({
+                    where: { AND: [{ followerId: currentUser.id }, { targetHandle }] },
+                });
+                if (!storedFollow) return false;
+
+                await tx.delete(remoteFollows).where(eq(remoteFollows.id, storedFollow.id));
+                await tx.update(users)
                     .set({ followingCount: sql`max(0, ${users.followingCount} - 1)` })
                     .where(eq(users.id, currentUser.id));
-            }
+                return true;
+            });
 
             console.log(`[Swarm] Unfollow delivered to ${remote.domain}`);
-            return NextResponse.json({ success: true, following: false, remote: true, swarm: true });
+            return NextResponse.json({ success: true, following: false, changed, remote: true, swarm: true });
         }
 
         if (!db) {
@@ -317,28 +324,23 @@ export async function DELETE(request: Request, context: RouteContext) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
-        // Find existing follow
-        const existingFollow = await db.query.follows.findFirst({
-            where: { AND: [{ followerId: currentUser.id }, { followingId: targetUser.id }] },
+        const changed = await db.transaction(async (tx) => {
+            const existingFollow = await tx.query.follows.findFirst({
+                where: { AND: [{ followerId: currentUser.id }, { followingId: targetUser.id }] },
+            });
+            if (!existingFollow) return false;
+
+            await tx.delete(follows).where(eq(follows.id, existingFollow.id));
+            await tx.update(users)
+                .set({ followingCount: sql`max(0, ${users.followingCount} - 1)` })
+                .where(eq(users.id, currentUser.id));
+            await tx.update(users)
+                .set({ followersCount: sql`max(0, ${users.followersCount} - 1)` })
+                .where(eq(users.id, targetUser.id));
+            return true;
         });
 
-        if (!existingFollow) {
-            return NextResponse.json({ success: true, following: false });
-        }
-
-        // Remove follow
-        await db.delete(follows).where(eq(follows.id, existingFollow.id));
-
-        // Update counts (atomic decrements, clamped to 0)
-        await db.update(users)
-            .set({ followingCount: sql`max(0, ${users.followingCount} - 1)` })
-            .where(eq(users.id, currentUser.id));
-
-        await db.update(users)
-            .set({ followersCount: sql`max(0, ${users.followersCount} - 1)` })
-            .where(eq(users.id, targetUser.id));
-
-        return NextResponse.json({ success: true, following: false });
+        return NextResponse.json({ success: true, following: false, changed });
     } catch (error) {
         if (error instanceof Error && error.message === 'Authentication required') {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });

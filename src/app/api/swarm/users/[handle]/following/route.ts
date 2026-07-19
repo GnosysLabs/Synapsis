@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, follows, users } from '@/db';
 import { and, eq, isNull, notLike } from 'drizzle-orm';
+import { hydrateSwarmUsers } from '@/lib/swarm/user-hydration';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
@@ -115,9 +116,24 @@ export async function GET(request: NextRequest, context: RouteContext) {
       nodeDomain: f.targetHandle.split('@').pop(),
     }));
 
-    // Federation ingress must remain local-data-only. Hydrating these entries here
-    // would let an unauthenticated caller fan one request out to many remote nodes.
-    const finalFollowing = [...localFollowing, ...remoteFollowing].slice(0, limit);
+    // Merge all following
+    const allFollowing = [...localFollowing, ...remoteFollowing].slice(0, limit);
+    const hydrated = await hydrateSwarmUsers(allFollowing.map((entry) => ({
+      id: entry.handle,
+      ...entry,
+      isRemote: entry.isRemote === true,
+    })));
+
+    const finalFollowing = hydrated.map((entry) => ({
+        handle: entry.handle,
+        displayName: entry.displayName || entry.handle.split('@')[0],
+        avatarUrl: entry.avatarUrl || undefined,
+        bio: entry.bio || undefined,
+        isRemote: entry.isRemote,
+        isNsfw: entry.isNsfw,
+        nodeIsNsfw: entry.nodeIsNsfw,
+        nodeDomain: entry.nodeDomain,
+      }));
     const profileRestricted = !trustedRead && (user.isNsfw || nodeIsNsfw);
     const responseFollowing = profileRestricted
       ? []

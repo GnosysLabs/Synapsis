@@ -66,7 +66,7 @@ vi.mock('@/db', () => ({
   db: {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
-        where: vi.fn().mockResolvedValue([{ followingId: 'adult-user', nodeDomain: 'adult.example' }]),
+        where: vi.fn().mockResolvedValue([{ followingId: 'adult-user' }]),
       })),
     })),
     query: {
@@ -91,20 +91,6 @@ vi.mock('@/db', () => ({
   remoteFollows: {},
   mutes: {},
   blocks: {},
-  mutedNodes: { nodeDomain: 'nodeDomain', userId: 'userId' },
-}));
-
-vi.mock('@/lib/swarm/node-blocklist', () => ({
-  getBlockedNodeDomains: vi.fn().mockResolvedValue(new Set()),
-}));
-
-vi.mock('@/lib/swarm/content-cache', () => ({
-  getCachedSwarmTimeline: vi.fn().mockResolvedValue({
-    posts: [],
-    sources: [],
-    fetchedAt: '2026-07-18T00:00:00.000Z',
-    continuationDate: null,
-  }),
 }));
 
 import { GET } from './route';
@@ -146,3 +132,4 @@ describe('GET /api/posts?type=home sensitive Following enforcement', () => {
     }
   });
 });
+

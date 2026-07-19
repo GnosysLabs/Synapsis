@@ -1,54 +1,19 @@
 const FEED_CURSOR_PREFIX = 'feed:';
-const FEED_CURSOR_V2_PREFIX = 'feed:v2:';
 
-export interface FeedCursorPosition {
-  at: Date;
-  id: string | null;
-}
-
-export function encodeFeedCursor(
-  value: string | number | Date | { at: string | number | Date; id: string } | null | undefined,
-): string | null {
+export function encodeFeedCursor(value: string | number | Date | null | undefined): string | null {
   if (value == null) return null;
-  if (typeof value === 'object' && !(value instanceof Date) && 'at' in value) {
-    const timestamp = new Date(value.at).getTime();
-    const id = value.id.slice(0, 1_024);
-    return Number.isFinite(timestamp) && id
-      ? `${FEED_CURSOR_V2_PREFIX}${timestamp}:${encodeURIComponent(id)}`
-      : null;
-  }
-  const timestamp = new Date(value as string | number | Date).getTime();
+  const timestamp = new Date(value).getTime();
   return Number.isFinite(timestamp) ? `${FEED_CURSOR_PREFIX}${timestamp}` : null;
 }
 
-export function decodeFeedCursorPosition(cursor: string | null): FeedCursorPosition | null {
+export function decodeFeedCursor(cursor: string | null): Date | null {
   if (!cursor?.startsWith(FEED_CURSOR_PREFIX)) return null;
-  if (cursor.startsWith(FEED_CURSOR_V2_PREFIX)) {
-    const remainder = cursor.slice(FEED_CURSOR_V2_PREFIX.length);
-    const separator = remainder.indexOf(':');
-    if (separator <= 0) return null;
-    const timestamp = Number(remainder.slice(0, separator));
-    let id: string;
-    try {
-      id = decodeURIComponent(remainder.slice(separator + 1));
-    } catch {
-      return null;
-    }
-    const at = new Date(timestamp);
-    return Number.isFinite(timestamp) && !Number.isNaN(at.getTime()) && id
-      ? { at, id }
-      : null;
-  }
 
   const timestamp = Number(cursor.slice(FEED_CURSOR_PREFIX.length));
   if (!Number.isFinite(timestamp)) return null;
 
-  const at = new Date(timestamp);
-  return Number.isNaN(at.getTime()) ? null : { at, id: null };
-}
-
-export function decodeFeedCursor(cursor: string | null): Date | null {
-  return decodeFeedCursorPosition(cursor)?.at ?? null;
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 interface FeedTimestamped {
@@ -64,23 +29,14 @@ export function selectFeedWindow<T extends FeedTimestamped>(posts: T[], limit: n
   posts: T[];
   hasOverflow: boolean;
   oldestActivityAt: Date | null;
-  oldestPostId: string | null;
 } {
-  const ordered = [...posts].sort((a, b) => {
-    const byActivity = feedActivityDate(b).getTime() - feedActivityDate(a).getTime();
-    if (byActivity !== 0) return byActivity;
-    const aId = 'id' in a ? String(a.id) : '';
-    const bId = 'id' in b ? String(b.id) : '';
-    return bId.localeCompare(aId);
-  });
+  const ordered = [...posts].sort((a, b) => feedActivityDate(b).getTime() - feedActivityDate(a).getTime());
   const selected = ordered.slice(0, limit);
-  const oldest = selected.at(-1);
 
   return {
     posts: selected,
     hasOverflow: ordered.length > selected.length,
-    oldestActivityAt: oldest ? feedActivityDate(oldest) : null,
-    oldestPostId: oldest && 'id' in oldest ? String(oldest.id) : null,
+    oldestActivityAt: selected.length > 0 ? feedActivityDate(selected[selected.length - 1]) : null,
   };
 }
 
