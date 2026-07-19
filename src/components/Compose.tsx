@@ -663,15 +663,19 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                     {canChooseCollections && (
                         <button
                             type="button"
-                            className={`compose-collection-button ${selectedCollectionIds.length > 0 ? 'selected' : ''}`}
+                            className={`compose-media-button compose-collection-button ${selectedCollectionIds.length > 0 ? 'selected' : ''}`}
                             title="Choose collections"
+                            aria-label={selectedCollectionIds.length > 0
+                                ? `Choose collections, ${selectedCollectionIds.length} selected`
+                                : 'Choose collections'}
                             onClick={() => setShowCollectionPicker(true)}
                             disabled={!currentHandle || isPosting}
                         >
-                            <FolderPlus size={18} />
-                            <span>Collections</span>
+                            <FolderPlus size={20} />
                             {selectedCollectionIds.length > 0 && (
-                                <span className="compose-collection-count">{selectedCollectionIds.length}</span>
+                                <span className="compose-collection-count" aria-hidden="true">
+                                    {selectedCollectionIds.length}
+                                </span>
                             )}
                         </button>
                     )}

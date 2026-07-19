@@ -1990,26 +1990,10 @@ a.btn-primary:visited {
 }
 
 .compose-collection-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--foreground-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
+  overflow: visible;
 }
 
-.compose-collection-button:hover,
 .compose-collection-button.selected {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
   color: var(--accent);
 }
 
@@ -2019,16 +2003,20 @@ a.btn-primary:visited {
 }
 
 .compose-collection-count {
+  position: absolute;
+  top: -3px;
+  right: -4px;
   display: grid;
   place-items: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
   border-radius: var(--radius-full);
   background: var(--accent);
   color: var(--background);
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
+  line-height: 1;
 }
 
 .compose-media-input {
@@ -3340,10 +3328,6 @@ a.btn-primary:visited {
   .compose-media-button {
     width: 44px;
     height: 44px;
-  }
-
-  .compose-collection-button {
-    min-height: 44px;
   }
 
   /* Improve menu dropdown positioning on mobile */
