@@ -116,7 +116,7 @@ synapsis post create --text "A field recording" --media ./recording.m4a --alt "B
 printf '%s' "Caption from an agent" | synapsis post create --stdin --media ./photo.jpg --alt "A moss-covered trail"
 ```
 
-Media bytes upload directly to the account's connected Stuffbox; the Synapsis node authorizes and records the resulting asset. Up to four images, videos, or audio files may be attached. Run `synapsis skill install` to install the bundled `synapsis-post` skill for Codex, Agent Skills-compatible clients, and Claude Code.
+Media bytes upload directly to the account's connected Stuffbox; the Synapsis node authorizes and records the resulting asset. Before photo or video bytes leave the client, Synapsis removes EXIF, GPS, capture dates, camera/device fields, comments, and container metadata. Orientation-dependent still photos are normalized first so they remain upright. Up to four images, videos, or audio files may be attached. Run `synapsis skill install` to install the bundled `synapsis-post` skill for Codex, Agent Skills-compatible clients, and Claude Code.
 
 Common commands:
 

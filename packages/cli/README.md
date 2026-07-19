@@ -39,6 +39,8 @@ synapsis post create \
   --media ./recording.flac
 ```
 
+The CLI removes private photo and video metadata before uploading, including EXIF, GPS, capture dates, camera/device fields, and container tags. It refuses an image whose EXIF orientation must first be baked into its pixels, rather than risk uploading metadata or turning the image sideways.
+
 Use stdin and machine-readable output from an agent:
 
 ```bash

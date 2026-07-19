@@ -8,6 +8,7 @@ import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPro
 import { useToast } from '@/lib/contexts/ToastContext';
 import { useAccentColor } from '@/lib/contexts/AccentColorContext';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { stripPhotoVideoMetadata } from '@/lib/media/browser-strip-metadata';
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
@@ -214,8 +215,9 @@ export default function AdminPage() {
         setIsUploadingLogo(true);
 
         try {
+            const privateFile = await stripPhotoVideoMetadata(file);
             const formData = new FormData();
-            formData.append('file', file);
+            formData.append('file', privateFile);
             formData.append('type', 'logo');
             const res = await fetch('/api/admin/node/upload', {
                 method: 'POST',
@@ -250,8 +252,9 @@ export default function AdminPage() {
         setIsUploadingFavicon(true);
 
         try {
+            const privateFile = await stripPhotoVideoMetadata(file);
             const formData = new FormData();
-            formData.append('file', file);
+            formData.append('file', privateFile);
             formData.append('type', 'favicon');
             const res = await fetch('/api/admin/node/upload', {
                 method: 'POST',

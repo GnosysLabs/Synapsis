@@ -3,6 +3,7 @@ import { db, nodes } from '@/db';
 import { eq } from 'drizzle-orm';
 import { requireAdmin } from '@/lib/auth/admin';
 import { getVersionedNodeAssetUrl } from '@/lib/node/assets';
+import { MediaMetadataError, stripMediaMetadataBytes } from '@/lib/media/strip-metadata';
 
 // Logo constraints
 const MAX_LOGO_SIZE = 2 * 1024 * 1024; // 2MB
@@ -78,6 +79,7 @@ export async function POST(req: NextRequest) {
     if (file.name.toLowerCase().endsWith('.ico')) {
       mimeType = 'image/x-icon';
     }
+    if (mimeType === 'image/jpg') mimeType = 'image/jpeg';
 
     if (!allowedTypes.includes(mimeType)) {
       const allowedList = isLogo 
@@ -90,7 +92,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Convert file to base64
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const uploadedBytes = new Uint8Array(await file.arrayBuffer());
+    const buffer = Buffer.from(stripMediaMetadataBytes(uploadedBytes, mimeType));
     const base64Data = buffer.toString('base64');
     const dataUrl = `data:${mimeType};base64,${base64Data}`;
 
@@ -130,12 +133,15 @@ export async function POST(req: NextRequest) {
       success: true,
       url: assetUrl,
       type,
-      size: file.size,
+      size: buffer.byteLength,
     });
 
   } catch (error) {
     if (error instanceof Error && error.message === 'Admin authentication required') {
       return NextResponse.json({ error: 'Admin authentication required' }, { status: 401 });
+    }
+    if (error instanceof MediaMetadataError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 400 });
     }
     console.error('Node upload error:', error);
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 });

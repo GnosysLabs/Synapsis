@@ -351,7 +351,11 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                     return;
                 }
 
-                setUploadError('One or more uploads failed. Retry the failed attachment.');
+                setUploadError(
+                    error instanceof MediaUploadError && error.code === 'METADATA_STRIP_FAILED'
+                        ? error.message
+                        : 'One or more uploads failed. Retry the failed attachment.',
+                );
             }
         }
 

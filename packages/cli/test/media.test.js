@@ -10,10 +10,27 @@ function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+function pngWithPrivateText() {
+  const chunk = (type, payload) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(payload.length);
+    return Buffer.concat([length, Buffer.from(type), payload, Buffer.alloc(4)]);
+  };
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', Buffer.alloc(13)),
+    chunk('iTXt', Buffer.from('private GPS metadata')),
+    chunk('IDAT', Buffer.from('png-bytes')),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
 test('uses signed node endpoints around a direct Stuffbox media upload', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'synapsis-cli-media-'));
   const path = join(directory, 'cover.png');
-  await writeFile(path, Buffer.from('png-bytes'));
+  const sourceBytes = pngWithPrivateText();
+  await writeFile(path, sourceBytes);
+  const sanitizedSize = sourceBytes.length - 12 - Buffer.byteLength('private GPS metadata');
   const keys = await generateCredentialKeyPair();
   const profile = {
     nodeUrl: 'https://social.example',
@@ -27,7 +44,7 @@ test('uses signed node endpoints around a direct Stuffbox media upload', async (
       const envelope = JSON.parse(init.body);
       assert.equal(envelope.action, 'media_upload_start');
       assert.equal(envelope.data.mimeType, 'image/png');
-      assert.equal(envelope.data.size, 9);
+      assert.equal(envelope.data.size, sanitizedSize);
       assert.equal('sha256' in envelope.data, false);
       return jsonResponse({
         id: 'upload-1',
@@ -38,7 +55,8 @@ test('uses signed node endpoints around a direct Stuffbox media upload', async (
     if (String(url) === 'https://stuffbox.example/direct') {
       assert.equal(init.method, 'PUT');
       assert.deepEqual(init.headers, { 'content-type': 'image/png', 'if-none-match': '*' });
-      assert.deepEqual(Buffer.from(init.body), Buffer.from('png-bytes'));
+      assert.doesNotMatch(Buffer.from(init.body).toString('latin1'), /private GPS metadata|iTXt/);
+      assert.match(Buffer.from(init.body).toString('latin1'), /png-bytes/);
       return new Response('', { status: 200 });
     }
     const envelope = JSON.parse(init.body);
@@ -55,7 +73,7 @@ test('uses signed node endpoints around a direct Stuffbox media upload', async (
 test('reports safe object-store error details without leaking the provider response', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'synapsis-cli-media-'));
   const path = join(directory, 'cover.png');
-  await writeFile(path, Buffer.from('png-bytes'));
+  await writeFile(path, pngWithPrivateText());
   const keys = await generateCredentialKeyPair();
   const profile = {
     nodeUrl: 'https://social.example',

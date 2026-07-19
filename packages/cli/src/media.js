@@ -1,6 +1,11 @@
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { signedRequest, SynapsisApiError } from './http.js';
+import {
+  MediaMetadataError,
+  imageMetadataNeedsRasterization,
+  stripMediaMetadataBytes,
+} from './media-metadata.js';
 
 const MIME_TYPES = new Map([
   ['.jpg', 'image/jpeg'],
@@ -70,11 +75,19 @@ export async function uploadMediaFile(profile, entry, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const inspected = await inspectMedia(entry.path);
   if (entry.alt && entry.alt.length > 1500) throw new Error('Media alt text must be 1500 characters or fewer');
-  const bytes = await readFile(entry.path);
+  const originalBytes = new Uint8Array(await readFile(entry.path));
+  if (inspected.mimeType.startsWith('image/')
+    && imageMetadataNeedsRasterization(originalBytes, inspected.mimeType)) {
+    throw new MediaMetadataError(
+      `${inspected.filename} uses EXIF orientation. Normalize its orientation before uploading it with the CLI.`,
+    );
+  }
+  const bytes = stripMediaMetadataBytes(originalBytes, inspected.mimeType);
+  const uploadInput = { ...inspected, size: bytes.byteLength };
 
   options.onProgress?.(`Starting upload for ${inspected.filename}`);
   const upload = await signedRequest(profile, '/api/media/stuffbox/uploads', 'media_upload_start', {
-    ...inspected,
+    ...uploadInput,
   }, fetchImpl);
   if (!upload.id || !upload.uploadUrl) throw new Error('Synapsis returned an invalid Stuffbox upload session');
   const uploadUrl = validatedUploadUrl(upload.uploadUrl);

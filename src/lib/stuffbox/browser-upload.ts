@@ -1,5 +1,8 @@
 'use client';
 
+import { stripPhotoVideoMetadata } from '@/lib/media/browser-strip-metadata';
+import { MediaMetadataError } from '@/lib/media/strip-metadata';
+
 export interface UploadedMedia {
   id: string;
   url: string;
@@ -122,6 +125,16 @@ export async function uploadMediaFile(
   onProgress?: (progress: number) => void,
 ): Promise<UploadedMedia> {
   const provider = await getStorageProvider();
-  if (provider === 'stuffbox') return uploadToStuffbox(file, onProgress);
+  if (provider === 'stuffbox') {
+    try {
+      const privateFile = await stripPhotoVideoMetadata(file);
+      return uploadToStuffbox(privateFile, onProgress);
+    } catch (error) {
+      if (error instanceof MediaMetadataError) {
+        throw new MediaUploadError(error.message, error.code);
+      }
+      throw error;
+    }
+  }
   throw new MediaUploadError('Connect Stuffbox before uploading.', 'STORAGE_NOT_CONFIGURED', 409);
 }

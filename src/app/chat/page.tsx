@@ -359,7 +359,9 @@ export default function ChatPage() {
 
                 setConversationAttachmentError(
                     pending.conversationKey,
-                    'An attachment could not be uploaded. Remove it or try again.',
+                    error instanceof MediaUploadError && error.code === 'METADATA_STRIP_FAILED'
+                        ? error.message
+                        : 'An attachment could not be uploaded. Remove it or try again.',
                 );
             }
         }
