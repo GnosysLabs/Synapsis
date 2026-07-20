@@ -7,7 +7,7 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { HomeIcon, SearchIcon, BellIcon, UserIcon, ShieldIcon, SettingsIcon } from './Icons';
-import { Check, ChevronDown, LogOut, Plus, Settings2 } from 'lucide-react';
+import { Check, ChevronDown, Globe, LogOut, Plus, Settings2 } from 'lucide-react';
 import { AuthScreen } from '@/components/AuthScreen';
 import { AvatarImage } from './AvatarImage';
 import { ANONYMOUS_APP_DESTINATION } from '@/lib/posts/home-feed';
@@ -252,8 +252,14 @@ export function Sidebar() {
                 </Link>
                 {user && (
                     <Link href="/explore" className={`nav-item ${pathname?.startsWith('/explore') ? 'active' : ''}`} title="Explore">
-                        <SearchIcon />
+                        <Globe size={20} />
                         <span>Explore</span>
+                    </Link>
+                )}
+                {user && (
+                    <Link href="/search" className={`nav-item ${pathname?.startsWith('/search') ? 'active' : ''}`} title="Search">
+                        <SearchIcon />
+                        <span>Search</span>
                     </Link>
                 )}
                 {user && (

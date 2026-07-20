@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Network } from 'lucide-react';
-import { SearchIcon, UsersIcon } from '@/components/Icons';
+import { UsersIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
 import { AvatarImage } from '@/components/AvatarImage';
 import { signedAPI } from '@/lib/api/signed-fetch';
@@ -13,7 +13,6 @@ import { ANONYMOUS_APP_DESTINATION } from '@/lib/posts/home-feed';
 import { EXPLORE_FEED_API_TYPE, EXPLORE_TABS, type ExploreTab } from '@/lib/posts/explore-feed';
 import type { Post, User } from '@/lib/types';
 import { useFormattedHandle } from '@/lib/utils/handle';
-import { getLiveSearchQuery, LIVE_SEARCH_DEBOUNCE_MS } from '@/lib/search/live-search';
 
 function UserCard({ user }: { user: User }) {
     const fullHandle = useFormattedHandle(user.handle);
@@ -50,14 +49,8 @@ export default function ExplorePage() {
     const [users, setUsers] = useState<User[]>([]);
     const [usersLoading, setUsersLoading] = useState(false);
     const [usersLoaded, setUsersLoaded] = useState(false);
-    const [query, setQuery] = useState('');
-    const [searching, setSearching] = useState(false);
-    const [hasSearched, setHasSearched] = useState(false);
-    const [searchedQuery, setSearchedQuery] = useState('');
-    const [searchResults, setSearchResults] = useState<{ posts: Post[]; users: User[] }>({ posts: [], users: [] });
     const loadMoreRef = useRef<HTMLDivElement>(null);
     const loadingCursorRef = useRef<string | null>(null);
-    const liveSearchQuery = getLiveSearchQuery(query);
 
     const loadExplore = useCallback(async (cursor: string | null = null) => {
         if (cursor && loadingCursorRef.current === cursor) return;
@@ -137,7 +130,7 @@ export default function ExplorePage() {
     }, [activeTab, user, usersLoaded, usersLoading]);
 
     useEffect(() => {
-        if (activeTab !== 'explore' || hasSearched || !loadMoreRef.current || !nextCursor || loadingMore) return;
+        if (activeTab !== 'explore' || !loadMoreRef.current || !nextCursor || loadingMore) return;
 
         const observer = new IntersectionObserver(
             (entries) => {
@@ -150,60 +143,7 @@ export default function ExplorePage() {
 
         observer.observe(loadMoreRef.current);
         return () => observer.disconnect();
-    }, [activeTab, hasSearched, loadExplore, loadingMore, nextCursor]);
-
-    const selectTab = (tab: ExploreTab) => {
-        setActiveTab(tab);
-        setHasSearched(false);
-    };
-
-    useEffect(() => {
-        if (!user || !liveSearchQuery) {
-            setHasSearched(false);
-            setSearching(false);
-            setSearchedQuery('');
-            setSearchResults({ posts: [], users: [] });
-            return;
-        }
-
-        const controller = new AbortController();
-        setHasSearched(true);
-        setSearching(true);
-        setSearchResults({ posts: [], users: [] });
-        const timeout = window.setTimeout(async () => {
-            try {
-                const response = await fetch(`/api/search?q=${encodeURIComponent(liveSearchQuery)}`, {
-                    cache: 'no-store',
-                    signal: controller.signal,
-                });
-                if (!response.ok) throw new Error('Search failed');
-                const data = await response.json();
-                if (controller.signal.aborted) return;
-                setSearchedQuery(liveSearchQuery);
-                setSearchResults({
-                    posts: data.posts || [],
-                    users: data.users || [],
-                });
-            } catch (error) {
-                if (!controller.signal.aborted) {
-                    console.error('Search failed', error);
-                    setSearchedQuery(liveSearchQuery);
-                    setSearchResults({ posts: [], users: [] });
-                }
-            } finally {
-                if (!controller.signal.aborted) setSearching(false);
-            }
-        }, LIVE_SEARCH_DEBOUNCE_MS);
-
-        return () => {
-            window.clearTimeout(timeout);
-            controller.abort();
-        };
-    }, [liveSearchQuery, user]);
-
-    const handleSearch = (event: React.FormEvent) => {
-        event.preventDefault();
-    };
+    }, [activeTab, loadExplore, loadingMore, nextCursor]);
 
     const handleLike = async (postId: string, currentLiked: boolean) => {
         if (!did || !handle) throw new Error('Please log in again.');
@@ -233,54 +173,6 @@ export default function ExplorePage() {
 
     const handleDelete = (postId: string) => {
         setPosts((currentPosts) => currentPosts.filter((post) => post.id !== postId));
-        setSearchResults((currentResults) => ({
-            ...currentResults,
-            posts: currentResults.posts.filter((post) => post.id !== postId),
-        }));
-    };
-
-    const renderSearchResults = () => {
-        if (searching) return <div className="explore-loading">Searching...</div>;
-
-        if (searchResults.users.length === 0 && searchResults.posts.length === 0) {
-            return (
-                <div className="explore-empty">
-                    <SearchIcon />
-                    <p>No results found for &ldquo;{searchedQuery}&rdquo;</p>
-                </div>
-            );
-        }
-
-        return (
-            <div className="explore-search-results">
-                {searchResults.users.length > 0 && (
-                    <div className="search-section">
-                        <h2>Users</h2>
-                        <div className="explore-users">
-                            {searchResults.users.map((resultUser) => (
-                                <UserCard key={resultUser.id} user={resultUser} />
-                            ))}
-                        </div>
-                    </div>
-                )}
-                {searchResults.posts.length > 0 && (
-                    <div className="search-section">
-                        <h2>Posts</h2>
-                        <div className="explore-posts">
-                            {searchResults.posts.map((post) => (
-                                <PostCard
-                                    key={post.id}
-                                    post={post}
-                                    onLike={handleLike}
-                                    onRepost={handleRepost}
-                                    onDelete={handleDelete}
-                                />
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
-        );
     };
 
     const renderExplore = () => (
@@ -370,26 +262,12 @@ export default function ExplorePage() {
                 <h1 style={{ fontSize: '20px', fontWeight: 600 }}>Explore</h1>
             </header>
 
-            <div style={{ padding: '0 16px' }}>
-                <form onSubmit={handleSearch} className="explore-search" style={{ marginTop: '16px' }}>
-                    <SearchIcon />
-                    <input
-                        type="text"
-                        placeholder="Search posts and users..."
-                        value={query}
-                        onChange={(event) => {
-                            setQuery(event.target.value);
-                        }}
-                    />
-                </form>
-            </div>
-
             <div className="explore-tabs" role="tablist" aria-label="Explore views">
                 {EXPLORE_TABS.map((tab) => (
                     <button
                         key={tab.id}
                         className={`explore-tab ${activeTab === tab.id ? 'active' : ''}`}
-                        onClick={() => selectTab(tab.id)}
+                        onClick={() => setActiveTab(tab.id)}
                         role="tab"
                         aria-selected={activeTab === tab.id}
                     >
@@ -400,11 +278,7 @@ export default function ExplorePage() {
             </div>
 
             <div className="explore-content">
-                {hasSearched
-                    ? renderSearchResults()
-                    : activeTab === 'explore'
-                        ? renderExplore()
-                        : renderUsers()}
+                {activeTab === 'explore' ? renderExplore() : renderUsers()}
             </div>
         </div>
     );

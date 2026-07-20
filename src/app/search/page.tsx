@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { SearchIcon } from '@/components/Icons';
 import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { PostCard } from '@/components/PostCard';
 import { Post } from '@/lib/types';
@@ -23,23 +24,6 @@ interface User {
     nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
 }
-
-
-
-// Icons
-const SearchIcon = () => (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="11" cy="11" r="8" />
-        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-    </svg>
-);
-
-const ArrowLeftIcon = () => (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <line x1="19" y1="12" x2="5" y2="12" />
-        <polyline points="12 19 5 12 12 5" />
-    </svg>
-);
 
 function UserCard({ user }: { user: User }) {
     const fullHandle = useFormattedHandle(user.handle);
@@ -92,6 +76,7 @@ export default function SearchPage() {
     const [posts, setPosts] = useState<Post[]>([]);
     const [loading, setLoading] = useState(false);
     const [searchedQuery, setSearchedQuery] = useState('');
+    const [searchError, setSearchError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'all' | 'users' | 'posts'>('all');
     const liveSearchQuery = getLiveSearchQuery(query);
 
@@ -99,10 +84,12 @@ export default function SearchPage() {
         if (!q.trim()) {
             setUsers([]);
             setPosts([]);
+            setSearchError(null);
             return;
         }
 
         setLoading(true);
+        setSearchError(null);
         try {
             const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&type=${type}`, {
                 cache: 'no-store',
@@ -115,7 +102,10 @@ export default function SearchPage() {
             setUsers(data.users || []);
             setPosts(data.posts || []);
         } catch (error) {
-            if (!signal.aborted) console.error('Search failed', error);
+            if (!signal.aborted) {
+                console.error('Search failed', error);
+                setSearchError('Search is unavailable right now. Please try again.');
+            }
         } finally {
             if (!signal.aborted) setLoading(false);
         }
@@ -126,6 +116,7 @@ export default function SearchPage() {
             setUsers([]);
             setPosts([]);
             setSearchedQuery('');
+            setSearchError(null);
             setLoading(false);
             return;
         }
@@ -133,6 +124,7 @@ export default function SearchPage() {
         const controller = new AbortController();
         setLoading(true);
         setSearchedQuery(liveSearchQuery);
+        setSearchError(null);
         setUsers([]);
         setPosts([]);
         const timeout = window.setTimeout(() => {
@@ -191,83 +183,66 @@ export default function SearchPage() {
     };
 
     return (
-        <div style={{ maxWidth: '600px', margin: '0 auto', minHeight: '100vh' }}>
-            {/* Header */}
+        <div className="explore-page">
             <header style={{
                 padding: '16px',
                 borderBottom: '1px solid var(--border)',
                 position: 'sticky',
                 top: 0,
-                background: 'var(--background)',
+                background: 'rgba(10, 10, 10, 0.95)',
                 zIndex: 10,
+                backdropFilter: 'blur(12px)',
             }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <Link href="/" style={{ color: 'var(--foreground)' }}>
-                        <ArrowLeftIcon />
-                    </Link>
-                    <form onSubmit={handleSubmit} style={{ flex: 1 }}>
-                        <div style={{ position: 'relative' }}>
-                            <span style={{
-                                position: 'absolute',
-                                left: '12px',
-                                top: '50%',
-                                transform: 'translateY(-50%)',
-                                color: 'var(--foreground-tertiary)',
-                            }}>
-                                <SearchIcon />
-                            </span>
-                            <input
-                                type="text"
-                                className="input"
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                placeholder="Search users and posts..."
-                                style={{ paddingLeft: '44px' }}
-                            />
-                        </div>
-                    </form>
-                </div>
+                <h1 style={{ fontSize: '20px', fontWeight: 600 }}>Search</h1>
             </header>
 
-            {/* Tabs */}
-            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ padding: '0 16px' }}>
+                <form onSubmit={handleSubmit} className="explore-search" style={{ marginTop: '16px' }}>
+                    <SearchIcon />
+                    <input
+                        type="search"
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder="Search users and posts..."
+                        aria-label="Search users and posts"
+                    />
+                </form>
+            </div>
+
+            <div className="explore-tabs" role="tablist" aria-label="Search result types">
                 {(['all', 'users', 'posts'] as const).map(tab => (
                     <button
                         key={tab}
+                        type="button"
                         onClick={() => handleTabChange(tab)}
-                        style={{
-                            flex: 1,
-                            padding: '16px',
-                            background: 'none',
-                            border: 'none',
-                            borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
-                            color: activeTab === tab ? 'var(--foreground)' : 'var(--foreground-tertiary)',
-                            fontWeight: activeTab === tab ? 600 : 400,
-                            cursor: 'pointer',
-                            textTransform: 'capitalize',
-                        }}
+                        className={`explore-tab ${activeTab === tab ? 'active' : ''}`}
+                        role="tab"
+                        aria-selected={activeTab === tab}
                     >
-                        {tab}
+                        {tab === 'all' ? 'All' : tab === 'users' ? 'Users' : 'Posts'}
                     </button>
                 ))}
             </div>
 
-            {/* Results */}
             {loading ? (
-                <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
-                    Searching...
-                </div>
+                <div className="explore-loading">Searching...</div>
             ) : !liveSearchQuery ? (
-                <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
+                <div className="explore-empty">
+                    <SearchIcon />
                     <p>Search for users and posts</p>
                 </div>
+            ) : searchError ? (
+                <div className="explore-empty" role="alert">
+                    <SearchIcon />
+                    <p>{searchError}</p>
+                </div>
             ) : users.length === 0 && posts.length === 0 ? (
-                <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
+                <div className="explore-empty">
+                    <SearchIcon />
                     <p>No results for &ldquo;{searchedQuery}&rdquo;</p>
                 </div>
             ) : (
                 <>
-                    {/* Users */}
                     {(activeTab === 'all' || activeTab === 'users') && users.length > 0 && (
                         <div>
                             {activeTab === 'all' && (
@@ -284,7 +259,6 @@ export default function SearchPage() {
                         </div>
                     )}
 
-                    {/* Posts */}
                     {(activeTab === 'all' || activeTab === 'posts') && posts.length > 0 && (
                         <div>
                             {activeTab === 'all' && (
