@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useState, useEffect, useRef } from 'react';
+import { Fragment, useCallback, useState, useEffect, useLayoutEffect, useRef } from 'react';
 import Image from 'next/image';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
@@ -203,6 +203,8 @@ export default function ChatPage() {
     const [isAtBottom, setIsAtBottom] = useState(true);
     const appliedSharedPostRef = useRef<string | null>(null);
     const messagesRequestRef = useRef(0);
+    const initialScrollConversationKeyRef = useRef<string | null>(null);
+    const suppressSmoothScrollRef = useRef(false);
     const conversationsRequestRef = useRef(0);
     const conversationsAbortRef = useRef<AbortController | null>(null);
     const peerResolutionRef = useRef(0);
@@ -486,10 +488,12 @@ export default function ChatPage() {
         messagesRequestRef.current += 1;
         peerResolutionRef.current += 1;
         sendRequestRef.current += 1;
-        selectedConversationRef.current = conversation;
-        selectedConversationKeyRef.current = conversation
+        const conversationKey = conversation
             ? encryptionConversationKey(conversation)
             : null;
+        selectedConversationRef.current = conversation;
+        selectedConversationKeyRef.current = conversationKey;
+        initialScrollConversationKeyRef.current = conversationKey;
         setMessages([]);
         messageElementsRef.current.clear();
         setHighlightedMessageId(null);
@@ -1227,21 +1231,31 @@ export default function ChatPage() {
         router.replace('/chat', { scroll: false });
     }, [selectedConversation, sharedPostUrl, router, updateSelectedDraft]);
 
-    // Auto-scroll to bottom of messages only if user was already at bottom
+    // Put a newly opened conversation at its newest message before the browser
+    // paints it. Smooth scrolling here would visibly replay the whole history.
+    useLayoutEffect(() => {
+        if (!selectedConversationKey
+            || initialScrollConversationKeyRef.current !== selectedConversationKey
+            || loadingMessages
+            || messages.length === 0) return;
+
+        const container = messagesContainerRef.current;
+        if (!container) return;
+        container.scrollTop = container.scrollHeight;
+        initialScrollConversationKeyRef.current = null;
+        suppressSmoothScrollRef.current = true;
+    }, [loadingMessages, messages.length, selectedConversationKey]);
+
+    // Auto-scroll later messages only if the user was already at the bottom.
     useEffect(() => {
+        if (suppressSmoothScrollRef.current) {
+            suppressSmoothScrollRef.current = false;
+            return;
+        }
         if (messagesEndRef.current && isAtBottom) {
             messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
     }, [messages, isAtBottom]);
-
-    useEffect(() => {
-        setIsAtBottom(true);
-        const frame = window.requestAnimationFrame(() => {
-            const container = messagesContainerRef.current;
-            if (container) container.scrollTop = container.scrollHeight;
-        });
-        return () => window.cancelAnimationFrame(frame);
-    }, [selectedConversationKey]);
 
     useEffect(() => {
         if (!showDeleteModal) return;
