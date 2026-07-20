@@ -22,7 +22,7 @@ vi.mock('@/db', () => {
       query: {
         remoteReposts: { findMany: vi.fn() },
         posts: { findMany: vi.fn() },
-        swarmContentClock: { findFirst: vi.fn().mockResolvedValue({ sequence: 0 }) },
+        swarmContentClock: { findFirst: vi.fn().mockResolvedValue({ sequence: 100 }) },
       },
     },
     posts: columns,
@@ -76,6 +76,13 @@ vi.mock('@/lib/nsfw/content-visibility', () => ({
 
 vi.mock('@/lib/search/post-index', () => ({
   searchIndexedPostIds: mocks.searchIndexedPostIds,
+}));
+
+vi.mock('@/lib/swarm/change-bundle', () => ({
+  createSignedChangeBundle: vi.fn(async (input) => ({
+    bundle: { ...input, type: 'ChangeBundle', version: 1 },
+    signature: 'origin-signature',
+  })),
 }));
 
 import { GET } from './route';
@@ -171,7 +178,7 @@ describe('GET /api/swarm/timeline local-author boundary', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       posts: [],
-      changeCursor: 42,
+      changeCursor: 100,
       hasMoreChanges: false,
       changes: [{
         sequence: 42,

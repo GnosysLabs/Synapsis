@@ -36,10 +36,16 @@ import { mapWithConcurrency } from '@/lib/async/concurrency';
 import { parseRemoteTimelineResponse } from './remote-timeline-payload';
 import { signedFederationRead } from './signed-read';
 import { SWARM_CONFIG } from './types';
-import { normalizeNodeDomain } from './node-domain';
+import { getPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
 import { markNodeSuccess } from './registry';
 import { decodeFeedCursorPosition, type FeedCursorPosition } from '@/lib/posts/feed-pagination';
 import { indexRemotePostContent, searchIndexedPostIds } from '@/lib/search/post-index';
+import {
+  cacheVerifiedChangeBundle,
+  getCachedVerifiedChangeBundle,
+  verifySignedChangeBundle,
+  type VerifiedChangeBundle,
+} from './change-bundle';
 
 const DEFAULT_SYNC_BATCH_SIZE = 8;
 const MAX_SYNC_BATCH_SIZE = 64;
@@ -699,9 +705,56 @@ async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: nu
     if (response.status < 200 || response.status >= 300) {
       throw new Error(`HTTP ${response.status}`);
     }
-    const parsed = parseRemoteTimelineResponse(response.json(), peer.domain);
-    await applyRemoteAccountDeletions(peer.domain, parsed.accountChanges);
-    const reconciliation = parsed.changeCursor !== undefined
+    const payload = response.json();
+    const parsed = parseRemoteTimelineResponse(payload, peer.domain);
+    if (!requestFullSnapshot && peer.changeCursor !== null && peer.changeCursor >= 0) {
+      const signedBundle = payload && typeof payload === 'object'
+        ? (payload as { signedChangeBundle?: unknown }).signedChangeBundle
+        : undefined;
+      if (signedBundle !== undefined) {
+        try {
+          const verified = await verifySignedChangeBundle(signedBundle, peer.domain);
+          if (verified.fromCursor !== peer.changeCursor
+            || verified.toCursor !== parsed.changeCursor
+            || verified.hasMoreChanges !== (parsed.hasMoreChanges === true)
+            || JSON.stringify(verified.signed.bundle.changes)
+              !== JSON.stringify((payload as { changes?: unknown }).changes)) {
+            throw new Error('Signed change bundle does not match its timeline page');
+          }
+          await cacheVerifiedChangeBundle(verified);
+        } catch (error) {
+          console.warn(`[ChangeBundle] Did not cache invalid bundle from ${peer.domain}:`, error);
+        }
+      }
+    }
+    const cached = await applyParsedPeerSync(peer, parsed, {
+      requestFullSnapshot,
+      directOriginRead: true,
+    });
+    return { domain: peer.domain, cached };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    await finishPeerSync(peer, { success: false, error: message });
+    return { domain: peer.domain, cached: 0, error: message };
+  }
+}
+
+type ParsedTimeline = ReturnType<typeof parseRemoteTimelineResponse>;
+
+async function applyParsedPeerSync(
+  peer: ClaimedPeer,
+  parsed: ParsedTimeline,
+  options: { requestFullSnapshot: boolean; directOriginRead: boolean },
+): Promise<number> {
+    if (peer.changeCursor !== null && peer.changeCursor >= 0
+      && parsed.changeCursor !== undefined
+      && parsed.changeCursor < peer.changeCursor) {
+      throw new Error('Remote change cursor regressed');
+    }
+    if (options.directOriginRead) {
+      await applyRemoteAccountDeletions(peer.domain, parsed.accountChanges);
+    }
+    const reconciliation = options.directOriginRead && parsed.changeCursor !== undefined
       ? await reconcileLegacyPeerReferences(peer)
       : {
           cursor: peer.legacyReconcileCursor,
@@ -723,7 +776,8 @@ async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: nu
     // The first change-stream snapshot is authoritative for this bounded
     // cache. Clearing only this peer repairs stale rows created before
     // tombstones existed without touching media or local interaction data.
-    if ((peer.changeCursor === null || requestFullSnapshot) && parsed.changeCursor !== undefined) {
+    if ((peer.changeCursor === null || options.requestFullSnapshot)
+      && parsed.changeCursor !== undefined) {
       await db.delete(remotePosts).where(eq(remotePosts.nodeDomain, peer.domain));
     }
 
@@ -748,7 +802,9 @@ async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: nu
     // A valid, bounded timeline response from a pinned peer is the successful
     // exchange that ends availability quarantine. Content is still treated as
     // untrusted and must pass all parsing/classification/display filters.
-    await markNodeSuccess(peer.domain, { verifiedContent: true });
+    if (options.directOriginRead) {
+      await markNodeSuccess(peer.domain, { verifiedContent: true });
+    }
     await finishPeerSync(peer, {
       success: true,
       highWaterAt: highWater?.at || null,
@@ -762,12 +818,86 @@ async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: nu
         || (reconciliation.progressed && !reconciliation.complete)
         || Boolean(peer.changeCursor === -1 && peer.highWaterAt && parsed.posts.length === 50),
     });
-    return { domain: peer.domain, cached };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    await finishPeerSync(peer, { success: false, error: message });
-    return { domain: peer.domain, cached: 0, error: message };
+    return cached;
+}
+
+async function deferClaimedPeer(peer: ClaimedPeer, nextAttemptAt: Date): Promise<void> {
+  const now = new Date();
+  await db.update(swarmContentSyncStates).set({
+    nextAttemptAt,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    lastError: null,
+    updatedAt: now,
+  }).where(and(
+    eq(swarmContentSyncStates.domain, peer.domain),
+    eq(swarmContentSyncStates.leaseOwner, peer.leaseOwner),
+  ));
+}
+
+async function fetchChangeBundleFromRelays(
+  origin: string,
+  afterCursor: number,
+  relayHints: readonly string[],
+): Promise<VerifiedChangeBundle | null> {
+  const ourDomain = getPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
+  const candidates = Array.from(new Set(relayHints))
+    .map(getPublicSwarmDomain)
+    .filter((domain): domain is string => Boolean(
+      domain && domain !== origin && domain !== ourDomain,
+    ))
+    .slice(0, 3);
+  if (candidates.length === 0) return null;
+  try {
+    return await Promise.any(candidates.map(async (relay) => {
+    try {
+      const url = new URL(`https://${relay}/api/swarm/change-bundles`);
+      url.searchParams.set('origin', origin);
+      url.searchParams.set('after', String(afterCursor));
+      const response = await signedFederationRead(url.toString(), {
+        headers: { Accept: 'application/json' },
+        timeoutMs: 2_500,
+        maxResponseBytes: 1024 * 1024,
+      });
+      if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
+      const verified = await verifySignedChangeBundle(response.json(), origin);
+      if (verified.fromCursor > afterCursor || verified.toCursor <= afterCursor) {
+        throw new Error('Relay returned a bundle that does not cover the requested cursor');
+      }
+      await cacheVerifiedChangeBundle(verified);
+      return verified;
+    } catch (error) {
+      console.warn(`[ChangeBundle] Relay ${relay} did not provide ${origin}:`, error);
+      throw error;
+    }
+    }));
+  } catch {
+    return null;
   }
+}
+
+async function applyVerifiedChangeBundle(
+  peer: ClaimedPeer,
+  bundle: VerifiedChangeBundle,
+  targetCursor: number,
+): Promise<number> {
+  const afterCursor = peer.changeCursor ?? -1;
+  if (afterCursor < 0
+    || bundle.fromCursor > afterCursor
+    || bundle.toCursor <= afterCursor) {
+    throw new Error('Verified change bundle does not cover the local cursor');
+  }
+  return applyParsedPeerSync(peer, {
+    posts: [],
+    changes: bundle.changes.filter((change) => change.sequence > afterCursor),
+    changeCursor: bundle.toCursor,
+    hasMoreChanges: bundle.hasMoreChanges || bundle.toCursor < targetCursor,
+    accountChanges: [],
+    nodeIsNsfw: bundle.nodeIsNsfw,
+  }, {
+    requestFullSnapshot: false,
+    directOriginRead: false,
+  });
 }
 
 /** Claim and synchronize a fair, fixed-size peer batch. */
@@ -810,6 +940,56 @@ export async function syncSwarmContentOrigin(
   const normalizedDomain = normalizeNodeDomain(domain);
   const [peer] = await claimDuePeers(1, normalizedDomain);
   return peer ? syncPeer(peer) : null;
+}
+
+/**
+ * Synchronize notice work through an origin-signed relay page when possible.
+ * Cache misses wait only until the bounded direct-origin fallback deadline.
+ */
+export async function syncSwarmContentNoticeOrigin(
+  domain: string,
+  options: {
+    targetCursor: number;
+    relayHints: readonly string[];
+    directFallbackAt: Date | null;
+  },
+): Promise<{ domain: string; cached: number; error?: string } | null> {
+  const normalizedDomain = normalizeNodeDomain(domain);
+  const [peer] = await claimDuePeers(1, normalizedDomain);
+  if (!peer) return null;
+
+  const fallbackAt = options.directFallbackAt?.getTime() ?? 0;
+  try {
+    const [cacheState] = await db.select({ count: sql<number>`count(*)` })
+      .from(remotePosts)
+      .where(eq(remotePosts.nodeDomain, peer.domain));
+    const hasIncrementalBase = Number(cacheState?.count || 0) > 0
+      && peer.changeCursor !== null
+      && peer.changeCursor >= 0;
+
+    if (hasIncrementalBase) {
+      const localBundle = await getCachedVerifiedChangeBundle(peer.domain, peer.changeCursor!);
+      const bundle = localBundle || await fetchChangeBundleFromRelays(
+        peer.domain,
+        peer.changeCursor!,
+        options.relayHints,
+      );
+      if (bundle) {
+        const cached = await applyVerifiedChangeBundle(peer, bundle, options.targetCursor);
+        return { domain: peer.domain, cached };
+      }
+    }
+
+    if (Date.now() < fallbackAt) {
+      await deferClaimedPeer(peer, new Date(Math.min(fallbackAt, Date.now() + 1_000)));
+      return null;
+    }
+    return await syncPeer(peer);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    await finishPeerSync(peer, { success: false, error: message });
+    return { domain: peer.domain, cached: 0, error: message };
+  }
 }
 
 /** Read a validated, bounded cross-node snapshot without remote request I/O. */

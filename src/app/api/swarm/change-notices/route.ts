@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     let duplicates = 0;
     const rejected: Record<string, number> = {};
     for (const entry of envelope.notices) {
-      const result = await acceptChangeNotice(entry);
+      const result = await acceptChangeNotice(entry, { relay: sender });
       if (result.status === 'accepted') accepted += 1;
       else if (result.status === 'duplicate') duplicates += 1;
       else rejected[result.reason] = (rejected[result.reason] || 0) + 1;

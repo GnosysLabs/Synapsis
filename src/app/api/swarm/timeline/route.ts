@@ -10,7 +10,6 @@ import {
   feedStories,
   media,
   posts,
-  remoteReposts,
   swarmAccountTombstones,
   swarmPostChanges,
   users,
@@ -25,6 +24,8 @@ import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
 import { parseBoundedInteger } from '@/lib/http/query';
 import { searchIndexedPostIds } from '@/lib/search/post-index';
+import { createSignedChangeBundle } from '@/lib/swarm/change-bundle';
+import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
 
 export interface SwarmPost {
   id: string;
@@ -242,11 +243,13 @@ export async function GET(request: NextRequest) {
     }
     // Capture the snapshot boundary before reading the snapshot. A concurrent
     // later mutation will then be replayed (safe) rather than skipped.
-    const initialChangeCursor = changesSince === null && trustedRead
+    const contentClockBoundary = trustedRead
       ? Number((await db.query.swarmContentClock.findFirst({ where: { id: 1 } }))?.sequence || 0)
       : null;
+    const initialChangeCursor = changesSince === null ? contentClockBoundary : null;
+    const changeBoundary = changesSince !== null ? contentClockBoundary : null;
     const accountChangeBoundary = accountsSince !== null
-      ? Number((await db.query.swarmContentClock.findFirst({ where: { id: 1 } }))?.sequence || 0)
+      ? contentClockBoundary
       : null;
     const accountChanges = accountsSince !== null
       ? await db.select({
@@ -485,13 +488,33 @@ export async function GET(request: NextRequest) {
         })
       : undefined;
 
+    // A short page reaches the captured snapshot boundary, including sequence
+    // gaps created by other stream types. A full page remains conservative and
+    // asks the receiver to request the next page before advancing farther.
+    const changeCursor = changesSince === null
+      ? initialChangeCursor
+      : changeRows.length === 50
+        ? changeRows.at(-1)?.sequence ?? changesSince
+        : changeBoundary ?? changesSince;
+    const hasMoreChanges = changesSince !== null ? changeRows.length === 50 : undefined;
+    const publicNodeDomain = getPublicSwarmDomain(nodeDomain);
+    const signedChangeBundle = changesSince !== null && publicNodeDomain
+      ? await createSignedChangeBundle({
+          origin: publicNodeDomain,
+          fromCursor: changesSince,
+          toCursor: changeCursor ?? changesSince,
+          changes: changes || [],
+          hasMoreChanges: hasMoreChanges === true,
+          nodeIsNsfw,
+        })
+      : undefined;
+
     return NextResponse.json({
       posts: changesSince === null ? responsePosts : [],
       changes,
-      changeCursor: changesSince === null
-        ? initialChangeCursor
-        : changeRows.at(-1)?.sequence ?? changesSince,
-      hasMoreChanges: changesSince !== null ? changeRows.length === 50 : undefined,
+      changeCursor,
+      hasMoreChanges,
+      signedChangeBundle,
       accountChanges: accountsSince !== null
         ? accountChanges.map((change): SwarmAccountDeletion => ({
             sequence: change.sequence,

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import {
   db,
   swarmChangeNoticeStates,
@@ -23,7 +24,7 @@ import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
 import { getNodesForChangeNotice, getTrustedSwarmReadPeerPublicKey } from './registry';
 import { safeFederationRequest } from './safe-federation-http';
 import { getNodePrivateKey, signPayload, verifySignature } from './signature';
-import { syncSwarmContentOrigin } from './content-cache';
+import { syncSwarmContentNoticeOrigin } from './content-cache';
 
 export const CHANGE_NOTICE_MAX_BODY_BYTES = 64 * 1024;
 export const CHANGE_NOTICE_MAX_BATCH = 50;
@@ -32,6 +33,11 @@ export const CHANGE_NOTICE_RELAY_ROUNDS = 5;
 export const CHANGE_NOTICE_ROUND_MS = 750;
 export const CHANGE_NOTICE_LIFETIME_MS = 120_000;
 export const CHANGE_NOTICE_CLOCK_SKEW_MS = 30_000;
+export const CHANGE_NOTICE_DIRECT_SPREAD_MS = 1_200;
+export const CHANGE_NOTICE_RELAY_PULL_MIN_MS = 500;
+export const CHANGE_NOTICE_RELAY_PULL_SPREAD_MS = 3_000;
+export const CHANGE_NOTICE_DIRECT_FALLBACK_MIN_MS = 15_000;
+export const CHANGE_NOTICE_DIRECT_FALLBACK_SPREAD_MS = 10_000;
 
 const PROCESSING_LEASE_MS = 15_000;
 const MAX_ORIGIN_SIGNATURE_BYTES = 2_048;
@@ -95,6 +101,86 @@ function parsedRelayTargets(value: string): string[] {
   }
 }
 
+function parsedRelayHints(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? Array.from(new Set(parsed.flatMap((value) => {
+          const domain = typeof value === 'string' ? getPublicSwarmDomain(value) : null;
+          return domain && domain === value ? [domain] : [];
+        }))).slice(0, 8)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function deterministicWindowOffset(
+  origin: string,
+  cursor: number,
+  receiver: string,
+  purpose: string,
+  spreadMs: number,
+): number {
+  if (spreadMs <= 0) return 0;
+  const word = crypto.createHash('sha256')
+    .update(`${purpose}\0${origin}\0${cursor}\0${receiver}`)
+    .digest()
+    .readUInt32BE(0);
+  return word % (spreadMs + 1);
+}
+
+export interface ChangeNoticePullSchedule {
+  pullAt: Date;
+  directFallbackAt: Date;
+  directRecipient: boolean;
+}
+
+/** Stable distribution prevents every receiver from waking in the same millisecond. */
+export function getChangeNoticePullSchedule(
+  notice: ChangeNoticeV1,
+  relay: string,
+  receiver: string,
+  nowMs = Date.now(),
+): ChangeNoticePullSchedule {
+  const issuedAtMs = Math.min(Date.parse(notice.issuedAt), nowMs);
+  const directRecipient = relay === notice.origin;
+  const pullDelay = directRecipient
+    ? deterministicWindowOffset(
+        notice.origin,
+        notice.cursor,
+        receiver,
+        'direct-pull',
+        CHANGE_NOTICE_DIRECT_SPREAD_MS,
+      )
+    : CHANGE_NOTICE_RELAY_PULL_MIN_MS + deterministicWindowOffset(
+        notice.origin,
+        notice.cursor,
+        receiver,
+        'relay-pull',
+        CHANGE_NOTICE_RELAY_PULL_SPREAD_MS,
+      );
+  const pullAtMs = Math.max(nowMs, issuedAtMs + pullDelay);
+  const fallbackAtMs = directRecipient
+    ? pullAtMs
+    : Math.max(
+        pullAtMs,
+        issuedAtMs + CHANGE_NOTICE_DIRECT_FALLBACK_MIN_MS
+          + deterministicWindowOffset(
+            notice.origin,
+            notice.cursor,
+            receiver,
+            'origin-fallback',
+            CHANGE_NOTICE_DIRECT_FALLBACK_SPREAD_MS,
+          ),
+      );
+  return {
+    pullAt: new Date(pullAtMs),
+    directFallbackAt: new Date(fallbackAtMs),
+    directRecipient,
+  };
+}
+
 async function originateLatestCursor(): Promise<boolean> {
   const origin = getPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
   if (!origin) return false;
@@ -136,6 +222,8 @@ async function originateLatestCursor(): Promise<boolean> {
     lastReceivedAt: null,
     lastForwardedAt: null,
     pullScheduledAt: null,
+    relayHintsJson: '[]',
+    directFallbackAt: null,
     lastDelayMs: 0,
     lastAttemptAt: null,
     lastError: null,
@@ -158,6 +246,8 @@ async function originateLatestCursor(): Promise<boolean> {
       lastReceivedAt: null,
       lastForwardedAt: null,
       pullScheduledAt: null,
+      relayHintsJson: '[]',
+      directFallbackAt: null,
       lastDelayMs: 0,
       lastAttemptAt: null,
       lastError: null,
@@ -171,22 +261,27 @@ async function originateLatestCursor(): Promise<boolean> {
   return inserted.length > 0;
 }
 
-async function scheduleImmediatePull(origin: string, cursor: number, now: Date): Promise<void> {
+async function scheduleContentPull(
+  origin: string,
+  cursor: number,
+  pullAt: Date,
+  now: Date,
+): Promise<void> {
   await db.update(swarmNodes).set({
     contentSequence: sql`max(coalesce(${swarmNodes.contentSequence}, 0), ${cursor})`,
     updatedAt: now,
   }).where(eq(swarmNodes.domain, origin));
   await db.insert(swarmContentSyncStates).values({
     domain: origin,
-    nextAttemptAt: now,
+    nextAttemptAt: pullAt,
   }).onConflictDoNothing();
-  // A verified higher cursor is authoritative scheduling evidence. Assigning
-  // the timestamp directly also avoids SQLite comparing an integer epoch with
-  // a bound Date inside min(), which can preserve the old future poll time.
   await db.update(swarmContentSyncStates).set({
-    nextAttemptAt: now,
+    nextAttemptAt: pullAt,
     updatedAt: now,
-  }).where(eq(swarmContentSyncStates.domain, origin));
+  }).where(and(
+    eq(swarmContentSyncStates.domain, origin),
+    gt(swarmContentSyncStates.nextAttemptAt, pullAt),
+  ));
 }
 
 export type ChangeNoticeAcceptance =
@@ -197,6 +292,7 @@ export type ChangeNoticeAcceptance =
 /** Authenticate and monotonically coalesce one immutable origin notice. */
 export async function acceptChangeNotice(
   entry: SignedChangeNotice,
+  context: { relay: string },
 ): Promise<ChangeNoticeAcceptance> {
   const notice = entry.notice;
   const origin = getPublicSwarmDomain(notice.origin);
@@ -208,16 +304,34 @@ export async function acceptChangeNotice(
   }
   const timingError = validateChangeNoticeTiming(notice);
   if (timingError) return { status: 'rejected', reason: timingError };
+  const relay = getPublicSwarmDomain(context.relay);
+  const receiver = getPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
+  if (!relay || relay !== context.relay || !receiver) {
+    return { status: 'rejected', reason: 'invalid relay hint' };
+  }
 
   const existing = await db.query.swarmChangeNoticeStates.findFirst({
     where: { originDomain: origin },
   });
   if (existing && notice.cursor < existing.sequence) return { status: 'duplicate' };
   if (existing && notice.cursor === existing.sequence) {
-    return existing.noticeJson === JSON.stringify(notice)
-      && existing.originSignature === entry.signature
-      ? { status: 'duplicate' }
-      : { status: 'rejected', reason: 'cursor conflict' };
+    if (existing.noticeJson !== JSON.stringify(notice)
+      || existing.originSignature !== entry.signature) {
+      return { status: 'rejected', reason: 'cursor conflict' };
+    }
+    const relayHints = Array.from(new Set([
+      ...parsedRelayHints(existing.relayHintsJson),
+      relay,
+    ])).slice(0, 8);
+    await db.update(swarmChangeNoticeStates).set({
+      relayHintsJson: JSON.stringify(relayHints),
+      lastReceivedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(swarmChangeNoticeStates.originDomain, origin),
+      eq(swarmChangeNoticeStates.sequence, notice.cursor),
+    ));
+    return { status: 'duplicate' };
   }
 
   const publicKey = await getTrustedSwarmReadPeerPublicKey(origin);
@@ -230,6 +344,20 @@ export async function acceptChangeNotice(
   const issuedAt = new Date(notice.issuedAt);
   const expiresAt = new Date(notice.expiresAt);
   const delayMs = Math.max(0, now.getTime() - issuedAt.getTime());
+  const schedule = getChangeNoticePullSchedule(notice, relay, receiver, now.getTime());
+  const previousSync = existing?.source === 'remote'
+    ? await db.query.swarmContentSyncStates.findFirst({ where: { domain: origin } })
+    : null;
+  const previousNoticeStillPending = Boolean(
+    existing
+    && Number(previousSync?.changeCursor ?? -1) < existing.sequence,
+  );
+  // A stream of higher notices may coalesce the cursor, but it must never
+  // postpone recovery forever when every relay is unavailable. Once caught
+  // up, a later notice starts a fresh relay window instead of staying direct.
+  const directFallbackAt = previousNoticeStillPending && existing?.directFallbackAt
+    ? new Date(Math.min(existing.directFallbackAt.getTime(), schedule.directFallbackAt.getTime()))
+    : schedule.directFallbackAt;
   const inserted = await db.insert(swarmChangeNoticeStates).values({
     originDomain: origin,
     sequence: notice.cursor,
@@ -245,7 +373,9 @@ export async function acceptChangeNotice(
     nextAttemptAt: now,
     firstSeenAt: now,
     lastReceivedAt: now,
-    pullScheduledAt: now,
+    pullScheduledAt: schedule.pullAt,
+    relayHintsJson: JSON.stringify([relay]),
+    directFallbackAt,
     lastDelayMs: delayMs,
     lastError: null,
     updatedAt: now,
@@ -266,7 +396,9 @@ export async function acceptChangeNotice(
       firstSeenAt: now,
       lastReceivedAt: now,
       lastForwardedAt: null,
-      pullScheduledAt: now,
+      pullScheduledAt: schedule.pullAt,
+      relayHintsJson: JSON.stringify([relay]),
+      directFallbackAt,
       lastDelayMs: delayMs,
       lastAttemptAt: null,
       lastError: null,
@@ -276,7 +408,7 @@ export async function acceptChangeNotice(
   }).returning({ sequence: swarmChangeNoticeStates.sequence });
   if (inserted.length === 0) return { status: 'duplicate' };
 
-  await scheduleImmediatePull(origin, notice.cursor, now);
+  await scheduleContentPull(origin, notice.cursor, schedule.pullAt, now);
   console.log(`[ChangeNotice] Accepted ${origin} cursor ${notice.cursor} after ${delayMs}ms`);
   return { status: 'accepted', delayMs };
 }
@@ -461,8 +593,12 @@ async function relayDueNotices(): Promise<{ relayed: number; targets: number }> 
 }
 
 async function pullNoticePrioritizedOrigins(): Promise<{ pulled: number; failed: number }> {
+  const now = new Date();
   const candidates = await db.select({
     origin: swarmChangeNoticeStates.originDomain,
+    cursor: swarmChangeNoticeStates.sequence,
+    relayHintsJson: swarmChangeNoticeStates.relayHintsJson,
+    directFallbackAt: swarmChangeNoticeStates.directFallbackAt,
   }).from(swarmChangeNoticeStates)
     .innerJoin(
       swarmContentSyncStates,
@@ -471,12 +607,22 @@ async function pullNoticePrioritizedOrigins(): Promise<{ pulled: number; failed:
     .where(and(
       eq(swarmChangeNoticeStates.source, 'remote'),
       isNotNull(swarmChangeNoticeStates.pullScheduledAt),
+      lte(swarmChangeNoticeStates.pullScheduledAt, now),
       sql`coalesce(${swarmContentSyncStates.changeCursor}, -1) < ${swarmChangeNoticeStates.sequence}`,
     ))
     .orderBy(asc(swarmChangeNoticeStates.pullScheduledAt))
     .limit(8);
-  const outcomes = await mapWithConcurrency(candidates, 4, async ({ origin }) => (
-    syncSwarmContentOrigin(origin)
+  const outcomes = await mapWithConcurrency(candidates, 4, async ({
+    origin,
+    cursor,
+    relayHintsJson,
+    directFallbackAt,
+  }) => (
+    syncSwarmContentNoticeOrigin(origin, {
+      targetCursor: cursor,
+      relayHints: parsedRelayHints(relayHintsJson),
+      directFallbackAt,
+    })
   ));
   return {
     pulled: outcomes.filter((outcome) => outcome && !outcome.error).length,

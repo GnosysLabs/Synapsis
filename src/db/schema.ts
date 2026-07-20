@@ -992,12 +992,40 @@ export const swarmChangeNoticeStates = sqliteTable('swarm_change_notice_states',
   lastReceivedAt: integer('last_received_at', { mode: 'timestamp' }),
   lastForwardedAt: integer('last_forwarded_at', { mode: 'timestamp' }),
   pullScheduledAt: integer('pull_scheduled_at', { mode: 'timestamp' }),
+  relayHintsJson: text('relay_hints_json').default('[]').notNull(),
+  directFallbackAt: integer('direct_fallback_at', { mode: 'timestamp' }),
   lastDelayMs: integer('last_delay_ms'),
   lastError: text('last_error'),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
   index('swarm_change_notice_due_idx').on(table.status, table.nextAttemptAt),
   index('swarm_change_notice_received_idx').on(table.source, table.lastReceivedAt),
+  index('swarm_change_notice_pull_idx').on(table.source, table.pullScheduledAt),
+]);
+
+/**
+ * Origin-signed incremental change pages cached by untrusted relays. A relay
+ * can withhold a page, but it cannot alter one without invalidating the
+ * origin signature checked by every receiver.
+ */
+export const swarmChangeBundles = sqliteTable('swarm_change_bundles', {
+  originDomain: text('origin_domain').notNull(),
+  fromCursor: integer('from_cursor').notNull(),
+  toCursor: integer('to_cursor').notNull(),
+  issuedAt: integer('issued_at', { mode: 'timestamp' }).notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  bundleJson: text('bundle_json').notNull(),
+  originSignature: text('origin_signature').notNull(),
+  cachedAt: integer('cached_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  lastAccessedAt: integer('last_accessed_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  primaryKey({
+    name: 'swarm_change_bundles_pk',
+    columns: [table.originDomain, table.fromCursor, table.toCursor],
+  }),
+  index('swarm_change_bundles_covering_idx')
+    .on(table.originDomain, table.fromCursor, table.toCursor, table.expiresAt),
+  index('swarm_change_bundles_expiry_idx').on(table.expiresAt),
 ]);
 
 /** Persistent fair scheduling for followed-account profile refreshes. */

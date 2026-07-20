@@ -8,6 +8,13 @@ const DEFAULTS = Object.freeze({
   minLinkMs: 25,
   maxLinkMs: 180,
   peerViewSize: 32,
+  directSpreadMs: 1_200,
+  relayPullMinMs: 500,
+  relayPullSpreadMs: 3_000,
+  fallbackMinMs: 15_000,
+  fallbackSpreadMs: 10_000,
+  pullRetryMs: 1_000,
+  bundleFetchMs: 150,
   trials: 5,
 });
 
@@ -95,10 +102,23 @@ function simulate(nodeCount, seed, options = DEFAULTS) {
   const receivedAt = new Float64Array(nodeCount);
   receivedAt.fill(Number.POSITIVE_INFINITY);
   receivedAt[0] = 0;
+  const receivedVia = new Int32Array(nodeCount);
+  receivedVia.fill(-1);
+  const relayHints = Array.from({ length: nodeCount }, () => new Set());
+  const contentAt = new Float64Array(nodeCount);
+  contentAt.fill(Number.POSITIVE_INFINITY);
+  contentAt[0] = 0;
+  const bundleCachedAt = new Float64Array(nodeCount);
+  bundleCachedAt.fill(Number.POSITIVE_INFINITY);
+  bundleCachedAt[0] = 0;
   const contacted = Array.from({ length: nodeCount }, () => new Set());
   const outbound = new Uint16Array(nodeCount);
   const events = new MinHeap();
   let messages = 0;
+  let originPulls = 0;
+  let originFallbacks = 0;
+  let relayBundleHits = 0;
+  let relayBundleMisses = 0;
 
   const scheduleRelayRounds = (node, firstSeenAt) => {
     for (let round = 0; round < options.relayRounds; round += 1) {
@@ -115,9 +135,61 @@ function simulate(nodeCount, seed, options = DEFAULTS) {
     const event = events.pop();
     if (!event) break;
     if (event.kind === 'delivery') {
+      relayHints[event.node].add(event.from);
       if (receivedAt[event.node] !== Number.POSITIVE_INFINITY) continue;
       receivedAt[event.node] = event.at;
+      receivedVia[event.node] = event.from;
       scheduleRelayRounds(event.node, event.at);
+      const direct = event.from === 0;
+      const pullAt = Math.max(event.at, direct
+        ? randomInteger(random, 0, options.directSpreadMs)
+        : options.relayPullMinMs
+          + randomInteger(random, 0, options.relayPullSpreadMs));
+      events.push({
+        at: pullAt,
+        kind: 'pull',
+        node: event.node,
+        relay: event.from,
+        direct,
+        fallbackAt: direct
+          ? pullAt
+          : Math.max(
+              pullAt,
+              options.fallbackMinMs + randomInteger(random, 0, options.fallbackSpreadMs),
+            ),
+      });
+      continue;
+    }
+    if (event.kind === 'pull') {
+      if (contentAt[event.node] !== Number.POSITIVE_INFINITY) continue;
+      if (event.direct) {
+        originPulls += 1;
+        contentAt[event.node] = event.at + options.bundleFetchMs;
+        bundleCachedAt[event.node] = contentAt[event.node];
+        continue;
+      }
+      const availableRelay = [...relayHints[event.node]]
+        .filter((relay) => relay !== 0)
+        .slice(0, 3)
+        .find((relay) => bundleCachedAt[relay] <= event.at);
+      if (availableRelay !== undefined) {
+        relayBundleHits += 1;
+        contentAt[event.node] = event.at + options.bundleFetchMs;
+        bundleCachedAt[event.node] = contentAt[event.node];
+        continue;
+      }
+      relayBundleMisses += 1;
+      if (event.at >= event.fallbackAt) {
+        originPulls += 1;
+        originFallbacks += 1;
+        contentAt[event.node] = event.at + options.bundleFetchMs;
+        bundleCachedAt[event.node] = contentAt[event.node];
+      } else {
+        events.push({
+          ...event,
+          at: Math.min(event.fallbackAt, event.at + options.pullRetryMs),
+        });
+      }
       continue;
     }
 
@@ -132,6 +204,7 @@ function simulate(nodeCount, seed, options = DEFAULTS) {
         at: event.at + randomInteger(random, options.minLinkMs, options.maxLinkMs),
         kind: 'delivery',
         node: target,
+        from: event.node,
       });
     }
   }
@@ -140,6 +213,9 @@ function simulate(nodeCount, seed, options = DEFAULTS) {
     .filter(Number.isFinite)
     .sort((left, right) => left - right);
   const reached = latencies.length;
+  const contentLatencies = [...contentAt]
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right);
   return {
     seed,
     nodes: nodeCount,
@@ -149,9 +225,18 @@ function simulate(nodeCount, seed, options = DEFAULTS) {
     p95Ms: percentile(latencies, 0.95),
     p99Ms: percentile(latencies, 0.99),
     maxMs: latencies.at(-1) ?? null,
+    contentReached: contentLatencies.length,
+    contentCoverage: contentLatencies.length / nodeCount,
+    contentP95Ms: percentile(contentLatencies, 0.95),
+    contentP99Ms: percentile(contentLatencies, 0.99),
+    contentMaxMs: contentLatencies.at(-1) ?? null,
     messages,
     messagesPerNode: messages / nodeCount,
     originContacts: outbound[0],
+    originPulls,
+    originFallbacks,
+    relayBundleHits,
+    relayBundleMisses,
     maxOutbound: Math.max(...outbound),
   };
 }
@@ -173,8 +258,12 @@ for (const nodes of parseNodeCounts(process.argv.slice(2))) {
 
 const failures = results.filter((result) => (
   result.coverage !== 1
+  || result.contentCoverage !== 1
   || result.p99Ms === null
   || result.p99Ms > 10_000
+  || result.contentP99Ms === null
+  || result.contentP99Ms > 8_000
+  || result.originPulls > 30
   || result.originContacts > DEFAULTS.fanout * DEFAULTS.relayRounds
   || result.maxOutbound > DEFAULTS.fanout * DEFAULTS.relayRounds
 ));
@@ -184,6 +273,8 @@ console.log(JSON.stringify({
   acceptance: {
     coverage: '100% of online nodes',
     p99LatencyMs: 10_000,
+    p99ContentLatencyMs: 8_000,
+    maxOriginPulls: 30,
     maxContactsPerNode: DEFAULTS.fanout * DEFAULTS.relayRounds,
   },
   results,
@@ -191,4 +282,3 @@ console.log(JSON.stringify({
 }, null, 2));
 
 if (failures.length > 0) process.exitCode = 1;
-
