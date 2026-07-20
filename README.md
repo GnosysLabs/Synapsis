@@ -32,8 +32,9 @@ The installer creates:
 - Embedded Turso database: `/var/lib/synapsis/synapsis.db`
 - Service: `synapsis.service`
 - Mandatory update timer: `synapsis-update.timer`
+- Admin update trigger: `synapsis-update.path`
 
-Every node pins `origin` to [`GnosysLabs/Synapsis`](https://github.com/GnosysLabs/Synapsis) on GitHub and checks `origin/main` about once per minute. When a new commit is available, Synapsis fast-forwards the checkout, replaces the single `backups/latest` database snapshot, installs dependencies, runs migrations, builds, and restarts automatically. The repository commit count is shown in the Network Info card; `/api/version` exposes both that number and the full deployed commit hash.
+Every node pins `origin` to [`GnosysLabs/Synapsis`](https://github.com/GnosysLabs/Synapsis) on GitHub. After each automatic check finishes, the next check runs 15 minutes later plus up to 30 minutes of fleet-wide random delay. When a new commit is available, Synapsis fast-forwards the checkout, replaces the single `backups/latest` database snapshot, installs dependencies, runs migrations, builds, and restarts automatically. An admin can skip the wait with **Update now** in Admin Settings. The repository commit count is shown in the Network Info card; `/api/version` exposes both that number and the full deployed commit hash.
 
 While an update is being installed, `synapsis-maintenance.service` temporarily serves a maintenance page on the node's configured `PORT`, using that node's logo and accent color. Existing reverse proxies continue receiving an HTTP response instead of showing a gateway error, and browsers automatically reload when Synapsis is ready.
 
@@ -50,6 +51,7 @@ Useful commands:
 ```bash
 sudo systemctl status synapsis
 sudo systemctl status synapsis-update.timer
+sudo systemctl status synapsis-update.path
 sudo journalctl -u synapsis -f
 sudo journalctl -u synapsis-update -f
 sudo /opt/synapsis/deploy/update.sh

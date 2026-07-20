@@ -1,0 +1,9 @@
+[Unit]
+Description=Start a Synapsis update when requested by an administrator
+
+[Path]
+PathExists=/var/lib/synapsis/update-requested
+Unit=synapsis-update.service
+
+[Install]
+WantedBy=multi-user.target

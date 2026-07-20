@@ -64,10 +64,12 @@ install -m 0644 "$APP_DIR/deploy/synapsis.service" /etc/systemd/system/synapsis.
 install -m 0644 "$APP_DIR/deploy/synapsis-maintenance.service" /etc/systemd/system/synapsis-maintenance.service
 install -m 0644 "$APP_DIR/deploy/synapsis-update.service" /etc/systemd/system/synapsis-update.service
 install -m 0644 "$APP_DIR/deploy/synapsis-update.timer" /etc/systemd/system/synapsis-update.timer
+install -m 0644 "$APP_DIR/deploy/synapsis-update.path" /etc/systemd/system/synapsis-update.path
 runuser -u synapsis -- git -C "$APP_DIR" rev-parse HEAD | install -m 0644 -o synapsis -g synapsis /dev/stdin "$DATA_DIR/deployed-commit"
 systemctl daemon-reload
 systemctl enable --now synapsis
 systemctl enable --now synapsis-update.timer
+systemctl enable --now synapsis-update.path
 
 echo "Synapsis is listening on http://127.0.0.1:${PORT}"
 echo "Edit $ENV_FILE, run $APP_DIR/deploy/update.sh, then configure your own reverse proxy."

@@ -6,11 +6,16 @@ DATA_DIR="${DATA_DIR:-/var/lib/synapsis}"
 ENV_FILE="${ENV_FILE:-/etc/synapsis.env}"
 BRANCH="${BRANCH:-main}"
 DEPLOYED_COMMIT_FILE="$DATA_DIR/deployed-commit"
+UPDATE_REQUEST_FILE="$DATA_DIR/update-requested"
 
 if [[ ${EUID} -ne 0 ]]; then
   echo "Run this updater as root." >&2
   exit 1
 fi
+
+# A web-admin request is a one-shot signal. Remove it before any fallible work
+# so a failed update cannot make the path unit retry in a tight loop.
+rm -f -- "$UPDATE_REQUEST_FILE"
 
 [[ -d "$APP_DIR/.git" ]] || { echo "No Synapsis checkout found at $APP_DIR" >&2; exit 1; }
 [[ -f "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
@@ -33,7 +38,7 @@ fi
 
 install_update_units() {
   units_changed=0
-  for unit in synapsis.service synapsis-maintenance.service synapsis-update.service synapsis-update.timer; do
+  for unit in synapsis.service synapsis-maintenance.service synapsis-update.service synapsis-update.timer synapsis-update.path; do
     if ! cmp -s "$APP_DIR/deploy/$unit" "/etc/systemd/system/$unit"; then
       install -m 0644 "$APP_DIR/deploy/$unit" "/etc/systemd/system/$unit"
       units_changed=1
@@ -43,12 +48,14 @@ install_update_units() {
   if [[ "$units_changed" == "1" ]]; then
     systemctl daemon-reload
   fi
-  if ! systemctl is-enabled --quiet synapsis-update.timer; then
-    systemctl enable synapsis-update.timer
-  fi
-  if ! systemctl is-active --quiet synapsis-update.timer; then
-    systemctl start synapsis-update.timer
-  fi
+  for trigger in synapsis-update.timer synapsis-update.path; do
+    if ! systemctl is-enabled --quiet "$trigger"; then
+      systemctl enable "$trigger"
+    fi
+    if ! systemctl is-active --quiet "$trigger"; then
+      systemctl start "$trigger"
+    fi
+  done
 }
 
 if [[ "${SYNAPSIS_APPLY_UPDATE:-0}" != "1" ]]; then

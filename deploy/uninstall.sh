@@ -11,14 +11,17 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 systemctl disable --now synapsis-update.timer 2>/dev/null || true
+systemctl disable --now synapsis-update.path 2>/dev/null || true
 systemctl stop synapsis-update.service 2>/dev/null || true
 systemctl stop synapsis-maintenance.service 2>/dev/null || true
 systemctl disable --now synapsis 2>/dev/null || true
 rm -f /etc/systemd/system/synapsis.service \
   /etc/systemd/system/synapsis-maintenance.service \
   /etc/systemd/system/synapsis-update.service \
-  /etc/systemd/system/synapsis-update.timer
+  /etc/systemd/system/synapsis-update.timer \
+  /etc/systemd/system/synapsis-update.path
 systemctl daemon-reload
+rm -f "$DATA_DIR/update-requested"
 rm -rf "$APP_DIR"
 
 if [[ "${1:-}" == "--purge-data" ]]; then

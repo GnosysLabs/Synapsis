@@ -38,6 +38,8 @@ export default function AdminPage() {
     const savedNodeSettingsRef = useRef<typeof nodeSettings | null>(null);
     const nodeSettingsChanged = hasUnsavedChanges(nodeSettings, savedNodeSettingsRef.current);
     const [savingSettings, setSavingSettings] = useState(false);
+    const [updateState, setUpdateState] = useState<'idle' | 'requesting' | 'requested' | 'error'>('idle');
+    const [updateFeedback, setUpdateFeedback] = useState<string | null>(null);
     const [isUploadingBanner, setIsUploadingBanner] = useState(false);
     const [bannerUploadError, setBannerUploadError] = useState<string | null>(null);
     const [showBannerStorageConfiguration, setShowBannerStorageConfiguration] = useState(false);
@@ -152,6 +154,32 @@ export default function AdminPage() {
 
         const saved = await handleSaveSettings(nextSettings, nodeDomain);
         if (!saved) setNodeSettings(previousSettings);
+    };
+
+    const handleUpdateNow = async () => {
+        if (updateState === 'requesting' || updateState === 'requested') return;
+
+        setUpdateState('requesting');
+        setUpdateFeedback(null);
+        try {
+            const response = await fetch('/api/admin/update', { method: 'POST' });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to request an update check.');
+            }
+
+            const message = data.alreadyQueued
+                ? 'An update check is already queued.'
+                : 'Update check requested. If an update is available, this node will enter maintenance mode shortly.';
+            setUpdateState('requested');
+            setUpdateFeedback(message);
+            showToast(message, 'success');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to request an update check.';
+            setUpdateState('error');
+            setUpdateFeedback(message);
+            showToast(message, 'error');
+        }
     };
 
     const uploadBannerFile = async (file: File, allowPrompt = true) => {
@@ -320,6 +348,46 @@ export default function AdminPage() {
                 <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>Loading settings...</div>
             ) : (
                 <div style={{ display: 'grid', gap: '16px', maxWidth: '600px', padding: '16px' }}>
+                            <section className="card" style={{ padding: '16px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' }}>
+                                    <div style={{ flex: '1 1 320px' }}>
+                                        <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px' }}>Software updates</h2>
+                                        <p style={{ fontSize: '12px', color: 'var(--foreground-secondary)', marginBottom: '8px' }}>
+                                            Updates are automatic. After each check finishes, this node waits 15 minutes plus up to 30 minutes of randomized delay before checking again. When an update is available, it installs it and briefly shows a maintenance page while Synapsis rebuilds and restarts.
+                                        </p>
+                                        <p style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', margin: 0 }}>
+                                            Update now skips that wait and asks the updater to check immediately.
+                                        </p>
+                                    </div>
+                                    <button
+                                        className="btn btn-primary"
+                                        type="button"
+                                        onClick={handleUpdateNow}
+                                        disabled={updateState === 'requesting' || updateState === 'requested'}
+                                        aria-busy={updateState === 'requesting'}
+                                        style={{ flexShrink: 0 }}
+                                    >
+                                        {updateState === 'requesting'
+                                            ? 'Requesting...'
+                                            : updateState === 'requested'
+                                                ? 'Update requested'
+                                                : 'Update now'}
+                                    </button>
+                                </div>
+                                {updateFeedback && (
+                                    <p
+                                        role={updateState === 'error' ? 'alert' : 'status'}
+                                        style={{
+                                            marginTop: '12px',
+                                            fontSize: '12px',
+                                            color: updateState === 'error' ? 'var(--error)' : 'var(--success)',
+                                        }}
+                                    >
+                                        {updateFeedback}
+                                    </p>
+                                )}
+                            </section>
+
                             <div>
                                 <label style={{ fontSize: '13px', fontWeight: 500, marginBottom: '4px', display: 'block' }}>Node Name</label>
                                 <input
