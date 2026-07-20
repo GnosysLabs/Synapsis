@@ -183,13 +183,11 @@ export async function upsertSwarmNode(
     await db.insert(swarmContentSyncStates).values({
       domain: normalizedDomain,
       nextAttemptAt: now,
-    }).onConflictDoUpdate({
-      target: swarmContentSyncStates.domain,
-      set: {
-        nextAttemptAt: sql`min(${swarmContentSyncStates.nextAttemptAt}, ${now})`,
-        updatedAt: now,
-      },
-    });
+    }).onConflictDoNothing();
+    await db.update(swarmContentSyncStates).set({
+      nextAttemptAt: now,
+      updatedAt: now,
+    }).where(eq(swarmContentSyncStates.domain, normalizedDomain));
   }
 
   return { isNew: false };

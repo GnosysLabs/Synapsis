@@ -179,13 +179,14 @@ async function scheduleImmediatePull(origin: string, cursor: number, now: Date):
   await db.insert(swarmContentSyncStates).values({
     domain: origin,
     nextAttemptAt: now,
-  }).onConflictDoUpdate({
-    target: swarmContentSyncStates.domain,
-    set: {
-      nextAttemptAt: sql`min(${swarmContentSyncStates.nextAttemptAt}, ${now})`,
-      updatedAt: now,
-    },
-  });
+  }).onConflictDoNothing();
+  // A verified higher cursor is authoritative scheduling evidence. Assigning
+  // the timestamp directly also avoids SQLite comparing an integer epoch with
+  // a bound Date inside min(), which can preserve the old future poll time.
+  await db.update(swarmContentSyncStates).set({
+    nextAttemptAt: now,
+    updatedAt: now,
+  }).where(eq(swarmContentSyncStates.domain, origin));
 }
 
 export type ChangeNoticeAcceptance =
