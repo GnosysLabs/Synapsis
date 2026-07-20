@@ -415,6 +415,38 @@ export async function getNodesForGossip(count: number): Promise<SwarmNodeInfo[]>
   return nodes.filter((node) => isPublicSwarmDomain(node.domain)).map(nodeToInfo);
 }
 
+/** Select a tiny established relay set without revisiting this cursor's peers. */
+export async function getNodesForChangeNotice(
+  count: number,
+  excludedDomains: readonly string[] = [],
+): Promise<SwarmNodeInfo[]> {
+  if (!db) return [];
+  const boundedCount = Math.max(0, Math.min(count, 3));
+  if (boundedCount === 0) return [];
+  const excluded = new Set(excludedDomains
+    .map(getPublicSwarmDomain)
+    .filter((domain): domain is string => Boolean(domain)));
+  const candidates = await db.query.swarmNodes.findMany({
+    where: { AND: [
+      { isActive: true },
+      { isBlocked: false },
+      { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
+      { nsfwClassificationKnown: true },
+      { publicKey: { isNotNull: true } },
+      { OR: [
+        { discoveredVia: 'direct' },
+        { discoveredVia: 'announcement' },
+      ] },
+    ] },
+    orderBy: () => sql`RANDOM()`,
+    limit: Math.min(64, boundedCount + excluded.size + 8),
+  });
+  return candidates
+    .filter((node) => isPublicSwarmDomain(node.domain) && !excluded.has(node.domain))
+    .slice(0, boundedCount)
+    .map(nodeToInfo);
+}
+
 /**
  * Rotate origin-verified identities through gossip so a large registry does
  * not permanently expose only its newest prefix. These entries are relayed as

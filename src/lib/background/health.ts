@@ -1,4 +1,4 @@
-export type BackgroundTaskName = 'gossip' | 'contentSync' | 'followSync' | 'mentions' | 'push';
+export type BackgroundTaskName = 'gossip' | 'contentSync' | 'changeNotice' | 'followSync' | 'mentions' | 'push';
 
 interface TaskHeartbeat {
   lastAttemptAt?: string;

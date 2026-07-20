@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { getBackgroundHealth } from '@/lib/background/health';
+import { getChangeNoticeHealth } from '@/lib/swarm/change-notice';
 
 const MIN_FREE_DISK_BYTES = 128 * 1024 * 1024;
 
@@ -49,6 +50,7 @@ export async function GET() {
             disk: diskHealthy,
             freeDiskBytes,
             background: getBackgroundHealth(),
+            changeNotices: await getChangeNoticeHealth(),
         },
     }, { status: healthy ? 200 : 503 });
 }

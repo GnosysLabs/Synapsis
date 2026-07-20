@@ -967,6 +967,39 @@ export const swarmContentSyncStates = sqliteTable('swarm_content_sync_states', {
   index('swarm_content_sync_success_idx').on(table.lastSuccessAt),
 ]);
 
+/**
+ * One durable, coalesced ChangeNoticeV1 cursor per origin. The immutable
+ * origin-signed payload survives relay retries while a strictly higher cursor
+ * atomically replaces older work.
+ */
+export const swarmChangeNoticeStates = sqliteTable('swarm_change_notice_states', {
+  originDomain: text('origin_domain').primaryKey(),
+  sequence: integer('sequence').notNull(),
+  issuedAt: integer('issued_at', { mode: 'timestamp' }).notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  noticeJson: text('notice_json').notNull(),
+  originSignature: text('origin_signature').notNull(),
+  source: text('source', { enum: ['local', 'remote'] }).notNull(),
+  status: text('status', {
+    enum: ['pending', 'processing', 'retry', 'delivered', 'dead'],
+  }).default('pending').notNull(),
+  relayRound: integer('relay_round').default(0).notNull(),
+  relayTargetsJson: text('relay_targets_json').default('[]').notNull(),
+  attempts: integer('attempts').default(0).notNull(),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  lastAttemptAt: integer('last_attempt_at', { mode: 'timestamp' }),
+  firstSeenAt: integer('first_seen_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  lastReceivedAt: integer('last_received_at', { mode: 'timestamp' }),
+  lastForwardedAt: integer('last_forwarded_at', { mode: 'timestamp' }),
+  pullScheduledAt: integer('pull_scheduled_at', { mode: 'timestamp' }),
+  lastDelayMs: integer('last_delay_ms'),
+  lastError: text('last_error'),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  index('swarm_change_notice_due_idx').on(table.status, table.nextAttemptAt),
+  index('swarm_change_notice_received_idx').on(table.source, table.lastReceivedAt),
+]);
+
 /** Persistent fair scheduling for followed-account profile refreshes. */
 export const remoteFollowSyncStates = sqliteTable('remote_follow_sync_states', {
   targetHandle: text('target_handle').primaryKey(),

@@ -163,7 +163,7 @@ export async function seedSwarmContentSyncStates(
   `);
 }
 
-async function claimDuePeers(batchSize: number): Promise<ClaimedPeer[]> {
+async function claimDuePeers(batchSize: number, onlyDomain?: string): Promise<ClaimedPeer[]> {
   await seedSwarmContentSyncStates();
   const now = new Date();
   const candidates = await db.select({
@@ -185,6 +185,7 @@ async function claimDuePeers(batchSize: number): Promise<ClaimedPeer[]> {
       eq(swarmNodes.nsfwClassificationKnown, true),
       sql`${swarmNodes.publicKey} is not null`,
       sql`${swarmNodes.discoveredVia} in ('direct', 'announcement')`,
+      ...(onlyDomain ? [eq(swarmContentSyncStates.domain, onlyDomain)] : []),
       lte(swarmContentSyncStates.nextAttemptAt, now),
       or(
         isNull(swarmContentSyncStates.leaseExpiresAt),
@@ -800,6 +801,15 @@ export async function syncSwarmContentBatch(): Promise<ContentSyncResult> {
     cached: domains.reduce((sum, item) => sum + item.cached, 0),
     domains,
   };
+}
+
+/** Pull one notice-prioritized origin while sharing the ordinary DB lease. */
+export async function syncSwarmContentOrigin(
+  domain: string,
+): Promise<{ domain: string; cached: number; error?: string } | null> {
+  const normalizedDomain = normalizeNodeDomain(domain);
+  const [peer] = await claimDuePeers(1, normalizedDomain);
+  return peer ? syncPeer(peer) : null;
 }
 
 /** Read a validated, bounded cross-node snapshot without remote request I/O. */

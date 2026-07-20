@@ -17,11 +17,13 @@ import { processPushDeliveryOutbox } from '@/lib/push/delivery';
 import { syncSwarmContentBatch } from '@/lib/swarm/content-cache';
 import { markBackgroundStarted, markBackgroundTask } from '@/lib/background/health';
 import { reconcilePostSearchIndex } from '@/lib/search/post-index';
+import { processChangeNoticeCycle } from '@/lib/swarm/change-notice';
 
 const GOSSIP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const REMOTE_SYNC_INTERVAL_MS = 60 * 1000; // 1 minute - keep feeds fresh
 const MENTION_DELIVERY_INTERVAL_MS = 30 * 1000;
 const PUSH_DELIVERY_INTERVAL_MS = 15 * 1000;
+const CHANGE_NOTICE_INTERVAL_MS = 1_000;
 const STARTUP_DELAY_MS = 10 * 1000; // Wait 10s for server to be ready
 
 let isStarted = false;
@@ -140,6 +142,22 @@ async function runSwarmContentSync() {
   }
 }
 
+async function runChangeNotices() {
+  try {
+    const result = await processChangeNoticeCycle();
+    markBackgroundTask('changeNotice', { success: true });
+    if (result.originated || result.relayed > 0 || result.immediatePulls > 0 || result.pullFailures > 0) {
+      log(
+        'CHANGE_NOTICE',
+        `Originated ${result.originated ? 1 : 0}, relayed ${result.relayed} cursors to ${result.relayTargets} peers, immediate pulls ${result.immediatePulls}, failures ${result.pullFailures}`,
+      );
+    }
+  } catch (error) {
+    markBackgroundTask('changeNotice', { success: false, error });
+    log('CHANGE_NOTICE', `Error: ${error}`);
+  }
+}
+
 export function startBackgroundTasks(origin?: string) {
   // Prevent double-start (Next.js can call register() multiple times in dev)
   if (isStarted) return;
@@ -152,6 +170,7 @@ export function startBackgroundTasks(origin?: string) {
 
   log('STARTUP', 'Background task scheduler starting...');
   log('STARTUP', `Gossip interval: ${GOSSIP_INTERVAL_MS / 1000}s, Remote sync interval: ${REMOTE_SYNC_INTERVAL_MS / 1000}s`);
+  log('STARTUP', `ChangeNoticeV1: ${publicSwarmEnabled ? 'active' : 'disabled for non-public node'}`);
 
   // Wait for server to be fully ready before starting tasks
   setTimeout(async () => {
@@ -171,6 +190,7 @@ export function startBackgroundTasks(origin?: string) {
     setTimeout(() => runRemoteSync(syncOrigin), 15 * 1000);
     if (publicSwarmEnabled) {
       setTimeout(runSwarmContentSync, 20 * 1000);
+      setTimeout(runChangeNotices, 5 * 1000);
     }
     
     // Schedule recurring tasks
@@ -179,6 +199,7 @@ export function startBackgroundTasks(origin?: string) {
     if (publicSwarmEnabled) {
       setInterval(runSwarmGossip, GOSSIP_INTERVAL_MS);
       setInterval(runSwarmContentSync, REMOTE_SYNC_INTERVAL_MS);
+      setInterval(runChangeNotices, CHANGE_NOTICE_INTERVAL_MS);
     }
     setInterval(() => runRemoteSync(syncOrigin), REMOTE_SYNC_INTERVAL_MS);
     
