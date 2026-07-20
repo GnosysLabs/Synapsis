@@ -1989,6 +1989,16 @@ a.btn-primary:visited {
   color: var(--accent);
 }
 
+.chat-message-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 140px;
+  line-height: 20px;
+  resize: none;
+  overflow-y: hidden;
+}
+
 .compose-collection-button {
   overflow: visible;
 }

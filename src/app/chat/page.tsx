@@ -117,6 +117,7 @@ interface ComposeIntentError {
 }
 
 const CHAT_REQUEST_TIMEOUT_MS = 15_000;
+const CHAT_COMPOSER_MAX_HEIGHT_PX = 140;
 
 interface PreparedSend {
     accountDid: string;
@@ -147,6 +148,14 @@ function getReplyPreview(message: Message, domain: string): string {
         return uniqueChatPostLinks(postLinks).length > 1 ? 'Shared posts' : 'Shared a post';
     }
     return getChatMessagePreview({ text: previewText, attachments: message.attachments });
+}
+
+function resizeChatComposer(input: HTMLTextAreaElement): void {
+    input.style.height = 'auto';
+    const borderHeight = input.offsetHeight - input.clientHeight;
+    const contentHeight = input.scrollHeight + borderHeight;
+    input.style.height = `${Math.min(contentHeight, CHAT_COMPOSER_MAX_HEIGHT_PX)}px`;
+    input.style.overflowY = contentHeight > CHAT_COMPOSER_MAX_HEIGHT_PX ? 'auto' : 'hidden';
 }
 
 export default function ChatPage() {
@@ -194,7 +203,7 @@ export default function ChatPage() {
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const messagesContainerRef = useRef<HTMLDivElement>(null);
-    const messageInputRef = useRef<HTMLInputElement>(null);
+    const messageInputRef = useRef<HTMLTextAreaElement>(null);
     const mediaInputRef = useRef<HTMLInputElement>(null);
     const storageCheckInFlightRef = useRef(false);
     const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
@@ -217,6 +226,10 @@ export default function ChatPage() {
     const preparedSendsRef = useRef(new Map<string, PreparedSend>());
     const activeSendKeysRef = useRef(new Set<string>());
     const e2eeMaterialRef = useRef<{ accountDid: string; material: E2EEKeyMaterial } | null>(null);
+    const setMessageInputRef = useCallback((input: HTMLTextAreaElement | null) => {
+        messageInputRef.current = input;
+        if (input) resizeChatComposer(input);
+    }, []);
 
     renderedAccountDidRef.current = user?.did ?? null;
     attachmentDraftsRef.current = attachmentDrafts;
@@ -1246,6 +1259,17 @@ export default function ChatPage() {
         suppressSmoothScrollRef.current = true;
     }, [loadingMessages, messages.length, selectedConversationKey]);
 
+    useLayoutEffect(() => {
+        const input = messageInputRef.current;
+        if (!input) return;
+
+        resizeChatComposer(input);
+
+        if (isAtBottom && messagesContainerRef.current) {
+            messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+        }
+    }, [isAtBottom, newMessage, selectedConversationKey]);
+
     // Auto-scroll later messages only if the user was already at the bottom.
     useEffect(() => {
         if (suppressSmoothScrollRef.current) {
@@ -1740,7 +1764,7 @@ export default function ChatPage() {
                                     {selectedAttachments.length} of {CHAT_ATTACHMENT_LIMIT} attachments
                                 </div>
                             )}
-                            <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
                                 <button
                                     type="button"
                                     className="compose-media-button"
@@ -1760,14 +1784,22 @@ export default function ChatPage() {
                                     disabled={sending || selectedAttachments.length >= CHAT_ATTACHMENT_LIMIT}
                                     className="compose-media-input"
                                 />
-                                <input
-                                    ref={messageInputRef}
-                                    type="text"
-                                    className="input"
-                                    style={{ flex: 1 }}
+                                <textarea
+                                    ref={setMessageInputRef}
+                                    className="input chat-message-input"
+                                    rows={1}
                                     placeholder="Type an encrypted message..."
                                     value={newMessage}
                                     onChange={e => updateSelectedDraft(e.target.value)}
+                                    onKeyDown={(event) => {
+                                        if (event.key !== 'Enter'
+                                            || event.shiftKey
+                                            || event.nativeEvent.isComposing) return;
+                                        event.preventDefault();
+                                        if (canSendMessage && !sending) {
+                                            event.currentTarget.form?.requestSubmit();
+                                        }
+                                    }}
                                     aria-label={`Encrypted message to ${selectedHandle}`}
                                     aria-describedby={sendError || selectedAttachmentError ? 'encrypted-send-error' : undefined}
                                 />
