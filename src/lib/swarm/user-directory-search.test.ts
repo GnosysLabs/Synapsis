@@ -93,4 +93,16 @@ describe('searchKnownSwarmUsers', () => {
             expect.objectContaining({ knownNode: true }),
         );
     });
+
+    it('keeps the full handle out of the display-name fallback', async () => {
+        mocks.fetchDirectory.mockResolvedValue([]);
+
+        await expect(searchKnownSwarmUsers('theredpillgod', {
+            limit: 8,
+            localDomain: 'local.com',
+        })).resolves.toMatchObject([{
+            handle: 'theredpillgod@rprh.link',
+            displayName: 'theredpillgod',
+        }]);
+    });
 });

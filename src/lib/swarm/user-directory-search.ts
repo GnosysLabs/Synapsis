@@ -80,7 +80,7 @@ export async function searchKnownSwarmUsers(
         seen.add(canonicalHandle);
         return [{
             handle: canonicalHandle,
-            displayName: row.handle,
+            displayName: bareHandle,
             avatarUrl: null,
             isRemote: true,
             nodeDomain: domain,
