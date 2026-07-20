@@ -150,4 +150,33 @@ describe('GET /api/node public response', () => {
     expect(body).not.toHaveProperty('logoData');
     expect(body).not.toHaveProperty('faviconData');
   });
+
+  it('does not advertise a widget when the server key pair is incomplete', async () => {
+    mocks.getSensitiveContentViewerAccess.mockResolvedValue({
+      localNodeIsNsfw: false,
+      canViewSensitive: false,
+    });
+    mocks.findFirst.mockResolvedValue({
+      domain: 'adult.example',
+      name: 'Misconfigured node',
+      description: null,
+      longDescription: null,
+      rules: null,
+      bannerUrl: null,
+      logoUrl: null,
+      faviconUrl: null,
+      logoData: null,
+      faviconData: null,
+      accentColor: '#FFFFFF',
+      isNsfw: false,
+      turnstileSiteKey: 'site-key-without-secret',
+      turnstileSecretKey: null,
+      createdAt: new Date('2026-07-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-07-17T00:00:00.000Z'),
+    });
+
+    const body = await (await GET()).json();
+
+    expect(body.turnstileSiteKey).toBeNull();
+  });
 });

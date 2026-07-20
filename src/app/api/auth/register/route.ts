@@ -1,42 +1,40 @@
 import { NextResponse } from 'next/server';
-import { registerUser, createSession } from '@/lib/auth';
-import { db, users } from '@/db';
 import { eq } from 'drizzle-orm';
-import { verifyTurnstileToken } from '@/lib/turnstile';
 import { z } from 'zod';
+
+import { db, users } from '@/db';
+import { registerUser, createSession } from '@/lib/auth';
+import {
+    admitRegistrationRequest,
+    createAuthAbuseContext,
+    tryAcquireAuthWork,
+} from '@/lib/auth/abuse-protection';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { getTurnstileConfiguration, verifyTurnstileToken } from '@/lib/turnstile';
 
 const registerSchema = z.object({
     handle: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/),
     email: z.string().email(),
-    password: z.string().min(8),
+    password: z.string().min(8).max(1_024),
     displayName: z.string().trim().max(50).optional(),
-    turnstileToken: z.string().nullable().optional(),
+    turnstileToken: z.string().max(4_096).nullable().optional(),
     confirmAge: z.boolean().optional(),
 });
+
+function retryResponse(message: string, retryAfterSeconds: number) {
+    return NextResponse.json(
+        { error: message, retryAfterSeconds },
+        {
+            status: 429,
+            headers: { 'Retry-After': String(Math.max(1, retryAfterSeconds)) },
+        },
+    );
+}
 
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-
-        // Log registration attempt (excluding password)
-        console.log('Registration attempt:', { handle: body.handle, email: body.email });
-
         const data = registerSchema.parse(body);
-
-        // Verify Turnstile token if provided
-        if (data.turnstileToken) {
-            const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || undefined;
-            const isValid = await verifyTurnstileToken(data.turnstileToken, ip);
-            if (!isValid) {
-                console.error('Turnstile verification failed for handle:', data.handle);
-                return NextResponse.json(
-                    { error: 'Bot verification failed. Please try again.' },
-                    { status: 400 }
-                );
-            }
-        }
-
         const nodeIsNsfw = await requireLocalNodeNsfwClassification();
         if (nodeIsNsfw && data.confirmAge !== true) {
             return NextResponse.json({
@@ -45,67 +43,101 @@ export async function POST(request: Request) {
             }, { status: 400 });
         }
 
-        const user = await registerUser(
-            data.handle,
-            data.email,
-            data.password,
-            data.displayName
-        );
-
-        const verifiedAt = nodeIsNsfw ? new Date() : user.ageVerifiedAt;
-        if (nodeIsNsfw) {
-            // Auto-enable NSFW viewing and mark account as NSFW for users on NSFW nodes
-            await db.update(users)
-                .set({
-                    nsfwEnabled: true,
-                    isNsfw: true,
-                    ageVerifiedAt: verifiedAt,
-                })
-                .where(eq(users.id, user.id));
+        const abuseContext = createAuthAbuseContext(request, data.email);
+        const admission = await admitRegistrationRequest(abuseContext);
+        if (!admission.allowed) {
+            return retryResponse(
+                'Too many account-creation attempts. Please try again later.',
+                admission.retryAfterSeconds,
+            );
         }
 
-        // Create session for new user
-        await createSession(user.id);
+        // Registration becomes interactive after repeated attempts from the
+        // same client or for the same identity. The first normal attempt stays
+        // fast and independent of Cloudflare.
+        if (admission.challengeRequired) {
+            const configuration = await getTurnstileConfiguration();
+            if (configuration) {
+                if (!data.turnstileToken) {
+                    return NextResponse.json({
+                        error: 'Please complete the security check to continue.',
+                        requiresTurnstile: true,
+                        turnstileAction: 'register',
+                    }, { status: 403 });
+                }
+                const verified = await verifyTurnstileToken(data.turnstileToken, {
+                    action: 'register',
+                    configuration,
+                    ip: abuseContext.clientAddress,
+                });
+                if (!verified) {
+                    return NextResponse.json({
+                        error: 'The security check failed. Please try it again.',
+                        requiresTurnstile: true,
+                        turnstileAction: 'register',
+                    }, { status: 403 });
+                }
+            }
+        }
 
-        return NextResponse.json({
-            success: true,
-            user: {
-                id: user.id,
-                handle: user.handle,
-                displayName: user.displayName,
-                did: user.did,
-                publicKey: user.publicKey,
-                privateKeyEncrypted: user.privateKeyEncrypted, // Client will decrypt with password
-                isNsfw: nodeIsNsfw ? true : user.isNsfw,
-                nsfwEnabled: nodeIsNsfw ? true : user.nsfwEnabled,
-                ageVerifiedAt: verifiedAt?.toISOString() || null,
-            },
-        });
+        const releaseWork = tryAcquireAuthWork('register');
+        if (!releaseWork) {
+            return retryResponse('Account creation is busy. Please try again shortly.', 3);
+        }
+
+        try {
+            const user = await registerUser(
+                data.handle,
+                data.email,
+                data.password,
+                data.displayName,
+            );
+
+            const verifiedAt = nodeIsNsfw ? new Date() : user.ageVerifiedAt;
+            if (nodeIsNsfw) {
+                await db.update(users)
+                    .set({
+                        nsfwEnabled: true,
+                        isNsfw: true,
+                        ageVerifiedAt: verifiedAt,
+                    })
+                    .where(eq(users.id, user.id));
+            }
+
+            await createSession(user.id);
+            return NextResponse.json({
+                success: true,
+                user: {
+                    id: user.id,
+                    handle: user.handle,
+                    displayName: user.displayName,
+                    did: user.did,
+                    publicKey: user.publicKey,
+                    privateKeyEncrypted: user.privateKeyEncrypted,
+                    isNsfw: nodeIsNsfw ? true : user.isNsfw,
+                    nsfwEnabled: nodeIsNsfw ? true : user.nsfwEnabled,
+                    ageVerifiedAt: verifiedAt?.toISOString() || null,
+                },
+            });
+        } finally {
+            releaseWork();
+        }
     } catch (error) {
-        console.error('Registration error detailed:', error);
-
         if (error instanceof z.ZodError) {
-            console.error('Validation error:', error.issues);
             return NextResponse.json(
                 { error: 'Invalid input', details: error.issues },
-                { status: 400 }
+                { status: 400 },
             );
         }
 
         const errorMessage = error instanceof Error ? error.message : 'Registration failed';
-
-        // Return 400 for known business logic errors
-        if (errorMessage.includes('taken') || errorMessage.includes('registered') || errorMessage.includes('Handle must be')) {
-            return NextResponse.json(
-                { error: errorMessage },
-                { status: 400 }
-            );
+        if (errorMessage.includes('taken')
+            || errorMessage.includes('registered')
+            || errorMessage.includes('Handle must')) {
+            return NextResponse.json({ error: errorMessage }, { status: 400 });
         }
 
-        // Return 500 for everything else so we can see it's a server error
-        return NextResponse.json(
-            { error: `Server error: ${errorMessage}` },
-            { status: 500 }
-        );
+        console.error('Registration error:', error);
+        return NextResponse.json({ error: 'Account creation failed' }, { status: 500 });
     }
 }

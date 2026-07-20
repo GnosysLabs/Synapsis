@@ -91,6 +91,24 @@ export const users = sqliteTable('users', {
   index('users_nsfw_idx').on(table.isNsfw),
 ]);
 
+/**
+ * Durable, privacy-preserving counters for unauthenticated login and
+ * registration abuse. Keys are HMAC digests, never raw addresses or emails.
+ * Fixed-window rows keep the hot-path write atomic across server processes.
+ */
+export const authAbuseQuotaBuckets = sqliteTable('auth_abuse_quota_buckets', {
+  bucketKey: text('bucket_key').notNull(),
+  bucketStartMs: integer('bucket_start_ms').notNull(),
+  eventCount: integer('event_count').default(0).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  primaryKey({
+    name: 'auth_abuse_quota_buckets_pk',
+    columns: [table.bucketKey, table.bucketStartMs],
+  }),
+  index('auth_abuse_quota_buckets_start_idx').on(table.bucketStartMs),
+]);
+
 // ============================================
 // STUFFBOX CONNECTIONS
 // ============================================

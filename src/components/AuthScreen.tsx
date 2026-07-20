@@ -13,8 +13,10 @@ declare global {
         turnstile?: {
             render: (element: string | HTMLElement, options: {
                 sitekey: string;
+                action?: 'login' | 'register';
+                retry?: 'auto' | 'never';
                 callback?: (token: string) => void;
-                'error-callback'?: () => void;
+                'error-callback'?: (errorCode: string) => void;
                 'expired-callback'?: () => void;
             }) => string;
             reset: (widgetId: string) => void;
@@ -45,6 +47,8 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
     const [ageVerified, setAgeVerified] = useState(false);
     const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
     const [turnstileLoaded, setTurnstileLoaded] = useState(false);
+    const [turnstileRequired, setTurnstileRequired] = useState(false);
+    const [turnstileError, setTurnstileError] = useState('');
     const turnstileRef = useRef<HTMLDivElement>(null);
     const turnstileWidgetId = useRef<string | null>(null);
 
@@ -59,6 +63,23 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             turnstileWidgetId.current = null;
         }
         setTurnstileToken(null);
+    };
+
+    const selectMode = (nextMode: 'login' | 'register' | 'import') => {
+        const widgetId = turnstileWidgetId.current;
+        if (widgetId && window.turnstile) {
+            try {
+                window.turnstile.remove(widgetId);
+            } catch {
+                // The widget may already have removed itself.
+            }
+        }
+        turnstileWidgetId.current = null;
+        setTurnstileToken(null);
+        setTurnstileRequired(false);
+        setTurnstileError('');
+        setError('');
+        setMode(nextMode);
     };
 
     const { login } = useAuth();
@@ -95,16 +116,17 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             });
     }, []);
 
-    // Load Turnstile script if site key is available
+    // Load Cloudflare only after the server asks for a challenge. Normal
+    // sign-in and registration never load the third-party widget.
     useEffect(() => {
-        if (!nodeInfo.turnstileSiteKey) return;
+        if (!turnstileRequired || !nodeInfo.turnstileSiteKey) return;
 
         if (window.turnstile) {
             setTurnstileLoaded(true);
             return;
         }
 
-        const source = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+        const source = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
         let script = document.querySelector<HTMLScriptElement>(`script[src="${source}"]`);
         const handleLoad = () => setTurnstileLoaded(true);
 
@@ -120,11 +142,12 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
         return () => {
             script?.removeEventListener('load', handleLoad);
         };
-    }, [nodeInfo.turnstileSiteKey]);
+    }, [nodeInfo.turnstileSiteKey, turnstileRequired]);
 
     // Render Turnstile widget when ready
     useEffect(() => {
-        if (!turnstileLoaded || !nodeInfo.turnstileSiteKey || !turnstileRef.current || mode === 'import') return;
+        if (!turnstileRequired || !turnstileLoaded || !nodeInfo.turnstileSiteKey
+            || !turnstileRef.current || mode === 'import') return;
 
         // Clean up previous widget
         if (turnstileWidgetId.current && window.turnstile) {
@@ -140,14 +163,21 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
         if (window.turnstile) {
             turnstileWidgetId.current = window.turnstile.render(turnstileRef.current, {
                 sitekey: nodeInfo.turnstileSiteKey,
+                action: mode === 'register' ? 'register' : 'login',
+                retry: 'never',
                 callback: (token: string) => {
                     setTurnstileToken(token);
+                    setTurnstileError('');
                 },
                 'error-callback': () => {
                     setTurnstileToken(null);
+                    setTurnstileError(
+                        'The security check could not run. Retry it, or allow challenges.cloudflare.com in your browser privacy settings.',
+                    );
                 },
                 'expired-callback': () => {
                     setTurnstileToken(null);
+                    setTurnstileError('The security check expired. Please retry it.');
                 },
             });
         }
@@ -165,7 +195,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                 }
             }
         };
-    }, [turnstileLoaded, nodeInfo.turnstileSiteKey, mode]);
+    }, [turnstileLoaded, nodeInfo.turnstileSiteKey, mode, turnstileRequired]);
 
     // Handle availability check
     useEffect(() => {
@@ -270,8 +300,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             return;
         }
 
-        // Check if Turnstile is required but not completed
-        if (nodeInfo.turnstileSiteKey && !turnstileToken) {
+        if (turnstileRequired && !turnstileToken) {
             setError('Please complete the verification challenge');
             return;
         }
@@ -281,12 +310,11 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
         try {
             const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
 
-            // Only include turnstileToken if Turnstile is enabled (site key exists)
             const body = mode === 'login'
                 ? {
                     email,
                     password,
-                    ...(nodeInfo.turnstileSiteKey ? { turnstileToken } : {})
+                    ...(turnstileToken ? { turnstileToken } : {})
                 }
                 : {
                     email,
@@ -294,7 +322,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                     handle,
                     displayName,
                     confirmAge: nodeInfo.isNsfw ? ageVerified : undefined,
-                    ...(nodeInfo.turnstileSiteKey ? { turnstileToken } : {})
+                    ...(turnstileToken ? { turnstileToken } : {})
                 };
 
             const res = await fetch(endpoint, {
@@ -307,6 +335,13 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             const data = await res.json();
 
             if (!res.ok) {
+                if (data.requiresTurnstile && nodeInfo.turnstileSiteKey) {
+                    setTurnstileRequired(true);
+                    setTurnstileToken(null);
+                    setTurnstileError('');
+                    setError(data.error || 'Please complete the security check to continue.');
+                    return;
+                }
                 throw new Error(data.error || 'Authentication failed');
             }
 
@@ -336,8 +371,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
             completePostSignInNavigation(router, onSuccess);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
-            // Reset Turnstile on error
-            resetTurnstile();
+            if (turnstileRequired) resetTurnstile();
         } finally {
             setLoading(false);
         }
@@ -399,7 +433,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                     gap: '4px'
                 }}>
                     <button
-                        onClick={() => setMode('login')}
+                        onClick={() => selectMode('login')}
                         style={{
                             flex: 1,
                             padding: '10px',
@@ -415,7 +449,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                         Login
                     </button>
                     <button
-                        onClick={() => setMode('register')}
+                        onClick={() => selectMode('register')}
                         style={{
                             flex: 1,
                             padding: '10px',
@@ -431,7 +465,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                         Register
                     </button>
                     <button
-                        onClick={() => setMode('import')}
+                        onClick={() => selectMode('import')}
                         style={{
                             flex: 1,
                             padding: '10px',
@@ -647,9 +681,27 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                             </div>
                         )}
 
-                        {nodeInfo.turnstileSiteKey && (
-                            <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'center' }}>
-                                <div ref={turnstileRef}></div>
+                        {turnstileRequired && nodeInfo.turnstileSiteKey && (
+                            <div style={{ marginBottom: '20px', textAlign: 'center' }}>
+                                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                    <div ref={turnstileRef}></div>
+                                </div>
+                                {turnstileError && (
+                                    <div style={{ marginTop: '10px', fontSize: '13px', color: 'var(--error)' }}>
+                                        <div>{turnstileError}</div>
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            style={{ marginTop: '8px', padding: '6px 12px' }}
+                                            onClick={() => {
+                                                setTurnstileError('');
+                                                resetTurnstile();
+                                            }}
+                                        >
+                                            Retry verification
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -658,7 +710,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                             className="btn btn-primary btn-lg"
                             style={{ width: '100%' }}
                             disabled={loading || 
-                                (!!nodeInfo.turnstileSiteKey && !turnstileToken) ||
+                                (turnstileRequired && !turnstileToken) ||
                                 (mode === 'register' && (
                                     !handle || handle.length < 3 ||
                                     !email ||

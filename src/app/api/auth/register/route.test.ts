@@ -4,6 +4,10 @@ const mocks = vi.hoisted(() => ({
     registerUser: vi.fn(),
     createSession: vi.fn(),
     verifyTurnstileToken: vi.fn(),
+    getTurnstileConfiguration: vi.fn(),
+    admitRegistrationRequest: vi.fn(),
+    createAuthAbuseContext: vi.fn(),
+    tryAcquireAuthWork: vi.fn(),
     requireClassification: vi.fn(),
     update: vi.fn(),
     set: vi.fn(),
@@ -17,6 +21,13 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/turnstile', () => ({
     verifyTurnstileToken: mocks.verifyTurnstileToken,
+    getTurnstileConfiguration: mocks.getTurnstileConfiguration,
+}));
+
+vi.mock('@/lib/auth/abuse-protection', () => ({
+    admitRegistrationRequest: mocks.admitRegistrationRequest,
+    createAuthAbuseContext: mocks.createAuthAbuseContext,
+    tryAcquireAuthWork: mocks.tryAcquireAuthWork,
 }));
 
 vi.mock('@/lib/node/local-node', () => ({
@@ -51,6 +62,19 @@ describe('adult-node registration', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.requireClassification.mockResolvedValue(true);
+        mocks.createAuthAbuseContext.mockReturnValue({
+            clientKey: 'client',
+            identityKey: 'identity',
+            clientAddress: '203.0.113.8',
+        });
+        mocks.admitRegistrationRequest.mockResolvedValue({
+            allowed: true,
+            challengeRequired: false,
+            retryAfterSeconds: 0,
+        });
+        mocks.tryAcquireAuthWork.mockImplementation(() => vi.fn());
+        mocks.getTurnstileConfiguration.mockResolvedValue(null);
+        mocks.verifyTurnstileToken.mockResolvedValue(true);
         mocks.where.mockResolvedValue([]);
         mocks.set.mockReturnValue({ where: mocks.where });
         mocks.update.mockReturnValue({ set: mocks.set });
@@ -95,5 +119,41 @@ describe('adult-node registration', () => {
                 ageVerifiedAt: expect.any(String),
             },
         });
+    });
+
+    it('requires a server-validated challenge only after abuse signals', async () => {
+        mocks.admitRegistrationRequest.mockResolvedValue({
+            allowed: true,
+            challengeRequired: true,
+            retryAfterSeconds: 0,
+        });
+        mocks.getTurnstileConfiguration.mockResolvedValue({
+            siteKey: 'site-key',
+            secretKey: 'secret-key',
+            hostname: 'node.social',
+        });
+
+        const response = await POST(registrationRequest(true));
+
+        expect(response.status).toBe(403);
+        await expect(response.json()).resolves.toMatchObject({
+            requiresTurnstile: true,
+            turnstileAction: 'register',
+        });
+        expect(mocks.registerUser).not.toHaveBeenCalled();
+    });
+
+    it('returns a durable quota response before expensive registration work', async () => {
+        mocks.admitRegistrationRequest.mockResolvedValue({
+            allowed: false,
+            challengeRequired: true,
+            retryAfterSeconds: 90,
+        });
+
+        const response = await POST(registrationRequest(true));
+
+        expect(response.status).toBe(429);
+        expect(response.headers.get('retry-after')).toBe('90');
+        expect(mocks.registerUser).not.toHaveBeenCalled();
     });
 });

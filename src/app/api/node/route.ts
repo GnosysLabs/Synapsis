@@ -92,7 +92,11 @@ export async function GET() {
             accentColor: node.accentColor,
             publicKey,
             isNsfw: node.isNsfw,
-            turnstileSiteKey: node.turnstileSiteKey,
+            // A partial configuration is not usable and must not make clients
+            // load a widget that the server cannot validate.
+            turnstileSiteKey: node.turnstileSiteKey && node.turnstileSecretKey
+                ? node.turnstileSiteKey
+                : null,
             createdAt: node.createdAt,
             updatedAt: node.updatedAt,
             admins,
