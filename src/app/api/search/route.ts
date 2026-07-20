@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { db, mutedNodes, users, posts } from '@/db';
-import { like, or, and, eq, isNull, notLike } from 'drizzle-orm';
+import { db, follows, mutedNodes, users, posts, remoteFollows } from '@/db';
+import { like, or, and, eq, inArray, isNull, notLike } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { probeTransientNode } from '@/lib/swarm/transient-node-probe';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
@@ -47,6 +47,7 @@ type SearchUser = {
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
+    isFollowing?: boolean;
 };
 
 const SEARCH_SWARM_TIMEOUT_MS = 1_500;
@@ -283,6 +284,47 @@ export async function GET(request: Request) {
                 }
             }
         }
+
+        const followedLocalIds = new Set<string>();
+        const followedRemoteHandles = new Set<string>();
+        if (viewer && searchUsers.length > 0) {
+            const localUserIds = searchUsers
+                .filter((searchUser) => searchUser.isRemote !== true)
+                .map((searchUser) => searchUser.id);
+            const remoteHandles = searchUsers
+                .filter((searchUser) => searchUser.isRemote === true)
+                .map((searchUser) => searchUser.handle.toLowerCase());
+
+            if (localUserIds.length > 0) {
+                const localFollowRows = await db
+                    .select({ followingId: follows.followingId })
+                    .from(follows)
+                    .where(and(
+                        eq(follows.followerId, viewer.id),
+                        inArray(follows.followingId, localUserIds),
+                    ));
+                localFollowRows.forEach((follow) => followedLocalIds.add(follow.followingId));
+            }
+
+            if (remoteHandles.length > 0) {
+                const remoteFollowRows = await db
+                    .select({ targetHandle: remoteFollows.targetHandle })
+                    .from(remoteFollows)
+                    .where(and(
+                        eq(remoteFollows.followerId, viewer.id),
+                        inArray(remoteFollows.targetHandle, remoteHandles),
+                    ));
+                remoteFollowRows.forEach((follow) => {
+                    followedRemoteHandles.add(follow.targetHandle.toLowerCase());
+                });
+            }
+        }
+        searchUsers = searchUsers.map((searchUser) => ({
+            ...searchUser,
+            isFollowing: searchUser.isRemote === true
+                ? followedRemoteHandles.has(searchUser.handle.toLowerCase())
+                : followedLocalIds.has(searchUser.id),
+        }));
 
         const moderatedUsers = await db.select({ id: users.id })
             .from(users)

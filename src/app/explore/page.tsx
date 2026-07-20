@@ -1,42 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Network } from 'lucide-react';
 import { UsersIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
-import { AvatarImage } from '@/components/AvatarImage';
+import { UserListItem } from '@/components/UserListItem';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { ANONYMOUS_APP_DESTINATION } from '@/lib/posts/home-feed';
 import { EXPLORE_FEED_API_TYPE, EXPLORE_TABS, type ExploreTab } from '@/lib/posts/explore-feed';
 import type { Post, User } from '@/lib/types';
-import { useFormattedHandle } from '@/lib/utils/handle';
-
-function UserCard({ user }: { user: User }) {
-    const fullHandle = useFormattedHandle(user.handle);
-
-    return (
-        <Link href={`/u/${user.handle}`} className="user-card">
-            <div className="avatar">
-                <AvatarImage
-                    avatarUrl={user.avatarUrl}
-                    seed={user.handle}
-                    nodeDomain={user.nodeDomain}
-                    isNsfw={user.isNsfw}
-                    nodeIsNsfw={user.nodeIsNsfw}
-                    alt={user.displayName || user.handle}
-                />
-            </div>
-            <div className="user-card-info">
-                <span className="user-card-name">{user.displayName || user.handle}</span>
-                <div className="user-card-handle">{fullHandle}</div>
-                {user.bio && <div className="user-card-bio">{user.bio}</div>}
-            </div>
-        </Link>
-    );
-}
 
 export default function ExplorePage() {
     const router = useRouter();
@@ -237,7 +211,7 @@ export default function ExplorePage() {
             ) : (
                 <div className="explore-users">
                     {users.map((listedUser) => (
-                        <UserCard key={listedUser.id} user={listedUser} />
+                        <UserListItem key={listedUser.id} user={listedUser} />
                     ))}
                 </div>
             )}

@@ -3847,6 +3847,19 @@ a.btn-primary:visited {
   transition: background 0.15s ease;
 }
 
+.user-card-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+  color: inherit;
+}
+
+.user-card-link:hover {
+  color: inherit;
+}
+
 .user-card:hover {
   background: var(--background-secondary);
 }
@@ -3858,6 +3871,11 @@ a.btn-primary:visited {
 .user-card-info {
   min-width: 0;
   flex: 1;
+}
+
+.user-follow-button {
+  flex: 0 0 auto;
+  min-width: 88px;
 }
 
 .user-card-name {

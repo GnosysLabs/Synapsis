@@ -17,6 +17,7 @@ export interface User {
     nodeIsNsfw?: boolean;
     isSwarm?: boolean; // Whether this user is from a Synapsis swarm node
     nodeDomain?: string | null; // Domain of the node this user is from (for swarm users)
+    isFollowing?: boolean; // Viewer-specific relationship state for user lists
     nsfwRestricted?: boolean; // Sensitive remote profile metadata/content was withheld for this viewer
     did?: string;
     canReceiveDms?: boolean;

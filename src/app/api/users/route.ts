@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/db';
-import { users } from '@/db';
-import { desc, sql } from 'drizzle-orm';
+import { db, follows, users } from '@/db';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { parseBoundedInteger } from '@/lib/http/query';
@@ -38,11 +37,24 @@ export async function GET(request: NextRequest) {
             .orderBy(desc(users.createdAt))
             .limit(limit);
 
+        const followedUserIds = new Set<string>();
+        if (viewer && userList.length > 0) {
+            const followRows = await db
+                .select({ followingId: follows.followingId })
+                .from(follows)
+                .where(and(
+                    eq(follows.followerId, viewer.id),
+                    inArray(follows.followingId, userList.map((listedUser) => listedUser.id)),
+                ));
+            followRows.forEach((follow) => followedUserIds.add(follow.followingId));
+        }
+
         return NextResponse.json({
             users: userList.map((listedUser) => redactSensitiveUserSummary({
                 ...listedUser,
                 isRemote: false,
                 nodeIsNsfw: localNodeIsNsfw,
+                isFollowing: followedUserIds.has(listedUser.id),
             }, canViewSensitive)),
         });
     } catch (error) {

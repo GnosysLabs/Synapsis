@@ -1,67 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { SearchIcon } from '@/components/Icons';
-import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { PostCard } from '@/components/PostCard';
 import { Post } from '@/lib/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
-import { AvatarImage } from '@/components/AvatarImage';
+import { UserListItem, type UserListItemUser } from '@/components/UserListItem';
 import { getLiveSearchQuery, LIVE_SEARCH_DEBOUNCE_MS } from '@/lib/search/live-search';
-
-interface User {
-    id: string;
-    handle: string;
-    displayName: string;
-    avatarUrl?: string;
-    bio?: string;
-    profileUrl?: string | null;
-    isRemote?: boolean;
-    isNsfw?: boolean;
-    nodeIsNsfw?: boolean;
-    nodeDomain?: string | null;
-}
-
-function UserCard({ user }: { user: User }) {
-    const fullHandle = useFormattedHandle(user.handle);
-    return (
-        <Link
-            href={getProfilePath(user.handle)}
-            style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '16px',
-                borderBottom: '1px solid var(--border)',
-                transition: 'background 0.15s ease',
-            }}
-            className="hover-bg"
-        >
-            <div className="avatar">
-                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} nodeDomain={user.nodeDomain} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ fontWeight: 600 }}>{user.displayName || user.handle}</span>
-                <div style={{ color: 'var(--foreground-tertiary)', fontSize: '14px' }}>{fullHandle}</div>
-                {user.bio && (
-                    <div style={{
-                        color: 'var(--foreground-secondary)',
-                        fontSize: '14px',
-                        marginTop: '4px',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                    }}>
-                        {user.bio}
-                    </div>
-                )}
-            </div>
-        </Link>
-    );
-}
 
 
 
@@ -72,7 +19,7 @@ export default function SearchPage() {
     const { did, handle } = useAuth();
 
     const [query, setQuery] = useState(initialQuery);
-    const [users, setUsers] = useState<User[]>([]);
+    const [users, setUsers] = useState<UserListItemUser[]>([]);
     const [posts, setPosts] = useState<Post[]>([]);
     const [loading, setLoading] = useState(false);
     const [searchedQuery, setSearchedQuery] = useState('');
@@ -255,7 +202,7 @@ export default function SearchPage() {
                                     Users
                                 </div>
                             )}
-                            {users.map(user => <UserCard key={user.id} user={user} />)}
+                            {users.map(user => <UserListItem key={user.id} user={user} />)}
                         </div>
                     )}
 

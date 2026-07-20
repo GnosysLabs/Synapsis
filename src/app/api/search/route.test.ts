@@ -28,6 +28,7 @@ vi.mock('drizzle-orm', () => {
     return {
         and: expression('and'),
         eq: expression('eq'),
+        inArray: expression('inArray'),
         isNull: expression('isNull'),
         like: expression('like'),
         notLike: expression('notLike'),
@@ -45,8 +46,10 @@ vi.mock('@/db', () => {
                 likes: { findMany: vi.fn().mockResolvedValue([]) },
             },
         },
+        follows: columns,
         mutedNodes: columns,
         posts: columns,
+        remoteFollows: columns,
         users: columns,
     };
 });
@@ -109,6 +112,13 @@ describe('GET /api/search swarm users', () => {
     });
 
     it('finds an exact remote username without requiring its node domain', async () => {
+        mocks.select
+            .mockReturnValueOnce(queryBuilder([]))
+            .mockReturnValueOnce(queryBuilder([]))
+            .mockReturnValueOnce(queryBuilder([]))
+            .mockReturnValueOnce(queryBuilder([{ targetHandle: 'theredpillgod@rprh.link' }]))
+            .mockReturnValueOnce(queryBuilder([]));
+
         const response = await GET(new Request(
             'https://local.com/api/search?q=%40theredpillgod',
         ));
@@ -120,6 +130,7 @@ describe('GET /api/search swarm users', () => {
                 displayName: 'The Red Pill God',
                 nodeDomain: 'rprh.link',
                 isRemote: true,
+                isFollowing: true,
             }],
             posts: [],
         });
