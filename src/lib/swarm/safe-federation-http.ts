@@ -76,6 +76,11 @@ export interface SafeFederationRequestOptions {
   timeoutMs?: number;
   /** May only lower the one-MiB hard response ceiling. */
   maxResponseBytes?: number;
+  /**
+   * Return a bounded prefix instead of rejecting a larger GET response.
+   * Intended for metadata that lives near the start of an HTML document.
+   */
+  truncateResponse?: boolean;
   signal?: AbortSignal;
 }
 
@@ -511,6 +516,7 @@ function requestPinnedTarget(
   headers: Record<string, string | string[]>,
   body: Buffer | undefined,
   maxResponseBytes: number,
+  truncateResponse: boolean,
   signal: AbortSignal
 ): Promise<SafeFederationResponse> {
   return new Promise((resolve, reject) => {
@@ -542,7 +548,9 @@ function requestPinnedTarget(
       }
 
       const declaredLength = Number(response.headers['content-length']);
-      if (Number.isFinite(declaredLength) && declaredLength > maxResponseBytes) {
+      if (!truncateResponse
+        && Number.isFinite(declaredLength)
+        && declaredLength > maxResponseBytes) {
         response.destroy();
         reject(
           new SafeFederationError(
@@ -555,10 +563,33 @@ function requestPinnedTarget(
 
       const chunks: Buffer[] = [];
       let receivedBytes = 0;
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve(
+          createResponse(
+            target.url.toString(),
+            response.statusCode ?? 0,
+            response.headers,
+            Buffer.concat(chunks, receivedBytes)
+          )
+        );
+      };
       response.on('data', (chunk: Buffer | string) => {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        receivedBytes += buffer.byteLength;
-        if (receivedBytes > maxResponseBytes) {
+        const remaining = maxResponseBytes - receivedBytes;
+        if (buffer.byteLength > remaining) {
+          if (truncateResponse) {
+            if (remaining > 0) {
+              chunks.push(buffer.subarray(0, remaining));
+              receivedBytes += remaining;
+            }
+            response.removeAllListeners();
+            response.destroy();
+            finish();
+            return;
+          }
           response.destroy();
           reject(
             new SafeFederationError(
@@ -568,18 +599,10 @@ function requestPinnedTarget(
           );
           return;
         }
+        receivedBytes += buffer.byteLength;
         chunks.push(buffer);
       });
-      response.once('end', () => {
-        resolve(
-          createResponse(
-            target.url.toString(),
-            response.statusCode ?? 0,
-            response.headers,
-            Buffer.concat(chunks, receivedBytes)
-          )
-        );
-      });
+      response.once('end', finish);
       response.once('error', reject);
     });
 
@@ -607,6 +630,9 @@ export function createSafeFederationRequester(
 
     if (method === 'GET' && options.body !== undefined) {
       return invalidOption('GET federation requests cannot contain a body');
+    }
+    if (options.truncateResponse && method !== 'GET') {
+      return invalidOption('truncateResponse is only available for GET requests');
     }
 
     const timeoutMs = validatePositiveInteger(
@@ -658,6 +684,7 @@ export function createSafeFederationRequester(
         headers,
         body,
         maxResponseBytes,
+        options.truncateResponse === true,
         controller.signal
       );
     } catch (error) {

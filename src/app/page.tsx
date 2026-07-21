@@ -165,7 +165,7 @@ export default function Home() {
     return () => observer.disconnect();
   }, [nextCursor, loadingMore, activeFeedType]);
 
-  const handlePost = async (content: string, mediaIds: string[], linkPreview?: LinkPreviewData, replyToId?: string, isNsfw?: boolean, mediaManifest: import('@/lib/types').SignedMediaDescriptor[] = [], collectionIds: string[] = []) => {
+  const handlePost = async (content: string, mediaIds: string[], linkPreview?: LinkPreviewData | null, replyToId?: string, isNsfw?: boolean, mediaManifest: import('@/lib/types').SignedMediaDescriptor[] = [], collectionIds: string[] = []) => {
     // Check if we're replying to a swarm post
     let swarmReplyTo: { postId: string; nodeDomain: string } | undefined;
     let localReplyToId: string | undefined = replyToId;

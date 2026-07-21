@@ -15,6 +15,7 @@
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
+    "repair:link-preview": "tsx scripts/repair-link-preview.ts",
     "db:generate:dev": "dotenv -e .env.dev -- drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:push:dev": "dotenv -e .env.dev -- drizzle-kit push",

@@ -10,8 +10,13 @@ import {
 } from '@/lib/auth/cli-credentials';
 import { eq, and, asc, desc, gt, gte, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
+import {
+    findLinkPreviewUrlInText,
+    serializeLinkPreviewMedia,
+    parseLinkPreviewMediaJson,
+} from '@/lib/media/linkPreview';
 import { buildVideoLinkPreview, findVideoEmbedUrlInText } from '@/lib/media/video-embed';
+import { resolveLinkPreview } from '@/lib/media/resolveLinkPreview';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { hasPublishablePostContent } from '@/lib/posts/content-policy';
@@ -631,9 +636,15 @@ export async function POST(request: Request) {
         const contentVideoPreview = contentVideoUrl
             ? buildVideoLinkPreview(contentVideoUrl)
             : null;
+        const contentLinkUrl = findLinkPreviewUrlInText(postContent);
+        const resolvedContentPreview = data.linkPreview === undefined
+            && contentLinkUrl
+            && !contentVideoPreview
+            ? await resolveLinkPreview(contentLinkUrl)
+            : null;
         const persistedLinkPreview = submittedVideoPreview
             || contentVideoPreview
-            || data.linkPreview;
+            || (data.linkPreview === null ? null : data.linkPreview || resolvedContentPreview);
 
         const selectedCollectionIds = [...new Set(data.collectionIds)];
         if (selectedCollectionIds.length > 0) {

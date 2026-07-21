@@ -1,3 +1,5 @@
+import { parseMentions } from '@/lib/mentions/parser';
+
 export type LinkPreviewType = 'card' | 'image' | 'gallery' | 'video';
 
 export interface LinkPreviewMediaItem {
@@ -15,6 +17,35 @@ export interface LinkPreviewData {
   type?: LinkPreviewType | null;
   videoUrl?: string | null;
   media?: LinkPreviewMediaItem[] | null;
+}
+
+const LINK_CANDIDATE = /(?:https?:\/\/)?((?:[a-zA-Z0-9-]+\.)+[a-z]{2,63})\b([-a-zA-Z0-9@:%_+.~#?&//=()]*)/gi;
+const TRAILING_LINK_PUNCTUATION = /[\])},.!?;:'"]+$/;
+
+export function findLinkPreviewUrlInText(value: string): string | null {
+  const mentionRanges = parseMentions(value);
+  for (const match of value.matchAll(LINK_CANDIDATE)) {
+    const start = match.index ?? 0;
+    const raw = match[0].replace(TRAILING_LINK_PUNCTUATION, '');
+    const end = start + raw.length;
+    if (!raw || mentionRanges.some((mention) => start < mention.end && end > mention.start)) {
+      continue;
+    }
+
+    try {
+      const parsed = new URL(raw.startsWith('http') ? raw : `https://${raw}`);
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password) continue;
+      return parsed.toString();
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+export function proxiedLinkPreviewImageUrl(value: string): string {
+  if (value.startsWith('/')) return value;
+  return `/api/media/preview/image?url=${encodeURIComponent(value)}`;
 }
 
 export function parseLinkPreviewMediaJson(

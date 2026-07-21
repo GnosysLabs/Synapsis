@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   insertValues: vi.fn(),
   findCollections: vi.fn(),
   deliverPostToSwarmFollowers: vi.fn().mockResolvedValue({ delivered: 0, failed: 0 }),
+  resolveLinkPreview: vi.fn(),
 }));
 
 // Mock the dependencies
@@ -60,6 +61,10 @@ vi.mock('@/lib/mentions/delivery', () => ({
 
 vi.mock('@/lib/swarm/interactions', () => ({
   deliverPostToSwarmFollowers: mocks.deliverPostToSwarmFollowers,
+}));
+
+vi.mock('@/lib/media/resolveLinkPreview', () => ({
+  resolveLinkPreview: mocks.resolveLinkPreview,
 }));
 
 vi.mock('@/db', () => {
@@ -129,6 +134,15 @@ describe('POST /api/posts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findCollections.mockResolvedValue([]);
+    mocks.resolveLinkPreview.mockImplementation(async (url: string) => ({
+      url,
+      title: 'Example article',
+      description: 'A durable article summary.',
+      image: 'https://images.example.com/preview.jpg',
+      type: 'image',
+      videoUrl: null,
+      media: [{ url: 'https://images.example.com/preview.jpg' }],
+    }));
   });
 
   it('should accept a valid signed action and create a post', async () => {
@@ -226,6 +240,86 @@ describe('POST /api/posts', () => {
       linkPreviewUrl: youtubeUrl,
       linkPreviewTitle: 'YouTube',
       linkPreviewType: 'video',
+    }));
+  });
+
+  it('derives durable rich-link metadata when the composer did not submit a preview', async () => {
+    const mockUser = {
+      id: 'test-user-id',
+      did: 'did:synapsis:test123',
+      handle: 'testuser',
+      publicKey: 'test-public-key',
+      isSuspended: false,
+      isSilenced: false,
+      isNsfw: false,
+      postsCount: 0,
+    };
+    vi.mocked(requireSignedAction).mockResolvedValue(
+      mockUser as Awaited<ReturnType<typeof requireSignedAction>>,
+    );
+    const articleUrl = 'https://www.pcgamer.com/games/example-story/';
+    const signedAction = {
+      action: 'post',
+      data: signedPostData(`Read this ${articleUrl}`),
+      did: mockUser.did,
+      handle: mockUser.handle,
+      ts: Date.now(),
+      nonce: 'nonce-rich-link',
+      sig: 'test-signature',
+    };
+
+    const response = await POST(new Request('http://localhost:43821/api/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedAction),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveLinkPreview).toHaveBeenCalledWith(articleUrl);
+    expect(mocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      linkPreviewUrl: articleUrl,
+      linkPreviewTitle: 'Example article',
+      linkPreviewDescription: 'A durable article summary.',
+      linkPreviewImage: 'https://images.example.com/preview.jpg',
+    }));
+  });
+
+  it('preserves an explicit request to hide a link preview', async () => {
+    const mockUser = {
+      id: 'test-user-id',
+      did: 'did:synapsis:test123',
+      handle: 'testuser',
+      publicKey: 'test-public-key',
+      isSuspended: false,
+      isSilenced: false,
+      isNsfw: false,
+      postsCount: 0,
+    };
+    vi.mocked(requireSignedAction).mockResolvedValue(
+      mockUser as Awaited<ReturnType<typeof requireSignedAction>>,
+    );
+    const articleUrl = 'https://www.pcgamer.com/games/example-story/';
+    const signedAction = {
+      action: 'post',
+      data: { ...signedPostData(`Read this ${articleUrl}`), linkPreview: null },
+      did: mockUser.did,
+      handle: mockUser.handle,
+      ts: Date.now(),
+      nonce: 'nonce-hidden-link',
+      sig: 'test-signature',
+    };
+
+    const response = await POST(new Request('http://localhost:43821/api/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedAction),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveLinkPreview).not.toHaveBeenCalled();
+    expect(mocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      linkPreviewUrl: undefined,
+      linkPreviewImage: undefined,
     }));
   });
 

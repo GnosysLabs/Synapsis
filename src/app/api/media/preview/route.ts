@@ -1,37 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { LinkPreviewData } from '@/lib/media/linkPreview';
-import { fetchRedditRichPreview } from '@/lib/media/redditPreview';
-import { fetchGenericLinkPreview } from '@/lib/media/genericPreview';
-import { buildVideoLinkPreview } from '@/lib/media/video-embed';
+import { resolveLinkPreview } from '@/lib/media/resolveLinkPreview';
 import { isRateLimited } from '@/lib/rate-limit';
 import { z } from 'zod';
 
 const previewUrlSchema = z.string().trim().min(1).max(2_048);
-
-function isRedditUrl(url: string): boolean {
-    try {
-        const parsed = new URL(url);
-        const hostname = parsed.hostname.toLowerCase();
-        return hostname === 'reddit.com'
-            || hostname.endsWith('.reddit.com')
-            || hostname === 'redd.it'
-            || hostname.endsWith('.redd.it');
-    } catch {
-        return false;
-    }
-}
-
-function buildBasicPreview(url: string, title?: string | null, description?: string | null, image?: string | null): LinkPreviewData {
-    return {
-        url,
-        title: title || url,
-        description: description || null,
-        image: image || null,
-        type: image ? 'image' : 'card',
-        videoUrl: null,
-        media: image ? [{ url: image }] : null,
-    };
-}
 
 export async function GET(req: NextRequest) {
     try {
@@ -64,31 +36,7 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: 'Too many preview requests' }, { status: 429 });
         }
 
-        const videoPreview = buildVideoLinkPreview(url);
-        if (videoPreview) {
-            return NextResponse.json(videoPreview);
-        }
-
-        if (isRedditUrl(url)) {
-            const preview = await fetchRedditRichPreview(url);
-            if (preview) {
-                return NextResponse.json(preview);
-            }
-
-            return NextResponse.json(buildBasicPreview(url, 'Reddit'));
-        }
-
-        const preview = await fetchGenericLinkPreview(url);
-        if (!preview) {
-            return NextResponse.json({ error: 'Could not reach the URL' }, { status: 404 });
-        }
-
-        return NextResponse.json(buildBasicPreview(
-            preview.url,
-            preview.title?.trim() || url,
-            preview.description?.trim() || null,
-            preview.image?.trim() || null,
-        ));
+        return NextResponse.json(await resolveLinkPreview(url));
     } catch (error) {
         if (error instanceof z.ZodError || error instanceof TypeError) {
             return NextResponse.json({ error: 'Invalid preview URL' }, { status: 400 });

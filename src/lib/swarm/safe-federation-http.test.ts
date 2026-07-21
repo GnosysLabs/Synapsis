@@ -321,6 +321,26 @@ describe('E2EE federation HTTP behavior', () => {
     ).rejects.toSatisfy(expectCode('RESPONSE_TOO_LARGE'));
   });
 
+  it('returns a bounded prefix only when truncation is explicitly requested', async () => {
+    const server = await startServer((_incoming, response) => {
+      const body = `<title>Preview</title>${'x'.repeat(4_096)}`;
+      response.writeHead(200, {
+        'content-type': 'text/html',
+        'content-length': String(Buffer.byteLength(body)),
+      });
+      response.end(body);
+    });
+    const request = createSafeFederationRequester({ development: true });
+
+    const response = await request(`${server.baseUrl}/large-page`, {
+      maxResponseBytes: 64,
+      truncateResponse: true,
+    });
+
+    expect(response.body.byteLength).toBe(64);
+    expect(response.text()).toContain('<title>Preview</title>');
+  });
+
   it('enforces one deadline across the request', async () => {
     const server = await startServer((_incoming, response) => {
       setTimeout(() => {

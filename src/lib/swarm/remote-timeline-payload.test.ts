@@ -97,6 +97,24 @@ describe('remote timeline payload validation', () => {
     }
   });
 
+  it('accepts public preview artwork for same-origin proxying', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    try {
+      const result = parseRemoteTimelineResponse({
+        posts: [post({
+          linkPreviewUrl: 'https://pcgamer.com/story',
+          linkPreviewTitle: 'Example story',
+          linkPreviewImage: 'https://cdn.mos.cms.futurecdn.net/story.jpg',
+          linkPreviewMedia: [{ url: 'https://cdn.mos.cms.futurecdn.net/story.jpg' }],
+        })],
+      }, 'source.social');
+
+      expect(result.posts[0].linkPreviewImage).toBe('https://cdn.mos.cms.futurecdn.net/story.jpg');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('accepts bounded tombstones and rejects mismatched upsert identities', () => {
     const parsed = parseRemoteTimelineResponse({
       posts: [],

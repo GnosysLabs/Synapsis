@@ -32,7 +32,7 @@ const mediaSchema = z.object({
 });
 
 const previewMediaSchema = z.object({
-  url: federationMediaUrlSchema,
+  url: federationWebUrlSchema,
   width: z.number().int().positive().max(100_000).nullish(),
   height: z.number().int().positive().max(100_000).nullish(),
   mimeType: z.string().max(255).nullish(),
@@ -83,7 +83,7 @@ const shallowPostSchema = z.object({
   linkPreviewUrl: federationWebUrlSchema.nullish(),
   linkPreviewTitle: z.string().max(300).nullish(),
   linkPreviewDescription: z.string().max(1_000).nullish(),
-  linkPreviewImage: federationMediaUrlSchema.nullish(),
+  linkPreviewImage: federationWebUrlSchema.nullish(),
   linkPreviewType: z.enum(['card', 'image', 'gallery', 'video']).nullish(),
   linkPreviewVideoUrl: federationMediaUrlSchema.nullish(),
   linkPreviewMedia: z.array(previewMediaSchema).max(4).nullish(),

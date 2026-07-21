@@ -4,7 +4,7 @@ import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 
 const GENERIC_PREVIEW_USER_AGENT = 'Mozilla/5.0 (compatible; SynapsisPreview/1.0; +https://synapsis.social)';
 const HTML_CONTENT_TYPE = /^(?:text\/html|application\/xhtml\+xml)(?:\s*;|$)/i;
-const MAX_PREVIEW_RESPONSE_BYTES = 512 * 1024;
+const MAX_PREVIEW_RESPONSE_BYTES = 128 * 1024;
 
 function decodeHtmlEntities(value: string): string {
   return value
@@ -58,6 +58,7 @@ export async function fetchGenericLinkPreview(url: string): Promise<LinkPreviewD
       },
       timeoutMs: 5_000,
       maxResponseBytes: MAX_PREVIEW_RESPONSE_BYTES,
+      truncateResponse: true,
     });
 
     if (response.status < 200 || response.status >= 300) return null;

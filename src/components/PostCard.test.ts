@@ -265,8 +265,9 @@ describe('PostCard', () => {
 
             expect(html).toContain('A remote post');
             expect(html).not.toContain('unique-viewer-pixel.gif');
-            expect(html).not.toContain('preview-tracker.gif');
-            expect(html).not.toContain('gallery-tracker.gif');
+            expect(html).not.toContain('src="https://remote.example/preview-tracker.gif"');
+            expect(html).not.toContain('src="https://remote.example/gallery-tracker.gif"');
+            expect(html).toContain('/api/media/preview/image?url=');
             expect(html).not.toContain('aria-label="Download media"');
         } finally {
             vi.unstubAllEnvs();

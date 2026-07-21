@@ -43,4 +43,14 @@ describe('getNotificationPostPreview', () => {
             linkPreviewImage: null,
         }).label).toBe('View post');
     });
+
+    it('loads external link artwork through the local preview proxy', () => {
+        expect(getNotificationPostPreview({
+            content: 'Read this',
+            media: [],
+            linkPreviewImage: 'https://images.example/story.jpg',
+        }).imageUrl).toBe(
+            '/api/media/preview/image?url=https%3A%2F%2Fimages.example%2Fstory.jpg'
+        );
+    });
 });

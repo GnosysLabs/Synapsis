@@ -1,3 +1,5 @@
+import { proxiedLinkPreviewImageUrl } from '@/lib/media/linkPreview';
+
 interface NotificationPostMedia {
     url: string;
     mimeType: string | null;
@@ -36,7 +38,9 @@ export function getNotificationPostPreview(
         label: content || (mediaLabel ? `${mediaLabel}${attachmentSuffix}` : 'View post'),
         imageUrl: firstMedia?.mimeType?.startsWith('image/')
             ? firstMedia.url
-            : post.linkPreviewImage,
+            : post.linkPreviewImage
+                ? proxiedLinkPreviewImageUrl(post.linkPreviewImage)
+                : null,
         imageAlt: firstMedia?.altText || (mediaLabel ? `${mediaLabel} preview` : 'Post preview'),
     };
 }

@@ -14,7 +14,11 @@ import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stu
 import { getMediaKind } from '@/lib/media/upload-policy';
 import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 import { AvatarImage } from '@/components/AvatarImage';
-import type { LinkPreviewData } from '@/lib/media/linkPreview';
+import {
+    findLinkPreviewUrlInText,
+    proxiedLinkPreviewImageUrl,
+    type LinkPreviewData,
+} from '@/lib/media/linkPreview';
 import {
     buildVideoLinkPreview,
     findVideoEmbedUrlInText,
@@ -23,7 +27,6 @@ import {
 import {
     getActiveMentionQuery,
     canonicalizeMentionsInContent,
-    parseMentions,
     replaceMentionQuery,
     type ActiveMentionQuery,
 } from '@/lib/mentions/parser';
@@ -51,7 +54,7 @@ interface ComposeProps {
     onPost: (
         content: string,
         mediaIds: string[],
-        linkPreview?: LinkPreviewData,
+        linkPreview?: LinkPreviewData | null,
         replyToId?: string,
         isNsfw?: boolean,
         mediaManifest?: SignedMediaDescriptor[],
@@ -82,6 +85,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     const [pendingStorageUploads, setPendingStorageUploads] = useState<PendingMediaUpload[]>([]);
     const [showStorageConfiguration, setShowStorageConfiguration] = useState(false);
     const [linkPreview, setLinkPreview] = useState<LinkPreviewData | null>(null);
+    const [linkPreviewSuppressed, setLinkPreviewSuppressed] = useState(false);
     const [lastDetectedUrl, setLastDetectedUrl] = useState<string | null>(null);
     const [isNsfw, setIsNsfw] = useState(false);
     const [canPostNsfw, setCanPostNsfw] = useState(false);
@@ -143,24 +147,17 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
 
     // Detect URLs in content
     useEffect(() => {
-        const urlRegex = /(?:https?:\/\/)?((?:[a-zA-Z0-9-]+\.)+[a-z]{2,63})\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)/gi;
-        const mentionRanges = parseMentions(content);
-        const matches = Array.from(content.matchAll(urlRegex))
-            .filter((match) => {
-                const start = match.index || 0;
-                const end = start + match[0].length;
-                return !mentionRanges.some((mention) => start < mention.end && end > mention.start);
-            });
-
-        const url = findVideoEmbedUrlInText(content) || matches[0]?.[0];
+        const url = findVideoEmbedUrlInText(content) || findLinkPreviewUrlInText(content);
         if (url) {
             if (url !== lastDetectedUrl) {
                 setLastDetectedUrl(url);
+                setLinkPreviewSuppressed(false);
                 fetchPreview(url);
             }
         } else {
             setLinkPreview(null);
             setLastDetectedUrl(null);
+            setLinkPreviewSuppressed(false);
         }
     }, [content, lastDetectedUrl]);
 
@@ -288,7 +285,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
             const posted = await onPost(
                 canonicalContent,
                 attachments.map((item) => item.id).filter(Boolean),
-                linkPreview || undefined,
+                linkPreviewSuppressed ? null : linkPreview || undefined,
                 replyingTo?.id,
                 isNsfw,
                 attachments.map((item) => ({
@@ -311,6 +308,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
             setAttachments([]);
             setLinkPreview(null);
             setLastDetectedUrl(null);
+            setLinkPreviewSuppressed(false);
             setIsNsfw(false);
             setSelectedCollectionIds([]);
             setIsPosting(false);
@@ -619,7 +617,10 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                     <button
                         type="button"
                         className="compose-link-preview-remove"
-                        onClick={() => setLinkPreview(null)}
+                        onClick={() => {
+                            setLinkPreview(null);
+                            setLinkPreviewSuppressed(true);
+                        }}
                     >
                         x
                     </button>
@@ -630,7 +631,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                                 <div className="link-preview-image">
                                     <video
                                         src={linkPreview.videoUrl}
-                                        poster={previewImage || undefined}
+                                        poster={previewImage ? proxiedLinkPreviewImageUrl(previewImage) : undefined}
                                         muted
                                         playsInline
                                         preload="metadata"
@@ -640,7 +641,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                                 <div className="link-preview-gallery compact">
                                     {previewMedia.slice(0, 3).map((item: { url: string }, index: number) => (
                                         <div className="link-preview-gallery-item" key={`${item.url}-${index}`}>
-                                            <Image unoptimized src={item.url} alt="" width={640} height={480} />
+                                            <Image unoptimized src={proxiedLinkPreviewImageUrl(item.url)} alt="" width={640} height={480} />
                                             {index === Math.min(previewMedia.length, 3) - 1 && previewMedia.length > 3 && (
                                                 <span className="link-preview-gallery-more">+{previewMedia.length - 3}</span>
                                             )}
@@ -649,7 +650,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                                 </div>
                             ) : previewImage && (
                                 <div className="link-preview-image">
-                                    <Image unoptimized src={previewImage} alt="" width={640} height={360} />
+                                    <Image unoptimized src={proxiedLinkPreviewImageUrl(previewImage)} alt="" width={640} height={360} />
                                 </div>
                             )}
                             <div className="link-preview-info">

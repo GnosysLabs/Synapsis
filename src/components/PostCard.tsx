@@ -21,7 +21,10 @@ import {
 } from '@/lib/utils/handle';
 import { useDomain, useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
-import type { LinkPreviewData } from '@/lib/media/linkPreview';
+import {
+    proxiedLinkPreviewImageUrl,
+    type LinkPreviewData,
+} from '@/lib/media/linkPreview';
 import { findVideoEmbedUrlInText, parseVideoEmbedUrl } from '@/lib/media/video-embed';
 import { AvatarImage } from '@/components/AvatarImage';
 import { AudioPlayer } from '@/components/AudioPlayer';
@@ -943,10 +946,13 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         url: hydratedPreview?.url || post.linkPreviewUrl || null,
         title: hydratedPreview?.title || post.linkPreviewTitle || null,
         description: hydratedPreview?.description || post.linkPreviewDescription || null,
-        image: isSafeRenderedMediaUrl(candidatePreviewImage) ? candidatePreviewImage : null,
+        image: candidatePreviewImage ? proxiedLinkPreviewImageUrl(candidatePreviewImage) : null,
         type: hydratedPreview?.type || post.linkPreviewType || null,
         videoUrl: isSafeRenderedMediaUrl(candidatePreviewVideoUrl) ? candidatePreviewVideoUrl : null,
-        media: candidatePreviewMedia?.filter((item) => isSafeRenderedMediaUrl(item.url)) || null,
+        media: candidatePreviewMedia?.map((item) => ({
+            ...item,
+            url: proxiedLinkPreviewImageUrl(item.url),
+        })) || null,
     };
     const rawPreviewMedia = (() => {
         const mediaJson = (post as Post & { linkPreviewMediaJson?: string | null }).linkPreviewMediaJson;
@@ -960,8 +966,11 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     item
                     && typeof item === 'object'
                     && typeof item.url === 'string'
-                    && isSafeRenderedMediaUrl(item.url)
                 ))
+                .map((item) => ({
+                    ...item,
+                    url: proxiedLinkPreviewImageUrl(item.url),
+                }))
                 : [];
         } catch {
             return [];

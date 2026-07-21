@@ -30,7 +30,11 @@ describe('generic link previews', () => {
     expect(preview?.image).toBe('https://images.unsplash.com/image.jpg');
     expect(mocks.safeFederationRequest).toHaveBeenCalledWith(
       'https://example.com/post',
-      expect.objectContaining({ timeoutMs: 5_000, maxResponseBytes: 512 * 1024 }),
+      expect.objectContaining({
+        timeoutMs: 5_000,
+        maxResponseBytes: 128 * 1024,
+        truncateResponse: true,
+      }),
     );
   });
 
