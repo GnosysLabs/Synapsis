@@ -892,59 +892,64 @@ export default function ProfilePage() {
                         <div style={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '8px',
+                            gap: '16px',
                             marginTop: '12px',
                             color: 'var(--foreground-tertiary)',
                             fontSize: '14px',
+                            whiteSpace: 'nowrap',
+                            overflowX: 'auto',
+                            scrollbarWidth: 'none',
                         }}>
-                            <CalendarIcon />
-                            <span>Joined {formatDate(user.createdAt || new Date().toISOString())}</span>
-                        </div>
-
-                        {user.website && (
-                            <div style={{
-                                display: 'flex',
+                            <span style={{
+                                display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '8px',
-                                marginTop: '4px',
-                                color: 'var(--accent)',
-                                fontSize: '14px',
+                                gap: '6px',
+                                flexShrink: 0,
                             }}>
+                                <CalendarIcon />
+                                Joined {formatDate(user.createdAt || new Date().toISOString())}
+                            </span>
+
+                            {user.website && (
                                 <Link
                                     href={user.website.startsWith('http') ? user.website : `https://${user.website}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    style={{ color: 'inherit', textDecoration: 'none' }}
+                                    style={{ color: 'var(--accent)', textDecoration: 'none', flexShrink: 0 }}
                                 >
                                     {user.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
                                 </Link>
-                            </div>
-                        )}
+                            )}
 
-                        <div style={{ display: 'flex', gap: '16px', marginTop: '12px' }}>
                             <button
                                 onClick={() => setActiveTab('followers')}
                                 style={{
                                     background: 'none',
                                     border: 'none',
+                                    padding: 0,
                                     color: 'var(--foreground)',
                                     cursor: 'pointer',
+                                    font: 'inherit',
+                                    flexShrink: 0,
                                 }}
                             >
                                 <strong>{user.followersCount}</strong>{' '}
                                 <span style={{ color: 'var(--foreground-tertiary)' }}>Followers</span>
                             </button>
                             <button
-                                    onClick={() => setActiveTab('following')}
-                                    style={{
-                                        background: 'none',
-                                        border: 'none',
-                                        color: 'var(--foreground)',
-                                        cursor: 'pointer',
-                                    }}
-                                >
-                                    <strong>{user.followingCount}</strong>{' '}
-                                    <span style={{ color: 'var(--foreground-tertiary)' }}>Following</span>
+                                onClick={() => setActiveTab('following')}
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    padding: 0,
+                                    color: 'var(--foreground)',
+                                    cursor: 'pointer',
+                                    font: 'inherit',
+                                    flexShrink: 0,
+                                }}
+                            >
+                                <strong>{user.followingCount}</strong>{' '}
+                                <span style={{ color: 'var(--foreground-tertiary)' }}>Following</span>
                             </button>
                         </div>
                     </div>
