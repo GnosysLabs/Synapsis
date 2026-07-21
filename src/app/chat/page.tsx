@@ -2049,11 +2049,11 @@ export default function ChatPage() {
                                     <span style={{ fontWeight: 600, fontSize: '15px' }}>{conv.participant2.displayName || conv.participant2.handle}</span>
                                     {conv.unreadCount > 0 && <span className="badge" style={{ background: 'var(--accent)', color: '#000', borderRadius: '10px', padding: '2px 8px', fontSize: '11px', fontWeight: 600 }}>{conv.unreadCount}</span>}
                                 </div>
-                                <div style={{ fontSize: '13px', color: 'var(--foreground-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px' }}>
-                                    {conv.lastMessagePreview}
-                                </div>
                                 <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px' }}>
                                     {displayAccountAddress(conv.participant2.handle)}
+                                </div>
+                                <div style={{ fontSize: '13px', color: 'var(--foreground-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px' }}>
+                                    {conv.lastMessagePreview}
                                 </div>
                             </div>
                         </button>
