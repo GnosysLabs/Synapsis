@@ -30,6 +30,9 @@ export function Sidebar() {
     const accountPopupRef = useRef<HTMLDivElement | null>(null);
     const [accountPopupStyle, setAccountPopupStyle] = useState<React.CSSProperties | null>(null);
     const formattedHandle = user ? displayAccountAddress(user.handle) : '';
+    const signOutName = user
+        ? user.displayName?.trim() || user.username || user.handle.split('@')[0]
+        : '';
     const profilePath = user ? getProfilePath(user.handle) : '/u';
 
     useEffect(() => {
@@ -427,7 +430,7 @@ export function Sidebar() {
                                     }}
                                 >
                                     <LogOut size={18} style={{ flexShrink: 0 }} />
-                                    <span>{loggingOut ? 'Signing out...' : `Sign out ${formattedHandle}`}</span>
+                                    <span>{loggingOut ? 'Signing out...' : `Sign out ${signOutName}`}</span>
                                 </button>
                             </div>
                             </div>
