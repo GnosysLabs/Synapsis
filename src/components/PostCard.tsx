@@ -9,7 +9,7 @@ import { MoreHorizontal, Download, MessageCircle, Link2, Share, TriangleAlert } 
 import { Post, LinkPreviewMediaItem } from '@/lib/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useToast } from '@/lib/contexts/ToastContext';
-import { parseVideoEmbedUrl, VideoEmbed } from '@/components/VideoEmbed';
+import { VideoEmbed } from '@/components/VideoEmbed';
 import BlurredImage from '@/components/BlurredImage';
 import BlurredVideo from '@/components/BlurredVideo';
 import {
@@ -22,6 +22,7 @@ import {
 import { useDomain, useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
+import { findVideoEmbedUrlInText, parseVideoEmbedUrl } from '@/lib/media/video-embed';
 import { AvatarImage } from '@/components/AvatarImage';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import { getMediaKind } from '@/lib/media/upload-policy';
@@ -867,9 +868,14 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
 
             if (token.type === 'url') {
                 const part = token.value;
-                // If this URL matches the link preview URL, hide it entirely
-                if (hidePreviewUrl && part.includes(hidePreviewUrl.replace(/^https?:\/\/(www\.)?/, '').split('/')[0])) {
-                    return null;
+                if (hidePreviewUrl) {
+                    try {
+                        if (new URL(part).toString() === new URL(hidePreviewUrl).toString()) {
+                            return null;
+                        }
+                    } catch {
+                        // Keep rendering malformed legacy values as ordinary text links.
+                    }
                 }
                 // Extract just the domain (TLD)
                 try {
@@ -968,14 +974,16 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
             ? [{ url: effectivePreview.image }]
             : [];
     const previewImage = previewMedia[0]?.url || effectivePreview.image || null;
-    const isEmbeddedVideo = Boolean(
-        effectivePreview.url && parseVideoEmbedUrl(effectivePreview.url)
-    );
+    const previewVideoEmbed = effectivePreview.url
+        ? parseVideoEmbedUrl(effectivePreview.url)
+        : null;
+    const contentVideoEmbedUrl = findVideoEmbedUrlInText(decodeHtmlEntities(post.content));
+    const embeddedVideoUrl = previewVideoEmbed?.sourceUrl || contentVideoEmbedUrl;
     const isRichVideoPreview = effectivePreview.type === 'video' && Boolean(effectivePreview.videoUrl);
     const isGalleryPreview = effectivePreview.type === 'gallery' && previewMedia.length > 1;
 
     const renderLinkPreviewCard = (compact = false) => {
-        if (!effectivePreview.url || isEmbeddedVideo) {
+        if (!effectivePreview.url || previewVideoEmbed) {
             return null;
         }
 
@@ -1148,10 +1156,10 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     {hideSensitiveContent ? sensitiveContentWarning : (
                         <>
                             {post.content.trim() && (
-                                <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
+                                <div className="post-content">{renderContent(post.content, embeddedVideoUrl || post.linkPreviewUrl || undefined)}</div>
                             )}
                             {renderPostMedia()}
-                            {post.linkPreviewUrl && <VideoEmbed url={post.linkPreviewUrl} />}
+                            {embeddedVideoUrl && <VideoEmbed url={embeddedVideoUrl} />}
                             {renderLinkPreviewCard(true)}
                         </>
                     )}
@@ -1178,7 +1186,11 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     </div>
 
                     {hideSensitiveContent ? sensitiveContentWarning : hasOwnContent && (
-                        <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
+                        <div className="post-content">{renderContent(post.content, embeddedVideoUrl || post.linkPreviewUrl || undefined)}</div>
+                    )}
+
+                    {!hideSensitiveContent && hasOwnContent && embeddedVideoUrl && (
+                        <VideoEmbed url={embeddedVideoUrl} />
                     )}
 
                     <div className="repost-embed">
@@ -1338,12 +1350,12 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
 
                 {hideSensitiveContent ? sensitiveContentWarning : (
                     <>
-                <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
+                <div className="post-content">{renderContent(post.content, embeddedVideoUrl || post.linkPreviewUrl || undefined)}</div>
 
                 {renderPostMedia()}
 
-                {post.linkPreviewUrl && (
-                    <VideoEmbed url={post.linkPreviewUrl} />
+                {embeddedVideoUrl && (
+                    <VideoEmbed url={embeddedVideoUrl} />
                 )}
 
                 {renderLinkPreviewCard()}

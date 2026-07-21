@@ -11,6 +11,7 @@ import {
 import { eq, and, asc, desc, gt, gte, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
+import { buildVideoLinkPreview, findVideoEmbedUrlInText } from '@/lib/media/video-embed';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { hasPublishablePostContent } from '@/lib/posts/content-policy';
@@ -616,6 +617,16 @@ export async function POST(request: Request) {
                 { status: 400 },
             );
         }
+        const submittedVideoPreview = data.linkPreview?.url
+            ? buildVideoLinkPreview(data.linkPreview.url)
+            : null;
+        const contentVideoUrl = findVideoEmbedUrlInText(postContent);
+        const contentVideoPreview = contentVideoUrl
+            ? buildVideoLinkPreview(contentVideoUrl)
+            : null;
+        const persistedLinkPreview = submittedVideoPreview
+            || contentVideoPreview
+            || data.linkPreview;
 
         const selectedCollectionIds = [...new Set(data.collectionIds)];
         if (selectedCollectionIds.length > 0) {
@@ -647,13 +658,13 @@ export async function POST(request: Request) {
                 isNsfw: data.isNsfw || user.isNsfw || false, // Inherit from account if account is NSFW
                 apId: `https://${nodeDomain}/posts/${data.clientPostId || crypto.randomUUID()}`,
                 apUrl: `https://${nodeDomain}/posts/${data.clientPostId || crypto.randomUUID()}`,
-                linkPreviewUrl: data.linkPreview?.url,
-                linkPreviewTitle: data.linkPreview?.title,
-                linkPreviewDescription: data.linkPreview?.description,
-                linkPreviewImage: data.linkPreview?.image,
-                linkPreviewType: data.linkPreview?.type,
-                linkPreviewVideoUrl: data.linkPreview?.videoUrl,
-                linkPreviewMediaJson: serializeLinkPreviewMedia(data.linkPreview?.media),
+                linkPreviewUrl: persistedLinkPreview?.url,
+                linkPreviewTitle: persistedLinkPreview?.title,
+                linkPreviewDescription: persistedLinkPreview?.description,
+                linkPreviewImage: persistedLinkPreview?.image,
+                linkPreviewType: persistedLinkPreview?.type,
+                linkPreviewVideoUrl: persistedLinkPreview?.videoUrl,
+                linkPreviewMediaJson: serializeLinkPreviewMedia(persistedLinkPreview?.media),
             }).returning();
             if (selectedCollectionIds.length > 0) {
                 await tx.insert(collectionPosts).values(selectedCollectionIds.map((collectionId) => ({

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import { fetchRedditRichPreview } from '@/lib/media/redditPreview';
 import { fetchGenericLinkPreview } from '@/lib/media/genericPreview';
+import { buildVideoLinkPreview } from '@/lib/media/video-embed';
 import { isRateLimited } from '@/lib/rate-limit';
 import { z } from 'zod';
 
@@ -61,6 +62,11 @@ export async function GET(req: NextRequest) {
             || isRateLimited(`link-preview-target:${parsedUrl.hostname}`, 120, 60 * 1_000)
             || isRateLimited('link-preview-global', 600, 60 * 1_000)) {
             return NextResponse.json({ error: 'Too many preview requests' }, { status: 429 });
+        }
+
+        const videoPreview = buildVideoLinkPreview(url);
+        if (videoPreview) {
+            return NextResponse.json(videoPreview);
         }
 
         if (isRedditUrl(url)) {

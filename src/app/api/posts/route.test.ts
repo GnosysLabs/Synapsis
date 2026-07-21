@@ -190,6 +190,45 @@ describe('POST /api/posts', () => {
     }));
   });
 
+  it('derives durable YouTube embed metadata from signed post content', async () => {
+    const mockUser = {
+      id: 'test-user-id',
+      did: 'did:synapsis:test123',
+      handle: 'testuser',
+      publicKey: 'test-public-key',
+      isSuspended: false,
+      isSilenced: false,
+      isNsfw: false,
+      postsCount: 0,
+    };
+    vi.mocked(requireSignedAction).mockResolvedValue(
+      mockUser as Awaited<ReturnType<typeof requireSignedAction>>,
+    );
+    const youtubeUrl = 'https://www.youtube.com/watch?v=Y1t26WsnwCQ';
+    const signedAction = {
+      action: 'post',
+      data: signedPostData(`Big changes in Diablo 4! ${youtubeUrl}`),
+      did: mockUser.did,
+      handle: mockUser.handle,
+      ts: Date.now(),
+      nonce: 'nonce-youtube-embed',
+      sig: 'test-signature',
+    };
+
+    const response = await POST(new Request('http://localhost:43821/api/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedAction),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      linkPreviewUrl: youtubeUrl,
+      linkPreviewTitle: 'YouTube',
+      linkPreviewType: 'video',
+    }));
+  });
+
   it('rejects a new post containing a bare mention', async () => {
     const mockUser = {
       id: 'test-user-id',

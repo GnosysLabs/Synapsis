@@ -35,6 +35,7 @@ import {
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import { federatedHandleSchema } from '@/lib/utils/federation';
 import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
+import { buildVideoLinkPreview, findVideoEmbedUrlInText } from '@/lib/media/video-embed';
 
 // The same exact schema is persisted with the source node signature so other
 // peers can independently verify a relayed reply instead of trusting us.
@@ -190,6 +191,8 @@ export async function POST(request: NextRequest) {
     }
 
     const createdAt = new Date(verified.userAction.ts);
+    const replyVideoUrl = findVideoEmbedUrlInText(data.reply.content);
+    const replyVideoPreview = replyVideoUrl ? buildVideoLinkPreview(replyVideoUrl) : null;
     const outcome = await db.transaction(async (tx) => {
       const [claim] = await tx.insert(swarmInboundActions).values({
         sourceDomain,
@@ -240,6 +243,9 @@ export async function POST(request: NextRequest) {
         apUrl: `https://${sourceDomain}/posts/${data.reply.id}`,
         createdAt,
         updatedAt: createdAt,
+        linkPreviewUrl: replyVideoPreview?.url,
+        linkPreviewTitle: replyVideoPreview?.title,
+        linkPreviewType: replyVideoPreview?.type,
         federationReplyProvenanceJson,
         isNsfw: actionData.data.isNsfw !== false
           || data.reply.isNsfw === true

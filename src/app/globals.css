@@ -1147,35 +1147,6 @@ a.btn-primary:visited {
   height: 100%;
 }
 
-.video-embed-consent {
-  display: grid;
-  place-items: center;
-}
-
-.video-embed-consent button {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  border: 0;
-  background: linear-gradient(135deg, var(--background-secondary), #080808);
-  color: var(--foreground);
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-}
-
-.video-embed-consent button:hover {
-  color: var(--accent);
-}
-
-.video-embed-consent small {
-  color: var(--foreground-tertiary);
-  font-size: 12px;
-}
-
 .post-actions {
   display: flex;
   align-items: center;

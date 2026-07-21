@@ -37,6 +37,7 @@ import {
     resolveAccountAddress,
 } from '@/lib/identity/account-address';
 import { isNodeBlocked } from '@/lib/swarm/node-blocklist';
+import { buildVideoLinkPreview, findVideoEmbedUrlInText } from '@/lib/media/video-embed';
 
 const isoTimestampSchema = z.iso.datetime({ offset: true });
 const didSchema = z.string().min(8).max(2_048).regex(/^did:/);
@@ -829,9 +830,14 @@ export async function POST(req: NextRequest) {
         let importedPosts = 0;
         for (const post of importPosts) {
             try {
+                const videoUrl = findVideoEmbedUrlInText(post.content);
+                const videoPreview = videoUrl ? buildVideoLinkPreview(videoUrl) : null;
                 const [newPost] = await db.insert(posts).values({
                     userId: newUser.id,
                     content: post.content,
+                    linkPreviewUrl: videoPreview?.url,
+                    linkPreviewTitle: videoPreview?.title,
+                    linkPreviewType: videoPreview?.type,
                     createdAt: new Date(post.createdAt),
                     apId: `https://${nodeDomain}/posts/${uuid()}`,
                     apUrl: `https://${nodeDomain}/posts/${uuid()}`,

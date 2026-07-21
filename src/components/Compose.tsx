@@ -16,6 +16,11 @@ import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 import { AvatarImage } from '@/components/AvatarImage';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import {
+    buildVideoLinkPreview,
+    findVideoEmbedUrlInText,
+    parseVideoEmbedUrl,
+} from '@/lib/media/video-embed';
+import {
     getActiveMentionQuery,
     canonicalizeMentionsInContent,
     parseMentions,
@@ -102,7 +107,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
             ? [{ url: linkPreview.image }]
             : [];
     const previewImage = previewMedia[0]?.url || linkPreview?.image || null;
-    const isEmbeddedVideo = Boolean(linkPreview?.url?.match(/(youtube\.com|youtu\.be|vimeo\.com)/));
+    const isEmbeddedVideo = Boolean(linkPreview?.url && parseVideoEmbedUrl(linkPreview.url));
     const canChooseCollections = !isReply && !replyingTo;
 
     // Check if user can post NSFW content and if node is NSFW
@@ -147,13 +152,13 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                 return !mentionRanges.some((mention) => start < mention.end && end > mention.start);
             });
 
-        if (matches[0]) {
-            const url = matches[0][0];
+        const url = findVideoEmbedUrlInText(content) || matches[0]?.[0];
+        if (url) {
             if (url !== lastDetectedUrl) {
                 setLastDetectedUrl(url);
                 fetchPreview(url);
             }
-        } else if (!content.trim()) {
+        } else {
             setLinkPreview(null);
             setLastDetectedUrl(null);
         }
@@ -237,6 +242,12 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
     };
 
     const fetchPreview = async (url: string) => {
+        const videoPreview = buildVideoLinkPreview(url);
+        if (videoPreview) {
+            setLinkPreview(videoPreview);
+            return;
+        }
+
         try {
             const res = await fetch(`/api/media/preview?url=${encodeURIComponent(url)}`);
             if (res.ok) {

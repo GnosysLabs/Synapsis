@@ -127,6 +127,36 @@ describe('PostCard', () => {
         expect(html).not.toMatch(/<button class="post-action reposted"[^>]*disabled/);
     });
 
+    it('renders an existing remote content-only YouTube URL as a playable embed', () => {
+        const html = renderToStaticMarkup(createElement(PostCard, {
+            post: {
+                id: 'swarm:onlynerds.xyz:a937deec-06d6-4aab-a503-f870bb1a4f2a',
+                content: 'Big changes in Diablo 4! https://www.youtube.com/watch?v=Y1t26WsnwCQ',
+                createdAt: '2026-07-21T06:44:21.000Z',
+                likesCount: 0,
+                repostsCount: 0,
+                repliesCount: 0,
+                isNsfw: false,
+                nodeIsNsfw: false,
+                nodeDomain: 'onlynerds.xyz',
+                isSwarm: true,
+                author: {
+                    id: 'remote-koolkat',
+                    handle: 'koolkat0770@onlynerds.xyz',
+                    displayName: 'KoolKat',
+                    nodeDomain: 'onlynerds.xyz',
+                    isRemote: true,
+                    isNsfw: false,
+                    nodeIsNsfw: false,
+                },
+            },
+        }));
+
+        expect(html).toContain('<iframe');
+        expect(html).toContain('https://www.youtube-nocookie.com/embed/Y1t26WsnwCQ');
+        expect(html).not.toContain('>youtube.com</a>');
+    });
+
     it('renders only a warning shell for a signed-out sensitive post', () => {
         const html = renderToStaticMarkup(createElement(PostCard, { post: sensitivePost }));
 
