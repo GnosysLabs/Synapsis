@@ -23,6 +23,69 @@ describe('sensitive content visibility', () => {
         expect(isPostSensitive({ postIsNsfw: false, authorIsNsfw: false, nodeIsNsfw: false, isRemote: true })).toBe(false);
     });
 
+    it('serializes the resolved node classification on local posts and nested cards', () => {
+        const serialized = redactSensitivePostForViewer({
+            id: 'local-reply',
+            content: 'Reply',
+            isNsfw: false,
+            author: {
+                handle: 'alice@local.example',
+                isNsfw: false,
+            },
+            replyTo: {
+                id: 'local-parent',
+                content: 'Parent',
+                isNsfw: false,
+                author: {
+                    handle: 'bob@local.example',
+                    isNsfw: false,
+                },
+            },
+        }, {
+            canViewSensitive: false,
+            localNodeDomain: 'local.example',
+            localNodeIsNsfw: false,
+        });
+
+        expect(serialized).toMatchObject({
+            nodeIsNsfw: false,
+            author: { nodeIsNsfw: false },
+            replyTo: {
+                nodeIsNsfw: false,
+                author: { nodeIsNsfw: false },
+            },
+        });
+        expect(serialized).not.toHaveProperty('sensitiveContentRestricted');
+        expect(serialized.replyTo).not.toHaveProperty('sensitiveContentRestricted');
+    });
+
+    it('fails closed when post and author node classifications conflict', () => {
+        const restricted = redactSensitivePostForViewer({
+            id: 'conflicting-remote-post',
+            content: 'Must remain hidden',
+            isNsfw: false,
+            nodeIsNsfw: false,
+            nodeDomain: 'remote.example',
+            isSwarm: true,
+            author: {
+                handle: 'alice@remote.example',
+                isNsfw: false,
+                nodeIsNsfw: true,
+            },
+        }, {
+            canViewSensitive: false,
+            localNodeDomain: 'local.example',
+            localNodeIsNsfw: false,
+        });
+
+        expect(restricted).toMatchObject({
+            content: '',
+            nodeIsNsfw: true,
+            sensitiveContentRestricted: true,
+            author: { nodeIsNsfw: true },
+        });
+    });
+
     it('treats a bare-handle author with a remote node id as unknown remote content', () => {
         const restricted = redactSensitivePostForViewer({
             id: 'legacy-remote-placeholder-post',

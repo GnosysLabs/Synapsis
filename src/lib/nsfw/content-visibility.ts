@@ -248,16 +248,30 @@ export function redactSensitivePostForViewer<T extends SerializablePost>(
     const authorAddress = authorHandle
         ? resolveAccountAddress(authorHandle, nodeDomain || localNodeDomain)
         : null;
+    const hasLegacyUnqualifiedNodeIdentity = Boolean(
+        authorHandle
+        && !authorHandle.includes('@')
+        && typeof author?.nodeId === 'string'
+        && author.nodeId.length > 0
+        && author?.isLocalAccount !== true,
+    );
     const isRemote = post.isSwarm === true
         || post.isRemote === true
         || author?.isRemote === true
+        || hasLegacyUnqualifiedNodeIdentity
         || Boolean(authorHandle && (!authorAddress
             || !isAccountOnNode(authorAddress.canonical, localNodeDomain)))
         || Boolean(nodeDomain && !isSameNodeDomain(nodeDomain, localNodeDomain));
-    const nodeIsNsfw = typeof post.nodeIsNsfw === 'boolean'
+    const postNodeIsNsfw = typeof post.nodeIsNsfw === 'boolean'
         ? post.nodeIsNsfw
-        : typeof author?.nodeIsNsfw === 'boolean'
-            ? author.nodeIsNsfw
+        : undefined;
+    const authorNodeIsNsfw = typeof author?.nodeIsNsfw === 'boolean'
+        ? author.nodeIsNsfw
+        : undefined;
+    const nodeIsNsfw = postNodeIsNsfw === true || authorNodeIsNsfw === true
+        ? true
+        : postNodeIsNsfw === false || authorNodeIsNsfw === false
+            ? false
             : isRemote ? undefined : localNodeIsNsfw;
     const sensitive = isPostSensitive({
         postIsNsfw: typeof post.isNsfw === 'boolean' ? post.isNsfw : undefined,
@@ -290,6 +304,11 @@ export function redactSensitivePostForViewer<T extends SerializablePost>(
         : null;
     const base = {
         ...serializePublicPostSummary(post),
+        // Database-backed local posts do not persist a node classification on
+        // each row. Always serialize the classification resolved above so
+        // downstream federation consumers do not mistake an omitted `false`
+        // for unknown, fail-closed sensitive content.
+        nodeIsNsfw,
         author: safeAuthor,
         media: serializePublicMedia(post.media),
         linkPreviewMedia: serializePublicMedia(post.linkPreviewMedia),

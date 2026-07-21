@@ -202,6 +202,15 @@ function assertSourceDomain(value: string | null | undefined, sourceDomain: stri
   }
 }
 
+function resolveSourceNodeNsfwClassification(
+  postValue: boolean | undefined,
+  authorValue: boolean | undefined,
+): boolean {
+  if (postValue === true || authorValue === true) return true;
+  if (postValue === false || authorValue === false) return false;
+  return true;
+}
+
 function normalizePost(
   raw: unknown,
   sourceDomain: string,
@@ -229,11 +238,15 @@ function normalizePost(
     assertSourceDomain(post.repostOf.author.nodeDomain, sourceDomain);
     assertNotFuture(post.repostOf.createdAt, 'Nested remote post');
     const nestedAuthor = sourceOwnedHandle(post.repostOf.author.handle, sourceDomain);
+    const nestedNodeIsNsfw = resolveSourceNodeNsfwClassification(
+      post.repostOf.nodeIsNsfw,
+      post.repostOf.author.nodeIsNsfw,
+    );
     repostOf = {
       ...post.repostOf,
       nodeDomain: sourceDomain,
       isNsfw: post.repostOf.isNsfw ?? true,
-      nodeIsNsfw: post.repostOf.nodeIsNsfw ?? true,
+      nodeIsNsfw: nestedNodeIsNsfw,
       likesCount: post.repostOf.likesCount ?? post.repostOf.likeCount ?? 0,
       repostsCount: post.repostOf.repostsCount ?? post.repostOf.repostCount ?? 0,
       repliesCount: post.repostOf.repliesCount ?? post.repostOf.replyCount ?? 0,
@@ -242,7 +255,7 @@ function normalizePost(
         handle: nestedAuthor,
         nodeDomain: sourceDomain,
         isNsfw: post.repostOf.author.isNsfw ?? true,
-        nodeIsNsfw: post.repostOf.author.nodeIsNsfw ?? post.repostOf.nodeIsNsfw ?? true,
+        nodeIsNsfw: nestedNodeIsNsfw,
       },
     };
   } else {
@@ -255,11 +268,15 @@ function normalizePost(
     assertSourceDomain(post.replyTo.author.nodeDomain, sourceDomain);
     assertNotFuture(post.replyTo.createdAt, 'Nested reply parent');
     const nestedAuthor = sourceOwnedHandle(post.replyTo.author.handle, sourceDomain);
+    const nestedNodeIsNsfw = resolveSourceNodeNsfwClassification(
+      post.replyTo.nodeIsNsfw,
+      post.replyTo.author.nodeIsNsfw,
+    );
     replyTo = {
       ...post.replyTo,
       nodeDomain: sourceDomain,
       isNsfw: post.replyTo.isNsfw ?? true,
-      nodeIsNsfw: post.replyTo.nodeIsNsfw ?? true,
+      nodeIsNsfw: nestedNodeIsNsfw,
       likesCount: post.replyTo.likesCount ?? post.replyTo.likeCount ?? 0,
       repostsCount: post.replyTo.repostsCount ?? post.replyTo.repostCount ?? 0,
       repliesCount: post.replyTo.repliesCount ?? post.replyTo.replyCount ?? 0,
@@ -268,7 +285,7 @@ function normalizePost(
         handle: nestedAuthor,
         nodeDomain: sourceDomain,
         isNsfw: post.replyTo.author.isNsfw ?? true,
-        nodeIsNsfw: post.replyTo.author.nodeIsNsfw ?? post.replyTo.nodeIsNsfw ?? true,
+        nodeIsNsfw: nestedNodeIsNsfw,
       },
     };
   } else {
@@ -292,11 +309,20 @@ function normalizePost(
     }
   });
 
+  // Older profile Likes/Replies payloads wrote the authenticated source node
+  // classification on the source-owned author but omitted it on the post.
+  // Both fields describe the same source node after the ownership checks
+  // above, so preserve the explicit author value before failing closed.
+  const nodeIsNsfw = resolveSourceNodeNsfwClassification(
+    post.nodeIsNsfw,
+    post.author.nodeIsNsfw,
+  );
+
   return {
     ...post,
     nodeDomain: sourceDomain,
     isNsfw: post.isNsfw ?? true,
-    nodeIsNsfw: post.nodeIsNsfw ?? true,
+    nodeIsNsfw,
     likesCount: post.likesCount ?? post.likeCount ?? 0,
     repostsCount: post.repostsCount ?? post.repostCount ?? 0,
     repliesCount: post.repliesCount ?? post.replyCount ?? 0,
@@ -305,7 +331,7 @@ function normalizePost(
       handle: authorHandle,
       nodeDomain: sourceDomain,
       isNsfw: post.author.isNsfw ?? true,
-      nodeIsNsfw: post.author.nodeIsNsfw ?? post.nodeIsNsfw ?? true,
+      nodeIsNsfw,
     },
     repostOf,
     replyTo,

@@ -278,4 +278,36 @@ describe('remote profile and post validation', () => {
       posts: Array.from({ length: 51 }, () => post()),
     }, 'source.social')).toThrow(/failed validation/);
   });
+
+  it('preserves a source-owned author node classification in legacy post lists', () => {
+    const parent = post({
+      id: '33333333-3333-4333-8333-333333333333',
+      nodeIsNsfw: undefined,
+      author: {
+        handle: 'bob@source.social',
+        displayName: 'Bob',
+        isNsfw: false,
+        nodeIsNsfw: false,
+        nodeDomain: 'source.social',
+      },
+    });
+    const [parsed] = parseRemotePostListResponse({
+      posts: [post({
+        nodeIsNsfw: undefined,
+        author: {
+          handle: 'alice@source.social',
+          displayName: 'Alice',
+          isNsfw: false,
+          nodeIsNsfw: false,
+          nodeDomain: 'source.social',
+        },
+        replyTo: parent,
+      })],
+    }, 'source.social');
+
+    expect(parsed.nodeIsNsfw).toBe(false);
+    expect(parsed.author.nodeIsNsfw).toBe(false);
+    expect(parsed.replyTo?.nodeIsNsfw).toBe(false);
+    expect(parsed.replyTo?.author.nodeIsNsfw).toBe(false);
+  });
 });
