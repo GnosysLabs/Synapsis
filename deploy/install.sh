@@ -12,7 +12,7 @@ if [[ ${EUID} -ne 0 ]]; then
   exit 1
 fi
 
-for command in git node npm openssl runuser systemctl; do
+for command in cmp curl flock git node npm openssl runuser systemctl tar; do
   command -v "$command" >/dev/null || { echo "Missing required command: $command" >&2; exit 1; }
 done
 
@@ -59,6 +59,17 @@ set +a
 runuser -u synapsis -- npm --prefix "$APP_DIR" ci
 runuser -u synapsis -- npm --prefix "$APP_DIR" run db:migrate
 runuser -u synapsis -- npm --prefix "$APP_DIR" run build
+
+CURRENT_LINK="${CURRENT_LINK:-${APP_DIR}-current}"
+if [[ -e "$CURRENT_LINK" && ! -L "$CURRENT_LINK" ]]; then
+  echo "$CURRENT_LINK exists but is not a symlink; refusing to replace it." >&2
+  exit 1
+fi
+if [[ ! -L "$CURRENT_LINK" ]]; then
+  temporary_link="${CURRENT_LINK}.new.$$"
+  ln -s "$APP_DIR" "$temporary_link"
+  mv -Tf "$temporary_link" "$CURRENT_LINK"
+fi
 
 install -m 0644 "$APP_DIR/deploy/synapsis.service" /etc/systemd/system/synapsis.service
 install -m 0644 "$APP_DIR/deploy/synapsis-maintenance.service" /etc/systemd/system/synapsis-maintenance.service

@@ -41,15 +41,19 @@ The service binds only to `127.0.0.1:43821`. Point your reverse proxy at that ad
 The installer creates:
 
 - Application checkout: `/opt/synapsis`
+- Active release symlink: `/opt/synapsis-current`
+- Versioned releases: `/opt/synapsis-releases/<commit>`
 - Environment file: `/etc/synapsis.env`
 - Embedded Turso database: `/var/lib/synapsis/synapsis.db`
 - Service: `synapsis.service`
 - Mandatory update timer: `synapsis-update.timer`
 - Admin update trigger: `synapsis-update.path`
 
-Every node pins `origin` to [`GnosysLabs/Synapsis`](https://github.com/GnosysLabs/Synapsis) on GitHub. The first automatic check becomes eligible five minutes after boot and receives up to 30 minutes of random delay. After a check finishes, the next becomes eligible 15 minutes later and receives the same random delay. When a new commit is available, Synapsis fast-forwards the checkout, replaces the single `backups/latest` database snapshot, installs dependencies, runs migrations, builds, and restarts automatically. An admin can skip the wait with **Update now** in Admin Settings. The repository commit count is shown in the Network Info card; `/api/version` exposes both that number and the full deployed commit hash.
+Every node pins `origin` to [`GnosysLabs/Synapsis`](https://github.com/GnosysLabs/Synapsis) on GitHub. The first automatic check becomes eligible five minutes after boot and receives up to 30 minutes of random delay. After a check finishes, the next becomes eligible 15 minutes later and receives the same random delay. When a new commit is available, Synapsis fast-forwards the source checkout and builds a versioned candidate—including dependency installation and an isolated build-database migration—while the current release remains online. Only then does it enter maintenance mode, replace the single `backups/latest` database snapshot, migrate the real database, atomically switch the active-release symlink, and restart. An admin can skip the wait with **Update now** in Admin Settings. The repository commit count is shown in the Network Info card; `/api/version` exposes both that number and the full deployed commit hash.
 
-While an update is being installed, `synapsis-maintenance.service` temporarily serves a maintenance page on the node's configured `PORT`, using that node's logo and accent color. Existing reverse proxies continue receiving an HTTP response instead of showing a gateway error, and browsers automatically reload when Synapsis is ready.
+The maintenance page is now limited to the database migration and release switch rather than the full install/build. If the new release fails its local `/api/health` check, the updater switches back to the previous release automatically; if that release also cannot start, it leaves the branded maintenance page active instead of exposing a gateway error. A failed candidate is not activated repeatedly on every timer tick. The active and immediately previous releases are retained, and older release directories are removed after a successful update.
+
+Custom instances can use the same updater instead of maintaining a fork. Set `APP_DIR`, `DATA_DIR`, `ENV_FILE`, `SERVICE_USER`, `SERVICE_GROUP`, `SERVICE_NAME`, `MAINTENANCE_SERVICE_NAME`, `CURRENT_LINK`, and `RELEASES_DIR`, then invoke `$APP_DIR/deploy/update.sh`. Set `INSTALL_UPDATE_UNITS=0` when the instance owns custom systemd units; its application service must run from `$CURRENT_LINK` with `npm run start:server`.
 
 For a node installed before the GitHub updater migration (or before automatic updates existed), bootstrap it once with:
 

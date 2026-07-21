@@ -174,7 +174,7 @@ export default function AdminPage() {
 
             const message = data.alreadyQueued
                 ? 'An update check is already queued.'
-                : 'Update check requested. If an update is available, this node will enter maintenance mode shortly.';
+                : 'Update check requested. If an update is available, it will build while this node stays online, then switch releases during brief maintenance.';
             setUpdateState('requested');
             setUpdateFeedback(message);
             showToast(message, 'success');
@@ -372,7 +372,7 @@ export default function AdminPage() {
                                     <div style={{ flex: '1 1 320px' }}>
                                         <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px' }}>Software updates</h2>
                                         <p style={{ fontSize: '12px', color: 'var(--foreground-secondary)', marginBottom: '8px' }}>
-                                            Updates are automatic. After each check finishes, this node waits 15 minutes plus up to 30 minutes of randomized delay before checking again. When an update is available, it installs it and briefly shows a maintenance page while Synapsis rebuilds and restarts.
+                                            Updates are automatic. After each check finishes, this node waits 15 minutes plus up to 30 minutes of randomized delay before checking again. When an update is available, Synapsis installs and builds it alongside the live release, then briefly shows a maintenance page while it migrates the database and switches releases.
                                         </p>
                                         <p style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', margin: 0 }}>
                                             Update now skips that wait and asks the updater to check immediately.

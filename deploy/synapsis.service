@@ -7,10 +7,10 @@ Wants=network-online.target
 Type=simple
 User=synapsis
 Group=synapsis
-WorkingDirectory=/opt/synapsis
+WorkingDirectory=/opt/synapsis-current
 EnvironmentFile=/etc/synapsis.env
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/env npm start
+ExecStart=/usr/bin/env npm run start:server
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=90
@@ -19,7 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/synapsis /opt/synapsis/.next
+ReadWritePaths=/var/lib/synapsis /opt/synapsis-current/.next
 
 [Install]
 WantedBy=multi-user.target
