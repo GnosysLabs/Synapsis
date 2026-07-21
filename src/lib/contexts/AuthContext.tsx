@@ -153,6 +153,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
     }, [applyAuthState]);
 
+    const refreshStuffboxBadge = useCallback(async () => {
+        if (signInInProgressRef.current || !user) return;
+        const generation = authGenerationRef.current;
+        try {
+            const res = await fetch('/api/auth/me', { cache: 'no-store' });
+            if (!res.ok || generation !== authGenerationRef.current) return;
+            const data = await res.json() as {
+                user?: User | null;
+                accounts?: AuthAccount[];
+            };
+            if (!data.user || data.user.id !== user.id) return;
+            const refreshedUser = data.user;
+            setUser(current => current?.id === refreshedUser.id
+                ? { ...current, stuffboxBadge: refreshedUser.stuffboxBadge ?? null }
+                : current);
+            const badgeByAccount = new Map(
+                (data.accounts ?? []).map(account => [account.id, account.stuffboxBadge ?? null]),
+            );
+            setAccounts(current => current.map(account => badgeByAccount.has(account.id)
+                ? { ...account, stuffboxBadge: badgeByAccount.get(account.id) }
+                : account));
+        } catch {
+            // Keep the last verified badge during a transient refresh failure.
+        }
+    }, [user]);
+
     const broadcastAuthChange = useCallback(() => {
         if (typeof window === 'undefined') return;
         const marker = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
@@ -307,6 +333,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             window.removeEventListener('storage', onStorage);
         };
     }, [refreshAuth]);
+
+    useEffect(() => {
+        const refreshWhenActive = () => {
+            if (document.visibilityState === 'visible') void refreshStuffboxBadge();
+        };
+        window.addEventListener('focus', refreshWhenActive);
+        document.addEventListener('visibilitychange', refreshWhenActive);
+        return () => {
+            window.removeEventListener('focus', refreshWhenActive);
+            document.removeEventListener('visibilitychange', refreshWhenActive);
+        };
+    }, [refreshStuffboxBadge]);
 
     const activeAccountId = user?.id ?? null;
 

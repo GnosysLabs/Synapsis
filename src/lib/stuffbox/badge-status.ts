@@ -13,6 +13,16 @@ import {
 const REFRESH_AHEAD_MS = 6 * 60 * 60 * 1000;
 const refreshes = new Map<string, Promise<StuffboxBadge | null>>();
 
+function hasSameBadgeEntitlement(
+  cached: StuffboxBadge | null,
+  refreshed: StuffboxBadge,
+): cached is StuffboxBadge {
+  return Boolean(cached
+    && cached.level === refreshed.level
+    && cached.plan === refreshed.plan
+    && cached.issuer === refreshed.issuer);
+}
+
 export async function clearStuffboxBadge(userId: string): Promise<void> {
   await db.update(users).set(stuffboxBadgeColumns(null)).where(eq(users.id, userId));
 }
@@ -45,6 +55,10 @@ export async function getOrRefreshStuffboxBadge(
         issuer: baseOrigin,
       });
       if (!badge) throw new Error('Stuffbox badge proof did not match this account');
+      if (hasSameBadgeEntitlement(cached, badge)
+        && Date.parse(cached.expiresAt) > Date.now() + REFRESH_AHEAD_MS) {
+        return cached;
+      }
       await db.update(users).set(stuffboxBadgeColumns(badge)).where(eq(users.id, user.id));
       return badge;
     } catch (error) {

@@ -93,5 +93,9 @@ describe('GET /api/auth/me canonical account contract', () => {
                 isLocalAccount: true,
             }],
         });
+        expect(mocks.getOrRefreshStuffboxBadge).toHaveBeenCalledWith(
+            expect.objectContaining({ id: '11111111-1111-4111-8111-111111111111' }),
+            { force: true },
+        );
     });
 });

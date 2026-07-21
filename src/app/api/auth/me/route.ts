@@ -31,7 +31,9 @@ export async function GET() {
         }
 
         const localNodeIsNsfw = await isLocalNodeNsfw();
-        const stuffboxBadge = await getOrRefreshStuffboxBadge(session.user);
+        // The active account is the authoritative place to detect a plan
+        // change after the user returns from Stuffbox.
+        const stuffboxBadge = await getOrRefreshStuffboxBadge(session.user, { force: true });
 
         return NextResponse.json({
             user: {
