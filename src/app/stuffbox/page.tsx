@@ -9,7 +9,7 @@ export default function StuffboxBadgesPage() {
             <div className="stuffbox-explainer-eyebrow">Portable media, visibly yours</div>
             <h1>Stuffbox badges</h1>
             <p className="stuffbox-explainer-lede">
-                Connect your own Stuffbox to keep uploaded media attached to your account—not trapped on one Synapsis node—and earn a badge wherever your profile appears.
+                Connect your own Stuffbox to keep uploaded media attached to your account instead of trapped on one Synapsis node. You earn a badge wherever your profile appears.
             </p>
 
             <section className="stuffbox-explainer-grid" aria-label="Stuffbox badge levels">
@@ -25,11 +25,6 @@ export default function StuffboxBadgesPage() {
                     />
                     <h2>Connected</h2>
                     <p>Confirms that this exact <code>@handle@node</code> currently has official Stuffbox storage connected.</p>
-                    <ul>
-                        <li>Portable, user-owned media storage</li>
-                        <li>Media remains available when moving between nodes</li>
-                        <li>A trusted badge across the federation</li>
-                    </ul>
                 </article>
 
                 <article className="stuffbox-explainer-card stuffbox-explainer-card-supporter">
@@ -44,11 +39,6 @@ export default function StuffboxBadgesPage() {
                     />
                     <h2>Paid plan</h2>
                     <p>Confirms that Stuffbox reports an active paid plan for this account. The checkmark gets an animated finish.</p>
-                    <ul>
-                        <li>Everything in Connected</li>
-                        <li>More storage according to your Stuffbox plan</li>
-                        <li>Animated paid-plan checkmark</li>
-                    </ul>
                 </article>
             </section>
 

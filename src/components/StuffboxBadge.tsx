@@ -36,7 +36,11 @@ export function StuffboxBadge({
                     />
                     <path className="stuffbox-badge-check" d="m8.5 12.2 2.25 2.25 4.9-4.9" />
                     {supporter && (
-                        <path className="stuffbox-badge-spark" d="m20 1.2.48 1.22 1.22.48-1.22.48L20 4.6l-.48-1.22-1.22-.48 1.22-.48L20 1.2Z" />
+                        <>
+                            <path className="stuffbox-badge-spark stuffbox-badge-spark-one" d="m20.3 1 .48 1.22 1.22.48-1.22.48-.48 1.22-.48-1.22-1.22-.48 1.22-.48L20.3 1Z" />
+                            <path className="stuffbox-badge-spark stuffbox-badge-spark-two" d="m2.5 4 .32.82.82.32-.82.32-.32.82-.32-.82-.82-.32.82-.32L2.5 4Z" />
+                            <path className="stuffbox-badge-spark stuffbox-badge-spark-three" d="m21.5 18 .36.92.92.36-.92.36-.36.92-.36-.92-.92-.36.92-.36.36-.92Z" />
+                        </>
                     )}
                 </svg>
             </span>

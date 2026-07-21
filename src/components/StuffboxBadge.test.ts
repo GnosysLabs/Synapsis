@@ -33,6 +33,7 @@ describe('StuffboxBadge', () => {
     expect(supporter).toContain('stuffbox-badge-supporter');
     expect(supporter).toContain('stuffbox-badge-seal');
     expect(supporter).toContain('stuffbox-badge-check');
+    expect((supporter.match(/class="stuffbox-badge-spark /g) ?? [])).toHaveLength(3);
     expect(supporter).not.toContain('stuffbox-badge-label');
     expect(renderToStaticMarkup(createElement(StuffboxBadge, {
       badge: {
