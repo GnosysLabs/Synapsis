@@ -79,9 +79,13 @@ export async function GET(request: Request, context: RouteContext) {
                             handle: profileAddress.canonical,
                             displayName: profile.displayName,
                             avatarUrl: profile.avatarUrl ?? null,
+                            bio: profile.bio ?? null,
+                            headerUrl: profile.headerUrl ?? null,
+                            website: profile.website ?? null,
                             did: profile.did,
                             publicKey: profile.publicKey,
                             isNsfw: profile.isNsfw,
+                            profileDocument: profile.profileDocument,
                             // fetchSwarmUserProfile has already replaced the
                             // transport proof with its independently verified
                             // full badge result.

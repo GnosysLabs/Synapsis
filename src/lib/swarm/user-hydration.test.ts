@@ -27,6 +27,7 @@ describe('hydrateSwarmUsers federation targets', () => {
     mocks.fetchSwarmUserProfile.mockResolvedValue({
       nodeDomain: 'remote.social',
       profile: {
+        profilePresentationVerified: true,
         displayName: 'Alice',
         avatarUrl: null,
         bio: 'Hello',

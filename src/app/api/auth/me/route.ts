@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getSession, getSessionAccounts } from '@/lib/auth';
 import { db, notifications, users } from '@/db';
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { isLocalNodeNsfw } from '@/lib/node/local-node';
 import { getOrRefreshStuffboxBadge } from '@/lib/stuffbox/badge-status';
+import {
+    PUBLISH_PROFILE_ACTION,
+    signedProfileDocumentSchema,
+} from '@/lib/profile/profile-document';
 
 const updateProfileSchema = z.object({
     displayName: z.string().min(1).max(50).optional(),
@@ -15,6 +19,8 @@ const updateProfileSchema = z.object({
     website: z.string().url().or(z.string().length(0)).optional().nullable(),
     dmPrivacy: z.enum(['everyone', 'following', 'none']).optional(),
 });
+
+class ProfileVersionConflictError extends Error {}
 
 export async function GET() {
     try {
@@ -48,8 +54,10 @@ export async function GET() {
                 displayName: session.user.displayName,
                 avatarUrl: session.user.avatarUrl,
                 bio: session.user.bio,
+                headerUrl: session.user.headerUrl,
                 website: session.user.website,
                 dmPrivacy: session.user.dmPrivacy,
+                profileVersion: session.user.profileVersion,
                 did: session.user.did,
                 publicKey: session.user.publicKey,
                 privateKeyEncrypted: session.user.privateKeyEncrypted,
@@ -91,13 +99,12 @@ export async function PATCH(request: Request) {
         // This ensures the request was signed by the user's private key
         const currentUser = await requireSignedAction(signedAction);
 
-        // Ensure the action type is correct for profile updates
-        if (signedAction.action !== 'update_profile') {
+        // Public presentation is a complete, durable profile document. Private
+        // preferences remain ordinary partial updates and are never federated.
+        if (signedAction.action !== 'update_profile'
+            && signedAction.action !== PUBLISH_PROFILE_ACTION) {
             return NextResponse.json({ error: 'Invalid action type' }, { status: 400 });
         }
-
-        // Parse inner data
-        const data = updateProfileSchema.parse(signedAction.data);
 
         const updateData: {
             displayName?: string;
@@ -106,15 +113,40 @@ export async function PATCH(request: Request) {
             headerUrl?: string | null;
             website?: string | null;
             dmPrivacy?: 'everyone' | 'following' | 'none';
+            profileDocumentJson?: string | null;
+            profileVersion?: number | null;
             updatedAt?: Date;
         } = {};
 
-        if (data.displayName !== undefined) updateData.displayName = data.displayName;
-        if (data.bio !== undefined) updateData.bio = data.bio === '' ? null : data.bio;
-        if (data.avatarUrl !== undefined) updateData.avatarUrl = data.avatarUrl === '' ? null : data.avatarUrl;
-        if (data.headerUrl !== undefined) updateData.headerUrl = data.headerUrl === '' ? null : data.headerUrl;
-        if (data.website !== undefined) updateData.website = data.website === '' ? null : data.website;
-        if (data.dmPrivacy !== undefined) updateData.dmPrivacy = data.dmPrivacy;
+        if (signedAction.action === PUBLISH_PROFILE_ACTION) {
+            const profileDocument = signedProfileDocumentSchema.parse(signedAction);
+            updateData.displayName = profileDocument.data.displayName;
+            updateData.bio = profileDocument.data.bio;
+            updateData.avatarUrl = profileDocument.data.avatarUrl;
+            updateData.headerUrl = profileDocument.data.headerUrl;
+            updateData.website = profileDocument.data.website;
+            updateData.profileDocumentJson = JSON.stringify(profileDocument);
+            updateData.profileVersion = profileDocument.ts;
+        } else {
+            const data = updateProfileSchema.parse(signedAction.data);
+            if (data.displayName !== undefined) updateData.displayName = data.displayName;
+            if (data.bio !== undefined) updateData.bio = data.bio === '' ? null : data.bio;
+            if (data.avatarUrl !== undefined) updateData.avatarUrl = data.avatarUrl === '' ? null : data.avatarUrl;
+            if (data.headerUrl !== undefined) updateData.headerUrl = data.headerUrl === '' ? null : data.headerUrl;
+            if (data.website !== undefined) updateData.website = data.website === '' ? null : data.website;
+            if (data.dmPrivacy !== undefined) updateData.dmPrivacy = data.dmPrivacy;
+            if (data.displayName !== undefined
+                || data.bio !== undefined
+                || data.avatarUrl !== undefined
+                || data.headerUrl !== undefined
+                || data.website !== undefined) {
+                // Old clients may still send partial public updates. Do not
+                // publish a now-stale proof; the next unlock will replace it
+                // with a complete signed document.
+                updateData.profileDocumentJson = null;
+                updateData.profileVersion = null;
+            }
+        }
 
         if (Object.keys(updateData).length === 0) {
             return NextResponse.json({
@@ -130,6 +162,7 @@ export async function PATCH(request: Request) {
                     headerUrl: currentUser.headerUrl,
                     website: currentUser.website,
                     dmPrivacy: currentUser.dmPrivacy,
+                    profileVersion: currentUser.profileVersion,
                     followersCount: currentUser.followersCount,
                     followingCount: currentUser.followingCount,
                     postsCount: currentUser.postsCount,
@@ -143,8 +176,17 @@ export async function PATCH(request: Request) {
         const updatedUser = await db.transaction(async (tx) => {
             const [freshUser] = await tx.update(users)
                 .set(updateData)
-                .where(eq(users.id, currentUser.id))
+                .where(signedAction.action === PUBLISH_PROFILE_ACTION
+                    ? and(
+                        eq(users.id, currentUser.id),
+                        or(
+                            isNull(users.profileVersion),
+                            lt(users.profileVersion, signedAction.ts),
+                        ),
+                    )
+                    : eq(users.id, currentUser.id))
                 .returning();
+            if (!freshUser) throw new ProfileVersionConflictError();
 
             // Historical notifications identify the actor canonically, but
             // their presentation fields are snapshots. Keep local snapshots
@@ -179,6 +221,7 @@ export async function PATCH(request: Request) {
                 headerUrl: updatedUser.headerUrl,
                 website: updatedUser.website,
                 dmPrivacy: updatedUser.dmPrivacy,
+                profileVersion: updatedUser.profileVersion,
                 followersCount: updatedUser.followersCount,
                 followingCount: updatedUser.followingCount,
                 postsCount: updatedUser.postsCount,
@@ -186,6 +229,9 @@ export async function PATCH(request: Request) {
             },
         });
     } catch (error) {
+        if (error instanceof ProfileVersionConflictError) {
+            return NextResponse.json({ error: 'A newer profile update already exists' }, { status: 409 });
+        }
         if (error instanceof z.ZodError) {
             return NextResponse.json({ error: 'Invalid input', details: error.issues }, { status: 400 });
         }

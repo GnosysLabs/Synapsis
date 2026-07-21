@@ -90,6 +90,11 @@ export const users = sqliteTable('users', {
   postsCount: integer('posts_count').default(0).notNull(),
   website: text('website'),
   dmPrivacy: text('dm_privacy').default('everyone').notNull(),
+  // Latest complete public-profile snapshot signed by the account key. The
+  // millisecond action timestamp is its monotonic version; remote caches never
+  // let an unsigned or older snapshot replace a newer verified document.
+  profileDocumentJson: text('profile_document_json'),
+  profileVersion: integer('profile_version'),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [

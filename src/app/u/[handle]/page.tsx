@@ -22,6 +22,10 @@ import { useDomain } from '@/lib/contexts/ConfigContext';
 import { displayAccountAddress, sameAccountAddress } from '@/lib/identity/account-address';
 import { StuffboxBadge } from '@/components/StuffboxBadge';
 import type { StuffboxBadge as StuffboxBadgeValue } from '@/lib/types';
+import {
+    buildProfileDocumentData,
+    PUBLISH_PROFILE_ACTION,
+} from '@/lib/profile/profile-document';
 
 interface UserSummary {
     id: string;
@@ -537,8 +541,11 @@ export default function ProfilePage() {
         }
     };
 
-    const updateProfile = async (changes: Partial<typeof profileForm>): Promise<User> => {
-            const signedPayload = await signUserAction('update_profile', changes);
+    const updateProfile = async (presentation: typeof profileForm): Promise<User> => {
+            const signedPayload = await signUserAction(
+                PUBLISH_PROFILE_ACTION,
+                buildProfileDocumentData(presentation),
+            );
 
             const res = await fetch('/api/auth/me', {
                 method: 'PATCH',
@@ -591,7 +598,7 @@ export default function ProfilePage() {
 
         setMediaSaveStatus(prev => ({ ...prev, [field]: 'saving' }));
         try {
-            const updatedUser = await updateProfile({ [field]: value });
+            const updatedUser = await updateProfile({ ...profileForm, [field]: value });
             setUser(prev => prev ? { ...prev, ...updatedUser } : updatedUser);
             updateUserProfile(updatedUser);
             setMediaSaveStatus(prev => ({ ...prev, [field]: 'saved' }));

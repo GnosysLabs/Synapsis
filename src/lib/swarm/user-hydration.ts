@@ -84,7 +84,7 @@ export async function hydrateSwarmUsers(
             // api routes have their own timeouts.
             const response = await fetchSwarmUserProfile(handle, domain, 0); // 0 limit as we only want profile
 
-            if (response && response.profile) {
+            if (response?.profile.profilePresentationVerified) {
                 hydratedMap.set(user.id, {
                     displayName: response.profile.displayName,
                     avatarUrl: response.profile.avatarUrl,

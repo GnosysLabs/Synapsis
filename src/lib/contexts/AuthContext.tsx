@@ -18,6 +18,10 @@ export interface User {
     displayName: string;
     email?: string;
     avatarUrl?: string | null;
+    bio?: string | null;
+    headerUrl?: string | null;
+    website?: string | null;
+    profileVersion?: number | null;
     did?: string;
     publicKey?: string;
     privateKeyEncrypted?: string;

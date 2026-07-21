@@ -22,6 +22,7 @@ export interface User {
     followingCount?: number;
     postsCount?: number;
     website?: string | null;
+    profileVersion?: number | null;
     createdAt?: string;
     movedTo?: string | null;
     isRemote?: boolean;

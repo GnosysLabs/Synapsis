@@ -145,6 +145,35 @@ describe('verified remote user cache upgrades', () => {
     expect(mocks.updateSet).toHaveBeenCalledWith(expect.objectContaining({ avatarUrl: null }));
   });
 
+  it('does not let an unsigned interaction snapshot replace a versioned profile', async () => {
+    mocks.handleFindFirst.mockResolvedValue({ handle, did, identityVerified: true });
+    mocks.userFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'remote-user',
+        handle,
+        did,
+        publicKey,
+        displayName: 'Current Alice',
+        avatarUrl: 'https://remote.social/current.jpg',
+        profileVersion: 500,
+        isNsfw: false,
+      });
+
+    await upsertRemoteUser({
+      handle,
+      did,
+      publicKey,
+      displayName: 'Old envelope name',
+      avatarUrl: 'https://remote.social/old.jpg',
+    }, { identityVerified: true });
+
+    expect(mocks.updateSet).toHaveBeenCalledWith(expect.objectContaining({
+      displayName: 'Current Alice',
+      avatarUrl: 'https://remote.social/current.jpg',
+    }));
+  });
+
   it('skips presentation refreshes until a signed action has pinned the identity', async () => {
     mocks.handleFindFirst.mockResolvedValue(null);
 

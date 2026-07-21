@@ -17,6 +17,8 @@ import {
   requireCanonicalAccountHomeDomain,
   resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import { signedProfileDocumentSchema } from '@/lib/profile/profile-document';
+import { verifyProfileDocument } from '@/lib/profile/verify-profile-document';
 
 const MAX_REMOTE_POSTS = 50;
 const MAX_REMOTE_REPLIES = 50;
@@ -116,6 +118,7 @@ const profileSchema = z.object({
   nodeDomain: nodeDomainSchema,
   publicKey: z.string().min(1).max(2_048),
   did: z.string().min(16).max(2_048),
+  profileDocument: signedProfileDocumentSchema.optional(),
   nsfwRestricted: z.boolean().optional(),
   stuffboxBadge: stuffboxBadgeSchema.nullish(),
 });
@@ -142,7 +145,10 @@ const postListResponseSchema = z.object({
   posts: z.array(z.unknown()).max(MAX_REMOTE_POSTS),
 });
 
-export type RemoteSwarmProfile = z.infer<typeof profileSchema>;
+export type RemoteSwarmProfile = z.infer<typeof profileSchema> & {
+  profilePresentationVerified: boolean;
+  profileVersion?: number;
+};
 export type RemoteSwarmPost = z.infer<typeof postSchema>;
 
 export interface RemoteSwarmProfileResponse {
@@ -358,6 +364,37 @@ function validateProfileIdentity(profile: RemoteSwarmProfile, sourceDomain: stri
   profile.publicKey = normalizedKey;
 }
 
+/**
+ * A home node may transport a legacy profile, but it cannot authorize a cache
+ * refresh unless the account key signed the exact presentation being shown.
+ */
+export async function verifyRemoteProfilePresentation(
+  profile: RemoteSwarmProfile,
+): Promise<RemoteSwarmProfile> {
+  if (!profile.profileDocument) {
+    return { ...profile, profilePresentationVerified: false, profileVersion: undefined };
+  }
+  const verified = await verifyProfileDocument(profile.profileDocument, {
+    handle: profile.handle,
+    did: profile.did,
+    publicKey: profile.publicKey,
+    displayName: profile.displayName,
+    bio: profile.bio,
+    avatarUrl: profile.avatarUrl,
+    headerUrl: profile.headerUrl,
+    website: profile.website,
+  });
+  if (!verified) {
+    throw new Error('Remote profile document signature or presentation is invalid');
+  }
+  return {
+    ...profile,
+    profileDocument: verified,
+    profilePresentationVerified: true,
+    profileVersion: verified.ts,
+  };
+}
+
 export function parseRemoteProfileResponse(
   value: unknown,
   sourceDomainInput: string,
@@ -373,7 +410,11 @@ export function parseRemoteProfileResponse(
     throw new Error('Remote profile response returned a different node identity');
   }
   assertNotFuture(parsed.data.timestamp, 'Remote profile response');
-  validateProfileIdentity(parsed.data.profile, sourceDomain, expectedHandle);
+  const profile: RemoteSwarmProfile = {
+    ...parsed.data.profile,
+    profilePresentationVerified: false,
+  };
+  validateProfileIdentity(profile, sourceDomain, expectedHandle);
 
   const boundedLimit = Math.max(0, Math.min(MAX_REMOTE_POSTS, postsLimit));
   const posts = parsed.data.posts.slice(0, boundedLimit).flatMap((post) => {
@@ -385,7 +426,7 @@ export function parseRemoteProfileResponse(
   });
 
   return {
-    profile: parsed.data.profile,
+    profile,
     posts,
     nodeDomain: sourceDomain,
     timestamp: parsed.data.timestamp,

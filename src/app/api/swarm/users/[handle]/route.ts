@@ -20,6 +20,11 @@ import {
 } from '@/lib/identity/account-address';
 import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
 import type { StuffboxBadge } from '@/lib/types';
+import {
+  parseStoredProfileDocument,
+  type SignedProfileDocument,
+} from '@/lib/profile/profile-document';
+import { verifyProfileDocument } from '@/lib/profile/verify-profile-document';
 
 export interface SwarmUserProfile {
   handle: string;
@@ -37,6 +42,7 @@ export interface SwarmUserProfile {
   nodeDomain: string;
   publicKey?: string; // Signing key for verifying actions
   did?: string;
+  profileDocument?: SignedProfileDocument;
   stuffboxBadge?: StuffboxBadge | null;
 }
 
@@ -293,7 +299,22 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Build profile response
+    const storedProfileDocument = parseStoredProfileDocument(user.profileDocumentJson);
+    const verifiedProfileDocument = storedProfileDocument
+      ? await verifyProfileDocument(storedProfileDocument, {
+          handle: user.handle,
+          did: user.did,
+          publicKey: user.publicKey,
+          displayName: user.displayName || user.handle,
+          bio: user.bio,
+          avatarUrl: user.avatarUrl,
+          headerUrl: user.headerUrl,
+          website: user.website,
+        })
+      : null;
+
+    // Build profile response. Legacy accounts remain readable during rollout,
+    // but only this user-signed document may refresh presentation snapshots.
     const profile: SwarmUserProfile = {
       handle: user.handle,
       displayName: user.displayName || user.handle,
@@ -310,6 +331,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       nodeDomain,
       publicKey: user.publicKey, // Expose signing key
       did: user.did || undefined,
+      profileDocument: verifiedProfileDocument || undefined,
       stuffboxBadge: stuffboxBadgeFromStoredUser(user),
     };
 

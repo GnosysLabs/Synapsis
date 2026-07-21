@@ -32,6 +32,7 @@ import {
   type RemoteSwarmPost,
   type RemoteSwarmProfile,
   type RemoteSwarmProfileResponse,
+  verifyRemoteProfilePresentation,
 } from './remote-post-payload';
 import type { SwarmPost } from '@/app/api/swarm/timeline/route';
 import type { StuffboxBadge } from '@/lib/types';
@@ -420,7 +421,8 @@ export async function fetchSwarmUserProfile(
   handle: string,
   domain: string,
   postsLimit: number = 25,
-  cursor?: string
+  cursor?: string,
+  timeoutMs?: number,
 ): Promise<SwarmProfileResponse | null> {
   try {
     const normalizedDomain = normalizeNodeDomain(domain);
@@ -455,6 +457,7 @@ export async function fetchSwarmUserProfile(
 
     const response = await signedFederationRead(url.toString(), {
       headers: { 'Accept': 'application/json' },
+      ...(timeoutMs ? { timeoutMs } : {}),
       maxResponseBytes: 1024 * 1024,
     });
 
@@ -465,12 +468,16 @@ export async function fetchSwarmUserProfile(
     const effectivePostsLimit = Number.isSafeInteger(postsLimit)
       ? Math.min(Math.max(postsLimit, 0), 50)
       : 25;
-    const payload = parseRemoteProfileResponse(
+    const parsedPayload = parseRemoteProfileResponse(
       response.json(),
       targetDomain,
       address.username,
       effectivePostsLimit,
     );
+    const payload = {
+      ...parsedPayload,
+      profile: await verifyRemoteProfilePresentation(parsedPayload.profile),
+    };
     const { verifyStuffboxBadgeAttestation, verifyStuffboxBadgeOnPost } = await import('@/lib/stuffbox/badge');
     const profileBadge = payload.profile.stuffboxBadge?.attestation
       ? await verifyStuffboxBadgeAttestation(
@@ -483,6 +490,28 @@ export async function fetchSwarmUserProfile(
       profile: { ...payload.profile, stuffboxBadge: profileBadge },
       posts: await Promise.all(payload.posts.map((post) => verifyStuffboxBadgeOnPost(post))),
     };
+
+    if (verifiedPayload.profile.profilePresentationVerified) {
+      try {
+        await refreshPinnedRemoteUserPresentation({
+          handle: verifiedPayload.profile.handle,
+          displayName: verifiedPayload.profile.displayName,
+          avatarUrl: verifiedPayload.profile.avatarUrl ?? null,
+          bio: verifiedPayload.profile.bio ?? null,
+          headerUrl: verifiedPayload.profile.headerUrl ?? null,
+          website: verifiedPayload.profile.website ?? null,
+          did: verifiedPayload.profile.did,
+          publicKey: verifiedPayload.profile.publicKey,
+          isNsfw: verifiedPayload.profile.isNsfw,
+          profileDocument: verifiedPayload.profile.profileDocument,
+          stuffboxBadge: verifiedPayload.profile.stuffboxBadge as StuffboxBadge | null | undefined,
+        });
+      } catch (cacheError) {
+        // A valid live response remains usable if the optional local cache is
+        // busy. Its version will be reconsidered on the next profile read.
+        console.warn(`[Swarm] Could not cache signed profile for ${handle}:`, cacheError);
+      }
+    }
 
     const knownNodeIsNsfw = await getKnownSwarmNodeNsfw(normalizedDomain);
     if (knownNodeIsNsfw === true && verifiedPayload.profile.nodeIsNsfw !== true) {
@@ -533,7 +562,7 @@ export async function cacheSwarmUserPosts(
     }
 
     let cached = 0;
-    let skipped = 0;
+    const skipped = 0;
 
     const actorUrl = `swarm://${domain}/${address.username}`;
     const profile = profileData.profile;
@@ -545,9 +574,13 @@ export async function cacheSwarmUserPosts(
       handle: address.canonical,
       displayName: profile.displayName,
       avatarUrl: profile.avatarUrl ?? null,
+      bio: profile.bio ?? null,
+      headerUrl: profile.headerUrl ?? null,
+      website: profile.website ?? null,
       did: profile.did,
       publicKey: profile.publicKey,
       isNsfw: profile.isNsfw,
+      profileDocument: profile.profileDocument,
       // fetchSwarmUserProfile verifies and expands the transport proof before
       // it reaches this cache boundary.
       stuffboxBadge: profile.stuffboxBadge as StuffboxBadge | null | undefined,

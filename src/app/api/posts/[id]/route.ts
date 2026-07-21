@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db, posts, users } from '@/db';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { normalizeSameNodePostId, parseSwarmPostId } from '@/lib/swarm/post-id';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
@@ -38,9 +38,12 @@ import {
 } from '@/lib/identity/account-address';
 import {
     attachStoredStuffboxBadgesToPost,
+    stuffboxBadgeFromStoredUser,
     verifyStuffboxBadgeOnPost,
 } from '@/lib/stuffbox/badge';
 import type { StuffboxBadge } from '@/lib/types';
+import { mapWithConcurrency } from '@/lib/async/concurrency';
+import { fetchSwarmUserProfile } from '@/lib/swarm/interactions';
 
 interface SwarmReplyDeletionPayload {
     replyId: string;
@@ -243,6 +246,110 @@ function postRecordIsSensitive(
         ));
 }
 
+const MAX_RELAYED_AUTHORS_TO_REHYDRATE = 4;
+const RELAYED_AUTHOR_PROFILE_TIMEOUT_MS = 2_500;
+
+/**
+ * Replace immutable reply-envelope presentation snapshots with the newest
+ * trusted profile presentation. Local accounts come from this node's
+ * authoritative row; remote accounts require an exact user-signed profile
+ * document fetched from their canonical home node.
+ */
+async function rehydrateRelayedReplyPresentations(
+    replies: SwarmDetailPostInput[],
+    originDomain: string,
+    localNodeDomain: string,
+): Promise<SwarmDetailPostInput[]> {
+    const targets = new Map<string, { handle: string; homeDomain: string }>();
+    for (const reply of replies) {
+        if (!reply.author || !reply.nodeDomain || reply.nodeDomain === originDomain) continue;
+        const address = resolveAccountAddress(reply.author.handle, reply.nodeDomain);
+        if (address) targets.set(address.canonical, {
+            handle: address.canonical,
+            homeDomain: address.homeDomain,
+        });
+    }
+    if (targets.size === 0) return replies;
+
+    const presentations = new Map<string, {
+        displayName: string;
+        avatarUrl?: string | null;
+        stuffboxBadge?: StuffboxBadge | null;
+        version?: number;
+    }>();
+    const localHandles = [...targets.values()]
+        .filter((target) => target.homeDomain === localNodeDomain)
+        .map((target) => target.handle);
+    if (localHandles.length > 0) {
+        const localUsers = await db.select().from(users).where(and(
+            inArray(users.handle, localHandles),
+            eq(users.isLocalAccount, true),
+        ));
+        for (const user of localUsers) {
+            presentations.set(user.handle, {
+                displayName: user.displayName || user.handle,
+                avatarUrl: user.avatarUrl,
+                stuffboxBadge: stuffboxBadgeFromStoredUser(user),
+            });
+        }
+    }
+
+    const remoteTargets = [...targets.values()]
+        .filter((target) => target.homeDomain !== localNodeDomain)
+        .slice(0, MAX_RELAYED_AUTHORS_TO_REHYDRATE);
+    if (remoteTargets.length > 0) {
+        const cachedUsers = await db.select().from(users).where(and(
+            inArray(users.handle, remoteTargets.map((target) => target.handle)),
+            eq(users.isLocalAccount, false),
+            isNotNull(users.profileVersion),
+            isNotNull(users.profileDocumentJson),
+        ));
+        for (const user of cachedUsers) {
+            presentations.set(user.handle, {
+                displayName: user.displayName || user.handle,
+                avatarUrl: user.avatarUrl,
+                stuffboxBadge: stuffboxBadgeFromStoredUser(user),
+                version: user.profileVersion ?? undefined,
+            });
+        }
+    }
+    await mapWithConcurrency(remoteTargets, 4, async (target) => {
+        const response = await fetchSwarmUserProfile(
+            target.handle,
+            target.homeDomain,
+            0,
+            undefined,
+            RELAYED_AUTHOR_PROFILE_TIMEOUT_MS,
+        );
+        if (!response?.profile.profilePresentationVerified) return;
+        const cached = presentations.get(target.handle);
+        if (cached?.version !== undefined
+            && (response.profile.profileVersion ?? 0) < cached.version) return;
+        presentations.set(target.handle, {
+            displayName: response.profile.displayName,
+            avatarUrl: response.profile.avatarUrl,
+            stuffboxBadge: response.profile.stuffboxBadge as StuffboxBadge | null | undefined,
+            version: response.profile.profileVersion,
+        });
+    });
+
+    return replies.map((reply) => {
+        if (!reply.author || !reply.nodeDomain) return reply;
+        const address = resolveAccountAddress(reply.author.handle, reply.nodeDomain);
+        const presentation = address ? presentations.get(address.canonical) : null;
+        if (!presentation) return reply;
+        return {
+            ...reply,
+            author: {
+                ...reply.author,
+                displayName: presentation.displayName,
+                avatarUrl: presentation.avatarUrl,
+                stuffboxBadge: presentation.stuffboxBadge,
+            },
+        };
+    });
+}
+
 export async function GET(
     request: Request,
     { params }: { params: Promise<{ id: string }> }
@@ -377,6 +484,11 @@ export async function GET(
                             }
                         }
 
+                        originReplies = await rehydrateRelayedReplyPresentations(
+                            originReplies,
+                            originDomain,
+                            nodeDomain,
+                        );
                         const verifiedOriginReplies = await Promise.all(
                             originReplies.map((reply) => verifyStuffboxBadgeOnPost(reply)),
                         );

@@ -9,7 +9,12 @@ import {
   parseRemotePostListResponse,
   parseRemoteProfileResponse,
   parseRemoteRepliesResponse,
+  verifyRemoteProfilePresentation,
 } from './remote-post-payload';
+import {
+  PROFILE_DOCUMENT_PROTOCOL,
+  PUBLISH_PROFILE_ACTION,
+} from '@/lib/profile/profile-document';
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
 const signingKey = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
@@ -132,11 +137,52 @@ function profileResponse(posts: unknown[] = [post()]) {
   };
 }
 
+function signedProfileDocument(overrides: Record<string, unknown> = {}) {
+  const unsigned = {
+    action: PUBLISH_PROFILE_ACTION,
+    data: {
+      protocol: PROFILE_DOCUMENT_PROTOCOL,
+      displayName: 'Alice',
+      bio: null,
+      avatarUrl: null,
+      headerUrl: null,
+      website: null,
+      ...overrides,
+    },
+    did,
+    handle: 'alice@source.social',
+    ts: Date.now(),
+    nonce: 'portable_profile_nonce',
+  };
+  const signer = crypto.createSign('SHA256');
+  signer.update(canonicalize(unsigned));
+  signer.end();
+  return {
+    ...unsigned,
+    sig: signer.sign({ key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url'),
+  };
+}
+
 describe('remote profile and post validation', () => {
   it('accepts bounded source-owned profile data with a self-certifying identity', () => {
     const result = parseRemoteProfileResponse(profileResponse(), 'source.social', 'alice', 25);
     expect(result.posts).toHaveLength(1);
     expect(result.profile.publicKey).toBe(signingKey);
+  });
+
+  it('accepts an exact account-signed profile document and rejects node presentation edits', async () => {
+    const payload = profileResponse();
+    (payload.profile as Record<string, unknown>).profileDocument = signedProfileDocument();
+    const parsed = parseRemoteProfileResponse(payload, 'source.social', 'alice', 25);
+    const verified = await verifyRemoteProfilePresentation(parsed.profile);
+    expect(verified.profilePresentationVerified).toBe(true);
+    expect(verified.profileVersion).toBe(verified.profileDocument?.ts);
+
+    const editedPayload = profileResponse();
+    editedPayload.profile.displayName = 'Node rewrite';
+    (editedPayload.profile as Record<string, unknown>).profileDocument = signedProfileDocument();
+    const edited = parseRemoteProfileResponse(editedPayload, 'source.social', 'alice', 25);
+    await expect(verifyRemoteProfilePresentation(edited.profile)).rejects.toThrow(/invalid/);
   });
 
   it('uses an authenticated safe profile classification for its post and author', () => {
