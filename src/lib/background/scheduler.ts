@@ -19,6 +19,7 @@ import { markBackgroundStarted, markBackgroundTask } from '@/lib/background/heal
 import { reconcilePostSearchIndex } from '@/lib/search/post-index';
 import { processChangeNoticeCycle } from '@/lib/swarm/change-notice';
 import { reconcileBlockedNodeQuarantines } from '@/lib/swarm/node-blocklist';
+import { processAccountMoveDeliveryOutbox } from '@/lib/account/move-delivery';
 
 const GOSSIP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const REMOTE_SYNC_INTERVAL_MS = 60 * 1000; // 1 minute - keep feeds fresh
@@ -26,6 +27,7 @@ const MENTION_DELIVERY_INTERVAL_MS = 30 * 1000;
 const PUSH_DELIVERY_INTERVAL_MS = 15 * 1000;
 const CHANGE_NOTICE_INTERVAL_MS = 1_000;
 const NODE_QUARANTINE_INTERVAL_MS = 60 * 1000;
+const ACCOUNT_MOVE_DELIVERY_INTERVAL_MS = 60 * 1000;
 const STARTUP_DELAY_MS = 10 * 1000; // Wait 10s for server to be ready
 
 let isStarted = false;
@@ -85,6 +87,17 @@ async function runNodeBlockQuarantines() {
     }
   } catch (error) {
     log('NODE_BLOCK', `Quarantine reconciliation error: ${error}`);
+  }
+}
+
+async function runAccountMoveDeliveries() {
+  try {
+    const result = await processAccountMoveDeliveryOutbox();
+    if (result.confirmed > 0 || result.retrying > 0) {
+      log('ACCOUNT_MOVE', `Confirmed ${result.confirmed}, still retrying ${result.retrying}`);
+    }
+  } catch (error) {
+    log('ACCOUNT_MOVE', `Source cleanup outbox error: ${error}`);
   }
 }
 
@@ -217,6 +230,7 @@ export function startBackgroundTasks(origin?: string) {
     await runMentionDeliveries();
     await runPushDeliveries();
     await runNodeBlockQuarantines();
+    await runAccountMoveDeliveries();
     
     // Run initial remote sync (after 15s to let server stabilize)
     setTimeout(() => runRemoteSync(syncOrigin), 15 * 1000);
@@ -229,6 +243,7 @@ export function startBackgroundTasks(origin?: string) {
     setInterval(runMentionDeliveries, MENTION_DELIVERY_INTERVAL_MS);
     setInterval(runPushDeliveries, PUSH_DELIVERY_INTERVAL_MS);
     setInterval(runNodeBlockQuarantines, NODE_QUARANTINE_INTERVAL_MS);
+    setInterval(runAccountMoveDeliveries, ACCOUNT_MOVE_DELIVERY_INTERVAL_MS);
     if (publicSwarmEnabled) {
       setInterval(runSwarmGossip, GOSSIP_INTERVAL_MS);
       setInterval(runSwarmContentSync, REMOTE_SYNC_INTERVAL_MS);

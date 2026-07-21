@@ -12,9 +12,12 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: 'Encryption key not found' }, { status: 404 });
   }
 
-  const [row, vault] = await Promise.all([
+  const [row, vault, moveDelivery] = await Promise.all([
     db.query.e2eeKeyBundles.findFirst({ where: { userId: user.id } }),
     db.query.e2eeKeyVaults.findFirst({ where: { userId: user.id } }),
+    user.movedFrom
+      ? db.query.accountMoveDeliveries.findFirst({ where: { userId: user.id } })
+      : null,
   ]);
   if (!row && !vault) {
     return NextResponse.json({
@@ -37,6 +40,15 @@ export async function GET(_request: Request, context: RouteContext) {
       bundle,
       proof,
       signingPublicKey: user.publicKey,
+      ...(moveDelivery ? {
+        moveNotice: {
+          oldHandle: moveDelivery.oldHandle,
+          newActorUrl: moveDelivery.newActorUrl,
+          did: moveDelivery.did,
+          movedAt: moveDelivery.movedAt.toISOString(),
+          signature: moveDelivery.signature,
+        },
+      } : {}),
     }, { headers: { 'Cache-Control': 'public, max-age=60, must-revalidate' } });
   } catch (error) {
     console.error('[E2EE Keys] Stored key proof is invalid:', error);

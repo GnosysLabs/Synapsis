@@ -99,6 +99,7 @@ import { verifyE2EEPublicBundle } from '@/lib/e2ee/bundle-proof';
 import { generateE2EEKeyMaterial } from '@/lib/e2ee/client-crypto';
 import { E2EE_PROTOCOL } from '@/lib/e2ee/protocol';
 import { FederatedIdentityContinuityError } from '@/lib/swarm/federated-action';
+import { createSignedAccountMoveNotice, verifySignedAccountMoveNotice } from '@/lib/account/move-notification';
 import { GET } from './route';
 
 function pemBody(pem: string): Uint8Array {
@@ -125,7 +126,11 @@ async function createValidSelfSignedBundle(handle = 'alice') {
     recoveryCommitment: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
   } as const;
   const proof = await createSignedAction('e2ee_key_bundle', bundle, did, handle);
-  return { did, response: { bundle, proof, signingPublicKey: signingKeys.publicKey } };
+  return {
+    did,
+    privateKey: signingKeys.privateKey,
+    response: { bundle, proof, signingPublicKey: signingKeys.publicKey },
+  };
 }
 
 function resolveRequest(did: string) {
@@ -170,7 +175,7 @@ describe('remote E2EE handle identity continuity', () => {
     expect(mocks.events).toEqual(['pin', 'cache']);
     expect(mocks.pinVerifiedFederatedActorIdentity).toHaveBeenCalledWith({
       sourceDomain: 'remote.social',
-      actorHandle: 'alice',
+      actorHandle: 'alice@remote.social',
       did: attacker.did,
     }, expect.anything());
     expect(mocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
@@ -218,6 +223,40 @@ describe('remote E2EE handle identity continuity', () => {
     await expect(response.json()).resolves.toMatchObject({
       code: 'E2EE_IDENTITY_KEY_CHANGED',
     });
+    expect(mocks.insertValues).not.toHaveBeenCalled();
+  });
+
+  it('accepts the same DID and E2EE key at its new handle with a valid signed move notice', async () => {
+    const moved = await createValidSelfSignedBundle('alice@old.social');
+    const moveNotice = createSignedAccountMoveNotice({
+      oldHandle: 'alice@old.social',
+      newActorUrl: 'https://remote.social/users/alice',
+      did: moved.did,
+      privateKey: moved.privateKey,
+    });
+    expect(verifySignedAccountMoveNotice(moveNotice, moved.response.signingPublicKey)).toBe(true);
+    expect(await verifyE2EEPublicBundle(moved.response, moved.did)).toBe(true);
+    mocks.safeFederationRequest.mockResolvedValue({
+      status: 200,
+      json: () => ({ ...moved.response, moveNotice }),
+    });
+    mocks.remoteBundleFindFirst.mockResolvedValue({
+      did: moved.did,
+      handle: 'alice@old.social',
+      signingPublicKey: moved.response.signingPublicKey,
+      keyId: moved.response.bundle.keyId,
+      keyVersion: moved.response.bundle.version,
+      publicKey: moved.response.bundle.publicKey,
+    });
+
+    const response = await GET(resolveRequest(moved.did));
+
+    expect(response.status).toBe(200);
+    expect(mocks.pinVerifiedFederatedActorIdentity).toHaveBeenCalledWith({
+      sourceDomain: 'remote.social',
+      actorHandle: 'alice@remote.social',
+      did: moved.did,
+    }, expect.anything());
     expect(mocks.insertValues).not.toHaveBeenCalled();
   });
 });

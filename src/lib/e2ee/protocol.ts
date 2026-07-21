@@ -112,16 +112,42 @@ export const e2eeVaultSetupSchema = z.strictObject({
 
 export type E2EEVaultSetup = z.infer<typeof e2eeVaultSetupSchema>;
 
+/**
+ * Portable portion of a recovery vault. The password-derived verifier is
+ * deliberately omitted and recomputed by the destination node from the
+ * import password. The signed export digest protects both fields in transit.
+ */
+export const e2eeVaultTransferSchema = z.strictObject({
+  vault: e2eeVaultRecordSchema,
+  serverShare: base64UrlSchema.max(64),
+});
+
+export type E2EEVaultTransfer = z.infer<typeof e2eeVaultTransferSchema>;
+
 export interface E2EEPublicBundleResponse {
   bundle: E2EEKeyBundle;
   proof: SignedUserAction;
   signingPublicKey: string;
+  moveNotice?: {
+    oldHandle: string;
+    newActorUrl: string;
+    did: string;
+    movedAt: string;
+    signature: string;
+  };
 }
 
 export const e2eePublicBundleResponseSchema = z.strictObject({
   bundle: e2eeKeyBundleSchema,
   proof: signedUserActionSchema,
   signingPublicKey: z.string().min(1).max(8_192),
+  moveNotice: z.strictObject({
+    oldHandle: handleSchema,
+    newActorUrl: z.url().max(2_048),
+    did: didSchema,
+    movedAt: z.iso.datetime({ offset: true }),
+    signature: z.string().min(1).max(16_384).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+  }).optional(),
 });
 
 export interface E2EEKeyMaterial {

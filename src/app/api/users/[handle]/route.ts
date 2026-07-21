@@ -102,6 +102,34 @@ export async function GET(request: Request, context: RouteContext) {
             }
             // Only return 404 if this wasn't a remote placeholder we were trying to refresh
             if (!isRemotePlaceholder) {
+                const tombstone = resolvedHandle.isLocal
+                    ? await db.query.swarmAccountTombstones.findFirst({
+                        where: { handle: cleanHandle },
+                    })
+                    : null;
+                if (tombstone?.movedTo) {
+                    return NextResponse.json({
+                        user: {
+                            id: `moved:${tombstone.did}`,
+                            handle: tombstone.handle,
+                            displayName: tombstone.username,
+                            bio: null,
+                            avatarUrl: null,
+                            headerUrl: null,
+                            followersCount: 0,
+                            followingCount: 0,
+                            postsCount: 0,
+                            website: null,
+                            createdAt: (tombstone.migratedAt ?? tombstone.deletedAt).toISOString(),
+                            movedTo: tombstone.movedTo,
+                            did: tombstone.did,
+                            dmPrivacy: 'none',
+                            canReceiveDms: false,
+                            isNsfw: false,
+                            stuffboxBadge: null,
+                        },
+                    }, { headers: { 'Cache-Control': 'no-store' } });
+                }
                 return NextResponse.json({ error: 'User not found' }, { status: 404 });
             }
         }

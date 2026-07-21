@@ -2,12 +2,26 @@
  * Account Moved Notification API
  * 
  * Called by the new node to notify the old node that an account has migrated.
- * The old node then marks the account as moved.
+ * The old node then replaces the account with a permanent move tombstone.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, users } from '@/db';
-import { eq } from 'drizzle-orm';
+import {
+    chatConversations,
+    chatMessages,
+    db,
+    follows,
+    handleRegistry,
+    likes,
+    notifications,
+    posts,
+    reports,
+    sessions,
+    swarmAccountTombstones,
+    swarmContentClock,
+    users,
+} from '@/db';
+import { and, eq, or, sql } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { z } from 'zod';
 
@@ -19,7 +33,7 @@ import {
 } from '@/lib/identity/account-address';
 
 const MAX_MOVE_NOTIFICATION_BYTES = 32 * 1024;
-const MOVE_NOTIFICATION_MAX_AGE_MS = 10 * 60 * 1_000;
+const MOVE_NOTIFICATION_MAX_FUTURE_SKEW_MS = 10 * 60 * 1_000;
 const moveNotificationSchema = z.strictObject({
     // Bare values are accepted only for legacy, already-signed move notices;
     // the receiving node supplies the authoritative local domain.
@@ -46,8 +60,8 @@ export async function POST(req: NextRequest) {
         }
         const movedAtMs = Date.parse(movedAt);
         if (!Number.isFinite(movedAtMs)
-            || Math.abs(Date.now() - movedAtMs) > MOVE_NOTIFICATION_MAX_AGE_MS) {
-            return NextResponse.json({ error: 'Move notification is stale' }, { status: 400 });
+            || movedAtMs > Date.now() + MOVE_NOTIFICATION_MAX_FUTURE_SKEW_MS) {
+            return NextResponse.json({ error: 'Move notification timestamp is invalid' }, { status: 400 });
         }
 
         // Find the user on this node
@@ -62,6 +76,17 @@ export async function POST(req: NextRequest) {
         });
 
         if (!user) {
+            const tombstone = await db.query.swarmAccountTombstones.findFirst({
+                where: { handle: oldAddress.canonical },
+            });
+            if (tombstone?.did === did && tombstone.movedTo === newActorUrl) {
+                return NextResponse.json({
+                    success: true,
+                    message: 'Account move was already finalized',
+                    sourceDataDeleted: true,
+                    usernameReserved: true,
+                });
+            }
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
@@ -80,34 +105,79 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Invalid signature' }, { status: 403 });
         }
 
-        // Check if already moved
-        if (user.movedTo) {
-            return NextResponse.json({ error: 'Account already marked as moved' }, { status: 409 });
-        }
-
-        // Mark the account as moved
-        await db.update(users)
-            .set({
-                movedTo: newActorUrl,
-                migratedAt: new Date(movedAtMs),
-                updatedAt: new Date(),
-            })
-            .where(eq(users.id, user.id));
-
-        // Get all followers to notify
+        // Count local follower relationships before the account is removed.
         const userFollowers = await db.query.follows.findMany({
             where: { followingId: user.id },
-            with: {
-                follower: true,
-            },
         });
 
-        console.log(`Account ${oldAddress.canonical} marked as moved to ${newActorUrl}. ${userFollowers.length} followers.`);
+        // Preserve only the cryptographically-bound move target and permanent
+        // username reservation. All user-owned rows and credentials are
+        // removed in the same transaction as the move tombstone.
+        await db.transaction(async (tx) => {
+            await tx.delete(chatMessages).where(eq(chatMessages.senderDid, user.did));
+
+            const conversations = await tx.query.chatConversations.findMany({
+                where: {
+                    OR: [
+                        { participant1Id: user.id },
+                        { participant2Handle: user.handle },
+                        { participant2Handle: user.username },
+                    ],
+                },
+            });
+            for (const conversation of conversations) {
+                await tx.delete(chatConversations).where(eq(chatConversations.id, conversation.id));
+            }
+
+            await tx.delete(notifications).where(or(
+                eq(notifications.userId, user.id),
+                eq(notifications.actorId, user.id),
+            ));
+            await tx.delete(likes).where(eq(likes.userId, user.id));
+            await tx.delete(follows).where(or(
+                eq(follows.followerId, user.id),
+                eq(follows.followingId, user.id),
+            ));
+            await tx.update(posts).set({ removedBy: null }).where(eq(posts.removedBy, user.id));
+            await tx.update(reports).set({ resolvedBy: null }).where(eq(reports.resolvedBy, user.id));
+            await tx.delete(posts).where(eq(posts.userId, user.id));
+            await tx.delete(sessions).where(eq(sessions.userId, user.id));
+
+            const [clock] = await tx.update(swarmContentClock).set({
+                sequence: sql`${swarmContentClock.sequence} + 1`,
+            }).where(eq(swarmContentClock.id, 1)).returning({
+                sequence: swarmContentClock.sequence,
+            });
+            if (!clock) throw new Error('Federation change clock is unavailable');
+
+            await tx.insert(swarmAccountTombstones).values({
+                handle: oldAddress.canonical,
+                username: oldAddress.username,
+                homeDomain: oldAddress.homeDomain,
+                did: user.did,
+                sequence: clock.sequence,
+                deletedAt: new Date(movedAtMs),
+                movedTo: newActorUrl,
+                migratedAt: new Date(movedAtMs),
+            });
+            await tx.update(handleRegistry).set({
+                deletedAt: new Date(movedAtMs),
+                updatedAt: new Date(),
+            }).where(and(
+                eq(handleRegistry.did, user.did),
+                eq(handleRegistry.nodeDomain, oldAddress.homeDomain),
+            ));
+            await tx.delete(users).where(eq(users.id, user.id));
+        });
+
+        console.log(`Account ${oldAddress.canonical} moved to ${newActorUrl}; source data deleted and username reserved.`);
 
         return NextResponse.json({
             success: true,
-            message: 'Account marked as moved',
-            followersNotified: userFollowers.length,
+            message: 'Account move finalized',
+            sourceDataDeleted: true,
+            usernameReserved: true,
+            followerRelationshipsRemoved: userFollowers.length,
         });
 
     } catch (error) {

@@ -34,6 +34,9 @@ export async function GET() {
         // The active account is the authoritative place to detect a plan
         // change after the user returns from Stuffbox.
         const stuffboxBadge = await getOrRefreshStuffboxBadge(session.user, { force: true });
+        const moveDelivery = session.user.movedFrom
+            ? await db.query.accountMoveDeliveries.findFirst({ where: { userId: session.user.id } })
+            : null;
 
         return NextResponse.json({
             user: {
@@ -56,6 +59,8 @@ export async function GET() {
                     : session.user.nsfwEnabled,
                 ageVerifiedAt: session.user.ageVerifiedAt?.toISOString() || null,
                 stuffboxBadge,
+                movedFrom: session.user.movedFrom,
+                sourceCleanupConfirmed: moveDelivery?.status === 'confirmed',
             },
             accounts: accounts.map((account) => ({
                 ...account,

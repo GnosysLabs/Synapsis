@@ -14,6 +14,8 @@ import { generateDID } from '@/lib/crypto/did-key';
 import { canonicalize } from '@/lib/crypto/user-signing';
 import { encryptPrivateKey, serializeEncryptedKey } from '@/lib/crypto/private-key';
 import { encryptionKeyIdFromPublicKey } from '@/lib/e2ee/bundle-proof';
+import { createE2EEVault, generateE2EEKeyMaterial } from '@/lib/e2ee/client-crypto';
+import { sealServerShare } from '@/lib/e2ee/server-secrets';
 import {
     E2EE_CIPHER_SUITE,
     E2EE_KEY_BUNDLE_ACTION,
@@ -23,6 +25,7 @@ import {
 const mocks = vi.hoisted(() => ({
     tables: {
         users: { table: 'users' },
+        accountMoveDeliveries: { table: 'accountMoveDeliveries' },
         posts: { table: 'posts' },
         media: { table: 'media' },
         follows: { table: 'follows' },
@@ -30,6 +33,7 @@ const mocks = vi.hoisted(() => ({
         chatConversations: { table: 'chatConversations' },
         chatMessages: { table: 'chatMessages' },
         e2eeKeyBundles: { table: 'e2eeKeyBundles' },
+        e2eeKeyVaults: { table: 'e2eeKeyVaults' },
         e2eeMessageReceipts: { table: 'e2eeMessageReceipts' },
     },
     requireAuth: vi.fn(),
@@ -41,7 +45,9 @@ const mocks = vi.hoisted(() => ({
     findRemoteFollows: vi.fn(),
     findConversations: vi.fn(),
     findE2EEKeyBundle: vi.fn(),
+    findE2EEVault: vi.fn(),
     findUsers: vi.fn(),
+    findAccountMove: vi.fn(),
     findNodes: vi.fn(),
     insert: vi.fn(),
     update: vi.fn(),
@@ -64,12 +70,14 @@ vi.mock('@/db', () => ({
         transaction: mocks.transaction,
         query: {
             users: { findFirst: mocks.findUsers },
+            accountMoveDeliveries: { findFirst: mocks.findAccountMove },
             nodes: { findFirst: mocks.findNodes },
             posts: { findMany: mocks.findPosts },
             follows: { findMany: mocks.findFollows },
             remoteFollows: { findMany: mocks.findRemoteFollows },
             chatConversations: { findMany: mocks.findConversations },
             e2eeKeyBundles: { findFirst: mocks.findE2EEKeyBundle },
+            e2eeKeyVaults: { findFirst: mocks.findE2EEVault },
             swarmAccountTombstones: { findFirst: vi.fn().mockResolvedValue(undefined) },
         },
     },
@@ -79,6 +87,10 @@ vi.mock('drizzle-orm', async (importOriginal) => ({
     eq: vi.fn(() => ({})),
 }));
 vi.mock('@/lib/federation/handles', () => ({ upsertHandleEntries: vi.fn() }));
+vi.mock('@/lib/swarm/node-blocklist', () => ({
+    getBlockedNodeDomains: vi.fn(async () => new Set<string>()),
+    isNodeBlocked: vi.fn(async () => false),
+}));
 vi.mock('@/lib/swarm/safe-federation-http', () => ({
     safeFederationRequest: mocks.safeFederationRequest,
 }));
@@ -89,7 +101,7 @@ import { POST as importAccount } from '../import/route';
 interface ExportResponseBody {
     export: {
         manifest: {
-            version: '1.1';
+            version: '1.2';
             did: string;
             handle: string;
             sourceNode: string;
@@ -106,6 +118,7 @@ interface ExportResponseBody {
         following: unknown[];
         dms: unknown[];
         e2eeKeyBundle: unknown | null;
+        e2eeVault: unknown | null;
     };
 }
 
@@ -114,6 +127,8 @@ describe('account export manifest integrity', () => {
         vi.clearAllMocks();
         mocks.insertedRows.length = 0;
         vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'export.synapsis.social');
+        vi.stubEnv('E2EE_RECOVERY_SECRET', 'test-only-independent-recovery-secret-123456789');
+        vi.stubEnv('AUTH_SECRET', 'different-test-auth-secret-123456789');
         mocks.verifyPassword.mockResolvedValue(true);
         mocks.hashPassword.mockResolvedValue('imported-password-hash');
         mocks.createSession.mockResolvedValue('imported-session-token');
@@ -122,9 +137,19 @@ describe('account export manifest integrity', () => {
         mocks.findRemoteFollows.mockResolvedValue([]);
         mocks.findConversations.mockResolvedValue([]);
         mocks.findE2EEKeyBundle.mockResolvedValue(undefined);
+        mocks.findE2EEVault.mockResolvedValue(undefined);
         mocks.findUsers.mockResolvedValue(undefined);
+        mocks.findAccountMove.mockImplementation(async () => {
+            const stored = mocks.insertedRows.find(
+                ({ table }) => table === mocks.tables.accountMoveDeliveries,
+            )?.values;
+            return stored ? { id: 'move-1', attempts: 0, ...stored } : undefined;
+        });
         mocks.findNodes.mockResolvedValue({ isNsfw: false });
-        mocks.safeFederationRequest.mockResolvedValue({ status: 204 });
+        mocks.safeFederationRequest.mockResolvedValue({
+            status: 200,
+            json: () => ({ success: true, sourceDataDeleted: true, usernameReserved: true }),
+        });
         mocks.update.mockImplementation(() => ({
             set: () => ({
                 where: () => Promise.resolve(),
@@ -153,7 +178,7 @@ describe('account export manifest integrity', () => {
         vi.unstubAllEnvs();
     });
 
-    it('decrypts the stored key to sign v1.1 while exporting its encrypted blob unchanged', async () => {
+    it('round-trips a signed v1.2 export with its portable encrypted-message recovery vault', async () => {
         const password = 'correct horse battery staple';
         const { privateKey, publicKey } = generateKeyPairSync('ec', {
             namedCurve: 'P-256',
@@ -216,9 +241,13 @@ describe('account export manifest integrity', () => {
             dsaEncoding: 'ieee-p1363',
         }).toString('base64url');
 
-        const encryptionPublicKey = randomBytes(32).toString('base64url');
+        const encryptionMaterial = await generateE2EEKeyMaterial();
+        const encryptionPublicKey = encryptionMaterial.publicKey;
         const continuityKeyId = await encryptionKeyIdFromPublicKey(encryptionPublicKey);
-        if (!continuityKeyId) throw new Error('Could not derive test encryption key ID');
+        if (!continuityKeyId || continuityKeyId !== encryptionMaterial.keyId) {
+            throw new Error('Could not derive test encryption key ID');
+        }
+        const recovery = await createE2EEVault(password, encryptionMaterial, ownerDid, 1);
         const continuityCreatedAt = Date.now();
         const continuityBundle = {
             protocol: E2EE_PROTOCOL,
@@ -226,7 +255,9 @@ describe('account export manifest integrity', () => {
             version: 1,
             publicKey: encryptionPublicKey,
             createdAt: continuityCreatedAt,
-            recoveryCommitment: randomBytes(32).toString('base64url'),
+            recoveryCommitment: createHash('sha256')
+                .update(canonicalize(recovery))
+                .digest('base64url'),
         };
         const continuityProofPayload = {
             action: E2EE_KEY_BUNDLE_ACTION,
@@ -273,16 +304,19 @@ describe('account export manifest integrity', () => {
             }],
         }]);
         mocks.findRemoteFollows.mockResolvedValue([{
-            targetActorUrl: 'https://adult.remote/users/private-account',
-            targetHandle: 'private-account@adult.remote',
+            targetActorUrl: 'https://adult.wikipedia.org/users/private_account',
+            targetHandle: 'private_account@adult.wikipedia.org',
             displayName: 'Remote account',
             bio: 'PRIVATE REMOTE BIO',
-            avatarUrl: 'https://adult.remote/private-avatar.jpg',
+            avatarUrl: 'https://adult.wikipedia.org/private-avatar.jpg',
         }]);
         mocks.requireAuth.mockResolvedValue({
             id: 'user-1',
             did: ownerDid,
-            handle: 'alice',
+            handle: 'alice@export.synapsis.social',
+            username: 'alice',
+            homeDomain: 'export.synapsis.social',
+            isLocalAccount: true,
             displayName: 'Alice',
             bio: null,
             avatarUrl: null,
@@ -299,6 +333,25 @@ describe('account export manifest integrity', () => {
             publicKey: encryptionPublicKey,
             proofAction: JSON.stringify(continuityProof),
         });
+        mocks.findE2EEVault.mockResolvedValue({
+            userId: 'user-1',
+            keyId: continuityKeyId,
+            keyVersion: 1,
+            ownerDid,
+            publicKey: encryptionPublicKey,
+            ciphertext: recovery.vault.ciphertext,
+            nonce: recovery.vault.nonce,
+            salt: recovery.vault.salt,
+            kdfAlgorithm: recovery.vault.kdfAlgorithm,
+            kdfOpsLimit: recovery.vault.kdfOpsLimit,
+            kdfMemLimit: recovery.vault.kdfMemLimit,
+            recoveryMethod: 'password',
+            serverShareEncrypted: sealServerShare(
+                recovery.serverShare,
+                'user-1',
+                continuityKeyId,
+            ),
+        });
 
         const response = await POST(new NextRequest('https://export.synapsis.social/api/account/export', {
             method: 'POST',
@@ -308,7 +361,7 @@ describe('account export manifest integrity', () => {
         const body = await response.json() as ExportResponseBody;
 
         expect(response.status).toBe(200);
-        expect(body.export.manifest.version).toBe('1.1');
+        expect(body.export.manifest.version).toBe('1.2');
         expect(body.export.manifest.privateKeyEncrypted).toBe(storedPrivateKey);
         expect(body.export.manifest).not.toHaveProperty('salt');
         expect(body.export.manifest).not.toHaveProperty('iv');
@@ -320,8 +373,8 @@ describe('account export manifest integrity', () => {
             proofAction: continuityProof,
         });
         expect(body.export.following).toContainEqual({
-            actorUrl: 'https://adult.remote/users/private-account',
-            handle: 'private-account@adult.remote',
+            actorUrl: 'https://adult.wikipedia.org/users/private_account',
+            handle: 'private_account@adult.wikipedia.org',
             isRemote: true,
             displayName: 'Remote account',
             bio: null,
@@ -341,6 +394,7 @@ describe('account export manifest integrity', () => {
             following: body.export.following,
             dms: body.export.dms,
             e2eeKeyBundle: body.export.e2eeKeyBundle,
+            e2eeVault: body.export.e2eeVault,
         };
         expect(body.export.manifest.payloadDigest).toBe(
             createHash('sha256').update(canonicalize(payload)).digest('hex'),
@@ -349,7 +403,7 @@ describe('account export manifest integrity', () => {
         // The exported message carries millisecond-authenticated envelope
         // time while its DB timestamp is second-precision. A fresh importer
         // must accept the round-trip and preserve account login plus the
-        // signed public continuity anchor (but never a PIN vault).
+        // signed public continuity anchor and password recovery vault.
         const importResponse = await importAccount(new NextRequest('https://new.example/api/account/import', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -365,9 +419,7 @@ describe('account export manifest integrity', () => {
         await expect(importResponse.json()).resolves.toMatchObject({
             success: true,
             stats: { dmsImported: 1 },
-            warnings: expect.arrayContaining([
-                expect.stringContaining('decryption key is not portable yet'),
-            ]),
+            sourceCleanupConfirmed: true,
         });
         expect(mocks.hashPassword).toHaveBeenCalledWith(password);
 
@@ -393,6 +445,19 @@ describe('account export manifest integrity', () => {
         expect(JSON.parse(String(importedContinuity?.values.proofAction))).toEqual(continuityProof);
         expect(importedContinuity?.values).not.toHaveProperty('ciphertext');
         expect(importedContinuity?.values).not.toHaveProperty('pinVerifierMac');
+        const importedVault = mocks.insertedRows.find(
+            ({ table }) => table === mocks.tables.e2eeKeyVaults,
+        );
+        expect(importedVault?.values).toMatchObject({
+            userId: 'imported-user-1',
+            keyId: continuityKeyId,
+            ownerDid,
+            publicKey: encryptionPublicKey,
+            ciphertext: recovery.vault.ciphertext,
+            recoveryMethod: 'password',
+        });
+        expect(importedVault?.values.pinVerifierMac).toEqual(expect.any(String));
+        expect(importedVault?.values.serverShareEncrypted).toEqual(expect.any(String));
         expect(mocks.safeFederationRequest).toHaveBeenCalledWith(
             'https://export.synapsis.social/api/account/moved',
             expect.objectContaining({ method: 'POST', timeoutMs: 5_000 }),

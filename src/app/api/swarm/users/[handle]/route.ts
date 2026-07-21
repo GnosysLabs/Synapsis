@@ -268,6 +268,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
         where: { handle: localAddress.canonical },
       });
       if (tombstone && trustedRead) {
+        if (tombstone.movedTo) {
+          return NextResponse.json({
+            moved: true,
+            handle: tombstone.handle,
+            did: tombstone.did,
+            movedTo: tombstone.movedTo,
+            migratedAt: (tombstone.migratedAt ?? tombstone.deletedAt).toISOString(),
+          }, { status: 410 });
+        }
         return NextResponse.json({
           deleted: true,
           handle: tombstone.handle,

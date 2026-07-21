@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, users, posts, media, follows, remoteFollows, chatConversations, chatMessages, e2eeKeyBundles, e2eeMessageReceipts, swarmAccountTombstones } from '@/db';
+import { accountMoveDeliveries, db, users, posts, media, follows, remoteFollows, chatConversations, chatMessages, e2eeKeyBundles, e2eeKeyVaults, e2eeMessageReceipts, swarmAccountTombstones } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { z } from 'zod';
@@ -22,15 +22,20 @@ import { didKeyMatchesPublicKey } from '@/lib/crypto/did-key';
 import { createSession, hashPassword } from '@/lib/auth';
 import {
     E2EE_CHAT_ACTION,
+    E2EE_KDF,
     E2EE_KEY_BUNDLE_ACTION,
     e2eeKeyBundleSchema,
     e2eeMessageEnvelopeSchema,
+    e2eeVaultTransferSchema,
     signedUserActionSchema,
     validateMessageBindings,
 } from '@/lib/e2ee/protocol';
 import { encryptionKeyIdFromPublicKey } from '@/lib/e2ee/bundle-proof';
+import { prepareE2EEVaultUnlock } from '@/lib/e2ee/client-crypto';
+import { createPinVerifierMac, sealServerShare } from '@/lib/e2ee/server-secrets';
 import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
-import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
+import { createSignedAccountMoveNotice } from '@/lib/account/move-notification';
+import { retryAccountMoveForUser } from '@/lib/account/move-delivery';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import {
     requireCanonicalAccountHomeDomain,
@@ -94,9 +99,14 @@ const importManifestV11Schema = z.strictObject({
     signature: base64Schema,
 });
 
+const importManifestV12Schema = importManifestV11Schema.extend({
+    version: z.literal('1.2'),
+});
+
 const importManifestSchema = z.union([
     importManifestV10Schema,
     importManifestV11Schema,
+    importManifestV12Schema,
 ]);
 
 type ImportManifest = z.infer<typeof importManifestSchema>;
@@ -216,6 +226,13 @@ interface ImportedE2EEContinuityAnchor {
     publicKey: string;
     proofAction: z.infer<typeof signedUserActionSchema>;
     createdAt: number;
+    recoveryCommitment: string;
+}
+
+interface ImportedE2EEVault {
+    vault: z.infer<typeof e2eeVaultTransferSchema>['vault'];
+    serverShare: string;
+    pinVerifier: string;
 }
 
 const dmConversationCommonSchema = {
@@ -308,7 +325,54 @@ async function validateE2EEContinuityAnchor(
         publicKey: anchor.publicKey,
         proofAction: proof,
         createdAt: bundle.createdAt,
+        recoveryCommitment: bundle.recoveryCommitment,
     };
+}
+
+async function validateImportedE2EEVault(
+    rawTransfer: unknown,
+    manifest: ImportManifest,
+    anchor: ImportedE2EEContinuityAnchor,
+    password: string,
+): Promise<ImportedE2EEVault> {
+    const transfer = e2eeVaultTransferSchema.parse(rawTransfer);
+    const { vault, serverShare } = transfer;
+    if (vault.ownerDid !== manifest.did
+        || vault.keyId !== anchor.keyId
+        || vault.keyVersion !== anchor.keyVersion
+        || vault.publicKey !== anchor.publicKey) {
+        throw new Error('Recovery vault does not match the signed account key');
+    }
+    if (Buffer.from(vault.publicKey, 'base64url').length !== 32
+        || Buffer.from(serverShare, 'base64url').length !== 32
+        || Buffer.from(vault.salt, 'base64url').length !== 16
+        || Buffer.from(vault.nonce, 'base64url').length !== 24) {
+        throw new Error('Recovery vault has invalid field sizes');
+    }
+    if (vault.kdfAlgorithm !== E2EE_KDF.algorithm
+        || vault.kdfOpsLimit !== E2EE_KDF.opsLimit
+        || vault.kdfMemLimit !== E2EE_KDF.memLimit) {
+        throw new Error('Recovery vault uses unsupported password-hardening settings');
+    }
+    const ciphertextLength = Buffer.from(vault.ciphertext, 'base64url').length;
+    if (ciphertextLength < 64 || ciphertextLength > 3_072) {
+        throw new Error('Recovery vault ciphertext is invalid');
+    }
+
+    const prepared = await prepareE2EEVaultUnlock(password, vault);
+    try {
+        const commitment = crypto.createHash('sha256').update(canonicalize({
+            vault,
+            serverShare,
+            pinVerifier: prepared.pinVerifier,
+        })).digest('base64url');
+        if (commitment !== anchor.recoveryCommitment) {
+            throw new Error('Recovery vault does not match its signed proof or import password');
+        }
+        return { vault, serverShare, pinVerifier: prepared.pinVerifier };
+    } finally {
+        prepared.pinKey.fill(0);
+    }
 }
 
 function digestImportPayload(exportData: Record<string, unknown>): string {
@@ -545,7 +609,7 @@ function signingKeyMatchesPublicKey(privateKey: string, publicKey: string): bool
 function verifyManifestSignature(manifest: ImportManifest): boolean {
     try {
         const { signature, ...manifestData } = manifest;
-        const data = manifest.version === '1.1'
+        const data = manifest.version === '1.1' || manifest.version === '1.2'
             ? canonicalize(manifestData)
             : JSON.stringify(manifestData);
 
@@ -648,6 +712,7 @@ export async function POST(req: NextRequest) {
             'following',
             'dms',
             'e2eeKeyBundle',
+            'e2eeVault',
             // Older exports always included this field. Empty arrays remain
             // importable, but automated accounts themselves are unsupported.
             'bots',
@@ -665,7 +730,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Export payload contains unsupported account types' }, { status: 400 });
         }
         let importedE2EEKeyBundle: ImportedE2EEContinuityAnchor | null = null;
-        if (manifest.version === '1.1' && exportData.e2eeKeyBundle != null) {
+        if (manifest.version !== '1.0' && exportData.e2eeKeyBundle != null) {
             try {
                 importedE2EEKeyBundle = await validateE2EEContinuityAnchor(
                     exportData.e2eeKeyBundle,
@@ -684,15 +749,9 @@ export async function POST(req: NextRequest) {
             const reason = error instanceof Error ? error.message : 'invalid direct-message history';
             return NextResponse.json({ error: `Invalid direct-message history: ${reason}` }, { status: 400 });
         }
-        const encryptedDMImportWarning = importDMs.some((conversation) => (
+        const hasEncryptedDMs = importDMs.some((conversation) => (
             conversation.messages.some((message) => message.protocolVersion === 1)
-        ))
-            ? 'Encrypted DM records were preserved, but their decryption key is not portable yet. This history cannot be opened on this node.'
-            : null;
-        const federatedMoveWarning = importedE2EEKeyBundle
-            ? 'Federated DM relationships do not automatically follow a home-node move. Peers that cached your old full handle may reject the new handle until signed account-move support is implemented.'
-            : null;
-
+        ));
         const profile = rawProfile as unknown as ImportProfile;
         const importPosts = rawPosts as ImportPost[];
         const following = rawFollowing as ImportFollowing[];
@@ -701,7 +760,7 @@ export async function POST(req: NextRequest) {
         let privateKey: string;
         let privateKeyEncryptedForStorage: string;
         try {
-            if (manifest.version === '1.1') {
+            if (manifest.version === '1.1' || manifest.version === '1.2') {
                 privateKey = decryptStoredPrivateKey(
                     deserializeEncryptedKey(manifest.privateKeyEncrypted),
                     password,
@@ -727,6 +786,29 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Export private key does not match its signing key' }, { status: 400 });
         }
         const importedPasswordHash = await hashPassword(password);
+
+        let importedE2EEVault: ImportedE2EEVault | null = null;
+        if (manifest.version === '1.2' && importedE2EEKeyBundle) {
+            try {
+                importedE2EEVault = await validateImportedE2EEVault(
+                    exportData.e2eeVault,
+                    manifest,
+                    importedE2EEKeyBundle,
+                    password,
+                );
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : 'invalid recovery vault';
+                return NextResponse.json({ error: `Invalid encrypted-message recovery: ${reason}` }, { status: 400 });
+            }
+        } else if (exportData.e2eeVault != null) {
+            return NextResponse.json({ error: 'Encrypted-message recovery requires a version 1.2 signed key bundle' }, { status: 400 });
+        }
+        if ((manifest.version === '1.2' && importedE2EEKeyBundle && !importedE2EEVault)
+            || (hasEncryptedDMs && !importedE2EEVault)) {
+            return NextResponse.json({
+                error: 'This export contains encrypted DM history without a portable recovery key. Create a fresh export from the old node.',
+            }, { status: 400 });
+        }
 
         // Check if DID already exists on this node
         const existingDid = await db.query.users.findFirst({
@@ -784,6 +866,12 @@ export async function POST(req: NextRequest) {
 
         const oldActorUrl = `${sourceNodeProtocol(sourceNode)}://${sourceNode}/users/${manifest.handle}`;
         const newActorUrl = `https://${nodeDomain}/users/${handleClean}`;
+        const moveNotice = createSignedAccountMoveNotice({
+            oldHandle: manifest.handle,
+            newActorUrl,
+            did: manifest.did,
+            privateKey,
+        });
 
         // The identity and its public continuity anchor are one unit. A key-ID
         // conflict must not leave behind an account that cannot be retried.
@@ -822,12 +910,57 @@ export async function POST(req: NextRequest) {
                     updatedAt: new Date(),
                 });
             }
+            if (importedE2EEVault) {
+                const vault = importedE2EEVault.vault;
+                await tx.insert(e2eeKeyVaults).values({
+                    userId: createdUser.id,
+                    keyId: vault.keyId,
+                    keyVersion: vault.keyVersion,
+                    ownerDid: vault.ownerDid,
+                    publicKey: vault.publicKey,
+                    ciphertext: vault.ciphertext,
+                    nonce: vault.nonce,
+                    salt: vault.salt,
+                    kdfAlgorithm: vault.kdfAlgorithm,
+                    kdfOpsLimit: vault.kdfOpsLimit,
+                    kdfMemLimit: vault.kdfMemLimit,
+                    recoveryMethod: 'password',
+                    pinVerifierMac: createPinVerifierMac(
+                        importedE2EEVault.pinVerifier,
+                        createdUser.id,
+                        vault.keyId,
+                    ),
+                    serverShareEncrypted: sealServerShare(
+                        importedE2EEVault.serverShare,
+                        createdUser.id,
+                        vault.keyId,
+                    ),
+                    failedAttempts: 0,
+                    lockedUntil: null,
+                    updatedAt: new Date(),
+                });
+            }
+            await tx.insert(accountMoveDeliveries).values({
+                userId: createdUser.id,
+                sourceNode,
+                sourceProtocol: sourceNodeProtocol(sourceNode),
+                oldHandle: moveNotice.oldHandle,
+                newActorUrl: moveNotice.newActorUrl,
+                did: moveNotice.did,
+                movedAt: new Date(moveNotice.movedAt),
+                signature: moveNotice.signature,
+                status: 'pending',
+                nextAttemptAt: new Date(),
+                updatedAt: new Date(),
+            });
 
             return createdUser;
         });
 
         // Import posts
         let importedPosts = 0;
+        let destinationImportFailed = false;
+        const incrementedFollowerTargetIds: string[] = [];
         for (const post of importPosts) {
             try {
                 const videoUrl = findVideoEmbedUrlInText(post.content);
@@ -858,20 +991,9 @@ export async function POST(req: NextRequest) {
                 importedPosts++;
             } catch (error) {
                 console.error('Failed to import post:', error);
+                destinationImportFailed = true;
             }
         }
-
-        // Update handle registry
-        await upsertHandleEntries([{
-            handle: canonicalHandle,
-            did: manifest.did,
-            nodeDomain,
-            updatedAt: new Date().toISOString(),
-        }], {
-            authoritativeDomain: nodeDomain,
-            allowIdentityChange: true,
-            identityVerified: true,
-        });
 
         // Import following list
         let importedFollowing = 0;
@@ -891,6 +1013,7 @@ export async function POST(req: NextRequest) {
                 );
                 if (!followAddress) {
                     console.log(`[Import] Invalid followed account ${follow.handle}, skipping follow`);
+                    destinationImportFailed = true;
                     continue;
                 }
                 const targetUser = followAddress.homeDomain === nodeDomain
@@ -913,7 +1036,6 @@ export async function POST(req: NextRequest) {
                         suspendedAt: targetBlocked ? new Date() : null,
                         suspensionReason: targetBlocked ? 'node_block' : null,
                     });
-                    if (targetBlocked) continue;
                 } else {
                     await db.insert(follows).values({
                         followerId: newUser.id,
@@ -922,10 +1044,12 @@ export async function POST(req: NextRequest) {
                     await db.update(users)
                         .set({ followersCount: sql`${users.followersCount} + 1` })
                         .where(eq(users.id, targetUser.id));
+                    incrementedFollowerTargetIds.push(targetUser.id);
                 }
                 importedFollowing++;
             } catch (error) {
                 console.error(`[Import] Failed to restore follow for @${follow.handle}:`, error);
+                destinationImportFailed = true;
             }
         }
 
@@ -993,15 +1117,63 @@ export async function POST(req: NextRequest) {
                 importedDMs += 1;
             } catch (error) {
                 console.error('Failed to import DM conversation:', error);
+                destinationImportFailed = true;
             }
         }
 
-        // Notify old node about the migration
+        if (destinationImportFailed
+            || importedPosts !== importPosts.length
+            || importedFollowing !== following.length
+            || importedDMs !== importDMs.length) {
+            await db.transaction(async (tx) => {
+                for (const targetId of incrementedFollowerTargetIds) {
+                    await tx.update(users).set({
+                        followersCount: sql`max(${users.followersCount} - 1, 0)`,
+                    }).where(eq(users.id, targetId));
+                }
+                await tx.delete(users).where(eq(users.id, newUser.id));
+            });
+            return NextResponse.json({
+                error: 'The destination could not restore every account record. The partial import was rolled back and nothing was deleted from the old node.',
+            }, { status: 500 });
+        }
+
+        // Publish the new authoritative handle only after every destination
+        // record has been restored successfully.
         try {
-            await notifyOldNode(sourceNode, manifest.handle, newActorUrl, manifest.did, privateKey);
+            await upsertHandleEntries([{
+                handle: canonicalHandle,
+                did: manifest.did,
+                nodeDomain,
+                updatedAt: new Date().toISOString(),
+            }], {
+                authoritativeDomain: nodeDomain,
+                allowIdentityChange: true,
+                identityVerified: true,
+            });
+        } catch (error) {
+            console.error('Failed to publish imported account identity:', error);
+            await db.transaction(async (tx) => {
+                for (const targetId of incrementedFollowerTargetIds) {
+                    await tx.update(users).set({
+                        followersCount: sql`max(${users.followersCount} - 1, 0)`,
+                    }).where(eq(users.id, targetId));
+                }
+                await tx.delete(users).where(eq(users.id, newUser.id));
+            });
+            return NextResponse.json({
+                error: 'The destination could not publish the moved identity. The partial import was rolled back and nothing was deleted from the old node.',
+            }, { status: 500 });
+        }
+
+        // Finalize the move only after destination data has been restored.
+        // A successful HTTP status is insufficient: the source must explicitly
+        // confirm both deletion and permanent username reservation.
+        let sourceCleanupConfirmed = false;
+        try {
+            sourceCleanupConfirmed = await retryAccountMoveForUser(newUser.id);
         } catch (error) {
             console.error('Failed to notify old node:', error);
-            // Don't fail the import if notification fails
         }
 
         // Match registration/login behavior so the successful import can
@@ -1028,62 +1200,26 @@ export async function POST(req: NextRequest) {
                 isNsfw: newUser.isNsfw,
                 nsfwEnabled: newUser.nsfwEnabled,
                 ageVerifiedAt: newUser.ageVerifiedAt?.toISOString() || null,
+                movedFrom: newUser.movedFrom,
+                sourceCleanupConfirmed,
             },
             stats: {
                 postsImported: importedPosts,
                 followingImported: importedFollowing,
                 dmsImported: importedDMs,
             },
-            warnings: [encryptedDMImportWarning, federatedMoveWarning, sessionWarning]
+            sourceCleanupConfirmed,
+            usernameReservedOnSource: sourceCleanupConfirmed,
+            sourceCleanupPending: !sourceCleanupConfirmed,
+            warnings: [sessionWarning]
                 .filter((warning): warning is string => warning !== null),
-            message: 'Account imported successfully. The old node was notified of the move when reachable.',
+            message: sourceCleanupConfirmed
+                ? 'Account moved successfully. The old node deleted the source data and permanently reserved the username.'
+                : 'Account moved successfully. The old node has not confirmed cleanup, so source deletion and username reservation are queued and will be retried automatically if it becomes reachable.',
         });
 
     } catch (error) {
         console.error('Import error:', error);
         return NextResponse.json({ error: 'Import failed' }, { status: 500 });
-    }
-}
-
-/**
- * Notify the old node that the account has moved
- */
-async function notifyOldNode(
-    sourceNode: string,
-    oldHandle: string,
-    newActorUrl: string,
-    did: string,
-    privateKey: string
-): Promise<void> {
-    const payload = {
-        oldHandle,
-        newActorUrl,
-        did,
-        movedAt: new Date().toISOString(),
-    };
-
-    // Sign the payload
-    const sign = crypto.createSign('sha256');
-    sign.update(JSON.stringify(payload));
-    const signature = sign.sign(privateKey, 'base64');
-
-    const response = await safeFederationRequest(
-      `${sourceNodeProtocol(sourceNode)}://${sourceNode}/api/account/moved`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            ...payload,
-            signature,
-        }),
-        timeoutMs: 5_000,
-        maxResponseBytes: 64 * 1024,
-    });
-
-    // The safe requester never follows redirects. Treat every non-2xx,
-    // including redirects, as a failed best-effort notification.
-    if (response.status < 200 || response.status >= 300) {
-        throw new Error(`Old node returned ${response.status}`);
     }
 }

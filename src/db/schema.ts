@@ -730,7 +730,7 @@ export const handleRegistry = sqliteTable('handle_registry', {
     .where(sql`${table.identityVerified} = 1`),
 ]);
 
-/** Durable local-account deletion marker; also prevents identity reuse. */
+/** Durable local-account deletion or move marker; also prevents identity reuse. */
 export const swarmAccountTombstones = sqliteTable('swarm_account_tombstones', {
   handle: text('handle').primaryKey(), // Canonical username@home-domain
   username: text('username').notNull(),
@@ -738,6 +738,8 @@ export const swarmAccountTombstones = sqliteTable('swarm_account_tombstones', {
   did: text('did').notNull(),
   sequence: integer('sequence').notNull(),
   deletedAt: integer('deleted_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  movedTo: text('moved_to'),
+  migratedAt: integer('migrated_at', { mode: 'timestamp' }),
 }, (table) => [
   uniqueIndex('swarm_account_tombstones_sequence_idx').on(table.sequence),
   uniqueIndex('swarm_account_tombstones_home_username_unique_idx')
@@ -758,6 +760,32 @@ export const sessions = sqliteTable('sessions', {
 }, (table) => [
   index('sessions_token_idx').on(table.token),
   index('sessions_user_idx').on(table.userId),
+]);
+
+/**
+ * Durable, user-signed source cleanup work for account moves. A destination
+ * accepts the account immediately and retries this notice until an offline
+ * source returns and confirms deletion plus permanent handle reservation.
+ */
+export const accountMoveDeliveries = sqliteTable('account_move_deliveries', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  userId: text('user_id').notNull().unique().references(() => users.id, { onDelete: 'cascade' }),
+  sourceNode: text('source_node').notNull(),
+  sourceProtocol: text('source_protocol').notNull(),
+  oldHandle: text('old_handle').notNull(),
+  newActorUrl: text('new_actor_url').notNull(),
+  did: text('did').notNull(),
+  movedAt: integer('moved_at', { mode: 'timestamp' }).notNull(),
+  signature: text('signature').notNull(),
+  status: text('status').default('pending').notNull(),
+  attempts: integer('attempts').default(0).notNull(),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  lastError: text('last_error'),
+  confirmedAt: integer('confirmed_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  index('account_move_deliveries_due_idx').on(table.status, table.nextAttemptAt),
 ]);
 
 

@@ -17,10 +17,14 @@ import {
 import {
     E2EE_KEY_BUNDLE_ACTION,
     e2eeKeyBundleSchema,
+    e2eeVaultRecordSchema,
     signedUserActionSchema,
+    type E2EEVaultTransfer,
     type SignedUserAction,
 } from '@/lib/e2ee/protocol';
 import { encryptionKeyIdFromPublicKey } from '@/lib/e2ee/bundle-proof';
+import { prepareE2EEVaultUnlock } from '@/lib/e2ee/client-crypto';
+import { openServerShare } from '@/lib/e2ee/server-secrets';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { accountUsername, resolveAccountAddress } from '@/lib/identity/account-address';
@@ -30,7 +34,7 @@ import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 // For production, consider using a streaming zip library
 
 interface ExportManifest {
-    version: '1.1';
+    version: '1.2';
     did: string;
     handle: string;
     sourceNode: string;
@@ -110,6 +114,7 @@ interface ExportPayload {
     following: ExportFollowing[];
     dms: ExportDMConversation[];
     e2eeKeyBundle: ExportE2EEContinuityAnchor | null;
+    e2eeVault: E2EEVaultTransfer | null;
 }
 
 /**
@@ -174,6 +179,74 @@ async function exportE2EEContinuityAnchor(
         publicKey: row.publicKey,
         proofAction: proof,
     };
+}
+
+async function exportE2EEVault(
+    row: {
+        userId: string;
+        keyId: string;
+        keyVersion: number;
+        ownerDid: string;
+        publicKey: string;
+        ciphertext: string;
+        nonce: string;
+        salt: string;
+        kdfAlgorithm: string;
+        kdfOpsLimit: number;
+        kdfMemLimit: number;
+        recoveryMethod: string;
+        serverShareEncrypted: string;
+    } | undefined,
+    user: { id: string; did: string },
+    anchor: ExportE2EEContinuityAnchor | null,
+    password: string,
+): Promise<E2EEVaultTransfer | null> {
+    if (!anchor && !row) return null;
+    if (!anchor || !row) {
+        throw new Error('Encrypted message recovery is incomplete');
+    }
+    if (row.recoveryMethod !== 'password') {
+        throw new Error('Encrypted message recovery must be upgraded to your account password before export');
+    }
+
+    const vault = e2eeVaultRecordSchema.parse({
+        protocol: 'synapsis-e2ee-v1',
+        ownerDid: row.ownerDid,
+        keyId: row.keyId,
+        keyVersion: row.keyVersion,
+        publicKey: row.publicKey,
+        ciphertext: row.ciphertext,
+        nonce: row.nonce,
+        salt: row.salt,
+        kdfAlgorithm: row.kdfAlgorithm,
+        kdfOpsLimit: row.kdfOpsLimit,
+        kdfMemLimit: row.kdfMemLimit,
+    });
+    if (row.userId !== user.id
+        || vault.ownerDid !== user.did
+        || vault.keyId !== anchor.keyId
+        || vault.keyVersion !== anchor.keyVersion
+        || vault.publicKey !== anchor.publicKey) {
+        throw new Error('Encrypted message recovery does not match the account key');
+    }
+
+    const serverShare = openServerShare(row.serverShareEncrypted, user.id, row.keyId);
+    const prepared = await prepareE2EEVaultUnlock(password, vault);
+    try {
+        const signedBundle = e2eeKeyBundleSchema.parse(anchor.proofAction.data);
+        const commitment = crypto.createHash('sha256').update(canonicalize({
+            vault,
+            serverShare,
+            pinVerifier: prepared.pinVerifier,
+        })).digest('base64url');
+        if (commitment !== signedBundle.recoveryCommitment) {
+            throw new Error('Encrypted message recovery does not match its signed proof');
+        }
+    } finally {
+        prepared.pinKey.fill(0);
+    }
+
+    return { vault, serverShare };
 }
 
 export async function POST(req: NextRequest) {
@@ -265,6 +338,15 @@ export async function POST(req: NextRequest) {
             where: { userId: user.id },
         });
         const e2eeKeyBundle = await exportE2EEContinuityAnchor(currentE2EEKeyBundle, user);
+        const currentE2EEVault = await db.query.e2eeKeyVaults.findFirst({
+            where: { userId: user.id },
+        });
+        const e2eeVault = await exportE2EEVault(
+            currentE2EEVault,
+            user,
+            e2eeKeyBundle,
+            password,
+        );
 
         // Build export data
         const exportPosts: ExportPost[] = userPosts.map(post => ({
@@ -350,14 +432,16 @@ export async function POST(req: NextRequest) {
             following: exportFollowing,
             dms: exportDMs,
             e2eeKeyBundle,
+            e2eeVault,
         };
 
-        // Version 1.1 fails closed on older importers and binds a canonical
+        // Version 1.2 adds a portable E2EE recovery vault and fails closed on
+        // older importers. A canonical digest binds every non-manifest field.
         // digest of every non-manifest field into the signed manifest.
         const exportedAt = new Date();
         const expiresAt = new Date(exportedAt.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
         const manifestData: Omit<ExportManifest, 'signature'> = {
-            version: '1.1',
+            version: '1.2',
             did: user.did,
             handle: user.handle,
             sourceNode: nodeDomain,
@@ -394,6 +478,9 @@ export async function POST(req: NextRequest) {
     } catch (error) {
         if (error instanceof Error && error.message === 'Authentication required') {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+        }
+        if (error instanceof Error && error.message.startsWith('Encrypted message recovery')) {
+            return NextResponse.json({ error: error.message }, { status: 409 });
         }
         console.error('Export error:', error);
         return NextResponse.json({ error: 'Export failed' }, { status: 500 });

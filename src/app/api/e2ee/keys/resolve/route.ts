@@ -16,6 +16,7 @@ import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 import { resolveAccountAddress, parseAccountAddress } from '@/lib/identity/account-address';
+import { verifySignedAccountMoveNotice } from '@/lib/account/move-notification';
 
 const querySchema = z.object({
   did: z.string().min(8).max(2_048).regex(/^did:/),
@@ -30,6 +31,37 @@ class RemoteKeyContinuityError extends Error {
     super(message);
     this.name = 'RemoteKeyContinuityError';
   }
+}
+
+function verifiedMoveSourceHandle(input: {
+  response: z.infer<typeof e2eePublicBundleResponseSchema>;
+  requestedAddress: NonNullable<ReturnType<typeof parseAccountAddress>>;
+  did: string;
+  signingPublicKey: string;
+}): string | null {
+  const notice = input.response.moveNotice;
+  if (!notice || notice.did !== input.did) return null;
+  const oldAddress = parseAccountAddress(notice.oldHandle);
+  if (!oldAddress) return null;
+
+  let destination: URL;
+  try {
+    destination = new URL(notice.newActorUrl);
+  } catch {
+    return null;
+  }
+  const destinationDomain = getPublicSwarmDomain(destination.host);
+  const destinationUsername = destination.pathname.match(/^\/(?:api\/)?users\/([^/]+)\/?$/)?.[1];
+  if (destination.protocol !== 'https:'
+    || destinationDomain !== input.requestedAddress.homeDomain
+    || !destinationUsername
+    || decodeURIComponent(destinationUsername).toLowerCase() !== input.requestedAddress.username
+    || !verifySignedAccountMoveNotice(notice, input.signingPublicKey)) {
+    return null;
+  }
+
+  const proofAddress = resolveAccountAddress(input.response.proof.handle, oldAddress.homeDomain);
+  return proofAddress?.canonical === oldAddress.canonical ? oldAddress.canonical : null;
 }
 
 export async function GET(request: NextRequest) {
@@ -113,18 +145,28 @@ export async function GET(request: NextRequest) {
     }
 
     const response = e2eePublicBundleResponseSchema.parse(remote.json());
-    const proofAddress = resolveAccountAddress(response.proof.handle, domain);
-    if (!proofAddress
-      || proofAddress.canonical !== requestedAddress.canonical
-      || !await verifyE2EEPublicBundle(response, query.did)) {
-      return NextResponse.json({ error: 'Recipient encryption key proof is invalid' }, { status: 502 });
-    }
     const resolvedSigningPublicKey = normalizeSigningPublicKey(response.signingPublicKey);
     if (!resolvedSigningPublicKey) {
       return NextResponse.json({ error: 'Recipient signing key is invalid' }, { status: 502 });
     }
     const canonicalSigningPublicKey = signingPublicKeyFromDid(query.did)
       || resolvedSigningPublicKey;
+    const explicitlyQualifiedProofAddress = parseAccountAddress(response.proof.handle);
+    const directProofAddress = explicitlyQualifiedProofAddress
+      ?? (response.moveNotice ? null : resolveAccountAddress(response.proof.handle, domain));
+    const movedFromHandle = verifiedMoveSourceHandle({
+      response,
+      requestedAddress,
+      did: query.did,
+      signingPublicKey: response.signingPublicKey,
+    });
+    const proofIdentityMatches = directProofAddress?.canonical === requestedAddress.canonical
+      || explicitlyQualifiedProofAddress?.canonical === movedFromHandle
+      || (!explicitlyQualifiedProofAddress && movedFromHandle !== null);
+    if (!proofIdentityMatches
+      || !await verifyE2EEPublicBundle(response, query.did)) {
+      return NextResponse.json({ error: 'Recipient encryption key proof is invalid' }, { status: 502 });
+    }
 
     const now = new Date();
     const qualifiedHandle = requestedAddress.canonical;
@@ -164,7 +206,8 @@ export async function GET(request: NextRequest) {
             'Recipient handle is already bound to another verified identity',
           );
         }
-        if (cached && cached.handle.toLowerCase() !== qualifiedHandle) {
+        if (cached && cached.handle.toLowerCase() !== qualifiedHandle
+          && cached.handle.toLowerCase() !== movedFromHandle) {
           throw new RemoteKeyContinuityError(
             'E2EE_IDENTITY_KEY_CHANGED',
             'Recipient identity is already bound to another handle',

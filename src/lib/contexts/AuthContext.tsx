@@ -25,6 +25,8 @@ export interface User {
     nsfwEnabled?: boolean;
     ageVerifiedAt?: string | null;
     stuffboxBadge?: StuffboxBadge | null;
+    movedFrom?: string | null;
+    sourceCleanupConfirmed?: boolean;
 }
 
 export interface AuthAccount extends User {
@@ -89,6 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [loading, setLoading] = useState(true);
     const authGenerationRef = useRef(0);
     const signInInProgressRef = useRef(false);
+    const initialAuthResolvedRef = useRef(false);
 
     // Integrate useUserIdentity hook with persistence
     const {
@@ -136,7 +139,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // operation while it is initializing the account and E2EE identity.
         if (signInInProgressRef.current) return;
         const generation = ++authGenerationRef.current;
-        setLoading(true);
+        const blocksAppBootstrap = !initialAuthResolvedRef.current;
+        if (blocksAppBootstrap) setLoading(true);
         try {
             const res = await fetch('/api/auth/me', { cache: 'no-store' });
             const data = await res.json();
@@ -149,7 +153,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (generation !== authGenerationRef.current) return;
             await applyAuthState({ user: null, accounts: [] });
         } finally {
-            if (generation === authGenerationRef.current) setLoading(false);
+            if (generation === authGenerationRef.current) {
+                initialAuthResolvedRef.current = true;
+                if (blocksAppBootstrap) setLoading(false);
+            }
         }
     }, [applyAuthState]);
 

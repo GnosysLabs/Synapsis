@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { useAuth } from '@/lib/contexts/AuthContext';
-import { TriangleAlert, ShieldAlert } from 'lucide-react';
+import { ShieldAlert } from 'lucide-react';
 
 interface ExportStats {
     posts: number;
@@ -14,13 +14,15 @@ interface ExportStats {
 }
 
 export default function MigrationPage() {
-    const { user } = useAuth();
+    const { user, refreshAuth } = useAuth();
 
     // Export state
     const [exportPassword, setExportPassword] = useState('');
     const [isExporting, setIsExporting] = useState(false);
     const [exportError, setExportError] = useState<string | null>(null);
     const [exportStats, setExportStats] = useState<ExportStats | null>(null);
+    const [cleanupStatus, setCleanupStatus] = useState<string | null>(null);
+    const [isCleaningSource, setIsCleaningSource] = useState(false);
 
     const handleExport = async () => {
         if (!exportPassword) {
@@ -61,6 +63,24 @@ export default function MigrationPage() {
             setExportError(error instanceof Error ? error.message : 'Export failed');
         } finally {
             setIsExporting(false);
+        }
+    };
+
+    const handleSourceCleanup = async () => {
+        setIsCleaningSource(true);
+        setCleanupStatus(null);
+        try {
+            const response = await fetch('/api/account/move/finalize', {
+                method: 'POST',
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Source cleanup failed');
+            setCleanupStatus(data.message);
+            if (data.pending !== true) await refreshAuth();
+        } catch (error) {
+            setCleanupStatus(error instanceof Error ? error.message : 'Source cleanup failed');
+        } finally {
+            setIsCleaningSource(false);
         }
     };
 
@@ -138,25 +158,8 @@ export default function MigrationPage() {
                         <li>Your profile information</li>
                         <li>All your posts</li>
                         <li>Your following list</li>
-                        <li>DM conversation records and encrypted message envelopes</li>
+                        <li>DM history and its password-encrypted recovery key</li>
                     </ul>
-                </div>
-
-                <div style={{
-                    display: 'flex',
-                    gap: '12px',
-                    padding: '16px',
-                    marginBottom: '20px',
-                    background: 'rgba(245, 158, 11, 0.1)',
-                    border: '1px solid rgba(245, 158, 11, 0.35)',
-                    borderRadius: '8px',
-                }}>
-                    <TriangleAlert size={20} style={{ flexShrink: 0, color: '#f59e0b' }} />
-                    <p style={{ fontSize: '13px', color: 'var(--foreground-secondary)', margin: 0, lineHeight: 1.5 }}>
-                        Encrypted DM keys are not portable yet. This export preserves encrypted message records,
-                        but E2EE history will not open after importing it on another node. Keep access to this
-                        browser and node if you need to read that history.
-                    </p>
                 </div>
 
                 <div style={{ marginBottom: '20px' }}>
@@ -171,6 +174,33 @@ export default function MigrationPage() {
                         placeholder="Enter your password"
                     />
                 </div>
+
+                {user.movedFrom && !user.sourceCleanupConfirmed && (
+                    <div style={{
+                        padding: '16px',
+                        marginBottom: '20px',
+                        background: 'var(--background-tertiary)',
+                        borderRadius: '8px',
+                    }}>
+                        <div style={{ fontWeight: 600, marginBottom: '8px' }}>Old node cleanup</div>
+                        <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.5, marginBottom: '12px' }}>
+                            Ask your previous node to delete the source account data and keep its username permanently reserved. This is safe to retry.
+                        </p>
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={handleSourceCleanup}
+                            disabled={isCleaningSource}
+                        >
+                            {isCleaningSource ? 'Confirming cleanup...' : 'Confirm old node cleanup'}
+                        </button>
+                        {cleanupStatus && (
+                            <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px', marginTop: '10px' }}>
+                                {cleanupStatus}
+                            </p>
+                        )}
+                    </div>
+                )}
 
                 {exportError && (
                     <div style={{ color: 'var(--error)', fontSize: '14px', marginBottom: '16px' }}>
