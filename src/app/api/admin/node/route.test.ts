@@ -123,4 +123,29 @@ describe('PATCH /api/admin/node adult-only classification', () => {
             nsfwActivatedAt: activatedAt,
         }));
     });
+
+    it('replaces legacy embedded logo bytes when a Stuffbox logo is saved', async () => {
+        const currentNode = {
+            id: 'node-1',
+            domain: 'node.example',
+            isNsfw: false,
+            logoUrl: '/api/node/logo?v=old',
+            logoData: 'data:image/png;base64,b2xk',
+        };
+        mocks.findFirst.mockResolvedValue(currentNode);
+        const stuffboxLogo = 'https://stuffbox.xyz/f/new-logo';
+        const update = mockNodeUpdate({
+            ...currentNode,
+            logoUrl: stuffboxLogo,
+            logoData: null,
+        });
+
+        const response = await PATCH(createRequest({ logoUrl: stuffboxLogo }) as never);
+
+        expect(response.status).toBe(200);
+        expect(update.set).toHaveBeenCalledWith(expect.objectContaining({
+            logoUrl: stuffboxLogo,
+            logoData: null,
+        }));
+    });
 });

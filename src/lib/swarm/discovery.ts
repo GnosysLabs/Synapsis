@@ -19,6 +19,7 @@ import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { safeFederationRequest } from './safe-federation-http';
 import { parseDirectNodeInfo } from './node-payload';
 import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
+import { sanitizeFederationMediaUrl } from '@/lib/utils/federation';
 
 const PUBLIC_SWARM_DOMAIN_ERROR = 'Public swarm participation requires a real ICANN domain';
 
@@ -52,7 +53,9 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     if (node) {
       name = node.name;
       description = node.description ?? undefined;
-      logoUrl = node.isNsfw ? undefined : resolveNodeAssetUrl(node.logoUrl, domain);
+      logoUrl = node.isNsfw
+        ? undefined
+        : sanitizeFederationMediaUrl(resolveNodeAssetUrl(node.logoUrl, domain));
       publicKey = node.publicKey ?? '';
     }
 
@@ -158,7 +161,7 @@ export async function announceToNode(targetDomain: string): Promise<{ success: b
     
     // Add/update the remote node in our registry
     await upsertSwarmNode(remoteInfo, 'direct');
-    await markNodeSuccess(publicTargetDomain);
+    await markNodeSuccess(publicTargetDomain, { verifiedExchange: true });
 
     return { success: true };
   } catch (error) {
@@ -268,7 +271,7 @@ export async function discoverNode(
   // Successful exact-origin discovery must advance the peer beyond the
   // admission boundary; otherwise an active peer at the boundary is never
   // selected for gossip or content synchronization again.
-  await markNodeSuccess(publicDomain);
+  await markNodeSuccess(publicDomain, { verifiedExchange: true });
   
   return { success: true, isNew: result.isNew };
 }

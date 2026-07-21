@@ -46,10 +46,14 @@ export default function AdminPage() {
     const [pendingBannerFile, setPendingBannerFile] = useState<File | null>(null);
     const [isUploadingLogo, setIsUploadingLogo] = useState(false);
     const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
+    const [showLogoStorageConfiguration, setShowLogoStorageConfiguration] = useState(false);
+    const [pendingLogoFile, setPendingLogoFile] = useState<File | null>(null);
     const [isUploadingFavicon, setIsUploadingFavicon] = useState(false);
     const [faviconUploadError, setFaviconUploadError] = useState<string | null>(null);
     const bannerInputRef = useRef<HTMLInputElement>(null);
     const bannerStorageCheckInFlightRef = useRef(false);
+    const logoInputRef = useRef<HTMLInputElement>(null);
+    const logoStorageCheckInFlightRef = useRef(false);
     useEffect(() => {
         fetch('/api/admin/me')
             .then((res) => res.json())
@@ -234,40 +238,55 @@ export default function AdminPage() {
         }
     };
 
+    const uploadLogoFile = async (file: File, allowPrompt = true) => {
+        setLogoUploadError(null);
+        setIsUploadingLogo(true);
+
+        try {
+            const media = await uploadMediaFile(file);
+
+            const nextSettings = {
+                ...nodeSettings,
+                logoUrl: media.url,
+            };
+            setNodeSettings(nextSettings);
+            await handleSaveSettings(nextSettings);
+            setPendingLogoFile(null);
+        } catch (error) {
+            if (error instanceof MediaUploadError && error.code === 'STORAGE_NOT_CONFIGURED' && allowPrompt) {
+                setPendingLogoFile(file);
+                setShowLogoStorageConfiguration(true);
+                return;
+            }
+            console.error('Logo upload failed', error);
+            setLogoUploadError(error instanceof Error ? error.message : 'Upload failed. Please try again.');
+        } finally {
+            setIsUploadingLogo(false);
+        }
+    };
+
     const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         event.target.value = '';
         if (!file) return;
 
+        await uploadLogoFile(file);
+    };
+
+    const handleChooseLogo = async () => {
+        if (logoStorageCheckInFlightRef.current) return;
+        logoStorageCheckInFlightRef.current = true;
         setLogoUploadError(null);
-        setIsUploadingLogo(true);
-
         try {
-            const privateFile = await stripPhotoVideoMetadata(file);
-            const formData = new FormData();
-            formData.append('file', privateFile);
-            formData.append('type', 'logo');
-            const res = await fetch('/api/admin/node/upload', {
-                method: 'POST',
-                body: formData,
-            });
-            const data = await res.json();
-
-            if (!res.ok || !data.url) {
-                throw new Error(data.error || 'Upload failed');
+            if (!await getStorageProvider()) {
+                setShowLogoStorageConfiguration(true);
+                return;
             }
-
-            const nextSettings = {
-                ...nodeSettings,
-                logoUrl: data.url,
-            };
-            setNodeSettings(nextSettings);
-            await handleSaveSettings(nextSettings);
+            logoInputRef.current?.click();
         } catch (error) {
-            console.error('Logo upload failed', error);
-            setLogoUploadError(error instanceof Error ? error.message : 'Upload failed. Please try again.');
+            setLogoUploadError(error instanceof Error ? error.message : 'Unable to check media storage');
         } finally {
-            setIsUploadingLogo(false);
+            logoStorageCheckInFlightRef.current = false;
         }
     };
 
@@ -404,16 +423,22 @@ export default function AdminPage() {
                                     Replaces the default logo in the sidebar. Max width: 200px.
                                 </p>
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                                    <label className="btn btn-ghost btn-sm">
+                                    <button
+                                        className="btn btn-ghost btn-sm"
+                                        type="button"
+                                        onClick={handleChooseLogo}
+                                        disabled={isUploadingLogo}
+                                    >
                                         {isUploadingLogo ? 'Uploading...' : 'Upload logo'}
-                                        <input
-                                            type="file"
-                                            accept="image/*"
-                                            onChange={handleLogoUpload}
-                                            disabled={isUploadingLogo}
-                                            style={{ display: 'none' }}
-                                        />
-                                    </label>
+                                    </button>
+                                    <input
+                                        ref={logoInputRef}
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={handleLogoUpload}
+                                        disabled={isUploadingLogo}
+                                        style={{ display: 'none' }}
+                                    />
                                     {nodeSettings.logoUrl && (
                                         <button
                                             className="btn btn-ghost btn-sm"
@@ -702,6 +727,22 @@ export default function AdminPage() {
                 onCancel={() => {
                     setShowBannerStorageConfiguration(false);
                     setPendingBannerFile(null);
+                }}
+            />
+            <StorageConfigurationPrompt
+                open={showLogoStorageConfiguration}
+                onConfigured={async () => {
+                    setShowLogoStorageConfiguration(false);
+                    if (pendingLogoFile) {
+                        await uploadLogoFile(pendingLogoFile, false);
+                        return;
+                    }
+                    showToast('Stuffbox connected. Choose a logo to continue.', 'success');
+                    logoInputRef.current?.click();
+                }}
+                onCancel={() => {
+                    setShowLogoStorageConfiguration(false);
+                    setPendingLogoFile(null);
                 }}
             />
         </>

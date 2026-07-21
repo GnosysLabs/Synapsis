@@ -15,6 +15,7 @@ import {
 } from './node-domain';
 import { mergePermanentNodeNsfwClassification } from '@/lib/node/nsfw-classification';
 import { normalizeSwarmNodePublicKey } from './node-public-key';
+import { sanitizeFederationMediaUrl } from '@/lib/utils/federation';
 
 interface NetworkStatNode {
   isActive: boolean;
@@ -141,7 +142,9 @@ export async function upsertSwarmNode(
     .set({
       name: node.name ?? existing.name,
       description: node.description ?? existing.description,
-      logoUrl: node.logoUrl ?? existing.logoUrl,
+      logoUrl: Object.prototype.hasOwnProperty.call(node, 'logoUrl')
+        ? node.logoUrl ?? null
+        : existing.logoUrl,
       publicKey: existingKeyIsPinned ? existingPinnedKey : incomingKey,
       softwareVersion: node.softwareVersion ?? existing.softwareVersion,
       userCount: node.userCount ?? existing.userCount,
@@ -563,16 +566,15 @@ export async function markNodeFailure(domain: string): Promise<void> {
     if (!node) return;
 
     const newFailures = node.consecutiveFailures + 1;
-    const newTrust = Math.max(
-      SWARM_CONFIG.minTrustScore,
-      node.trustScore + SWARM_CONFIG.trustScoreOnFailure
-    );
     const isActive = newFailures < SWARM_CONFIG.maxConsecutiveFailures;
 
     await db.update(swarmNodes)
       .set({
         consecutiveFailures: newFailures,
-        trustScore: newTrust,
+        // Reachability is not reputation. A timeout or protocol mismatch can
+        // eventually make a peer inactive, but must not quarantine its already
+        // verified cached content after one transient failure.
+        trustScore: node.trustScore,
         isActive: node.isBlocked ? false : isActive,
         updatedAt: new Date(),
       })
@@ -590,7 +592,7 @@ export async function markNodeFailure(domain: string): Promise<void> {
  */
 export async function markNodeSuccess(
   domain: string,
-  options: { verifiedContent?: boolean } = {},
+  options: { verifiedContent?: boolean; verifiedExchange?: boolean } = {},
 ): Promise<void> {
   if (!db) return;
 
@@ -603,7 +605,9 @@ export async function markNodeSuccess(
 
     const now = new Date();
     const lastTrustIncrease = node.lastSyncAt?.getTime() ?? 0;
-    const recoversAvailabilityQuarantine = options.verifiedContent === true
+    const recoversAvailabilityQuarantine = (
+      options.verifiedContent === true || options.verifiedExchange === true
+    )
       && node.trustScore <= SWARM_CONFIG.quarantineTrustScore;
     const mayIncreaseTrust = recoversAvailabilityQuarantine
       || now.getTime() - lastTrustIncrease >= SWARM_CONFIG.gossipIntervalMs;
@@ -756,7 +760,7 @@ function nodeToInfo(node: typeof swarmNodes.$inferSelect): SwarmNodeInfo {
     name: node.name ?? undefined,
     description: node.description ?? undefined,
     logoUrl: node.nsfwClassificationKnown && !node.isNsfw
-      ? node.logoUrl ?? undefined
+      ? sanitizeFederationMediaUrl(node.logoUrl)
       : undefined,
     publicKey: node.publicKey ?? undefined,
     softwareVersion: node.softwareVersion ?? undefined,

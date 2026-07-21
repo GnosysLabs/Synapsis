@@ -39,6 +39,15 @@ function log(category: string, message: string, data?: unknown) {
   }
 }
 
+function formatAnnouncementFailures(
+  failures: Array<{ domain: string; error: string }>,
+): string {
+  return failures
+    .map(({ domain, error }) => `${domain}: ${error}`)
+    .join('; ')
+    .slice(0, 1_000);
+}
+
 async function runMentionDeliveries() {
   try {
     const result = await processMentionDeliveryOutbox();
@@ -88,6 +97,9 @@ async function runSwarmGossip() {
       const announceResult = await announceToSeeds();
       if (announceResult.successful.length > 0 || announceResult.failed.length > 0) {
         log('SWARM', `Re-announced to seeds: ${announceResult.successful.length} successful, ${announceResult.failed.length} failed`);
+        if (announceResult.failed.length > 0) {
+          log('SWARM', `Seed announcement failures: ${formatAnnouncementFailures(announceResult.failed)}`);
+        }
       }
     }
 
@@ -108,6 +120,9 @@ async function announceToSwarm() {
   try {
     const result = await announceToSeeds();
     log('SWARM', `Announced to seeds: ${result.successful.length} successful, ${result.failed.length} failed`);
+    if (result.failed.length > 0) {
+      log('SWARM', `Seed announcement failures: ${formatAnnouncementFailures(result.failed)}`);
+    }
     
     const stats = await getSwarmStats();
     log('SWARM', `Network: ${stats.activeNodes} active nodes, ${stats.totalUsers} users, ${stats.totalPosts} posts`);

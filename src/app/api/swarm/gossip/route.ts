@@ -15,7 +15,10 @@ import type { SwarmGossipPayload } from '@/lib/swarm/types';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import { isRateLimited } from '@/lib/rate-limit';
-import { strictSwarmNodeInfoSchema } from '@/lib/swarm/node-payload';
+import {
+  sanitizeSwarmNodeInfo,
+  strictSwarmNodeInfoSchema,
+} from '@/lib/swarm/node-payload';
 
 const handleSchema = z.strictObject({
   handle: z.string().min(3).max(640),
@@ -103,7 +106,12 @@ export async function POST(request: Request) {
 
     console.log(`[Swarm] Gossip from ${data.sender}: ${data.nodes.length} nodes, ${data.handles?.length || 0} handles`);
 
-    if (!await establishDirectGossipPeer(payload.nodes, data.sender)) {
+    const sanitizedPayload = {
+      ...payload,
+      nodes: payload.nodes.map(sanitizeSwarmNodeInfo),
+    };
+
+    if (!await establishDirectGossipPeer(sanitizedPayload.nodes, data.sender)) {
       return NextResponse.json(
         { error: 'Gossip sender did not provide a complete exact-origin identity' },
         { status: 400 },
@@ -112,12 +120,12 @@ export async function POST(request: Request) {
 
     // Process the incoming gossip and build our response. The sender has
     // already been established above; relayed entries remain hints only.
-    const response = await processGossip(payload as SwarmGossipPayload, {
+    const response = await processGossip(sanitizedPayload as SwarmGossipPayload, {
       senderAuthenticated: false,
     });
     
     // Mark the sender as successfully contacted
-    await markNodeSuccess(data.sender);
+    await markNodeSuccess(data.sender, { verifiedExchange: true });
 
     console.log(`[Swarm] Gossip response to ${data.sender}: ${response.nodes.length} nodes, ${response.handles?.length || 0} handles`);
 

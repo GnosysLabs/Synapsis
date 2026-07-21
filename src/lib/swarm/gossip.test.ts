@@ -143,6 +143,10 @@ describe('direct peer trust through authenticated gossip', () => {
 
     expect(mocks.upsertSwarmNode).toHaveBeenCalledWith(peer, 'direct');
     expect(mocks.upsertRemoteHandleHints).toHaveBeenCalledWith([], 'peer.social');
+    expect(mocks.markNodeSuccess).toHaveBeenCalledWith(
+      'peer.social',
+      { verifiedExchange: true },
+    );
   });
 
   it('re-signs a legacy payload when an older strict peer rejects content clocks', async () => {

@@ -15,23 +15,19 @@ import type { SwarmNodeInfo } from '@/lib/swarm/types';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import { isRateLimited } from '@/lib/rate-limit';
-import { federationMediaUrlSchema } from '@/lib/utils/federation';
-
-const optionalUrlSchema = z.preprocess((value) => {
-  if (typeof value !== 'string') {
-    return value;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}, federationMediaUrlSchema.optional());
+import {
+  federationWebUrlSchema,
+  sanitizeFederationMediaUrl,
+} from '@/lib/utils/federation';
 
 const boundedCount = z.number().int().nonnegative().max(1_000_000_000);
 const announcementSchema = z.strictObject({
   domain: z.string().min(1).max(253),
   name: z.string().min(1).max(100),
   description: z.string().max(1_000).optional(),
-  logoUrl: optionalUrlSchema,
+  // This is sanitized only after signature verification so the signed bytes
+  // and the verified payload remain identical.
+  logoUrl: federationWebUrlSchema.optional(),
   publicKey: z.string().min(1).max(16_384),
   softwareVersion: z.string().min(1).max(100),
   userCount: boundedCount,
@@ -119,7 +115,7 @@ export async function POST(request: Request) {
       domain: data.domain,
       name: data.name,
       description: data.description,
-      logoUrl: data.logoUrl,
+      logoUrl: sanitizeFederationMediaUrl(data.logoUrl),
       publicKey: data.publicKey,
       softwareVersion: data.softwareVersion,
       userCount: data.userCount,
@@ -135,7 +131,7 @@ export async function POST(request: Request) {
     // A fresh, signed payload from the node's exact HTTPS origin establishes
     // reachability and key ownership. Reputation never means its content is
     // safe; all remote content remains untrusted and independently validated.
-    await markNodeSuccess(data.domain);
+    await markNodeSuccess(data.domain, { verifiedExchange: true });
 
     console.log(`[Swarm] ${isNew ? 'New' : 'Known'} node announced: ${data.domain}`);
 

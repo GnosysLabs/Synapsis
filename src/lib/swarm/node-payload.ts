@@ -1,15 +1,20 @@
 import { z } from 'zod';
 import type { SwarmNodeInfo } from './types';
 import { getPublicSwarmDomain } from './node-domain';
-import { federationMediaUrlSchema } from '@/lib/utils/federation';
+import {
+  federationWebUrlSchema,
+  sanitizeFederationMediaUrl,
+} from '@/lib/utils/federation';
 
 const boundedCount = z.number().int().nonnegative().max(1_000_000_000);
 
-export const swarmNodeInfoSchema = z.object({
+const swarmNodeInfoWireSchema = z.object({
   domain: z.string().min(1).max(253),
   name: z.string().max(100).optional(),
   description: z.string().max(1_000).optional(),
-  logoUrl: federationMediaUrlSchema.optional(),
+  // Keep the original URL until signed ingress has verified the payload.
+  // Consumers sanitize it before storage or rendering.
+  logoUrl: federationWebUrlSchema.optional(),
   publicKey: z.string().max(16_384).optional(),
   softwareVersion: z.string().max(100).optional(),
   userCount: boundedCount.optional(),
@@ -23,16 +28,25 @@ export const swarmNodeInfoSchema = z.object({
   lastSeenAt: z.string().datetime().optional(),
 });
 
+export function sanitizeSwarmNodeInfo(node: SwarmNodeInfo): SwarmNodeInfo {
+  return {
+    ...node,
+    logoUrl: sanitizeFederationMediaUrl(node.logoUrl),
+  };
+}
+
+export const swarmNodeInfoSchema = swarmNodeInfoWireSchema.transform(sanitizeSwarmNodeInfo);
+
 // Ingress routes must reject unknown peer-controlled fields, but they should
 // share the same canonical node shape as discovery and gossip clients. Keeping
 // a separate strict copy caused `contentSequence` to be emitted by every node
 // and rejected by every peer with HTTP 400.
-export const strictSwarmNodeInfoSchema = swarmNodeInfoSchema.strict();
+export const strictSwarmNodeInfoSchema = swarmNodeInfoWireSchema.strict();
 
-const directNodeInfoSchema = swarmNodeInfoSchema.extend({
+const directNodeInfoSchema = swarmNodeInfoWireSchema.extend({
   publicKey: z.string().min(1).max(16_384),
   isNsfw: z.boolean(),
-});
+}).transform(sanitizeSwarmNodeInfo);
 
 export function parseDirectNodeInfo(value: unknown, expectedDomain: string): SwarmNodeInfo {
   const parsed = directNodeInfoSchema.safeParse(value);

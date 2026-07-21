@@ -109,6 +109,17 @@ export const federationMediaUrlSchema = federationWebUrlSchema.refine(
   'Federated media must use a trusted Stuffbox or operator-approved CDN origin',
 );
 
+/**
+ * Optional peer branding must never make an otherwise valid node identity
+ * unusable. Keep the wire value intact until any signature has been checked,
+ * then retain it only when it is safe for clients to render.
+ */
+export function sanitizeFederationMediaUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const parsed = federationMediaUrlSchema.safeParse(value.trim());
+  return parsed.success ? parsed.data : undefined;
+}
+
 export function isValidNodeDomain(value: string): boolean {
   return nodeDomainRegex.test(value);
 }

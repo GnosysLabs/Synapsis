@@ -23,7 +23,11 @@ vi.mock('@/db', () => ({
   users: {},
 }));
 
-import { getTrustedSwarmReadPeerPublicKey, markNodeSuccess } from './registry';
+import {
+  getTrustedSwarmReadPeerPublicKey,
+  markNodeFailure,
+  markNodeSuccess,
+} from './registry';
 
 const peerPublicKey = crypto.generateKeyPairSync('ec', {
   namedCurve: 'prime256v1',
@@ -93,6 +97,39 @@ describe('trusted swarm read peers', () => {
     expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({
       trustScore: 26,
       consecutiveFailures: 0,
+      isActive: true,
+    }));
+  });
+
+  it('restores availability trust after a verified direct protocol exchange', async () => {
+    mocks.findFirst.mockResolvedValue({
+      ...establishedPeer,
+      trustScore: 21,
+      lastSyncAt: new Date(),
+      consecutiveFailures: 1,
+    });
+
+    await markNodeSuccess('peer.social', { verifiedExchange: true });
+
+    expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({
+      trustScore: 26,
+      consecutiveFailures: 0,
+      isActive: true,
+    }));
+  });
+
+  it('tracks transport failures without treating them as a reputation failure', async () => {
+    mocks.findFirst.mockResolvedValue({
+      ...establishedPeer,
+      trustScore: 50,
+      consecutiveFailures: 1,
+    });
+
+    await markNodeFailure('peer.social');
+
+    expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({
+      trustScore: 50,
+      consecutiveFailures: 2,
       isActive: true,
     }));
   });

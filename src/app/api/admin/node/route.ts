@@ -90,7 +90,11 @@ export async function PATCH(req: NextRequest) {
             if (data.faviconData !== undefined) {
                 updateData.faviconData = data.faviconData;
             }
-            if (data.logoUrl === '') {
+            // A new external logo replaces any legacy database-embedded logo.
+            // Keep the embedded bytes only when an old client explicitly saves
+            // the managed /api/node/logo route returned by the legacy uploader.
+            if (typeof data.logoUrl === 'string'
+                && !data.logoUrl.startsWith('/api/node/logo')) {
                 updateData.logoData = null;
             }
             if (data.faviconUrl === '') {

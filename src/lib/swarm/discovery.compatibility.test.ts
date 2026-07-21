@@ -83,7 +83,10 @@ describe('mixed-version swarm announcements', () => {
       expect.objectContaining({ domain: 'peer.social' }),
       'direct',
     );
-    expect(mocks.markNodeSuccess).toHaveBeenCalledWith('peer.social');
+    expect(mocks.markNodeSuccess).toHaveBeenCalledWith(
+      'peer.social',
+      { verifiedExchange: true },
+    );
     expect(mocks.markNodeFailure).not.toHaveBeenCalled();
   });
 });

@@ -340,7 +340,7 @@ export async function gossipToNode(
     const publicHandles = gossipResponse.handles?.filter((handle) => isPublicSwarmDomain(handle.nodeDomain)) ?? [];
     const handlesResult = await upsertRemoteHandleHints(publicHandles, publicTargetDomain);
 
-    await markNodeSuccess(publicTargetDomain);
+    await markNodeSuccess(publicTargetDomain, { verifiedExchange: true });
 
     const result: SwarmSyncResult = {
       success: true,
