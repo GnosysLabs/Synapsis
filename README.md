@@ -49,14 +49,22 @@ The installer creates:
 - Mandatory update timer: `synapsis-update.timer`
 - Admin update trigger: `synapsis-update.path`
 
-To install a second or later node on the same server, give it an instance name,
-unique port, and domain:
+### Multiple nodes on one VPS
+
+To install a second, third, or later node on the same server, give each one a
+unique instance name, loopback port, and public domain:
 
 ```bash
 sudo bash deploy/install.sh \
   --instance onlynerds \
   --port 43822 \
   --domain onlynerds.xyz \
+  --admin-email you@example.com
+
+sudo bash deploy/install.sh \
+  --instance community-two \
+  --port 43823 \
+  --domain community-two.example \
   --admin-email you@example.com
 ```
 
@@ -68,6 +76,16 @@ update trigger from the instance name. For the example above these are rooted at
 `synapsis-onlynerds*`. Every generated updater invokes the repository's shared
 atomic updater and refreshes its own generated units on later releases; sibling
 instances do not require copied scripts or hand-authored systemd files.
+
+| Instance | Application | Data | Environment | Service |
+| --- | --- | --- | --- | --- |
+| Primary | `/opt/synapsis` | `/var/lib/synapsis` | `/etc/synapsis.env` | `synapsis.service` |
+| `onlynerds` | `/opt/synapsis-onlynerds` | `/var/lib/synapsis-onlynerds` | `/etc/synapsis-onlynerds.env` | `synapsis-onlynerds.service` |
+| `community-two` | `/opt/synapsis-community-two` | `/var/lib/synapsis-community-two` | `/etc/synapsis-community-two.env` | `synapsis-community-two.service` |
+
+Point each hostname at its instance's unique loopback port in the reverse proxy.
+The instances do not share a database, secrets, service user, release directory,
+maintenance service, or update lock.
 
 Every node pins `origin` to [`GnosysLabs/Synapsis`](https://github.com/GnosysLabs/Synapsis) on GitHub. The first automatic check becomes eligible five minutes after boot and receives up to 30 minutes of random delay. After a check finishes, the next becomes eligible 15 minutes later and receives the same random delay. When a new commit is available, Synapsis fast-forwards the source checkout and builds a versioned candidate—including dependency installation and an isolated build-database migration—while the current release remains online. Only then does it enter maintenance mode, replace the single `backups/latest` database snapshot, migrate the real database, atomically switch the active-release symlink, and restart. An admin can skip the wait with **Update now** in Admin Settings. The repository commit count is shown in the Network Info card; `/api/version` exposes both that number and the full deployed commit hash.
 
