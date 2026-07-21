@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
   findNotifications: vi.fn(),
+  findUsers: vi.fn(),
 }));
 
 vi.mock('@/lib/auth', () => ({ requireAuth: mocks.requireAuth }));
@@ -13,7 +14,7 @@ vi.mock('@/db', () => ({
   db: {
     query: {
       notifications: { findMany: mocks.findNotifications },
-      users: { findMany: vi.fn().mockResolvedValue([]) },
+      users: { findMany: mocks.findUsers },
     },
   },
   notifications: {},
@@ -38,6 +39,14 @@ const remoteNotification = {
   post: null,
 };
 
+const degradedRemoteNotification = {
+  ...remoteNotification,
+  id: 'notification-new',
+  createdAt: new Date('2026-07-18T00:00:00.000Z'),
+  actorDisplayName: 'adult',
+  actorAvatarUrl: null,
+};
+
 describe('GET /api/notifications sensitive data enforcement', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -46,7 +55,8 @@ describe('GET /api/notifications sensitive data enforcement', () => {
       handle: 'viewer',
       nsfwEnabled: false,
     });
-    mocks.findNotifications.mockResolvedValue([remoteNotification]);
+    mocks.findNotifications.mockResolvedValue([degradedRemoteNotification, remoteNotification]);
+    mocks.findUsers.mockResolvedValue([]);
   });
 
   it('withholds an NSFW remote actor avatar and post preview', async () => {
@@ -80,6 +90,34 @@ describe('GET /api/notifications sensitive data enforcement', () => {
       displayName: 'Adult',
       isNsfw: true,
       nodeIsNsfw: true,
+    });
+  });
+
+  it('uses a cached remote profile when every notification snapshot is degraded', async () => {
+    mocks.requireAuth.mockResolvedValue({
+      id: 'viewer-1',
+      handle: 'viewer',
+      nsfwEnabled: true,
+      ageVerifiedAt: new Date('2026-07-01T00:00:00.000Z'),
+    });
+    mocks.findNotifications.mockResolvedValue([degradedRemoteNotification]);
+    mocks.findUsers.mockResolvedValue([{
+      id: 'cached-remote-user',
+      handle: 'adult@adult.example',
+      homeDomain: 'adult.example',
+      isLocalAccount: false,
+      displayName: 'Adult',
+      avatarUrl: 'https://stuffbox.xyz/adult-avatar.jpg',
+      isNsfw: true,
+    }]);
+
+    const response = await GET(new Request('https://local.example/api/notifications'));
+    const body = await response.json();
+
+    expect(body.notifications[0].actor).toMatchObject({
+      handle: 'adult@adult.example',
+      displayName: 'Adult',
+      avatarUrl: 'https://stuffbox.xyz/adult-avatar.jpg',
     });
   });
 

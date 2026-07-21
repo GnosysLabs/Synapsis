@@ -8,6 +8,7 @@ import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { isPostSensitive } from '@/lib/nsfw/content-visibility';
 import { parseBoundedInteger } from '@/lib/http/query';
 import {
+    type AccountAddress,
     canonicalAccountHomeDomain,
     requireCanonicalAccountHomeDomain,
     resolveAccountAddress,
@@ -17,6 +18,39 @@ const markSchema = z.object({
     ids: z.array(z.string().uuid()).optional(),
     all: z.boolean().optional(),
 });
+
+interface ActorPresentation {
+    displayName: string | null;
+    avatarUrl: string | null;
+}
+
+function displayNameQuality(value: string | null | undefined, address: AccountAddress | null): number {
+    const displayName = value?.trim();
+    if (!displayName) return 0;
+    if (!address) return 2;
+
+    const identityLikeName = displayName.replace(/^@/, '');
+    return identityLikeName === address.username || identityLikeName === address.canonical
+        ? 1
+        : 2;
+}
+
+function mergeActorPresentation(
+    current: ActorPresentation | undefined,
+    candidate: ActorPresentation,
+    address: AccountAddress | null,
+): ActorPresentation {
+    const currentDisplayName = current?.displayName?.trim() || null;
+    const candidateDisplayName = candidate.displayName?.trim() || null;
+
+    return {
+        displayName: displayNameQuality(candidateDisplayName, address)
+            > displayNameQuality(currentDisplayName, address)
+            ? candidateDisplayName
+            : currentDisplayName,
+        avatarUrl: current?.avatarUrl || candidate.avatarUrl?.trim() || null,
+    };
+}
 
 export async function GET(request: Request) {
     try {
@@ -61,21 +95,64 @@ export async function GET(request: Request) {
                 .filter((row) => row.actorId)
                 .map((row) => row.actorId as string),
         ));
-        const actorUsers = actorIds.length > 0
-            ? await db.query.users.findMany({ where: { id: { in: actorIds } } })
-            : [];
+        const actorHandles = Array.from(new Set(
+            rows.flatMap((row) => {
+                const address = resolveAccountAddress(row.actorHandle, row.actorNodeDomain);
+                return address ? [address.canonical] : [];
+            }),
+        ));
+        const [actorsById, actorsByHandle] = await Promise.all([
+            actorIds.length > 0
+                ? db.query.users.findMany({ where: { id: { in: actorIds } } })
+                : [],
+            actorHandles.length > 0
+                ? db.query.users.findMany({ where: { handle: { in: actorHandles } } })
+                : [],
+        ]);
+        const actorUsers = Array.from(new Map(
+            [...actorsById, ...actorsByHandle].map((actor) => [actor.id, actor]),
+        ).values());
         const actorMap = new Map(actorUsers.map((actor) => [actor.id, actor]));
+        const actorHandleMap = new Map(actorUsers.map((actor) => [actor.handle, actor]));
+        const actorPresentations = new Map<string, ActorPresentation>();
+
+        for (const actor of actorUsers) {
+            const address = resolveAccountAddress(actor.handle, actor.homeDomain);
+            if (!address) continue;
+            actorPresentations.set(address.canonical, mergeActorPresentation(
+                actorPresentations.get(address.canonical),
+                { displayName: actor.displayName, avatarUrl: actor.avatarUrl },
+                address,
+            ));
+        }
+        // A short-lived federation regression stored username-only/no-avatar
+        // snapshots. Reuse the best older snapshot for that same verified
+        // canonical actor instead of rendering inconsistent rows.
+        for (const row of rows) {
+            const address = resolveAccountAddress(row.actorHandle, row.actorNodeDomain);
+            if (!address) continue;
+            actorPresentations.set(address.canonical, mergeActorPresentation(
+                actorPresentations.get(address.canonical),
+                { displayName: row.actorDisplayName, avatarUrl: row.actorAvatarUrl },
+                address,
+            ));
+        }
         const localDomain = requireCanonicalAccountHomeDomain(
             process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
         );
 
         const payload = rows.map((row) => {
-            const actorUser = row.actorId ? actorMap.get(row.actorId) : null;
+            const rowActorAddress = resolveAccountAddress(row.actorHandle, row.actorNodeDomain);
+            const actorUser = (row.actorId ? actorMap.get(row.actorId) : null)
+                || (rowActorAddress ? actorHandleMap.get(rowActorAddress.canonical) : null);
             const actorDomain = actorUser?.homeDomain
                 || canonicalAccountHomeDomain(row.actorNodeDomain);
             const actorAddress = resolveAccountAddress(row.actorHandle, actorDomain);
             const actorHandle = actorAddress?.canonical || row.actorHandle;
             const actorUsername = actorAddress?.username || row.actorHandle;
+            const actorPresentation = actorAddress
+                ? actorPresentations.get(actorAddress.canonical)
+                : undefined;
             const actorIsRemote = actorUser
                 ? !actorUser.isLocalAccount
                 : Boolean(actorDomain && actorDomain !== localDomain);
@@ -126,10 +203,10 @@ export async function GET(request: Request) {
                     // The canonical handle remains the verified identity and is
                     // rendered beside this bounded, stored presentation name.
                     displayName: actorIsRemote
-                        ? row.actorDisplayName?.trim() || actorUsername
+                        ? actorPresentation?.displayName || actorUsername
                         : actorUser?.displayName || row.actorDisplayName,
                     avatarUrl: actorIsRemote
-                        ? canViewSensitive ? row.actorAvatarUrl : null
+                        ? canViewSensitive ? actorPresentation?.avatarUrl || null : null
                         : actorMediaRestricted
                             ? null
                             : actorUser?.avatarUrl || row.actorAvatarUrl,
