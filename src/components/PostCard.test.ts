@@ -158,6 +158,35 @@ describe('PostCard', () => {
         expect(html).not.toContain('>youtube.com</a>');
     });
 
+    it('keeps a thread parent badge in the display-name row', () => {
+        const html = renderToStaticMarkup(createElement(PostCard, {
+            post: {
+                id: 'parent-post',
+                content: 'Parent',
+                createdAt: '2026-07-21T00:00:00.000Z',
+                likesCount: 0,
+                repostsCount: 0,
+                repliesCount: 1,
+                author: {
+                    id: 'parent-author',
+                    handle: 'parent@local.example',
+                    displayName: 'Parent Author',
+                    stuffboxBadge: {
+                        level: 'supporter',
+                        plan: 'mini',
+                        issuer: 'https://stuffbox.xyz',
+                        attestation: 'verified-attestation',
+                        expiresAt: '2099-01-01T00:00:00.000Z',
+                    },
+                },
+            },
+            isThreadParent: true,
+        }));
+
+        expect(html).toMatch(/<div class="post-author-name-row"><a[^>]*>Parent Author<\/a><a[^>]*class="stuffbox-badge-link"/);
+        expect(html).toMatch(/<\/div><span class="post-time">@parent@local\.example/);
+    });
+
     it('renders only a warning shell for a signed-out sensitive post', () => {
         const html = renderToStaticMarkup(createElement(PostCard, { post: sensitivePost }));
 

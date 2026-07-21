@@ -232,17 +232,23 @@ function NotificationItem({
 
             <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', gap: '4px', alignItems: 'baseline', flexWrap: 'wrap' }}>
-                    <Link
-                        href={actorProfilePath}
-                        style={{ fontWeight: 600, color: 'var(--foreground)', textDecoration: 'none' }}
-                    >
-                        {actor?.displayName || (actor ? displayAccountAddress(actor.handle) : 'Someone')} {actor && (
-                            <span style={{ fontWeight: 400, color: 'var(--foreground-tertiary)' }}>
-                                {displayAccountAddress(actor.handle)}
-                            </span>
-                        )}
-                    </Link>
-                    <StuffboxBadge badge={actor?.stuffboxBadge} linked />
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        <Link
+                            href={actorProfilePath}
+                            style={{ fontWeight: 600, color: 'var(--foreground)', textDecoration: 'none' }}
+                        >
+                            {actor?.displayName || (actor ? displayAccountAddress(actor.handle) : 'Someone')}
+                        </Link>
+                        <StuffboxBadge badge={actor?.stuffboxBadge} linked />
+                    </span>
+                    {actor && (
+                        <Link
+                            href={actorProfilePath}
+                            style={{ fontWeight: 400, color: 'var(--foreground-tertiary)', textDecoration: 'none' }}
+                        >
+                            {displayAccountAddress(actor.handle)}
+                        </Link>
+                    )}
                     <span style={{ color: 'var(--foreground-secondary)' }}>
                         {getNotificationText(notification)}
                     </span>

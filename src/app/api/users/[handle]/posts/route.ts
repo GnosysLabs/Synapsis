@@ -21,6 +21,7 @@ import {
     requireCanonicalAccountHomeDomain,
     resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import { attachCachedStuffboxBadgesToPosts } from '@/lib/swarm/cached-post-badges';
 
 const embeddedPostRelations = {
     author: true,
@@ -463,8 +464,9 @@ export async function GET(request: Request, context: RouteContext) {
             console.error('Error populating interaction flags:', error);
         }
 
+        const userPostsWithCurrentBadges = await attachCachedStuffboxBadgesToPosts(userPosts);
         return NextResponse.json({
-            posts: serializePosts(userPosts),
+            posts: serializePosts(userPostsWithCurrentBadges),
             nextCursor: userPosts.length === limit ? userPosts[userPosts.length - 1]?.id : null,
         });
     } catch (error) {

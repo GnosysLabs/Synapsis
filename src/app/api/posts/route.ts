@@ -73,6 +73,7 @@ import {
     attachStoredStuffboxBadgesToPost,
     stuffboxBadgeFromStoredUser,
 } from '@/lib/stuffbox/badge';
+import { attachCachedStuffboxBadgesToPosts } from '@/lib/swarm/cached-post-badges';
 import { getOrRefreshStuffboxBadge } from '@/lib/stuffbox/badge-status';
 
 const POST_MAX_LENGTH = 600;
@@ -1436,7 +1437,8 @@ export async function GET(request: Request) {
             viewer: requestSession?.user ?? null,
             localNodeIsNsfw,
         });
-        const serializedFeedPosts = (feedPosts || []).map((post) => (
+        const feedPostsWithCurrentBadges = await attachCachedStuffboxBadgesToPosts(feedPosts || []);
+        const serializedFeedPosts = feedPostsWithCurrentBadges.map((post) => (
             redactSensitivePostForViewer(attachStoredStuffboxBadgesToPost(post) as unknown as Record<string, unknown>, {
                 canViewSensitive,
                 localNodeDomain: getLocalAccountHomeDomain(),

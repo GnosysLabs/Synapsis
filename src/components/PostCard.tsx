@@ -1181,10 +1181,12 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                         </div>
                     </Link>
                     <div className="post-author">
-                        <Link href={getProfilePath(authorCanonicalHandle)} className="post-handle" onClick={(e) => e.stopPropagation()}>
-                            {post.author.displayName || post.author.handle}
-                        </Link>
-                        <StuffboxBadge badge={post.author.stuffboxBadge} linked />
+                        <div className="post-author-name-row">
+                            <Link href={getProfilePath(authorCanonicalHandle)} className="post-handle" onClick={(e) => e.stopPropagation()}>
+                                {post.author.displayName || post.author.handle}
+                            </Link>
+                            <StuffboxBadge badge={post.author.stuffboxBadge} linked />
+                        </div>
                         <span className="post-time">{authorHandle} · {formatTime(post.createdAt)}</span>
                     </div>
                 </div>
@@ -1308,7 +1310,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                         </div>
                     </Link>
                     <div className="post-author">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div className="post-author-name-row">
                             <Link href={getProfilePath(authorCanonicalHandle)} className="post-handle" onClick={(e) => e.stopPropagation()}>
                                 {post.author.displayName || post.author.handle}
                             </Link>

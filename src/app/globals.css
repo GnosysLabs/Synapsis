@@ -818,6 +818,14 @@ a.btn-primary:visited {
 .post-author {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+}
+
+.post-author-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .post-handle {
