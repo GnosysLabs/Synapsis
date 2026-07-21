@@ -14,9 +14,11 @@ import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import {
+  canonicalAccountHomeDomain,
   requireCanonicalAccountHomeDomain,
   resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 
 const conversationsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -83,7 +85,7 @@ export async function GET(request: NextRequest) {
     // for every row. A single unavailable peer could therefore block the entire
     // response. Batch local metadata here; independent federation paths refresh
     // the remote-user cache without being on the inbox critical path.
-    const [unreadRows, latestMessages] = await Promise.all([
+    const [unreadRows, latestMessages, blockedDomains] = await Promise.all([
       conversationIds.length > 0
         ? db
           .select({
@@ -113,7 +115,13 @@ export async function GET(request: NextRequest) {
             )`,
           ))
         : Promise.resolve([]),
+      getBlockedNodeDomains(),
     ]);
+    const canonicalBlockedDomains = new Set(
+      [...blockedDomains]
+        .map(canonicalAccountHomeDomain)
+        .filter((domain): domain is string => Boolean(domain)),
+    );
 
     const latestByConversation = new Map(
       latestMessages.map((message) => [message.conversationId, message]),
@@ -153,10 +161,17 @@ export async function GET(request: NextRequest) {
         const participantAddress = resolveAccountAddress(conv.participant2Handle, localNodeDomain);
         const participant2Handle = participantAddress?.canonical || conv.participant2Handle;
         const cachedUser = usersByHandle.get(participant2Handle);
-        const participantDomain = cachedUser?.homeDomain || participantAddress?.homeDomain || null;
+        const participantDomain = participantAddress?.homeDomain
+          || canonicalAccountHomeDomain(cachedUser?.homeDomain)
+          || null;
         const participantIsRemote = cachedUser
           ? !cachedUser.isLocalAccount
           : Boolean(participantDomain && participantDomain !== localNodeDomain);
+        const nodeBlocked = Boolean(
+          participantDomain
+          && participantDomain !== localNodeDomain
+          && canonicalBlockedDomains.has(participantDomain),
+        );
         const participant2Info = redactSensitiveUserSummary(cachedUser
           ? {
               handle: cachedUser.handle,
@@ -230,7 +245,16 @@ export async function GET(request: NextRequest) {
 
         return {
           ...conv,
-          participant2: participant2Info,
+          participant2: nodeBlocked
+            ? {
+                ...participant2Info,
+                handle: participant2Handle,
+                displayName: participant2Handle,
+                avatarUrl: null,
+                nodeDomain: participantDomain,
+              }
+            : participant2Info,
+          nodeBlocked,
           lastMessage,
           unreadCount: unreadByConversation.get(conv.id) || 0,
         };

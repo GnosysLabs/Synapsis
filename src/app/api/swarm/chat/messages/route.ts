@@ -15,9 +15,11 @@ import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import {
+  canonicalAccountHomeDomain,
   requireCanonicalAccountHomeDomain,
   resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 
 // Schema for query parameters
 const messagesQuerySchema = z.object({
@@ -116,15 +118,21 @@ export async function GET(request: NextRequest) {
       found.forEach(u => usersByHandle[u.handle] = u);
     }
 
+    const localDomain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN || 'localhost:43821',
+    );
+    const blockedNodeDomains = new Set(
+      [...await getBlockedNodeDomains()]
+        .map(canonicalAccountHomeDomain)
+        .filter((domain): domain is string => Boolean(domain)),
+    );
+
     const messagesMapped = messages.map((msg) => {
       const isSentByMe = msg.senderDid === session.user.did || msg.senderHandle === session.user.handle;
 
       // Resolve fresh user data
       const user = msg.senderDid ? usersByDid[msg.senderDid] : usersByHandle[msg.senderHandle];
 
-      const localDomain = requireCanonicalAccountHomeDomain(
-        process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN || 'localhost:43821',
-      );
       const senderAddress = resolveAccountAddress(
         msg.senderHandle,
         msg.senderNodeDomain || localDomain,
@@ -132,10 +140,17 @@ export async function GET(request: NextRequest) {
       const canonicalSenderHandle = senderAddress?.canonical || msg.senderHandle;
       const displayName = user?.displayName || msg.senderDisplayName || canonicalSenderHandle;
       const avatarUrl = user?.avatarUrl || msg.senderAvatarUrl;
-      const senderDomain = user?.homeDomain || senderAddress?.homeDomain || null;
+      const senderDomain = senderAddress?.homeDomain
+        || canonicalAccountHomeDomain(user?.homeDomain)
+        || null;
       const senderIsRemote = user
         ? !user.isLocalAccount
         : Boolean(senderDomain && senderDomain !== localDomain);
+      const senderNodeBlocked = Boolean(
+        senderDomain
+        && senderDomain !== localDomain
+        && blockedNodeDomains.has(senderDomain),
+      );
       // Imported and historical messages may outlive their sender row. Stored
       // avatar snapshots have no trustworthy classifier, so fail closed unless
       // this is the authenticated viewer's own message.
@@ -178,9 +193,10 @@ export async function GET(request: NextRequest) {
         id: msg.id,
         clientMessageId: msg.clientMessageId,
         senderHandle: canonicalSenderHandle,
-        senderDisplayName: senderProfile.displayName,
-        senderAvatarUrl: senderProfile.avatarUrl,
-        senderNodeDomain: senderProfile.nodeDomain,
+        senderDisplayName: senderNodeBlocked ? canonicalSenderHandle : senderProfile.displayName,
+        senderAvatarUrl: senderNodeBlocked ? null : senderProfile.avatarUrl,
+        senderNodeDomain: senderDomain,
+        senderNodeBlocked,
         senderIsNsfw: senderProfile.isNsfw,
         senderNodeIsNsfw: senderProfile.nodeIsNsfw,
         senderDid: msg.senderDid,

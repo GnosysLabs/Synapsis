@@ -48,6 +48,7 @@ import {
 
 interface Conversation {
     id: string;
+    nodeBlocked: boolean;
     participant2: {
         handle: string;
         displayName: string;
@@ -71,8 +72,9 @@ interface ChatMessagePayload extends StoredChatMessage {
     clientMessageId?: string | null;
     senderHandle: string;
     senderDisplayName?: string;
-    senderAvatarUrl?: string;
+    senderAvatarUrl?: string | null;
     senderNodeDomain?: string | null;
+    senderNodeBlocked: boolean;
     senderIsNsfw?: boolean;
     senderNodeIsNsfw?: boolean;
     senderDid?: string;
@@ -145,6 +147,7 @@ function normalizeConversation(conversation: Conversation, localDomain: string):
     if (!address) return null;
     return {
         ...conversation,
+        nodeBlocked: conversation.nodeBlocked === true,
         participant2: {
             ...conversation.participant2,
             handle: address.canonical,
@@ -272,8 +275,10 @@ export default function ChatPage() {
     const selectedAttachmentError = selectedConversationKey ? attachmentErrors[selectedConversationKey] || null : null;
     const selectedStorageNotice = selectedConversationKey ? storageNotices[selectedConversationKey] || null : null;
     const hasUnreadyAttachments = selectedAttachments.some((attachment) => attachment.uploadState !== 'ready');
+    const selectedNodeBlocked = selectedConversation?.nodeBlocked === true;
     const canSendMessage = Boolean(newMessage.trim() || selectedAttachments.length > 0)
-        && !hasUnreadyAttachments;
+        && !hasUnreadyAttachments
+        && !selectedNodeBlocked;
     const loadedMessageIds = new Set(messages.map(chatMessageReferenceId));
 
     const updateSelectedDraft = useCallback((value: string) => {
@@ -550,6 +555,17 @@ export default function ChatPage() {
         setSelectedConversation(conversation);
     }, []);
 
+    const applyConversationList = useCallback((nextConversations: Conversation[]) => {
+        setConversations(nextConversations);
+        const current = selectedConversationRef.current;
+        if (!current || current.id === 'new') return;
+        const refreshed = nextConversations.find((conversation) => conversation.id === current.id);
+        if (!refreshed || refreshed.nodeBlocked === current.nodeBlocked) return;
+        selectedConversationRef.current = refreshed;
+        selectedConversationKeyRef.current = encryptionConversationKey(refreshed);
+        setSelectedConversation(refreshed);
+    }, []);
+
     // ============================================
     // HELPER FUNCTIONS (Defined before useEffects)
     // ============================================
@@ -593,7 +609,7 @@ export default function ChatPage() {
             if (isInitialLoad
                 && requestId === conversationsRequestRef.current
                 && renderedAccountDidRef.current === requestAccountDid) {
-                setConversations(nextConversations);
+                applyConversationList(nextConversations);
                 setConversationsError(null);
                 setLoading(false);
             }
@@ -623,7 +639,7 @@ export default function ChatPage() {
 
             if (requestId === conversationsRequestRef.current
                 && renderedAccountDidRef.current === requestAccountDid) {
-                setConversations(nextConversations);
+                applyConversationList(nextConversations);
                 setConversationsError(null);
             }
         } catch (e) {
@@ -647,7 +663,7 @@ export default function ChatPage() {
                 setLoading(false);
             }
         }
-    }, [domain]);
+    }, [applyConversationList, domain]);
 
     const markAsRead = useCallback(async (conversationId: string) => {
         const requestAccountDid = renderedAccountDidRef.current;
@@ -743,6 +759,9 @@ export default function ChatPage() {
                             && JSON.stringify(message.attachments) === JSON.stringify(next.attachments)
                             && JSON.stringify(message.replyTo) === JSON.stringify(next.replyTo)
                             && message.decryptionError === next.decryptionError
+                            && message.senderNodeBlocked === next.senderNodeBlocked
+                            && message.senderDisplayName === next.senderDisplayName
+                            && message.senderAvatarUrl === next.senderAvatarUrl
                             && message.readAt === next.readAt
                             && message.deliveredAt === next.deliveredAt;
                     });
@@ -837,6 +856,10 @@ export default function ChatPage() {
             : [];
         const replyToSend = conversationKey ? replyDrafts[conversationKey] || null : null;
         if ((!draftToSend.trim() && composerAttachments.length === 0) || !conversation || !conversationKey) return;
+        if (conversation.nodeBlocked) {
+            setSendError('This node is blocked. Your draft has not been sent.');
+            return;
+        }
         if (composerAttachments.some((attachment) => attachment.uploadState !== 'ready')) {
             setSendError('Wait for every attachment to finish uploading, or remove the failed attachment.');
             return;
@@ -1186,6 +1209,7 @@ export default function ChatPage() {
                     }
                     const draftConv: Conversation = {
                         id: 'new',
+                        nodeBlocked: false,
                         participant2: {
                             handle: userAddress.canonical,
                             displayName: data.user.displayName || data.user.handle,
@@ -1241,7 +1265,7 @@ export default function ChatPage() {
     // been resolved and verified. A failed lookup never falls back to plaintext.
     useEffect(() => {
         setSendError(null);
-        if (!selectedConversation || !activeE2EEKeyId) {
+        if (!selectedConversation || !activeE2EEKeyId || selectedConversation.nodeBlocked) {
             peerResolutionRef.current += 1;
             setConversationEncryption({ status: 'idle' });
             return;
@@ -1285,7 +1309,10 @@ export default function ChatPage() {
     // A post shared from the timeline waits for the user to choose a conversation,
     // then appears in the composer so they remain in control of sending it.
     useEffect(() => {
-        if (!selectedConversation || !sharedPostUrl || appliedSharedPostRef.current === sharedPostUrl) return;
+        if (!selectedConversation
+            || selectedConversation.nodeBlocked
+            || !sharedPostUrl
+            || appliedSharedPostRef.current === sharedPostUrl) return;
 
         updateSelectedDraft(sharedPostUrl);
         appliedSharedPostRef.current = sharedPostUrl;
@@ -1348,12 +1375,16 @@ export default function ChatPage() {
         conv.participant2.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         conv.participant2.handle.toLowerCase().includes(searchQuery.toLowerCase())
     );
-    const selectedEncryptionReady = conversationEncryption.status === 'ready'
+    const selectedEncryptionReady = !selectedNodeBlocked
+        && conversationEncryption.status === 'ready'
         && conversationEncryption.conversationKey === selectedConversationKey;
     const selectedEncryptionError = conversationEncryption.status === 'error'
         && conversationEncryption.conversationKey === selectedConversationKey
         ? conversationEncryption
         : null;
+    const selectedParticipantLabel = selectedNodeBlocked
+        ? selectedHandle
+        : selectedConversation?.participant2.displayName || selectedHandle;
 
     if (authLoading || isIdentityRestoring) {
         return (
@@ -1473,40 +1504,53 @@ export default function ChatPage() {
                         </button>
                         <div className="avatar" style={{ width: '32px', height: '32px', fontSize: '14px' }}>
                             <AvatarImage
-                                avatarUrl={selectedConversation.participant2.avatarUrl}
+                                avatarUrl={selectedNodeBlocked ? null : selectedConversation.participant2.avatarUrl}
                                 seed={selectedConversation.participant2.handle}
                                 nodeDomain={selectedConversation.participant2.nodeDomain}
                                 isNsfw={selectedConversation.participant2.isNsfw}
                                 nodeIsNsfw={selectedConversation.participant2.nodeIsNsfw}
-                                alt={selectedConversation.participant2.displayName || selectedConversation.participant2.handle}
+                                alt={selectedParticipantLabel}
                             />
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                            <Link
-                                href={getProfilePath(
-                                    selectedConversation.participant2.handle,
-                                    selectedConversation.participant2.nodeDomain,
-                                )}
-                                style={{
-                                    display: 'block',
-                                    color: 'var(--foreground)',
-                                    textDecoration: 'none',
-                                    minWidth: 0,
-                                }}
-                            >
-                                <div style={{ fontWeight: 600, fontSize: '15px' }}>{selectedConversation.participant2.displayName}</div>
-                                <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {selectedHandle}
+                            {selectedNodeBlocked ? (
+                                <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontWeight: 600, fontSize: '15px' }}>{selectedParticipantLabel}</div>
+                                    <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {selectedHandle}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2, fontSize: '11px', color: 'var(--foreground-secondary)' }}>
+                                        <LockKeyhole size={11} aria-hidden="true" />
+                                        <span>Node blocked · conversation is read-only</span>
+                                    </div>
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2, fontSize: '11px', color: 'var(--foreground-secondary)' }}>
-                                    <LockKeyhole size={11} aria-hidden="true" />
-                                    <span>{selectedEncryptionReady
-                                        ? 'End-to-end encrypted messaging'
-                                        : selectedEncryptionError
-                                            ? 'Encryption unavailable'
-                                            : 'Verifying encryption…'}</span>
-                                </div>
-                            </Link>
+                            ) : (
+                                <Link
+                                    href={getProfilePath(
+                                        selectedConversation.participant2.handle,
+                                        selectedConversation.participant2.nodeDomain,
+                                    )}
+                                    style={{
+                                        display: 'block',
+                                        color: 'var(--foreground)',
+                                        textDecoration: 'none',
+                                        minWidth: 0,
+                                    }}
+                                >
+                                    <div style={{ fontWeight: 600, fontSize: '15px' }}>{selectedParticipantLabel}</div>
+                                    <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {selectedHandle}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2, fontSize: '11px', color: 'var(--foreground-secondary)' }}>
+                                        <LockKeyhole size={11} aria-hidden="true" />
+                                        <span>{selectedEncryptionReady
+                                            ? 'End-to-end encrypted messaging'
+                                            : selectedEncryptionError
+                                                ? 'Encryption unavailable'
+                                                : 'Verifying encryption…'}</span>
+                                    </div>
+                                </Link>
+                            )}
                         </div>
                         <button
                             aria-label="Delete conversation"
@@ -1522,6 +1566,27 @@ export default function ChatPage() {
                     </div>
                 </header>
 
+                {selectedNodeBlocked && (
+                    <div
+                        role="status"
+                        style={{
+                            display: 'flex',
+                            gap: 10,
+                            padding: '12px 16px',
+                            borderBottom: '1px solid var(--border)',
+                            background: 'var(--background-secondary)',
+                            color: 'var(--foreground-secondary)',
+                            fontSize: 13,
+                            lineHeight: 1.45,
+                        }}
+                    >
+                        <LockKeyhole size={17} aria-hidden="true" style={{ flexShrink: 0, marginTop: 1 }} />
+                        <span>
+                            This node is blocked. Your message history remains available, but new messages and remote media are paused.
+                        </span>
+                    </div>
+                )}
+
                 {/* Messages */}
                 <div
                     ref={messagesContainerRef}
@@ -1530,7 +1595,7 @@ export default function ChatPage() {
                     aria-live="polite"
                     aria-relevant="additions text"
                     aria-busy={loadingMessages}
-                    aria-label={`Messages with ${selectedConversation.participant2.displayName || selectedHandle}`}
+                    aria-label={`Messages with ${selectedParticipantLabel}`}
                     style={{
                         padding: '16px',
                         flex: 1,
@@ -1566,6 +1631,8 @@ export default function ChatPage() {
                                 : findChatPostLinks(msg.content, domain);
                             const sharedPostLinks = uniqueChatPostLinks(detectedPostLinks);
                             const visibleMessageContent = removeChatPostLinks(msg.content, detectedPostLinks);
+                            const blockedRemoteSender = msg.senderNodeBlocked
+                                || (selectedNodeBlocked && !msg.isSentByMe);
                             const emojiOnlyCount = !msg.decryptionError
                                 && msg.attachments.length === 0
                                 && sharedPostLinks.length === 0
@@ -1605,12 +1672,16 @@ export default function ChatPage() {
                                     }}>
                                         <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
                                             <AvatarImage
-                                                avatarUrl={msg.isSentByMe ? user.avatarUrl : msg.senderAvatarUrl}
+                                                avatarUrl={msg.isSentByMe
+                                                    ? user.avatarUrl
+                                                    : blockedRemoteSender ? null : msg.senderAvatarUrl}
                                                 seed={msg.isSentByMe ? user.handle : msg.senderHandle}
                                                 nodeDomain={msg.isSentByMe ? undefined : msg.senderNodeDomain}
                                                 isNsfw={msg.isSentByMe ? user.isNsfw : msg.senderIsNsfw}
                                                 nodeIsNsfw={msg.isSentByMe ? undefined : msg.senderNodeIsNsfw}
-                                                alt={msg.isSentByMe ? user.displayName : msg.senderDisplayName || msg.senderHandle}
+                                                alt={msg.isSentByMe
+                                                    ? user.displayName
+                                                    : blockedRemoteSender ? msg.senderHandle : msg.senderDisplayName || msg.senderHandle}
                                             />
                                         </div>
 
@@ -1662,7 +1733,13 @@ export default function ChatPage() {
                                                     ) : (
                                                         <>
                                                             {visibleMessageContent || null}
-                                                            <ChatMessageAttachments attachments={msg.attachments} />
+                                                            {blockedRemoteSender && msg.attachments.length > 0 ? (
+                                                                <div role="status" style={{ marginTop: visibleMessageContent ? 8 : 0, fontSize: 12 }}>
+                                                                    Remote attachments are hidden while this node is blocked.
+                                                                </div>
+                                                            ) : (
+                                                                <ChatMessageAttachments attachments={msg.attachments} />
+                                                            )}
                                                         </>
                                                     )}
                                                 </div>
@@ -1675,7 +1752,16 @@ export default function ChatPage() {
                                                     {visibleMessageContent.trim()}
                                                 </div>
                                             )}
-                                            {sharedPostLinks.map((postLink) => (
+                                            {sharedPostLinks.map((postLink) => blockedRemoteSender ? (
+                                                <div className="chat-post-card-fallback" role="status" key={postLink.postId}>
+                                                    <div>
+                                                        <div className="chat-post-card-fallback-title">Shared post hidden</div>
+                                                        <div className="chat-post-card-fallback-message">
+                                                            Remote content is paused while this node is blocked.
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ) : (
                                                 <ChatPostCard link={postLink} key={postLink.postId} />
                                             ))}
                                             {msg.legacy && (
@@ -1687,15 +1773,17 @@ export default function ChatPage() {
                                                 {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                             </div>
                                         </div>
-                                        <button
-                                            type="button"
-                                            className="chat-message-reply-button"
-                                            onClick={() => handleReplyToMessage(msg)}
-                                            aria-label={`Reply to message from ${msg.isSentByMe ? 'yourself' : msg.senderDisplayName || msg.senderHandle}`}
-                                            title="Reply"
-                                        >
-                                            <ReplyIcon size={16} aria-hidden="true" />
-                                        </button>
+                                        {!selectedNodeBlocked && (
+                                            <button
+                                                type="button"
+                                                className="chat-message-reply-button"
+                                                onClick={() => handleReplyToMessage(msg)}
+                                                aria-label={`Reply to message from ${msg.isSentByMe ? 'yourself' : msg.senderDisplayName || msg.senderHandle}`}
+                                                title="Reply"
+                                            >
+                                                <ReplyIcon size={16} aria-hidden="true" />
+                                            </button>
+                                        )}
                                     </div>
                                 </Fragment>
                             );
@@ -1707,7 +1795,7 @@ export default function ChatPage() {
                 {/* Input */}
                 <div className="compose" style={{ border: 'none', background: 'transparent', flexShrink: 0 }}>
                     <StorageConfigurationPrompt
-                        open={showStorageConfiguration}
+                        open={showStorageConfiguration && !selectedNodeBlocked}
                         onConfigured={async () => {
                             setShowStorageConfiguration(false);
                             const pending = pendingStorageUploads;
@@ -1730,7 +1818,23 @@ export default function ChatPage() {
                             setPendingStorageUploads([]);
                         }}
                     />
-                    {selectedEncryptionReady ? (
+                    {selectedNodeBlocked ? (
+                        <div
+                            role="status"
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                minHeight: 44,
+                                padding: '0 4px',
+                                color: 'var(--foreground-secondary)',
+                                fontSize: 13,
+                            }}
+                        >
+                            <LockKeyhole size={16} aria-hidden="true" />
+                            This conversation is read-only while the node is blocked.
+                        </div>
+                    ) : selectedEncryptionReady ? (
                         <>
                             {selectedReply && (
                                 <div className="chat-reply-composer" role="status">
@@ -2036,24 +2140,30 @@ export default function ChatPage() {
                         >
                             <div className="avatar">
                                 <AvatarImage
-                                    avatarUrl={conv.participant2.avatarUrl}
+                                    avatarUrl={conv.nodeBlocked ? null : conv.participant2.avatarUrl}
                                     seed={conv.participant2.handle}
                                     nodeDomain={conv.participant2.nodeDomain}
                                     isNsfw={conv.participant2.isNsfw}
                                     nodeIsNsfw={conv.participant2.nodeIsNsfw}
-                                    alt={conv.participant2.displayName || conv.participant2.handle}
+                                    alt={conv.nodeBlocked
+                                        ? displayAccountAddress(conv.participant2.handle)
+                                        : conv.participant2.displayName || conv.participant2.handle}
                                 />
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                                    <span style={{ fontWeight: 600, fontSize: '15px' }}>{conv.participant2.displayName || conv.participant2.handle}</span>
+                                    <span style={{ fontWeight: 600, fontSize: '15px' }}>
+                                        {conv.nodeBlocked
+                                            ? displayAccountAddress(conv.participant2.handle)
+                                            : conv.participant2.displayName || conv.participant2.handle}
+                                    </span>
                                     {conv.unreadCount > 0 && <span className="badge" style={{ background: 'var(--accent)', color: '#000', borderRadius: '10px', padding: '2px 8px', fontSize: '11px', fontWeight: 600 }}>{conv.unreadCount}</span>}
                                 </div>
                                 <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px' }}>
                                     {displayAccountAddress(conv.participant2.handle)}
                                 </div>
                                 <div style={{ fontSize: '13px', color: 'var(--foreground-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px' }}>
-                                    {conv.lastMessagePreview}
+                                    {conv.nodeBlocked ? 'Node blocked · History available' : conv.lastMessagePreview}
                                 </div>
                             </div>
                         </button>

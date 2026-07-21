@@ -21,6 +21,7 @@ import {
 } from '@/lib/e2ee/protocol';
 import { enqueueMessagePushDeliveries } from '@/lib/push/messages';
 import { isNodeBlocked } from '@/lib/swarm/node-blocklist';
+import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
 import {
   FederatedIdentityContinuityError,
   federatedActionFailureInit,
@@ -79,7 +80,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Federated sender handle mismatch' }, { status: 403 });
     }
     if (await isNodeBlocked(sourceDomain)) {
-      return NextResponse.json({ error: 'Blocked node' }, { status: 403 });
+      return NextResponse.json({
+        error: 'Blocked node',
+        code: NODE_BLOCKED_CODE,
+      }, { status: 403 });
     }
 
     const verified = await verifyFederatedUserAction({

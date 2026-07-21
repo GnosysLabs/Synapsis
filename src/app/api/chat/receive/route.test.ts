@@ -334,6 +334,20 @@ describe('federated encrypted-message receiver', () => {
     );
   });
 
+  it('returns a typed block response without verifying or storing the message', async () => {
+    mocks.isNodeBlocked.mockResolvedValue(true);
+
+    const response = await POST(request() as never);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Blocked node',
+      code: 'NODE_BLOCKED',
+    });
+    expect(mocks.verifyFederatedUserAction).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
   it('rejects a new conversation when the durable recipient/source daily budget is exhausted', async () => {
     mocks.quotaConsumeResult.mockResolvedValue([]);
 
