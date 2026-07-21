@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildApnsPayload, notificationTitle, type PushEvent } from './apns';
+import { buildApnsPayload, notificationAction, notificationTitle, type PushEvent } from './apns';
 
 const event: PushEvent = {
   eventId: '00000000-0000-4000-8000-000000000001',
@@ -8,6 +8,7 @@ const event: PushEvent = {
   type: 'mention',
   actorName: 'Alice',
   actorAvatarUrl: 'https://cdn.example/alice.png',
+  badge: 7,
   postId: 'post-1',
   subscriptionId: '00000000-0000-4000-8000-000000000003',
 };
@@ -15,7 +16,11 @@ const event: PushEvent = {
 describe('APNs payload', () => {
   it('contains routing metadata but no post content', () => {
     const payload = JSON.parse(buildApnsPayload(event));
-    expect(payload.aps.alert.title).toBe('Alice mentioned you');
+    expect(payload.aps.alert).toEqual({
+      title: 'Alice',
+      body: 'mentioned you',
+    });
+    expect(payload.aps.badge).toBe(7);
     expect(payload.synapsis).toEqual({
       notificationId: event.notificationId,
       type: 'mention',
@@ -29,7 +34,8 @@ describe('APNs payload', () => {
 
   it('sanitizes actor names before displaying them', () => {
     expect(notificationTitle({ ...event, actorName: 'Alice\nInjected', type: 'follow' }))
-      .toBe('Alice Injected followed you');
+      .toBe('Alice Injected');
+    expect(notificationAction({ ...event, type: 'follow' })).toBe('followed you');
   });
 
   it('routes encrypted DMs to Messages without creating notification metadata', () => {
@@ -43,8 +49,8 @@ describe('APNs payload', () => {
     const payload = JSON.parse(buildApnsPayload(messageEvent));
 
     expect(payload.aps.alert).toEqual({
-      title: 'Charlie sent you a message',
-      body: 'Open Synapsis to read it.',
+      title: 'Charlie',
+      body: 'sent you a DM',
     });
     expect(payload.aps['thread-id']).toBe('messages');
     expect(payload.synapsis).toEqual({

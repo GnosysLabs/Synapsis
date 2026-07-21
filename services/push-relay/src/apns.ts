@@ -9,6 +9,7 @@ interface PushEventBase {
   eventId: string;
   actorName: string;
   actorAvatarUrl?: string;
+  badge?: number;
   subscriptionId?: string;
 }
 
@@ -41,14 +42,17 @@ function cleanActorName(value: string): string {
 }
 
 export function notificationTitle(event: PushEvent): string {
-  const actor = cleanActorName(event.actorName);
+  return cleanActorName(event.actorName);
+}
+
+export function notificationAction(event: PushEvent): string {
   switch (event.type) {
-    case 'follow': return `${actor} followed you`;
-    case 'reply': return `${actor} replied to your post`;
-    case 'mention': return `${actor} mentioned you`;
-    case 'like': return `${actor} liked your post`;
-    case 'repost': return `${actor} reposted your post`;
-    case 'message': return `${actor} sent you a message`;
+    case 'follow': return 'followed you';
+    case 'reply': return 'replied to your post';
+    case 'mention': return 'mentioned you';
+    case 'like': return 'liked your post';
+    case 'repost': return 'reposted your post';
+    case 'message': return 'sent you a DM';
   }
 }
 
@@ -64,12 +68,10 @@ export function buildApnsPayload(event: PushEvent): string {
     aps: {
       alert: {
         title: notificationTitle(event),
-        body: event.type === 'message'
-          ? 'Open Synapsis to read it.'
-          : 'Open Synapsis to view the notification.',
+        body: notificationAction(event),
       },
       sound: 'default',
-      badge: 1,
+      badge: event.badge ?? 1,
       'mutable-content': 1,
       'thread-id': event.type === 'message' ? 'messages' : 'notifications',
     },

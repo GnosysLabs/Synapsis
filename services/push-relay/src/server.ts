@@ -34,6 +34,7 @@ const notificationEventSchema = z.object({
   type: z.enum(['follow', 'reply', 'mention', 'like', 'repost']),
   actorName: z.string().min(1).max(160),
   actorAvatarUrl: avatarURLSchema.optional(),
+  badge: z.number().int().min(0).max(999_999).optional(),
   postId: z.string().min(1).max(256).optional(),
 }).strict();
 
@@ -43,6 +44,7 @@ const messageEventSchema = z.object({
   type: z.literal('message'),
   actorName: z.string().min(1).max(160),
   actorAvatarUrl: avatarURLSchema.optional(),
+  badge: z.number().int().min(0).max(999_999).optional(),
 }).strict();
 
 const eventSchema = z.discriminatedUnion('type', [
