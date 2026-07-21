@@ -64,16 +64,10 @@
 
 .stuffbox-badge-icon svg { width: 100%; height: 100%; overflow: visible; }
 .stuffbox-badge-connected circle { fill: currentColor; }
-.stuffbox-badge-connected path { fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.stuffbox-badge-label { color: currentColor; font-size: 13px; font-weight: 700; letter-spacing: .01em; }
+.stuffbox-badge-check { fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 .stuffbox-badge-supporter {
   color: #ffd970;
-  background: linear-gradient(110deg, #ffb84a, #fff099 35%, #bd8cff 68%, #74d7ff);
-  background-size: 220% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: stuffbox-badge-shimmer 3.2s linear infinite;
 }
 
 .stuffbox-badge-supporter .stuffbox-badge-icon {
@@ -81,15 +75,20 @@
   animation: stuffbox-badge-breathe 2.4s ease-in-out infinite;
 }
 
-.stuffbox-badge-supporter svg path:first-child { fill: #ffd765; stroke: #fff1aa; stroke-width: .45; }
+.stuffbox-badge-supporter circle {
+  fill: #ffd765;
+  stroke: #fff1aa;
+  stroke-width: .45;
+  animation: stuffbox-badge-color 3.2s ease-in-out infinite;
+}
 .stuffbox-badge-supporter .stuffbox-badge-spark { fill: #fff; transform-origin: center; animation: stuffbox-badge-sparkle 1.8s ease-in-out infinite; }
 
-@keyframes stuffbox-badge-shimmer { to { background-position: -220% 0; } }
+@keyframes stuffbox-badge-color { 0%, 100% { fill: #ffd765; } 50% { fill: #b88cff; } }
 @keyframes stuffbox-badge-breathe { 50% { transform: scale(1.12) rotate(4deg); filter: drop-shadow(0 0 8px rgb(195 127 255 / 62%)); } }
 @keyframes stuffbox-badge-sparkle { 0%, 100% { opacity: .35; transform: scale(.7); } 50% { opacity: 1; transform: scale(1.18); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .stuffbox-badge-supporter,
+  .stuffbox-badge-supporter circle,
   .stuffbox-badge-supporter .stuffbox-badge-icon,
   .stuffbox-badge-supporter .stuffbox-badge-spark { animation: none; }
 }

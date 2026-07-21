@@ -22,7 +22,6 @@ export default function StuffboxBadgesPage() {
                             attestation: 'preview',
                             expiresAt: previewExpiry,
                         }}
-                        showLabel
                     />
                     <h2>Connected</h2>
                     <p>Confirms that this exact <code>@handle@node</code> currently has official Stuffbox storage connected.</p>
@@ -42,14 +41,13 @@ export default function StuffboxBadgesPage() {
                             attestation: 'preview',
                             expiresAt: previewExpiry,
                         }}
-                        showLabel
                     />
-                    <h2>Supporter</h2>
-                    <p>Confirms an active paid Stuffbox plan, with an animated badge that recognizes support for independent media infrastructure.</p>
+                    <h2>Paid plan</h2>
+                    <p>Confirms that Stuffbox reports an active paid plan for this account. The checkmark gets an animated finish.</p>
                     <ul>
                         <li>Everything in Connected</li>
                         <li>More storage according to your Stuffbox plan</li>
-                        <li>Animated supporter badge</li>
+                        <li>Animated paid-plan checkmark</li>
                     </ul>
                 </article>
             </section>

@@ -103,9 +103,9 @@ export default function StorageSettingsPage() {
                             <div style={{ marginTop: '10px' }}>
                                 {status.stuffboxBadge ? (
                                     <>
-                                        <StuffboxBadge badge={status.stuffboxBadge} showLabel linked />
+                                        <StuffboxBadge badge={status.stuffboxBadge} linked />
                                         <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.5, marginTop: '8px' }}>
-                                            Your signed badge follows this account across Synapsis nodes.
+                                            The checkmark reflects the current plan Stuffbox reports for this account.
                                         </p>
                                     </>
                                 ) : (
@@ -140,7 +140,7 @@ export default function StorageSettingsPage() {
                         Connect Stuffbox
                     </h2>
                     <p style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.5, marginBottom: '20px' }}>
-                        Connect the official Synapsis storage partner to upload portable media and unlock a trusted Stuffbox Connected badge across the federation.
+                        Connect the official Synapsis storage partner to upload portable media and unlock a Stuffbox checkmark across the federation.
                     </p>
                     <StorageConfigurationPrompt
                         open
