@@ -12,6 +12,7 @@ import { isPostSensitive } from '@/lib/nsfw/content-visibility';
 import { signedFederationRead } from './signed-read';
 import { parseRemoteTimelineResponse } from './remote-timeline-payload';
 import { mapWithConcurrency } from '@/lib/async/concurrency';
+import { verifyStuffboxBadgeOnPost } from '@/lib/stuffbox/badge';
 
 const MAX_FEDERATION_NODES_PER_TIMELINE = 24;
 const MAX_CONCURRENT_TIMELINE_FETCHES = 6;
@@ -100,7 +101,11 @@ async function fetchNodeTimeline(
       return { posts: [], error: `HTTP ${response.status}` };
     }
 
-    return parseRemoteTimelineResponse(response.json(), normalizedDomain);
+    const parsed = parseRemoteTimelineResponse(response.json(), normalizedDomain);
+    return {
+      ...parsed,
+      posts: await Promise.all(parsed.posts.map((post) => verifyStuffboxBadgeOnPost(post))),
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return { posts: [], error: message };

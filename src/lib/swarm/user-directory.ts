@@ -7,6 +7,8 @@ import { getKnownSwarmNodeNsfw } from '@/lib/swarm/registry';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
 import { federationMediaUrlSchema } from '@/lib/utils/federation';
 import { resolveAccountAddress } from '@/lib/identity/account-address';
+import { verifyStuffboxBadgeAttestation } from '@/lib/stuffbox/badge';
+import type { StuffboxBadge } from '@/lib/types';
 
 const remoteDirectorySchema = z.object({
     users: z.array(z.object({
@@ -17,6 +19,7 @@ const remoteDirectorySchema = z.object({
         avatarUrl: federationMediaUrlSchema.nullable(),
         isNsfw: z.boolean().optional(),
         nodeIsNsfw: z.boolean().optional(),
+        stuffboxBadge: z.object({ attestation: z.string().min(100).max(8 * 1024) }).nullish(),
     })).max(12),
 });
 
@@ -28,6 +31,7 @@ export interface SwarmDirectoryUser {
     nodeDomain: string;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
+    stuffboxBadge?: StuffboxBadge | null;
 }
 
 export async function fetchSwarmUserDirectory(
@@ -65,15 +69,20 @@ export async function fetchSwarmUserDirectory(
     const registryNodeIsNsfw = typeof options.nodeIsNsfw === 'boolean'
         ? options.nodeIsNsfw
         : await getKnownSwarmNodeNsfw(domain);
-    return parsed.data.users.flatMap((user) => {
+    const verifiedUsers = await Promise.all(parsed.data.users.map(async (user) => {
         const address = resolveAccountAddress(user.handle, publicDomain || domain);
-        if (!address || address.homeDomain !== (publicDomain || domain)) return [];
-        return [{
+        if (!address || address.homeDomain !== (publicDomain || domain)) return null;
+        const stuffboxBadge = user.stuffboxBadge?.attestation
+            ? await verifyStuffboxBadgeAttestation(user.stuffboxBadge.attestation, address.canonical)
+            : null;
+        return {
             ...user,
             handle: address.canonical,
             isRemote: true as const,
             nodeDomain: address.homeDomain,
             nodeIsNsfw: registryNodeIsNsfw === true ? true : user.nodeIsNsfw,
-        }];
-    });
+            stuffboxBadge,
+        };
+    }));
+    return verifiedUsers.flatMap((user) => user ? [user] : []);
 }

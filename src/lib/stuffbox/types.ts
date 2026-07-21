@@ -30,3 +30,14 @@ export interface StuffboxAsset {
   createdAt: string;
   deletedAt?: string;
 }
+
+export interface StuffboxBadgeResponse {
+  attestation: string;
+  badge: {
+    level: 'connected' | 'supporter';
+    plan: 'free' | 'mini' | 'personal' | 'plus' | 'power' | 'max' | 'ultra';
+    subject: string;
+    issuedAt: string;
+    expiresAt: string;
+  };
+}

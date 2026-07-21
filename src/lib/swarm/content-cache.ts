@@ -40,6 +40,7 @@ import { getPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
 import { markNodeSuccess } from './registry';
 import { decodeFeedCursorPosition, type FeedCursorPosition } from '@/lib/posts/feed-pagination';
 import { indexRemotePostContent, searchIndexedPostIds } from '@/lib/search/post-index';
+import { verifyStuffboxBadgeOnPost } from '@/lib/stuffbox/badge';
 import {
   cacheVerifiedChangeBundle,
   getCachedVerifiedChangeBundle,
@@ -240,7 +241,8 @@ async function cacheValidatedPosts(
 ): Promise<number> {
   const now = new Date();
   for (const rawPost of posts) {
-    const post = applyAuthoritativeNodeClassification(rawPost, knownNodeIsNsfw);
+    const verifiedPost = await verifyStuffboxBadgeOnPost(rawPost);
+    const post = applyAuthoritativeNodeClassification(verifiedPost, knownNodeIsNsfw);
     const apId = `swarm:${domain}:${post.id}`;
     const feedActivityAt = new Date(post.feedActivityAt || post.createdAt);
     const authorAddress = resolveAccountAddress(post.author.handle, domain);
@@ -1119,7 +1121,9 @@ export async function getCachedSwarmTimeline(
         nodeDomain: row.nodeDomain,
         nodeIsNsfw: row.nodeIsNsfw ?? undefined,
       }, row.nodeDomain);
-      const parsedPost = parsed.posts[0];
+      const parsedPost = parsed.posts[0]
+        ? await verifyStuffboxBadgeOnPost(parsed.posts[0])
+        : undefined;
       const post = parsedPost
         ? applyAuthoritativeNodeClassification(
             parsedPost,

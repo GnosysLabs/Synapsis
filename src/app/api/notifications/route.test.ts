@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
   findNotifications: vi.fn(),
   findUsers: vi.fn(),
+  findBlockedNodes: vi.fn(),
 }));
 
 vi.mock('@/lib/auth', () => ({ requireAuth: mocks.requireAuth }));
@@ -15,6 +16,7 @@ vi.mock('@/db', () => ({
     query: {
       notifications: { findMany: mocks.findNotifications },
       users: { findMany: mocks.findUsers },
+      swarmNodes: { findMany: mocks.findBlockedNodes },
     },
   },
   notifications: {},
@@ -57,6 +59,7 @@ describe('GET /api/notifications sensitive data enforcement', () => {
     });
     mocks.findNotifications.mockResolvedValue([degradedRemoteNotification, remoteNotification]);
     mocks.findUsers.mockResolvedValue([]);
+    mocks.findBlockedNodes.mockResolvedValue([]);
   });
 
   it('withholds an NSFW remote actor avatar and post preview', async () => {

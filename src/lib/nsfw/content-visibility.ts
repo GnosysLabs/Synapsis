@@ -59,6 +59,7 @@ const PUBLIC_USER_SUMMARY_KEYS = [
     'dmPrivacy',
     'nsfwRestricted',
     'sensitiveRestricted',
+    'stuffboxBadge',
 ] as const;
 
 export type PublicUserSummary = Partial<Record<

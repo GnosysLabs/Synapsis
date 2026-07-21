@@ -13,6 +13,7 @@ import { AvatarImage } from './AvatarImage';
 import { ANONYMOUS_APP_DESTINATION } from '@/lib/posts/home-feed';
 import { displayAccountAddress } from '@/lib/identity/account-address';
 import { getProfilePath } from '@/lib/utils/handle';
+import { StuffboxBadge } from '@/components/StuffboxBadge';
 
 export function Sidebar() {
     const { user, accounts, isAdmin, logout, switchAccount } = useAuth();
@@ -371,8 +372,9 @@ export function Sidebar() {
                                                 <AvatarImage avatarUrl={account.avatarUrl} seed={account.handle} isNsfw={account.isNsfw} alt={account.displayName || account.handle} />
                                             </div>
                                             <div style={{ minWidth: 0, flex: 1, display: 'grid', gap: '2px' }}>
-                                                <div style={{ fontWeight: 700, fontSize: '15px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                    {account.displayName || account.handle}
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: '15px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{account.displayName || account.handle}</span>
+                                                    <StuffboxBadge badge={account.stuffboxBadge} />
                                                 </div>
                                                 <div style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                     {displayAccountAddress(account.handle)}
@@ -458,7 +460,10 @@ export function Sidebar() {
                             <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} isNsfw={user.isNsfw} alt={user.displayName} />
                         </div>
                         <div style={{ minWidth: 0, flex: 1, textAlign: 'left' }}>
-                            <div style={{ fontWeight: 600, fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.displayName}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.displayName}</span>
+                                <StuffboxBadge badge={user.stuffboxBadge} />
+                            </div>
                             <div style={{ color: 'var(--foreground-tertiary)', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{formattedHandle}</div>
                         </div>
                         <ChevronDown size={18} style={{

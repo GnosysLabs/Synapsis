@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { isLocalNodeNsfw } from '@/lib/node/local-node';
+import { getOrRefreshStuffboxBadge } from '@/lib/stuffbox/badge-status';
 
 const updateProfileSchema = z.object({
     displayName: z.string().min(1).max(50).optional(),
@@ -30,6 +31,7 @@ export async function GET() {
         }
 
         const localNodeIsNsfw = await isLocalNodeNsfw();
+        const stuffboxBadge = await getOrRefreshStuffboxBadge(session.user);
 
         return NextResponse.json({
             user: {
@@ -51,12 +53,16 @@ export async function GET() {
                     ? Boolean(session.user.ageVerifiedAt)
                     : session.user.nsfwEnabled,
                 ageVerifiedAt: session.user.ageVerifiedAt?.toISOString() || null,
+                stuffboxBadge,
             },
             accounts: accounts.map((account) => ({
                 ...account,
                 nsfwEnabled: localNodeIsNsfw
                     ? Boolean(account.ageVerifiedAt)
                     : account.nsfwEnabled,
+                stuffboxBadge: account.id === session.user.id
+                    ? stuffboxBadge
+                    : account.stuffboxBadge,
             })),
         });
     } catch (error) {

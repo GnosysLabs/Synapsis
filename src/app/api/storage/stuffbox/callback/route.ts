@@ -4,6 +4,7 @@ import { exchangeAuthorizationCode, StuffboxApiError } from '@/lib/stuffbox/clie
 import { consumeStuffboxConnectionState } from '@/lib/stuffbox/connection-state';
 import { saveStuffboxTokens } from '@/lib/stuffbox/tokens';
 import { renderStuffboxPopupResponse } from '@/lib/stuffbox/popup-response';
+import { getOrRefreshStuffboxBadge } from '@/lib/stuffbox/badge-status';
 
 function popupResponse(origin: string, success: boolean, message: string, attemptId?: string): NextResponse {
   return new NextResponse(renderStuffboxPopupResponse(origin, success, message, attemptId), {
@@ -35,6 +36,7 @@ export async function GET(request: NextRequest) {
       redirectUri: pending.callbackUrl,
     });
     await saveStuffboxTokens(user.id, pending.baseUrl, tokens);
+    await getOrRefreshStuffboxBadge(user, { force: true });
     return popupResponse(new URL(pending.callbackUrl).origin, true, 'Stuffbox connected.', attemptId);
   } catch (error) {
     if (error instanceof StuffboxApiError) {

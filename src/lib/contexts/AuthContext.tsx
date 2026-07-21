@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef } f
 import { useUserIdentity } from '@/lib/hooks/useUserIdentity';
 import { unlockE2EEFromSignIn } from '@/lib/e2ee/sign-in-unlock';
 import { parseAccountAddress } from '@/lib/identity/account-address';
+import type { StuffboxBadge } from '@/lib/types';
 
 const AUTH_SYNC_CHANNEL = 'synapsis-auth-state';
 const AUTH_SYNC_STORAGE_KEY = 'synapsis:auth-state-changed';
@@ -23,6 +24,7 @@ export interface User {
     isNsfw?: boolean;
     nsfwEnabled?: boolean;
     ageVerifiedAt?: string | null;
+    stuffboxBadge?: StuffboxBadge | null;
 }
 
 export interface AuthAccount extends User {

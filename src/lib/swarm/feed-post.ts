@@ -66,6 +66,7 @@ export function mapSwarmPostToPost(
             isNsfw: post.author.isNsfw,
             nodeIsNsfw: post.nodeIsNsfw,
             nodeDomain: post.nodeDomain,
+            stuffboxBadge: post.author.stuffboxBadge,
         },
         media: post.media?.map((item, index) => ({
             id: `${normalizedId}:media:${index}`,

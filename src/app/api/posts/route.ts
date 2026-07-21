@@ -64,6 +64,11 @@ import {
     resolveAccountAddress,
 } from '@/lib/identity/account-address';
 import { canonicalizeMentionsInContent } from '@/lib/mentions/parser';
+import {
+    attachStoredStuffboxBadgesToPost,
+    stuffboxBadgeFromStoredUser,
+} from '@/lib/stuffbox/badge';
+import { getOrRefreshStuffboxBadge } from '@/lib/stuffbox/badge-status';
 
 const POST_MAX_LENGTH = 600;
 const FOR_YOU_CURSOR_PREFIX = 'fy:v1';
@@ -122,7 +127,7 @@ function parseStoredFeedMeta(value: string): ForYouFeedMeta | null {
 
 function mapUserSwarmRepostToFeedPost(
     row: typeof userSwarmReposts.$inferSelect,
-    author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl' | 'isNsfw'>
+    author: typeof users.$inferSelect,
 ): FeedPostWithChildren {
     const localNodeDomain = getLocalAccountHomeDomain();
     const remoteAuthorAddress = resolveAccountAddress(row.authorHandle, row.nodeDomain);
@@ -144,6 +149,7 @@ function mapUserSwarmRepostToFeedPost(
             avatarUrl: author.avatarUrl,
             nodeDomain: localNodeDomain,
             isNsfw: author.isNsfw,
+            stuffboxBadge: stuffboxBadgeFromStoredUser(author),
         },
         repostOfId: remoteOriginalId,
         repostOf: {
@@ -482,6 +488,7 @@ export async function POST(request: Request) {
         const user = cliAuthorization?.user ?? (isSignedActionPayload(requestBody)
             ? await requireSignedAction(requestBody, 'post')
             : await requireAuth());
+        const stuffboxBadge = await getOrRefreshStuffboxBadge(user);
         const data = createPostSchema.parse(
             isCliSignedAction(requestBody) || isSignedActionPayload(requestBody)
                 ? requestBody.data
@@ -704,6 +711,7 @@ export async function POST(request: Request) {
                             did: user.did,
                             publicKey: user.publicKey,
                             isNsfw: user.isNsfw,
+                            stuffboxBadge,
                         },
                         nodeDomain,
                         nodeIsNsfw,
@@ -1418,7 +1426,7 @@ export async function GET(request: Request) {
             localNodeIsNsfw,
         });
         const serializedFeedPosts = (feedPosts || []).map((post) => (
-            redactSensitivePostForViewer(post as unknown as Record<string, unknown>, {
+            redactSensitivePostForViewer(attachStoredStuffboxBadgesToPost(post) as unknown as Record<string, unknown>, {
                 canViewSensitive,
                 localNodeDomain: getLocalAccountHomeDomain(),
                 localNodeIsNsfw,

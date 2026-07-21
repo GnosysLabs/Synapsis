@@ -77,6 +77,14 @@ export const users = sqliteTable('users', {
   storageBucket: text('storage_bucket'),
   storageAccessKeyEncrypted: text('storage_access_key_encrypted'),
   storageSecretKeyEncrypted: text('storage_secret_key_encrypted'),
+  // Public Stuffbox entitlement proof. The badge is shown only while this
+  // official Stuffbox-signed attestation remains valid for the canonical
+  // account address.
+  stuffboxBadgeProof: text('stuffbox_badge_proof'),
+  stuffboxBadgeLevel: text('stuffbox_badge_level'),
+  stuffboxBadgePlan: text('stuffbox_badge_plan'),
+  stuffboxBadgeIssuer: text('stuffbox_badge_issuer'),
+  stuffboxBadgeExpiresAt: integer('stuffbox_badge_expires_at', { mode: 'timestamp' }),
   followersCount: integer('followers_count').default(0).notNull(),
   followingCount: integer('following_count').default(0).notNull(),
   postsCount: integer('posts_count').default(0).notNull(),
@@ -94,6 +102,7 @@ export const users = sqliteTable('users', {
   index('users_suspended_idx').on(table.isSuspended),
   index('users_silenced_idx').on(table.isSilenced),
   index('users_nsfw_idx').on(table.isNsfw),
+  index('users_stuffbox_badge_idx').on(table.stuffboxBadgeLevel, table.stuffboxBadgeExpiresAt),
   index('users_remote_home_idx').on(table.homeDomain, table.isLocalAccount),
 ]);
 

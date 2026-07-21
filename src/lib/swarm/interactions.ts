@@ -33,6 +33,7 @@ import {
   type RemoteSwarmProfileResponse,
 } from './remote-post-payload';
 import type { SwarmPost } from '@/app/api/swarm/timeline/route';
+import type { StuffboxBadge } from '@/lib/types';
 import { indexRemotePostContent } from '@/lib/search/post-index';
 import {
   clearRemoteNodeAccessDenied,
@@ -468,13 +469,25 @@ export async function fetchSwarmUserProfile(
       address.username,
       effectivePostsLimit,
     );
+    const { verifyStuffboxBadgeAttestation, verifyStuffboxBadgeOnPost } = await import('@/lib/stuffbox/badge');
+    const profileBadge = payload.profile.stuffboxBadge?.attestation
+      ? await verifyStuffboxBadgeAttestation(
+          payload.profile.stuffboxBadge.attestation,
+          payload.profile.handle,
+        )
+      : null;
+    const verifiedPayload = {
+      ...payload,
+      profile: { ...payload.profile, stuffboxBadge: profileBadge },
+      posts: await Promise.all(payload.posts.map((post) => verifyStuffboxBadgeOnPost(post))),
+    };
 
     const knownNodeIsNsfw = await getKnownSwarmNodeNsfw(normalizedDomain);
-    if (knownNodeIsNsfw === true && payload.profile.nodeIsNsfw !== true) {
+    if (knownNodeIsNsfw === true && verifiedPayload.profile.nodeIsNsfw !== true) {
       return {
-        ...payload,
-        profile: { ...payload.profile, nodeIsNsfw: true },
-        posts: payload.posts.map((post) => ({
+        ...verifiedPayload,
+        profile: { ...verifiedPayload.profile, nodeIsNsfw: true },
+        posts: verifiedPayload.posts.map((post) => ({
           ...post,
           isNsfw: true,
           author: post.author ? { ...post.author, nodeIsNsfw: true } : post.author,
@@ -482,7 +495,7 @@ export async function fetchSwarmUserProfile(
       };
     }
 
-    return payload;
+    return verifiedPayload;
   } catch (error) {
     console.error(`[Swarm] Failed to fetch profile for ${handle}:`, error);
     return null;
@@ -543,6 +556,7 @@ export async function cacheSwarmUserPosts(
         nodeDomain: domain,
         isRemote: true,
         isSwarm: true,
+        stuffboxBadge: reposter.stuffboxBadge as StuffboxBadge | null | undefined,
       })),
       repostedByCount: post.repostedByCount,
       author: {
@@ -550,6 +564,7 @@ export async function cacheSwarmUserPosts(
         displayName: post.author.displayName || post.author.handle,
         avatarUrl: post.author.avatarUrl || undefined,
         isNsfw: post.author.isNsfw ?? profile.isNsfw,
+        stuffboxBadge: post.author.stuffboxBadge as StuffboxBadge | null | undefined,
       },
       nodeDomain: normalizeNodeDomain(domain),
       nodeIsNsfw: post.nodeIsNsfw ?? profile.nodeIsNsfw,

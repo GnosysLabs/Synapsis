@@ -14,6 +14,7 @@ import {
     resolveAccountAddress,
 } from '@/lib/identity/account-address';
 import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
 
 const markSchema = z.object({
     ids: z.array(z.string().uuid()).optional(),
@@ -225,6 +226,7 @@ export async function GET(request: Request) {
                     nodeIsNsfw: actorIsRemote
                         ? true
                         : localNodeIsNsfw,
+                    stuffboxBadge: actorUser ? stuffboxBadgeFromStoredUser(actorUser) : null,
                 },
                 post: row.postId || remotePostReference ? {
                     id: row.postId || remotePostReference!,

@@ -8,6 +8,8 @@ import { getProfilePath } from '@/lib/utils/handle';
 import { AvatarImage } from '@/components/AvatarImage';
 import { getNotificationPostPreview } from '@/lib/notifications/post-preview';
 import { displayAccountAddress } from '@/lib/identity/account-address';
+import { StuffboxBadge } from '@/components/StuffboxBadge';
+import type { StuffboxBadge as StuffboxBadgeValue } from '@/lib/types';
 
 interface NotificationActor {
     id: string;
@@ -17,6 +19,7 @@ interface NotificationActor {
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
+    stuffboxBadge?: StuffboxBadgeValue | null;
 }
 
 interface NotificationPost {
@@ -239,6 +242,7 @@ function NotificationItem({
                             </span>
                         )}
                     </Link>
+                    <StuffboxBadge badge={actor?.stuffboxBadge} linked />
                     <span style={{ color: 'var(--foreground-secondary)' }}>
                         {getNotificationText(notification)}
                     </span>

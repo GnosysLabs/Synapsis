@@ -6,6 +6,7 @@ export interface ChatRecipient {
     nodeDomain?: string | null;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
+    stuffboxBadge?: import('@/lib/types').StuffboxBadge | null;
 }
 
 function asRecipient(value: unknown): ChatRecipient | null {
@@ -23,6 +24,9 @@ function asRecipient(value: unknown): ChatRecipient | null {
         ...(nodeDomain ? { nodeDomain } : {}),
         ...(typeof candidate.isNsfw === 'boolean' ? { isNsfw: candidate.isNsfw } : {}),
         ...(typeof candidate.nodeIsNsfw === 'boolean' ? { nodeIsNsfw: candidate.nodeIsNsfw } : {}),
+        ...(candidate.stuffboxBadge && typeof candidate.stuffboxBadge === 'object'
+            ? { stuffboxBadge: candidate.stuffboxBadge as import('@/lib/types').StuffboxBadge }
+            : {}),
     };
 }
 

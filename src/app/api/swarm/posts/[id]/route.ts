@@ -18,6 +18,7 @@ import {
   requireCanonicalAccountHomeDomain,
   resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -100,6 +101,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
             avatarUrl: repostAuthor.avatarUrl,
             isNsfw: repostAuthor.isNsfw,
             nodeIsNsfw,
+            stuffboxBadge: stuffboxBadgeFromStoredUser(repostAuthor),
           },
           media: [],
           repostOfId: remoteRepost.originalPostId,
@@ -193,6 +195,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
           avatarUrl: author.avatarUrl,
           isNsfw: remoteMainAuthor ? true : author.isNsfw,
           nodeIsNsfw: remoteMainAuthor ? true : nodeIsNsfw,
+          stuffboxBadge: stuffboxBadgeFromStoredUser(author),
         },
         media: post.media?.map(m => ({
           id: m.id,
@@ -229,6 +232,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
             avatarUrl: replyAuthor.avatarUrl,
             isNsfw: remoteReply ? true : replyAuthor.isNsfw,
             nodeIsNsfw: remoteReply ? true : nodeIsNsfw,
+            stuffboxBadge: stuffboxBadgeFromStoredUser(replyAuthor),
           },
           media: r.media?.map(m => ({
             id: m.id,

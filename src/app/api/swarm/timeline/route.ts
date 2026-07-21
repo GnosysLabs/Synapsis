@@ -30,6 +30,7 @@ import {
   accountUsername,
   requireCanonicalAccountHomeDomain,
 } from '@/lib/identity/account-address';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
 
 export interface SwarmPost {
   id: string;
@@ -48,6 +49,7 @@ export interface SwarmPost {
     displayName: string;
     avatarUrl?: string;
     isNsfw: boolean;
+    stuffboxBadge?: User['stuffboxBadge'];
   };
   nodeDomain: string;
   nodeIsNsfw: boolean;
@@ -104,6 +106,11 @@ interface TimelinePostRow {
   authorDisplayName: string | null;
   authorAvatarUrl: string | null;
   authorIsNsfw: boolean;
+  stuffboxBadgeProof: string | null;
+  stuffboxBadgeLevel: string | null;
+  stuffboxBadgePlan: string | null;
+  stuffboxBadgeIssuer: string | null;
+  stuffboxBadgeExpiresAt: Date | null;
   feedActivityAt?: Date;
 }
 
@@ -116,6 +123,11 @@ interface LocalRepostRow {
     displayName: string | null;
     avatarUrl: string | null;
     isNsfw: boolean;
+    stuffboxBadgeProof: string | null;
+    stuffboxBadgeLevel: string | null;
+    stuffboxBadgePlan: string | null;
+    stuffboxBadgeIssuer: string | null;
+    stuffboxBadgeExpiresAt: Date | null;
   };
 }
 
@@ -137,6 +149,7 @@ function attachLocalRepostSummaries(
       avatarUrl: row.author.avatarUrl,
       isNsfw: row.author.isNsfw,
       nodeDomain,
+      stuffboxBadge: stuffboxBadgeFromStoredUser(row.author),
     };
     if (!actors.some((candidate) => candidate.id === actor.id)) {
       actors.push(actor);
@@ -184,6 +197,7 @@ function buildSwarmPost(
       displayName: post.authorDisplayName || post.authorHandle,
       avatarUrl: post.authorAvatarUrl || undefined,
       isNsfw: post.authorIsNsfw,
+      stuffboxBadge: stuffboxBadgeFromStoredUser(post),
     },
     nodeDomain,
     nodeIsNsfw,
@@ -323,6 +337,11 @@ export async function GET(request: NextRequest) {
         authorDisplayName: users.displayName,
         authorAvatarUrl: users.avatarUrl,
         authorIsNsfw: users.isNsfw,
+        stuffboxBadgeProof: users.stuffboxBadgeProof,
+        stuffboxBadgeLevel: users.stuffboxBadgeLevel,
+        stuffboxBadgePlan: users.stuffboxBadgePlan,
+        stuffboxBadgeIssuer: users.stuffboxBadgeIssuer,
+        stuffboxBadgeExpiresAt: users.stuffboxBadgeExpiresAt,
         feedActivityAt: feedStories.latestActivityAt,
       })
       .from(feedStories)
@@ -384,6 +403,11 @@ export async function GET(request: NextRequest) {
             authorDisplayName: users.displayName,
             authorAvatarUrl: users.avatarUrl,
             authorIsNsfw: users.isNsfw,
+            stuffboxBadgeProof: users.stuffboxBadgeProof,
+            stuffboxBadgeLevel: users.stuffboxBadgeLevel,
+            stuffboxBadgePlan: users.stuffboxBadgePlan,
+            stuffboxBadgeIssuer: users.stuffboxBadgeIssuer,
+            stuffboxBadgeExpiresAt: users.stuffboxBadgeExpiresAt,
           })
           .from(posts)
           .innerJoin(users, eq(posts.userId, users.id))

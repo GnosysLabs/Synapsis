@@ -32,11 +32,16 @@ const previewMediaSchema = z.object({
   mimeType: z.string().max(255).nullish(),
 });
 
+const stuffboxBadgeSchema = z.object({
+  attestation: z.string().min(100).max(8 * 1024),
+});
+
 const authorSchema = z.object({
   handle: federatedHandleSchema,
   displayName: z.string().min(1).max(50),
   avatarUrl: federationMediaUrlSchema.optional(),
   isNsfw: z.boolean().optional(),
+  stuffboxBadge: stuffboxBadgeSchema.nullish(),
 });
 
 const reposterSchema = z.object({
@@ -49,6 +54,7 @@ const reposterSchema = z.object({
   nodeDomain: z.string().min(1).max(253).nullish(),
   isRemote: z.boolean().optional(),
   isSwarm: z.boolean().optional(),
+  stuffboxBadge: stuffboxBadgeSchema.nullish(),
 });
 
 const shallowPostSchema = z.object({

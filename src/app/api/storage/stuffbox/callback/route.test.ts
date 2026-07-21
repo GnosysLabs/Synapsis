@@ -6,6 +6,7 @@ import { consumeStuffboxConnectionState } from '@/lib/stuffbox/connection-state'
 import { renderStuffboxPopupResponse } from '@/lib/stuffbox/popup-response';
 import { saveStuffboxTokens } from '@/lib/stuffbox/tokens';
 import { GET } from './route';
+import { getOrRefreshStuffboxBadge } from '@/lib/stuffbox/badge-status';
 
 vi.mock('@/lib/auth', () => ({ requireAuth: vi.fn() }));
 
@@ -21,11 +22,12 @@ vi.mock('@/lib/stuffbox/client', () => {
 vi.mock('@/lib/stuffbox/connection-state', () => ({ consumeStuffboxConnectionState: vi.fn() }));
 vi.mock('@/lib/stuffbox/popup-response', () => ({ renderStuffboxPopupResponse: vi.fn() }));
 vi.mock('@/lib/stuffbox/tokens', () => ({ saveStuffboxTokens: vi.fn() }));
+vi.mock('@/lib/stuffbox/badge-status', () => ({ getOrRefreshStuffboxBadge: vi.fn() }));
 
 describe('GET /api/storage/stuffbox/callback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(requireAuth).mockResolvedValue({ id: 'user-1' } as never);
+    vi.mocked(requireAuth).mockResolvedValue({ id: 'user-1', handle: 'alice@synapsis.example' } as never);
     vi.mocked(consumeStuffboxConnectionState).mockResolvedValue({
       userId: 'user-1',
       baseUrl: 'https://stuffbox.example',
@@ -42,6 +44,7 @@ describe('GET /api/storage/stuffbox/callback', () => {
       scopes: ['assets:write'],
     });
     vi.mocked(saveStuffboxTokens).mockResolvedValue(undefined);
+    vi.mocked(getOrRefreshStuffboxBadge).mockResolvedValue(null);
     vi.mocked(renderStuffboxPopupResponse).mockReturnValue('<html>connected</html>');
   });
 
@@ -63,6 +66,10 @@ describe('GET /api/storage/stuffbox/callback', () => {
       expiresIn: 900,
       scopes: ['assets:write'],
     });
+    expect(getOrRefreshStuffboxBadge).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'user-1', handle: 'alice@synapsis.example' }),
+      { force: true },
+    );
     expect(renderStuffboxPopupResponse).toHaveBeenCalledWith(
       'https://canonical.synapsis.example',
       true,

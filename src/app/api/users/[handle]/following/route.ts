@@ -22,6 +22,7 @@ import {
     parseRemoteUserListResponse,
     type ParsedRemoteUserListEntry,
 } from '@/lib/swarm/remote-user-list-payload';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -175,6 +176,7 @@ export async function GET(request: Request, context: RouteContext) {
             isRemote: false,
             isNsfw: f.following.isNsfw,
             nodeIsNsfw: profileAccess.nodeIsNsfw,
+            stuffboxBadge: stuffboxBadgeFromStoredUser(f.following),
         }));
 
         // Get remote following

@@ -7,6 +7,8 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { withSqliteLockRetry } from '@/lib/db/sqlite-lock-retry';
 import { parseAccountAddress } from '@/lib/identity/account-address';
+import type { StuffboxBadge } from '@/lib/types';
+import { stuffboxBadgeColumns } from '@/lib/stuffbox/badge';
 
 export interface RemoteProfile {
     handle: string;
@@ -15,6 +17,7 @@ export interface RemoteProfile {
     did: string;
     publicKey?: string;
     isNsfw?: boolean;
+    stuffboxBadge?: StuffboxBadge | null;
 }
 
 type VerifiedRemoteProfile = RemoteProfile & { publicKey: string };
@@ -86,6 +89,9 @@ async function upsertVerifiedRemoteUser(
                 avatarUrl: profile.avatarUrl || existing.avatarUrl,
                 publicKey: profile.publicKey,
                 isNsfw: profile.isNsfw ?? existing.isNsfw,
+                ...(profile.stuffboxBadge !== undefined
+                    ? stuffboxBadgeColumns(profile.stuffboxBadge)
+                    : {}),
                 updatedAt: new Date(),
             })
             .where(and(
@@ -106,6 +112,7 @@ async function upsertVerifiedRemoteUser(
             // Missing federation classification is never equivalent to
             // explicitly safe. Later profile hydration can set this false.
             isNsfw: profile.isNsfw ?? true,
+            ...stuffboxBadgeColumns(profile.stuffboxBadge ?? null),
         });
     }
 }

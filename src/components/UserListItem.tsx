@@ -12,6 +12,8 @@ import {
     displayAccountAddress,
     sameAccountAddress,
 } from '@/lib/identity/account-address';
+import { StuffboxBadge } from '@/components/StuffboxBadge';
+import type { StuffboxBadge as StuffboxBadgeValue } from '@/lib/types';
 
 export interface UserListItemUser {
     id: string;
@@ -23,6 +25,7 @@ export interface UserListItemUser {
     nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
     isFollowing?: boolean;
+    stuffboxBadge?: StuffboxBadgeValue | null;
 }
 
 interface FollowButtonProps {
@@ -130,7 +133,10 @@ export function UserListItem({ user }: { user: UserListItemUser }) {
                     />
                 </div>
                 <div className="user-card-info">
-                    <span className="user-card-name">{user.displayName || user.handle}</span>
+                    <span className="user-card-name" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        {user.displayName || user.handle}
+                        <StuffboxBadge badge={user.stuffboxBadge} />
+                    </span>
                     <div className="user-card-handle">{fullHandle}</div>
                     {user.bio && <div className="user-card-bio">{user.bio}</div>}
                 </div>

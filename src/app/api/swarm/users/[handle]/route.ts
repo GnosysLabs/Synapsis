@@ -18,6 +18,8 @@ import {
   requireCanonicalAccountHomeDomain,
   resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
+import type { StuffboxBadge } from '@/lib/types';
 
 export interface SwarmUserProfile {
   handle: string;
@@ -35,6 +37,7 @@ export interface SwarmUserProfile {
   nodeDomain: string;
   publicKey?: string; // Signing key for verifying actions
   did?: string;
+  stuffboxBadge?: StuffboxBadge | null;
 }
 
 export interface SwarmUserPost {
@@ -54,6 +57,7 @@ export interface SwarmUserPost {
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
     nodeDomain?: string;
+    stuffboxBadge?: StuffboxBadge | null;
   };
   media?: { url: string; mimeType?: string; altText?: string }[];
   linkPreviewUrl?: string;
@@ -126,6 +130,7 @@ function mapLocalPostToSwarmPost(post: LocalPostWithRelations, nodeDomain: strin
       isNsfw: post.author.isNsfw,
       nodeIsNsfw,
       nodeDomain,
+      stuffboxBadge: stuffboxBadgeFromStoredUser(post.author),
     } : undefined,
     media: post.media.map((item) => ({
       url: item.url,
@@ -170,6 +175,7 @@ function mapUserSwarmRepostToSwarmPost(
       isNsfw: author.isNsfw,
       nodeIsNsfw,
       nodeDomain,
+      stuffboxBadge: stuffboxBadgeFromStoredUser(author),
     },
     repostOfId: row.originalPostId,
     repostOf: {
@@ -292,6 +298,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       nodeDomain,
       publicKey: user.publicKey, // Expose signing key
       did: user.did || undefined,
+      stuffboxBadge: stuffboxBadgeFromStoredUser(user),
     };
 
     const localPosts = await db.query.posts.findMany({

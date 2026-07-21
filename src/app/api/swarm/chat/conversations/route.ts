@@ -19,6 +19,7 @@ import {
   resolveAccountAddress,
 } from '@/lib/identity/account-address';
 import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
 
 const conversationsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -141,6 +142,11 @@ export async function GET(request: NextRequest) {
           isNsfw: users.isNsfw,
           isLocalAccount: users.isLocalAccount,
           homeDomain: users.homeDomain,
+          stuffboxBadgeProof: users.stuffboxBadgeProof,
+          stuffboxBadgeLevel: users.stuffboxBadgeLevel,
+          stuffboxBadgePlan: users.stuffboxBadgePlan,
+          stuffboxBadgeIssuer: users.stuffboxBadgeIssuer,
+          stuffboxBadgeExpiresAt: users.stuffboxBadgeExpiresAt,
         })
         .from(users)
         .where(latestSenderDids.size > 0
@@ -184,6 +190,7 @@ export async function GET(request: NextRequest) {
                 ? cachedUser.isNsfw === true ? true : undefined
                 : cachedUser.isNsfw,
               nodeIsNsfw: participantIsRemote ? undefined : localNodeIsNsfw,
+              stuffboxBadge: stuffboxBadgeFromStoredUser(cachedUser),
             }
           : {
               handle: participant2Handle,

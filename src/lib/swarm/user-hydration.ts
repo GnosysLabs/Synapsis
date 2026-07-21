@@ -6,6 +6,7 @@ import {
 } from '@/lib/identity/account-address';
 import { getCanonicalSwarmSeedDomain } from './node-domain';
 import { isNodeBlocked } from './node-blocklist';
+import type { StuffboxBadge } from '@/lib/types';
 
 const MAX_REMOTE_USERS_TO_HYDRATE = 50;
 const MAX_CONCURRENT_PROFILE_HYDRATIONS = 6;
@@ -20,6 +21,7 @@ export interface HydratedUser {
     nodeDomain?: string; // For remote users
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
+    stuffboxBadge?: StuffboxBadge | null;
 }
 
 /**
@@ -40,6 +42,7 @@ export async function hydrateSwarmUsers(
         nodeDomain?: string;
         isNsfw?: boolean;
         nodeIsNsfw?: boolean;
+        stuffboxBadge?: StuffboxBadge | null;
     }[]
 ): Promise<HydratedUser[]> {
     const needsHydration = users
@@ -89,6 +92,7 @@ export async function hydrateSwarmUsers(
                     nodeDomain: response.nodeDomain,
                     isNsfw: response.profile.isNsfw,
                     nodeIsNsfw: response.profile.nodeIsNsfw,
+                    stuffboxBadge: response.profile.stuffboxBadge as StuffboxBadge | null | undefined,
                 });
             } else if (await isNodeBlocked(domain)) {
                 // A transient profile fetch failure may use the cached summary,

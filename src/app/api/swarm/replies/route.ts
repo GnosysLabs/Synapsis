@@ -36,6 +36,7 @@ import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request
 import { federatedHandleSchema } from '@/lib/utils/federation';
 import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 import { buildVideoLinkPreview, findVideoEmbedUrlInText } from '@/lib/media/video-embed';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
 
 // The same exact schema is persisted with the source node signature so other
 // peers can independently verify a relayed reply instead of trusting us.
@@ -471,6 +472,11 @@ export async function GET(request: NextRequest) {
         authorIsNsfw: users.isNsfw,
         authorHomeDomain: users.homeDomain,
         authorIsLocalAccount: users.isLocalAccount,
+        stuffboxBadgeProof: users.stuffboxBadgeProof,
+        stuffboxBadgeLevel: users.stuffboxBadgeLevel,
+        stuffboxBadgePlan: users.stuffboxBadgePlan,
+        stuffboxBadgeIssuer: users.stuffboxBadgeIssuer,
+        stuffboxBadgeExpiresAt: users.stuffboxBadgeExpiresAt,
         postIsNsfw: posts.isNsfw,
       })
       .from(posts)
@@ -561,6 +567,7 @@ export async function GET(request: NextRequest) {
           isRemote: authorIsRemote,
           nodeId: null,
           nodeIsNsfw: authorIsRemote ? undefined : localNodeIsNsfw,
+          stuffboxBadge: stuffboxBadgeFromStoredUser(reply),
         },
         nodeDomain: remoteDomain || (authorIsRemote ? null : nodeDomain),
         media: hasPortableProvenance

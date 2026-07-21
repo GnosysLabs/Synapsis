@@ -9,6 +9,8 @@ import {
     getCurrentViewerSensitiveProfileAccess,
 } from '@/lib/nsfw/remote-profile-access';
 import { resolveAccountAddress } from '@/lib/identity/account-address';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
+import { getOrRefreshStuffboxBadge } from '@/lib/stuffbox/badge-status';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -89,6 +91,7 @@ export async function GET(request: Request, context: RouteContext) {
                                 isNsfw: profile.isNsfw,
                                 nodeIsNsfw: profile.nodeIsNsfw,
                                 nsfwRestricted: !canAccessProfile,
+                                stuffboxBadge: profile.stuffboxBadge || null,
                             }
                         });
                     }
@@ -131,6 +134,7 @@ export async function GET(request: Request, context: RouteContext) {
                     isNsfw: user.isNsfw,
                     nodeIsNsfw: profileAccess.nodeIsNsfw,
                     nsfwRestricted: true,
+                    stuffboxBadge: stuffboxBadgeFromStoredUser(user),
                 },
             });
         }
@@ -154,6 +158,7 @@ export async function GET(request: Request, context: RouteContext) {
             dmPrivacy: user.dmPrivacy,
             isNsfw: user.isNsfw,
             nodeIsNsfw: profileAccess.nodeIsNsfw,
+            stuffboxBadge: await getOrRefreshStuffboxBadge(user),
         };
 
         // Check if viewer can DM this user

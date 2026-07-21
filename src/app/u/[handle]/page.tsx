@@ -20,6 +20,8 @@ import { useAppDialog } from '@/lib/contexts/DialogContext';
 import { decodeAccountRouteSegment } from '@/lib/navigation/route-params';
 import { useDomain } from '@/lib/contexts/ConfigContext';
 import { displayAccountAddress, sameAccountAddress } from '@/lib/identity/account-address';
+import { StuffboxBadge } from '@/components/StuffboxBadge';
+import type { StuffboxBadge as StuffboxBadgeValue } from '@/lib/types';
 
 interface UserSummary {
     id: string;
@@ -30,6 +32,7 @@ interface UserSummary {
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
+    stuffboxBadge?: StuffboxBadgeValue | null;
 }
 
 type ProfileMediaField = 'avatarUrl' | 'headerUrl';
@@ -48,7 +51,10 @@ function UserRow({ user }: { user: UserSummary }) {
                 <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} nodeDomain={user.nodeDomain} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
             </div>
             <div className="user-row-content">
-                <span style={{ fontWeight: 600 }}>{user.displayName || user.handle}</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
+                    {user.displayName || user.handle}
+                    <StuffboxBadge badge={user.stuffboxBadge} />
+                </span>
                 <div style={{ color: 'var(--foreground-tertiary)', fontSize: '13px' }}>{fullHandle}</div>
                 {user.bio && stripHtml(user.bio) && (
                     <div className="user-row-bio">{stripHtml(user.bio)}</div>
@@ -605,7 +611,10 @@ export default function ProfilePage() {
                 zIndex: 10,
             }}>
                 <div>
-                    <h1 style={{ fontSize: '18px', fontWeight: 600 }}>{user.displayName || user.handle}</h1>
+                    <h1 style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '18px', fontWeight: 600 }}>
+                        {user.displayName || user.handle}
+                        <StuffboxBadge badge={user.stuffboxBadge} linked />
+                    </h1>
                     <p style={{ fontSize: '13px', color: 'var(--foreground-tertiary)' }}>{user.postsCount} posts</p>
                 </div>
             </header>
@@ -870,7 +879,10 @@ export default function ProfilePage() {
 
                     {/* User Info */}
                     <div style={{ padding: '12px 0' }}>
-                        <h2 style={{ fontSize: '20px', fontWeight: 700 }}>{user.displayName || user.handle}</h2>
+                        <h2 style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '20px', fontWeight: 700 }}>
+                            {user.displayName || user.handle}
+                            <StuffboxBadge badge={user.stuffboxBadge} linked />
+                        </h2>
                         <p style={{ color: 'var(--foreground-tertiary)' }}>{userFullHandle}</p>
 
                         {user.bio && (

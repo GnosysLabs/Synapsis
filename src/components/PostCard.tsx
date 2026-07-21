@@ -40,6 +40,7 @@ import {
     displayAccountAddress,
     resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import { StuffboxBadge } from '@/components/StuffboxBadge';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -1149,6 +1150,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                         <Link href={getProfilePath(authorCanonicalHandle)} className="post-handle" onClick={(e) => e.stopPropagation()}>
                             {post.author.displayName || post.author.handle}
                         </Link>
+                        <StuffboxBadge badge={post.author.stuffboxBadge} linked />
                         <span className="post-time">{authorHandle} · {formatTime(post.createdAt)}</span>
                     </div>
                 </div>
@@ -1180,6 +1182,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                             <Link href={getProfilePath(authorCanonicalHandle)} onClick={(e) => e.stopPropagation()}>
                                 {post.author.displayName || post.author.handle}
                             </Link>
+                            <StuffboxBadge badge={post.author.stuffboxBadge} linked />
                             <span className="repost-event-copy"> reposted</span>
                             <span className="post-time"> {repostHandle} · {formatTime(post.createdAt)}</span>
                         </span>
@@ -1275,6 +1278,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                             <Link href={getProfilePath(authorCanonicalHandle)} className="post-handle" onClick={(e) => e.stopPropagation()}>
                                 {post.author.displayName || post.author.handle}
                             </Link>
+                            <StuffboxBadge badge={post.author.stuffboxBadge} linked />
                         </div>
                         <span className="post-time">{authorHandle} · {formatTime(post.createdAt)}</span>
                     </div>

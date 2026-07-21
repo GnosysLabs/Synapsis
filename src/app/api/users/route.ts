@@ -4,6 +4,7 @@ import { and, desc, eq, inArray, lt, or } from 'drizzle-orm';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { parseBoundedInteger } from '@/lib/http/query';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
 
 export async function GET(request: NextRequest) {
     try {
@@ -44,6 +45,11 @@ export async function GET(request: NextRequest) {
                 avatarUrl: users.avatarUrl,
                 createdAt: users.createdAt,
                 isNsfw: users.isNsfw,
+                stuffboxBadgeProof: users.stuffboxBadgeProof,
+                stuffboxBadgeLevel: users.stuffboxBadgeLevel,
+                stuffboxBadgePlan: users.stuffboxBadgePlan,
+                stuffboxBadgeIssuer: users.stuffboxBadgeIssuer,
+                stuffboxBadgeExpiresAt: users.stuffboxBadgeExpiresAt,
             })
             .from(users)
             .where(and(
@@ -74,6 +80,7 @@ export async function GET(request: NextRequest) {
                 isRemote: false,
                 nodeIsNsfw: localNodeIsNsfw,
                 isFollowing: followedUserIds.has(listedUser.id),
+                stuffboxBadge: stuffboxBadgeFromStoredUser(listedUser),
             }, canViewSensitive)),
             nextCursor: hasMore ? userList.at(-1)?.id || null : null,
         });

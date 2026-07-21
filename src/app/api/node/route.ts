@@ -7,6 +7,8 @@ import { getVersionedNodeAssetUrl } from '@/lib/node/assets';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
+import type { StuffboxBadge } from '@/lib/types';
 
 export async function GET() {
     try {
@@ -40,7 +42,7 @@ export async function GET() {
             .map(e => e.trim().toLowerCase())
             .filter(Boolean);
 
-        let admins: { handle: string; displayName: string | null; avatarUrl: string | null; isNsfw: boolean }[] = [];
+        let admins: { handle: string; displayName: string | null; avatarUrl: string | null; isNsfw: boolean; stuffboxBadge?: StuffboxBadge | null }[] = [];
         if (adminEmails.length > 0) {
             const adminUsers = await db
                 .select({
@@ -48,6 +50,11 @@ export async function GET() {
                     displayName: users.displayName,
                     avatarUrl: users.avatarUrl,
                     isNsfw: users.isNsfw,
+                    stuffboxBadgeProof: users.stuffboxBadgeProof,
+                    stuffboxBadgeLevel: users.stuffboxBadgeLevel,
+                    stuffboxBadgePlan: users.stuffboxBadgePlan,
+                    stuffboxBadgeIssuer: users.stuffboxBadgeIssuer,
+                    stuffboxBadgeExpiresAt: users.stuffboxBadgeExpiresAt,
                 })
                 .from(users)
                 .where(inArray(users.email, adminEmails));
@@ -55,6 +62,7 @@ export async function GET() {
                 ...admin,
                 isRemote: false,
                 nodeIsNsfw: localNodeIsNsfw,
+                stuffboxBadge: stuffboxBadgeFromStoredUser(admin),
             }, canViewSensitive));
         }
 

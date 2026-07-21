@@ -15,6 +15,8 @@ import { registrationDisplayName } from '@/lib/auth/display-name';
 import { configuredAdminEmails } from '@/lib/auth/admin-config';
 import { resolveSessionTokens } from '@/lib/auth/session-cookie';
 import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
+import type { StuffboxBadge } from '@/lib/types';
 
 const ACTIVE_SESSION_COOKIE_NAME = 'synapsis_session';
 const SESSION_COOKIE_NAME = 'synapsis_sessions';
@@ -39,6 +41,7 @@ export interface AuthAccount {
     isNsfw: boolean;
     nsfwEnabled: boolean;
     ageVerifiedAt: string | null;
+    stuffboxBadge: StuffboxBadge | null;
     isActive: boolean;
 }
 
@@ -135,6 +138,7 @@ function toAuthAccount(session: SessionRecord, activeToken: string | null): Auth
         isNsfw: session.user.isNsfw,
         nsfwEnabled: session.user.nsfwEnabled,
         ageVerifiedAt: session.user.ageVerifiedAt?.toISOString() || null,
+        stuffboxBadge: stuffboxBadgeFromStoredUser(session.user),
         isActive: session.token === activeToken,
     };
 }

@@ -7,11 +7,14 @@ import { ArrowLeftIcon } from '@/components/Icons';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { getStoragePageState } from './storage-page-state';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
+import { StuffboxBadge } from '@/components/StuffboxBadge';
+import type { StuffboxBadge as StuffboxBadgeValue } from '@/lib/types';
 
 interface StorageStatus {
     provider: 'stuffbox' | null;
     stuffboxAvailable: boolean;
     stuffboxBaseUrl: string | null;
+    stuffboxBadge: StuffboxBadgeValue | null;
 }
 
 export default function StorageSettingsPage() {
@@ -96,6 +99,22 @@ export default function StorageSettingsPage() {
                     <Box size={22} />
                     <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600 }}>{!status ? 'Loading…' : status.provider === 'stuffbox' ? 'Stuffbox.xyz connected' : 'Stuffbox not connected'}</div>
+                        {status.provider === 'stuffbox' && (
+                            <div style={{ marginTop: '10px' }}>
+                                {status.stuffboxBadge ? (
+                                    <>
+                                        <StuffboxBadge badge={status.stuffboxBadge} showLabel linked />
+                                        <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.5, marginTop: '8px' }}>
+                                            Your signed badge follows this account across Synapsis nodes.
+                                        </p>
+                                    </>
+                                ) : (
+                                    <p style={{ color: 'var(--foreground-tertiary)', fontSize: '13px', lineHeight: 1.5 }}>
+                                        Badge verification is refreshing. Your storage connection is still active.
+                                    </p>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
                 {status?.provider === 'stuffbox' && (
@@ -103,6 +122,11 @@ export default function StorageSettingsPage() {
                         <a className="btn btn-primary" href="https://stuffbox.xyz" target="_blank" rel="noopener noreferrer">
                             Manage Storage <ExternalLink size={15} />
                         </a>
+                        {status.stuffboxBadge?.level === 'connected' && (
+                            <a className="btn btn-ghost" href="https://stuffbox.xyz/pricing" target="_blank" rel="noopener noreferrer">
+                                Get the animated Supporter badge <ExternalLink size={15} />
+                            </a>
+                        )}
                         <button className="btn btn-ghost" type="button" onClick={disconnectStuffbox} disabled={isDisconnecting}>
                             {isDisconnecting ? 'Disconnecting…' : 'Disconnect Stuffbox'}
                         </button>
@@ -116,7 +140,7 @@ export default function StorageSettingsPage() {
                         Connect Stuffbox
                     </h2>
                     <p style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.5, marginBottom: '20px' }}>
-                        Connect the official Synapsis storage partner to upload portable media from your account.
+                        Connect the official Synapsis storage partner to upload portable media and unlock a trusted Stuffbox Connected badge across the federation.
                     </p>
                     <StorageConfigurationPrompt
                         open

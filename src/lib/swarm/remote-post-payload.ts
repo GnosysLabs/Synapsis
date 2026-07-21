@@ -38,6 +38,10 @@ const previewMediaSchema = z.object({
   mimeType: z.string().max(255).nullish(),
 });
 
+const stuffboxBadgeSchema = z.object({
+  attestation: z.string().min(100).max(8 * 1024),
+});
+
 const authorSchema = z.object({
   handle: z.string().min(1).max(640),
   displayName: z.string().min(1).max(50).nullish(),
@@ -45,6 +49,7 @@ const authorSchema = z.object({
   isNsfw: z.boolean().optional(),
   nodeIsNsfw: z.boolean().optional(),
   nodeDomain: nodeDomainSchema.nullish(),
+  stuffboxBadge: stuffboxBadgeSchema.nullish(),
 });
 
 const reposterSchema = authorSchema.extend({
@@ -112,6 +117,7 @@ const profileSchema = z.object({
   publicKey: z.string().min(1).max(2_048),
   did: z.string().min(16).max(2_048),
   nsfwRestricted: z.boolean().optional(),
+  stuffboxBadge: stuffboxBadgeSchema.nullish(),
 });
 
 const profileResponseSchema = z.object({

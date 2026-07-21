@@ -1,3 +1,13 @@
+export type StuffboxBadgeLevel = 'connected' | 'supporter';
+
+export interface StuffboxBadge {
+    level: StuffboxBadgeLevel;
+    plan: 'free' | 'mini' | 'personal' | 'plus' | 'power' | 'max' | 'ultra';
+    issuer: string;
+    attestation: string;
+    expiresAt: string;
+}
+
 export interface User {
     id: string;
     handle: string;
@@ -25,6 +35,7 @@ export interface User {
     did?: string;
     canReceiveDms?: boolean;
     dmPrivacy?: 'everyone' | 'following' | 'none';
+    stuffboxBadge?: StuffboxBadge | null;
 }
 
 export interface MediaItem {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createConnectionRequest, createUpload, exchangeAuthorizationCode } from './client';
+import { createConnectionRequest, createUpload, exchangeAuthorizationCode, getBadgeAttestation } from './client';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -128,6 +128,29 @@ describe('Stuffbox client', () => {
       requiredHeaders: { 'Content-Type': 'image/png', 'x-upload-token': 'one-time' },
       expiresAt: '2026-07-15T00:00:00Z',
     });
+  });
+
+  it('loads a signed badge attestation with bearer authorization', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: {
+      attestation: 'header.payload.signature',
+      badge: {
+        level: 'supporter',
+        plan: 'plus',
+        subject: 'alice@synapsis.test',
+        issued_at: '2026-07-21T00:00:00.000Z',
+        expires_at: '2026-07-28T00:00:00.000Z',
+      },
+    } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(getBadgeAttestation('https://stuffbox.test', 'access-token')).resolves.toMatchObject({
+      attestation: 'header.payload.signature',
+      badge: { level: 'supporter', plan: 'plus', subject: 'alice@synapsis.test' },
+    });
+    expect(fetch).toHaveBeenCalledWith('https://stuffbox.test/api/v1/badge', expect.objectContaining({
+      method: 'GET',
+      headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+    }));
   });
 
   it('preserves structured Stuffbox errors', async () => {

@@ -11,6 +11,7 @@ import {
     type ChatRecipient,
 } from '@/lib/chat/recipients';
 import { displayAccountAddress } from '@/lib/identity/account-address';
+import { StuffboxBadge } from '@/components/StuffboxBadge';
 
 interface ChatRecipientPickerProps {
     currentUserHandle?: string | null;
@@ -235,7 +236,10 @@ export function ChatRecipientPicker({ currentUserHandle, onClose, onSelect }: Ch
                                         />
                                     </span>
                                     <span className="chat-recipient-copy">
-                                        <strong>{recipient.displayName || recipient.handle}</strong>
+                                        <strong style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                            {recipient.displayName || recipient.handle}
+                                            <StuffboxBadge badge={recipient.stuffboxBadge} />
+                                        </strong>
                                         <span>{displayAccountAddress(recipient.handle)}</span>
                                     </span>
                                     <span className="chat-recipient-action">Open chat</span>

@@ -1,5 +1,6 @@
 import type {
   StuffboxAsset,
+  StuffboxBadgeResponse,
   StuffboxScope,
   StuffboxTokenSet,
   StuffboxUploadSession,
@@ -238,5 +239,38 @@ export async function completeUpload(
     ...(optionalString(asset, 'deletedAt', 'deleted_at')
       ? { deletedAt: optionalString(asset, 'deletedAt', 'deleted_at') }
       : {}),
+  };
+}
+
+export async function getBadgeAttestation(
+  baseUrl: string,
+  accessToken: string,
+): Promise<StuffboxBadgeResponse> {
+  const data = object(await request(baseUrl, '/api/v1/badge', {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  }));
+  const rawBadge = data.badge;
+  if (!rawBadge || typeof rawBadge !== 'object' || Array.isArray(rawBadge)) {
+    throw new StuffboxApiError('Stuffbox returned an invalid badge', 502, 'invalid_response');
+  }
+  const badge = rawBadge as JsonObject;
+  const level = string(badge, 'level');
+  const plan = string(badge, 'plan');
+  if (level !== 'connected' && level !== 'supporter') {
+    throw new StuffboxApiError('Stuffbox returned an invalid badge level', 502, 'invalid_response');
+  }
+  if (!['free', 'mini', 'personal', 'plus', 'power', 'max', 'ultra'].includes(plan)) {
+    throw new StuffboxApiError('Stuffbox returned an invalid badge plan', 502, 'invalid_response');
+  }
+  return {
+    attestation: string(data, 'attestation'),
+    badge: {
+      level,
+      plan: plan as StuffboxBadgeResponse['badge']['plan'],
+      subject: string(badge, 'subject'),
+      issuedAt: string(badge, 'issuedAt', 'issued_at'),
+      expiresAt: string(badge, 'expiresAt', 'expires_at'),
+    },
   };
 }

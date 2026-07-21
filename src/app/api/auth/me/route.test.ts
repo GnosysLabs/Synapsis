@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     getSession: vi.fn(),
     getSessionAccounts: vi.fn(),
     isLocalNodeNsfw: vi.fn(),
+    getOrRefreshStuffboxBadge: vi.fn(),
 }));
 
 vi.mock('@/lib/auth', () => ({
@@ -24,12 +25,17 @@ vi.mock('@/lib/node/local-node', () => ({
     isLocalNodeNsfw: mocks.isLocalNodeNsfw,
 }));
 
+vi.mock('@/lib/stuffbox/badge-status', () => ({
+    getOrRefreshStuffboxBadge: mocks.getOrRefreshStuffboxBadge,
+}));
+
 import { GET } from './route';
 
 describe('GET /api/auth/me canonical account contract', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.isLocalNodeNsfw.mockResolvedValue(false);
+        mocks.getOrRefreshStuffboxBadge.mockResolvedValue(null);
         mocks.getSession.mockResolvedValue({
             user: {
                 id: '11111111-1111-4111-8111-111111111111',

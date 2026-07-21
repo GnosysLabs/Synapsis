@@ -7,12 +7,15 @@ import { ProfileBanner } from './ProfileBanner';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { canonicalAccountAddress, displayAccountAddress } from '@/lib/identity/account-address';
 import { getProfilePath } from '@/lib/utils/handle';
+import { StuffboxBadge } from '@/components/StuffboxBadge';
+import type { StuffboxBadge as StuffboxBadgeValue } from '@/lib/types';
 
 interface Admin {
     handle: string;
     displayName: string | null;
     avatarUrl: string | null;
     isNsfw: boolean;
+    stuffboxBadge?: StuffboxBadgeValue | null;
 }
 
 interface NodeInfo {
@@ -200,8 +203,9 @@ export function RightSidebar() {
                                             <AvatarImage avatarUrl={admin.avatarUrl} seed={handle} nodeDomain={nodeInfo.domain} isNsfw={admin.isNsfw} nodeIsNsfw={localNodeIsNsfw} alt={admin.displayName || handle} />
                                         </div>
                                         <div>
-                                            <div style={{ fontWeight: 500, fontSize: '14px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 500, fontSize: '14px' }}>
                                                 {admin.displayName || admin.handle}
+                                                <StuffboxBadge badge={admin.stuffboxBadge} />
                                             </div>
                                             <div style={{ color: 'var(--foreground-tertiary)', fontSize: '12px' }}>
                                                 {displayAccountAddress(handle)}

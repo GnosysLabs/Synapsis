@@ -32,6 +32,11 @@ import {
     requireCanonicalAccountHomeDomain,
     resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import {
+    attachStoredStuffboxBadgesToPost,
+    verifyStuffboxBadgeOnPost,
+} from '@/lib/stuffbox/badge';
+import type { StuffboxBadge } from '@/lib/types';
 
 interface SwarmReplyDeletionPayload {
     replyId: string;
@@ -117,6 +122,7 @@ type SwarmDetailPostInput = {
         avatarUrl?: string | null;
         isNsfw?: boolean;
         nodeIsNsfw?: boolean;
+        stuffboxBadge?: StuffboxBadge | null;
     } | null;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
@@ -181,6 +187,7 @@ function mapSwarmDetailPost(post: SwarmDetailPostInput, fallbackDomain: string):
             nodeDomain: effectiveDomain,
             isNsfw: post.author.isNsfw,
             nodeIsNsfw: post.author.nodeIsNsfw ?? post.nodeIsNsfw,
+            stuffboxBadge: post.author.stuffboxBadge,
         } : null,
         media: post.media?.map((m, idx) => ({
             id: m.id || `swarm:${effectiveDomain}:${rawId}:media:${idx}`,
@@ -314,7 +321,9 @@ export async function GET(
                                 repostOf: post.repostOf ? classifyOriginPost(post.repostOf) : post.repostOf,
                             }
                             : post;
-                        const originPost = classifyOriginPost(data.post);
+                        const originPost = classifyOriginPost(
+                            await verifyStuffboxBadgeOnPost(data.post),
+                        );
 
                         mainPost = mapSwarmDetailPost({
                             ...originPost,
@@ -364,7 +373,10 @@ export async function GET(
                             }
                         }
 
-                        replyPosts = originReplies.map((reply) => mapSwarmDetailPost({
+                        const verifiedOriginReplies = await Promise.all(
+                            originReplies.map((reply) => verifyStuffboxBadgeOnPost(reply)),
+                        );
+                        replyPosts = verifiedOriginReplies.map((reply) => mapSwarmDetailPost({
                             ...classifyOriginPost(reply),
                             nodeDomain: reply.nodeDomain || originDomain,
                         }, reply.nodeDomain || originDomain));
@@ -458,10 +470,10 @@ export async function GET(
                 remoteRepostRows,
             );
 
-            mainPost = {
+            mainPost = attachStoredStuffboxBadgesToPost({
                 ...summarizedPost,
                 repliesCount: replies.length,
-            };
+            });
 
             let allPostIds = [post.id, ...replies.map(r => r.id)];
 
@@ -488,12 +500,16 @@ export async function GET(
                     };
 
                     replyPosts = summarizedReplies.map(r => ({
-                        ...r,
+                        ...attachStoredStuffboxBadgesToPost(r),
                         isLiked: likedPostIds.has(r.id),
                         isReposted: repostedPostIds.has(r.id),
                     }));
                 }
             } catch {
+            }
+
+            if (replyPosts.length === 0 && summarizedReplies.length > 0) {
+                replyPosts = summarizedReplies.map((reply) => attachStoredStuffboxBadgesToPost(reply));
             }
         } else {
             const cached = await db.query.remotePosts.findFirst({

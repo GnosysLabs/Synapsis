@@ -22,6 +22,11 @@ import {
     requireCanonicalAccountHomeDomain,
 } from '@/lib/identity/account-address';
 import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
+import {
+    attachStoredStuffboxBadgesToPost,
+    stuffboxBadgeFromStoredUser,
+} from '@/lib/stuffbox/badge';
+import type { StuffboxBadge } from '@/lib/types';
 
 const embeddedPostRelations = {
     author: true,
@@ -53,6 +58,7 @@ type SearchUser = {
     nodeIsNsfw?: boolean;
     nodeDomain?: string | null;
     isFollowing?: boolean;
+    stuffboxBadge?: StuffboxBadge | null;
 };
 
 const SEARCH_SWARM_TIMEOUT_MS = 1_500;
@@ -98,6 +104,7 @@ function toSearchUser(user: SwarmDirectoryUser): SearchUser {
         isNsfw: user.isNsfw,
         nodeIsNsfw: user.nodeIsNsfw,
         nodeDomain,
+        stuffboxBadge: user.stuffboxBadge,
     };
 }
 
@@ -187,6 +194,11 @@ export async function GET(request: Request) {
                     avatarUrl: users.avatarUrl,
                     bio: users.bio,
                     isNsfw: users.isNsfw,
+                    stuffboxBadgeProof: users.stuffboxBadgeProof,
+                    stuffboxBadgeLevel: users.stuffboxBadgeLevel,
+                    stuffboxBadgePlan: users.stuffboxBadgePlan,
+                    stuffboxBadgeIssuer: users.stuffboxBadgeIssuer,
+                    stuffboxBadgeExpiresAt: users.stuffboxBadgeExpiresAt,
                 })
                     .from(users)
                     .where(and(
@@ -199,7 +211,10 @@ export async function GET(request: Request) {
                     .limit(1);
 
                 if (exactMatch.length > 0) {
-                    searchUsers = exactMatch;
+                    searchUsers = exactMatch.map((user) => ({
+                        ...user,
+                        stuffboxBadge: stuffboxBadgeFromStoredUser(user),
+                    }));
                 }
             }
 
@@ -222,12 +237,20 @@ export async function GET(request: Request) {
                     avatarUrl: users.avatarUrl,
                     bio: users.bio,
                     isNsfw: users.isNsfw,
+                    stuffboxBadgeProof: users.stuffboxBadgeProof,
+                    stuffboxBadgeLevel: users.stuffboxBadgeLevel,
+                    stuffboxBadgePlan: users.stuffboxBadgePlan,
+                    stuffboxBadgeIssuer: users.stuffboxBadgeIssuer,
+                    stuffboxBadgeExpiresAt: users.stuffboxBadgeExpiresAt,
                 })
                     .from(users)
                     .where(userConditions)
                     .limit(limit);
 
-                searchUsers = localUsers;
+                searchUsers = localUsers.map((user) => ({
+                    ...user,
+                    stuffboxBadge: stuffboxBadgeFromStoredUser(user),
+                }));
             }
             searchUsers = searchUsers.map((searchUser) => redactSensitiveUserSummary({
                 ...searchUser,
@@ -285,6 +308,7 @@ export async function GET(request: Request) {
                                 isRemote: true,
                                 isNsfw: profile.isNsfw,
                                 nodeIsNsfw: profile.nodeIsNsfw,
+                                stuffboxBadge: profile.stuffboxBadge as StuffboxBadge | null | undefined,
                             };
                             if (!searchUsers.some((user) => user.handle.toLowerCase() === remoteUser.handle.toLowerCase())) {
                                 searchUsers = [remoteUser, ...searchUsers].slice(0, limit);
@@ -424,7 +448,7 @@ export async function GET(request: Request) {
         }
 
         const localSearchPosts = searchPosts.map((post) => redactSensitivePostForViewer(
-            post as unknown as Record<string, unknown>,
+            attachStoredStuffboxBadgesToPost(post) as unknown as Record<string, unknown>,
             {
                 canViewSensitive,
                 localNodeDomain: localDomain || 'localhost:43821',

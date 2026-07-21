@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm';
-import { db, stuffboxConnections } from '@/db';
+import { db, stuffboxConnections, users } from '@/db';
 import { openStuffboxSecret, sealStuffboxSecret } from './crypto';
 import { refreshTokens, type StuffboxApiError } from './client';
 import type { StuffboxTokenSet } from './types';
+import { stuffboxBadgeColumns } from './badge';
 
 const refreshes = new Map<string, Promise<{ baseUrl: string; accessToken: string }>>();
 
@@ -62,6 +63,7 @@ export async function getStuffboxAccess(userId: string): Promise<{ baseUrl: stri
       const apiError = error as StuffboxApiError;
       if (apiError?.status === 401 || apiError?.code === 'refresh_token_reuse') {
         await db.delete(stuffboxConnections).where(eq(stuffboxConnections.userId, userId));
+        await db.update(users).set(stuffboxBadgeColumns(null)).where(eq(users.id, userId));
       }
       throw error;
     } finally {
@@ -78,6 +80,7 @@ export async function getStuffboxConnection(userId: string) {
 
 export async function removeStuffboxConnection(userId: string): Promise<void> {
   await db.delete(stuffboxConnections).where(eq(stuffboxConnections.userId, userId));
+  await db.update(users).set(stuffboxBadgeColumns(null)).where(eq(users.id, userId));
 }
 
 export function readStuffboxRefreshToken(connection: typeof stuffboxConnections.$inferSelect): string {

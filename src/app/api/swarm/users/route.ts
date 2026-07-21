@@ -7,6 +7,7 @@ import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
+import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
 
 const querySchema = z.object({
   q: z.string().max(30).regex(/^[a-zA-Z0-9_ -]*$/),
@@ -34,6 +35,11 @@ export async function GET(request: NextRequest) {
     avatarUrl: users.avatarUrl,
     isNsfw: users.isNsfw,
     isLocalAccount: users.isLocalAccount,
+    stuffboxBadgeProof: users.stuffboxBadgeProof,
+    stuffboxBadgeLevel: users.stuffboxBadgeLevel,
+    stuffboxBadgePlan: users.stuffboxBadgePlan,
+    stuffboxBadgeIssuer: users.stuffboxBadgeIssuer,
+    stuffboxBadgeExpiresAt: users.stuffboxBadgeExpiresAt,
   })
     .from(users)
     .where(and(
@@ -54,6 +60,7 @@ export async function GET(request: NextRequest) {
         isNsfw: user.isNsfw,
         isRemote: false,
         nodeIsNsfw,
+        stuffboxBadge: stuffboxBadgeFromStoredUser(user),
       };
       return trustedRead ? summary : redactSensitiveUserSummary(summary, false);
     }),
