@@ -5,7 +5,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
-import { isPostSensitive } from '@/lib/nsfw/content-visibility';
+import { isPostSensitive, isUserSensitive } from '@/lib/nsfw/content-visibility';
 import { parseBoundedInteger } from '@/lib/http/query';
 import {
     type AccountAddress,
@@ -110,12 +110,28 @@ export async function GET(request: Request) {
                 return address ? [address.canonical] : [];
             }),
         ));
-        const [actorsById, actorsByHandle] = await Promise.all([
+        const actorDomains = Array.from(new Set(
+            rows.flatMap((row) => {
+                const domain = canonicalAccountHomeDomain(row.actorNodeDomain);
+                return domain ? [domain] : [];
+            }),
+        ));
+        const [actorsById, actorsByHandle, actorNodes] = await Promise.all([
             actorIds.length > 0
                 ? db.query.users.findMany({ where: { id: { in: actorIds } } })
                 : [],
             actorHandles.length > 0
                 ? db.query.users.findMany({ where: { handle: { in: actorHandles } } })
+                : [],
+            actorDomains.length > 0
+                ? db.query.swarmNodes.findMany({
+                    where: { domain: { in: actorDomains } },
+                    columns: {
+                        domain: true,
+                        isNsfw: true,
+                        nsfwClassificationKnown: true,
+                    },
+                })
                 : [],
         ]);
         const actorUsers = Array.from(new Map(
@@ -123,6 +139,13 @@ export async function GET(request: Request) {
         ).values());
         const actorMap = new Map(actorUsers.map((actor) => [actor.id, actor]));
         const actorHandleMap = new Map(actorUsers.map((actor) => [actor.handle, actor]));
+        const actorNodeNsfwMap = new Map(actorNodes.flatMap((node) => {
+            const domain = canonicalAccountHomeDomain(node.domain);
+            if (!domain) return [];
+            return [[domain, node.isNsfw
+                ? true
+                : node.nsfwClassificationKnown ? false : undefined] as const];
+        }));
         const actorPresentations = new Map<string, ActorPresentation>();
 
         for (const actor of actorUsers) {
@@ -165,6 +188,9 @@ export async function GET(request: Request) {
             const actorIsRemote = actorUser
                 ? !actorUser.isLocalAccount
                 : Boolean(actorDomain && actorDomain !== localDomain);
+            const actorNodeIsNsfw = actorIsRemote
+                ? actorNodeNsfwMap.get(actorDomain || '')
+                : localNodeIsNsfw;
             const remotePostReference = row.remotePostId && row.remotePostDomain
                 ? `swarm:${row.remotePostDomain}:${row.remotePostId}`
                 : null;
@@ -189,16 +215,11 @@ export async function GET(request: Request) {
             );
             const postRestricted = !canViewSensitive
                 && (remotePostIsSensitive || localPostIsSensitive || localPostMetadataMissing);
-            const actorIsSensitive = actorIsRemote
-                ? isPostSensitive({
-                    postIsNsfw: false,
-                    authorIsNsfw: undefined,
-                    nodeIsNsfw: undefined,
-                    isRemote: true,
-                })
-                : actorUser
-                    ? actorUser.isNsfw || localNodeIsNsfw
-                    : true;
+            const actorIsSensitive = isUserSensitive({
+                accountIsNsfw: actorUser?.isNsfw,
+                nodeIsNsfw: actorNodeIsNsfw,
+                isRemote: actorIsRemote,
+            });
             const actorMediaRestricted = !canViewSensitive && actorIsSensitive;
 
             return {
@@ -214,17 +235,15 @@ export async function GET(request: Request) {
                     displayName: actorIsRemote
                         ? actorPresentation?.displayName || actorUsername
                         : actorUser?.displayName || row.actorDisplayName,
-                    avatarUrl: actorIsRemote
-                        ? canViewSensitive ? actorPresentation?.avatarUrl || null : null
-                        : actorMediaRestricted
-                            ? null
+                    avatarUrl: actorMediaRestricted
+                        ? null
+                        : actorIsRemote
+                            ? actorPresentation?.avatarUrl || null
                             : actorUser?.avatarUrl || row.actorAvatarUrl,
                     nodeDomain: actorDomain,
-                    isNsfw: actorIsRemote
-                        ? true
-                        : actorUser?.isNsfw ?? true,
+                    isNsfw: actorUser?.isNsfw ?? true,
                     nodeIsNsfw: actorIsRemote
-                        ? true
+                        ? actorNodeIsNsfw ?? true
                         : localNodeIsNsfw,
                     stuffboxBadge: actorUser ? stuffboxBadgeFromStoredUser(actorUser) : null,
                 },

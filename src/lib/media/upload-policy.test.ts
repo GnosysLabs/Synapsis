@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { getMaxMediaSize, getMediaKind, MAX_AUDIO_SIZE, MAX_IMAGE_SIZE } from './upload-policy';
+import {
+  getMaxMediaSize,
+  getMediaKind,
+  MAX_AUDIO_SIZE,
+  MAX_GIF_SIZE,
+  MAX_IMAGE_SIZE,
+} from './upload-policy';
 
 describe('media upload policy', () => {
   it('recognizes common audio formats used for music uploads', () => {
@@ -11,6 +17,7 @@ describe('media upload policy', () => {
 
   it('keeps images on the smaller limit and allows larger audio tracks', () => {
     expect(getMaxMediaSize('image/png')).toBe(MAX_IMAGE_SIZE);
+    expect(getMaxMediaSize('image/gif')).toBe(MAX_GIF_SIZE);
     expect(getMaxMediaSize('audio/mpeg')).toBe(MAX_AUDIO_SIZE);
   });
 

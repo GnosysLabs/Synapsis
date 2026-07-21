@@ -134,4 +134,41 @@ describe('GET /api/notifications sensitive data enforcement', () => {
     expect(JSON.stringify(body)).not.toContain('stale-private-avatar.jpg');
     expect(JSON.stringify(body)).not.toContain('PRIVATE NOTIFICATION BODY');
   });
+
+  it('shows a current avatar for a cached actor on a classified safe remote node', async () => {
+    mocks.findNotifications.mockResolvedValue([{
+      ...remoteNotification,
+      actorHandle: 'cyph3rasi@synapsis.social',
+      actorDisplayName: 'Cyph3rASi',
+      actorAvatarUrl: 'https://stuffbox.xyz/cyph3rasi-avatar.jpg',
+      actorNodeDomain: 'synapsis.social',
+      remotePostDomain: 'synapsis.social',
+    }]);
+    mocks.findUsers.mockResolvedValue([{
+      id: 'cached-safe-user',
+      handle: 'cyph3rasi@synapsis.social',
+      homeDomain: 'synapsis.social',
+      isLocalAccount: false,
+      displayName: 'Cyph3rASi',
+      avatarUrl: 'https://stuffbox.xyz/cyph3rasi-avatar.jpg',
+      isNsfw: false,
+    }]);
+    mocks.findBlockedNodes
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        domain: 'synapsis.social',
+        isNsfw: false,
+        nsfwClassificationKnown: true,
+      }]);
+
+    const response = await GET(new Request('https://local.example/api/notifications'));
+    const body = await response.json();
+
+    expect(body.notifications[0].actor).toMatchObject({
+      handle: 'cyph3rasi@synapsis.social',
+      avatarUrl: 'https://stuffbox.xyz/cyph3rasi-avatar.jpg',
+      isNsfw: false,
+      nodeIsNsfw: false,
+    });
+  });
 });

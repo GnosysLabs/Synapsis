@@ -371,7 +371,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                 }
 
                 setUploadError(
-                    error instanceof MediaUploadError && error.code === 'METADATA_STRIP_FAILED'
+                    error instanceof MediaUploadError
                         ? error.message
                         : 'One or more uploads failed. Retry the failed attachment.',
                 );
