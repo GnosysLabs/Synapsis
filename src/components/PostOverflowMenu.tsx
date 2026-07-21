@@ -1,5 +1,5 @@
 import type { CSSProperties, MouseEventHandler } from 'react';
-import { FolderPlus, Globe, Trash2, UserX, VolumeX } from 'lucide-react';
+import { EyeOff, FolderPlus, Globe, Trash2, UserX, VolumeX } from 'lucide-react';
 import { FlagIcon } from '@/components/Icons';
 
 interface PostOverflowMenuProps {
@@ -9,6 +9,8 @@ interface PostOverflowMenuProps {
     onReport: MouseEventHandler<HTMLButtonElement>;
     showMuteNode: boolean;
     reporting: boolean;
+    onNotInterested?: MouseEventHandler<HTMLButtonElement>;
+    feedbackPending?: boolean;
     ownerMode?: boolean;
     onAddToCollection?: MouseEventHandler<HTMLButtonElement>;
     onDelete?: MouseEventHandler<HTMLButtonElement>;
@@ -36,6 +38,8 @@ export function PostOverflowMenu({
     onReport,
     showMuteNode,
     reporting,
+    onNotInterested,
+    feedbackPending = false,
     ownerMode = false,
     onAddToCollection,
     onDelete,
@@ -85,6 +89,22 @@ export function PostOverflowMenu({
                 </>
             ) : (
                 <>
+            {onNotInterested && (
+                <button
+                    type="button"
+                    role="menuitem"
+                    onClick={onNotInterested}
+                    disabled={feedbackPending}
+                    style={{
+                        ...menuItemStyle,
+                        cursor: feedbackPending ? 'default' : 'pointer',
+                        opacity: feedbackPending ? 0.65 : 1,
+                    }}
+                >
+                    <EyeOff size={16} />
+                    {feedbackPending ? 'Saving…' : 'Not interested'}
+                </button>
+            )}
             <button type="button" role="menuitem" onClick={onMuteUser} style={menuItemStyle}>
                 <VolumeX size={16} />
                 Mute

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { TriangleAlert } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -11,6 +11,7 @@ import { Post } from '@/lib/types';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import {
   DEFAULT_HOME_FEED,
+  ANONYMOUS_HOME_FEED,
   HOME_FEED_API_TYPES,
   HOME_FEED_LABELS,
   type HomeFeedType,
@@ -45,7 +46,7 @@ export default function Home() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<Post | null>(null);
   const [feedType, setFeedType] = useState<HomeFeedType>(DEFAULT_HOME_FEED);
-  const activeFeedType = user ? feedType : DEFAULT_HOME_FEED;
+  const activeFeedType = user ? feedType : ANONYMOUS_HOME_FEED;
   const nodeFeedBlocked = !canAccessNodeFeed({
     isAuthenticated: Boolean(user),
     localNodeIsNsfw: config?.isNsfw === true,
@@ -60,7 +61,7 @@ export default function Home() {
     feedTypeRef.current = activeFeedType;
   }, [activeFeedType]);
 
-  const loadFeed = async (type: HomeFeedType, cursor?: string | null, options: { silent?: boolean } = {}) => {
+  const loadFeed = async (type: HomeFeedType, cursor?: string | null, options: { silent?: boolean } = {}): Promise<void> => {
     const { silent = false } = options;
     if (cursor && loadingCursorRef.current === cursor) return;
     if (cursor) loadingCursorRef.current = cursor;
@@ -74,8 +75,15 @@ export default function Home() {
       const apiType = HOME_FEED_API_TYPES[type];
       const endpoint = `/api/posts?type=${apiType}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
 
-      const res = await fetch(endpoint);
+      const res = await fetch(endpoint, { cache: 'no-store' });
       const data = await res.json();
+
+      if (res.status === 410 && cursor && type === 'forYou') {
+        loadingCursorRef.current = null;
+        await loadFeed(type);
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || 'Failed to load feed');
 
       // Race condition check: ignore if user switched tabs
       if (type !== feedTypeRef.current) return;
@@ -208,6 +216,40 @@ export default function Home() {
     setPosts(prev => prev.filter(p => p.id !== postId));
   };
 
+  const getPostOrigin = useCallback((post: Post) => (
+    post.nodeDomain || post.author.nodeDomain || config?.domain || 'localhost:43821'
+  ), [config?.domain]);
+
+  const handleImpression = useCallback((post: Post) => {
+    void fetch('/api/feed/impressions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        postKey: post.id,
+        authorHandle: post.author.handle,
+        nodeDomain: getPostOrigin(post),
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  }, [getPostOrigin]);
+
+  const handleNotInterested = useCallback(async (post: Post) => {
+    const res = await fetch('/api/feed/feedback', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        postKey: post.id,
+        authorHandle: post.author.handle,
+        nodeDomain: getPostOrigin(post),
+        kind: 'not_interested',
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Could not save feedback');
+    }
+  }, [getPostOrigin]);
+
   // Show loading while checking auth
   if (authLoading || !config) {
     return (
@@ -224,6 +266,14 @@ export default function Home() {
           <h1 style={{ fontSize: '20px', fontWeight: 600 }}>{user ? 'Home' : 'Node'}</h1>
           {user && (
             <div className="feed-toggle" role="tablist" aria-label="Home feed">
+              <button
+                className={`feed-toggle-btn ${activeFeedType === 'forYou' ? 'active' : ''}`}
+                onClick={() => setFeedType('forYou')}
+                role="tab"
+                aria-selected={activeFeedType === 'forYou'}
+              >
+                {HOME_FEED_LABELS.forYou}
+              </button>
               <button
                 className={`feed-toggle-btn ${activeFeedType === 'node' ? 'active' : ''}`}
                 onClick={() => setFeedType('node')}
@@ -266,6 +316,15 @@ export default function Home() {
             </div>
           )}
 
+          {activeFeedType === 'forYou' && (
+            <div className="feed-meta card">
+              <div className="feed-meta-title">For You</div>
+              <div className="feed-meta-body">
+                Personalized from across Synapsis using who you follow, what you engage with, freshness, and a mix of voices and communities.
+              </div>
+            </div>
+          )}
+
           {activeFeedType === 'following' && (
             <div className="feed-meta card">
               <div className="feed-meta-title">Following feed</div>
@@ -281,7 +340,12 @@ export default function Home() {
             </div>
           ) : posts.length === 0 ? (
             <div style={{ padding: '48px', textAlign: 'center', color: 'var(--foreground-tertiary)' }}>
-              {activeFeedType === 'following' ? (
+              {activeFeedType === 'forYou' ? (
+                <>
+                  <p>Nothing to recommend yet</p>
+                  <p style={{ fontSize: '13px', marginTop: '8px' }}>As this node discovers posts, your feed will fill in automatically.</p>
+                </>
+              ) : activeFeedType === 'following' ? (
                 <>
                   <p>No posts from accounts you follow yet</p>
                   <p style={{ fontSize: '13px', marginTop: '8px' }}>Follow people locally or across the swarm to build this feed.</p>
@@ -309,6 +373,9 @@ export default function Home() {
                   onLike={handleLike}
                   onRepost={handleRepost}
                   onDelete={handleDelete}
+                  onHide={handleDelete}
+                  onImpression={activeFeedType === 'forYou' ? handleImpression : undefined}
+                  onNotInterested={activeFeedType === 'forYou' ? handleNotInterested : undefined}
                   onComment={(p) => {
                     setReplyingTo(p);
                     window.scrollTo({ top: 0, behavior: 'smooth' });

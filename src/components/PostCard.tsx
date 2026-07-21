@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -152,6 +152,8 @@ interface PostCardProps {
     onComment?: (post: Post) => void;
     onDelete?: (id: string) => void;
     onHide?: (id: string) => void; // Called when post should be hidden (block/mute)
+    onImpression?: (post: Post) => void;
+    onNotInterested?: (post: Post) => Promise<void> | void;
     isDetail?: boolean;
     showThread?: boolean; // Show parent post inline as a thread
     isThreadParent?: boolean; // This post is being shown as a parent in a thread
@@ -171,7 +173,7 @@ export function PostCard(props: PostCardProps) {
     return <AuthoredPostCard {...props} />;
 }
 
-function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDelete, onHide, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId, onCollectionsChanged }: PostCardProps) {
+function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDelete, onHide, onImpression, onNotInterested, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId, onCollectionsChanged }: PostCardProps) {
     const {
         user: currentUser,
         did,
@@ -204,6 +206,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     ));
     const [repostPending, setRepostPending] = useState(false);
     const [reporting, setReporting] = useState(false);
+    const [feedbackPending, setFeedbackPending] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
     const [showShareMenu, setShowShareMenu] = useState(false);
@@ -213,6 +216,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     const [hydratedPreview, setHydratedPreview] = useState<LinkPreviewData | null>(null);
     const [sensitiveContentRevealed, setSensitiveContentRevealed] = useState(false);
     const [revealingSensitiveContent, setRevealingSensitiveContent] = useState(false);
+    const articleRef = useRef<HTMLElement | null>(null);
     const domain = useDomain();
     const { config } = useRuntimeConfig();
     const localNodeClassificationKnown = config?.classificationKnown === true;
@@ -297,6 +301,30 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         setRevealedForViewerKey(null);
         setSensitiveContentRevealed(false);
     }, [initialPost.id, viewerSensitiveAccessKey]);
+
+    useEffect(() => {
+        if (!onImpression || isDetail || isEmbedded || isThreadParent || !articleRef.current) return;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let recorded = false;
+        const observer = new IntersectionObserver(([entry]) => {
+            if (recorded) return;
+            if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+                timer ??= setTimeout(() => {
+                    recorded = true;
+                    onImpression(post);
+                    observer.disconnect();
+                }, 800);
+            } else if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+        }, { threshold: [0, 0.5] });
+        observer.observe(articleRef.current);
+        return () => {
+            if (timer) clearTimeout(timer);
+            observer.disconnect();
+        };
+    }, [isDetail, isEmbedded, isThreadParent, onImpression, post]);
 
     useEffect(() => {
         let cancelled = false;
@@ -530,6 +558,23 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
             showToast('Report failed. Please try again.', 'error');
         } finally {
             setReporting(false);
+        }
+    };
+
+    const handleNotInterested = async (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!onNotInterested || feedbackPending) return;
+        setShowMenu(false);
+        setFeedbackPending(true);
+        try {
+            await onNotInterested(post);
+            onHide?.(post.id);
+            showToast('We will show you fewer posts like this.', 'success');
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : 'Could not save feedback', 'error');
+        } finally {
+            setFeedbackPending(false);
         }
     };
     const handleDelete = async (e: React.MouseEvent) => {
@@ -1082,7 +1127,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     if (isRepostEvent && post.repostOf) {
         return (
             <>
-                <article className={`post repost-event ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''}`}>
+                <article ref={articleRef} className={`post repost-event ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''}`}>
                     <div className="repost-event-header">
                         <span className="repost-event-icon" aria-hidden="true">
                             <RepeatIcon />
@@ -1136,7 +1181,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     />
                 </div>
             )}
-            <article className={`post ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''} ${showMenu ? 'menu-open' : ''}`}>
+            <article ref={articleRef} className={`post ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''} ${showMenu ? 'menu-open' : ''}`}>
                 {!isDetail && <Link href={postUrl} className="post-link-overlay" aria-label="View post" />}
 
                 {visibleReposters.length > 0 && (
@@ -1230,6 +1275,8 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                                         onBlockUser={handleBlockUser}
                                         onMuteNode={handleMuteNode}
                                         onReport={handleReport}
+                                        onNotInterested={onNotInterested ? handleNotInterested : undefined}
+                                        feedbackPending={feedbackPending}
                                         showMuteNode={isRemotePost && Boolean(post.nodeDomain || authorAddress?.homeDomain)}
                                         reporting={reporting}
                                         ownerMode={isOwnPost}

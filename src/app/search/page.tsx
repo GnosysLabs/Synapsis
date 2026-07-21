@@ -16,15 +16,21 @@ export default function SearchPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const initialQuery = searchParams.get('q') || '';
+    const initialTab = searchParams.get('tab');
     const { did, handle } = useAuth();
 
     const [query, setQuery] = useState(initialQuery);
     const [users, setUsers] = useState<UserListItemUser[]>([]);
+    const [nodeUsers, setNodeUsers] = useState<UserListItemUser[]>([]);
+    const [nodeUsersCursor, setNodeUsersCursor] = useState<string | null>(null);
+    const [nodeUsersLoading, setNodeUsersLoading] = useState(false);
     const [posts, setPosts] = useState<Post[]>([]);
     const [loading, setLoading] = useState(false);
     const [searchedQuery, setSearchedQuery] = useState('');
     const [searchError, setSearchError] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'all' | 'users' | 'posts'>('all');
+    const [activeTab, setActiveTab] = useState<'all' | 'users' | 'posts'>(
+        initialTab === 'users' || initialTab === 'posts' ? initialTab : 'all',
+    );
     const liveSearchQuery = getLiveSearchQuery(query);
 
     const search = useCallback(async (q: string, type: string, signal: AbortSignal) => {
@@ -60,7 +66,7 @@ export default function SearchPage() {
 
     useEffect(() => {
         if (!liveSearchQuery) {
-            setUsers([]);
+            if (activeTab !== 'users') setUsers([]);
             setPosts([]);
             setSearchedQuery('');
             setSearchError(null);
@@ -84,15 +90,47 @@ export default function SearchPage() {
         };
     }, [activeTab, liveSearchQuery, search]);
 
+    const loadNodeUsers = useCallback(async (cursor?: string | null) => {
+        setNodeUsersLoading(true);
+        setSearchError(null);
+        try {
+            const res = await fetch(`/api/users?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, {
+                cache: 'no-store',
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Could not load users');
+            setNodeUsers((current) => cursor
+                ? [...current, ...(data.users || []).filter((user: UserListItemUser) => (
+                    !current.some((existing) => existing.id === user.id)
+                ))]
+                : data.users || []);
+            setNodeUsersCursor(data.nextCursor || null);
+        } catch (error) {
+            setSearchError(error instanceof Error ? error.message : 'Could not load users');
+        } finally {
+            setNodeUsersLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!liveSearchQuery && activeTab === 'users') {
+            void loadNodeUsers();
+        }
+    }, [activeTab, liveSearchQuery, loadNodeUsers]);
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (liveSearchQuery) {
-            router.replace(`/search?q=${encodeURIComponent(liveSearchQuery)}`, { scroll: false });
+            router.replace(`/search?q=${encodeURIComponent(liveSearchQuery)}&tab=${activeTab}`, { scroll: false });
         }
     };
 
     const handleTabChange = (tab: 'all' | 'users' | 'posts') => {
         setActiveTab(tab);
+        const params = new URLSearchParams();
+        if (liveSearchQuery) params.set('q', liveSearchQuery);
+        params.set('tab', tab);
+        router.replace(`/search?${params.toString()}`, { scroll: false });
     };
 
     const handleLike = async (postId: string, currentLiked: boolean) => {
@@ -171,8 +209,38 @@ export default function SearchPage() {
                 ))}
             </div>
 
-            {loading ? (
+            {loading || (!liveSearchQuery && activeTab === 'users' && nodeUsersLoading && nodeUsers.length === 0) ? (
                 <div className="explore-loading">Searching...</div>
+            ) : !liveSearchQuery && activeTab === 'users' ? (
+                searchError ? (
+                    <div className="explore-empty" role="alert">
+                        <SearchIcon />
+                        <p>{searchError}</p>
+                    </div>
+                ) : (
+                    <div>
+                        <div className="feed-meta card">
+                            <div className="feed-meta-title">Users on this node</div>
+                            <div className="feed-meta-body">Every local account, newest first.</div>
+                        </div>
+                        {nodeUsers.map(user => <UserListItem key={user.id} user={user} />)}
+                        {nodeUsers.length === 0 && (
+                            <div className="explore-empty"><p>No users on this node yet</p></div>
+                        )}
+                        {nodeUsersCursor && (
+                            <div style={{ padding: '20px', textAlign: 'center' }}>
+                                <button
+                                    type="button"
+                                    className="btn"
+                                    disabled={nodeUsersLoading}
+                                    onClick={() => void loadNodeUsers(nodeUsersCursor)}
+                                >
+                                    {nodeUsersLoading ? 'Loading…' : 'Load more users'}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )
             ) : !liveSearchQuery ? (
                 <div className="explore-empty">
                     <SearchIcon />

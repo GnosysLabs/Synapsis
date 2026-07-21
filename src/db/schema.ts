@@ -815,6 +815,74 @@ export const reports = sqliteTable('reports', {
 ]);
 
 
+// ============================================
+// PERSONALIZED FEED STATE
+// ============================================
+
+/**
+ * A durable, privacy-local record that a signed-in viewer actually saw a post.
+ * Individual viewing history never needs to federate to rank this node's feed.
+ */
+export const feedImpressions = sqliteTable('feed_impressions', {
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  postKey: text('post_key').notNull(),
+  authorHandle: text('author_handle').notNull(),
+  nodeDomain: text('node_domain').notNull(),
+  firstSeenAt: integer('first_seen_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  viewCount: integer('view_count').default(1).notNull(),
+}, (table) => [
+  primaryKey({ name: 'feed_impressions_pk', columns: [table.userId, table.postKey] }),
+  index('feed_impressions_user_seen_idx').on(table.userId, table.lastSeenAt),
+  index('feed_impressions_post_idx').on(table.postKey),
+]);
+
+/** Explicit viewer feedback is a stronger signal than passive engagement. */
+export const feedFeedback = sqliteTable('feed_feedback', {
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  postKey: text('post_key').notNull(),
+  authorHandle: text('author_handle').notNull(),
+  nodeDomain: text('node_domain').notNull(),
+  kind: text('kind', { enum: ['not_interested'] }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  primaryKey({ name: 'feed_feedback_pk', columns: [table.userId, table.postKey] }),
+  index('feed_feedback_user_kind_idx').on(table.userId, table.kind, table.updatedAt),
+]);
+
+/**
+ * Short-lived server-side cursors keep infinite-scroll ordering stable. Only
+ * items actually served are retained; the whole candidate corpus is never
+ * copied once per viewer.
+ */
+export const forYouFeedSessions = sqliteTable('for_you_feed_sessions', {
+  id: text('id').primaryKey().$defaultFn(() => randomUUID()),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  snapshotAt: integer('snapshot_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  nextPosition: integer('next_position').default(0).notNull(),
+  diversityStateJson: text('diversity_state_json').default('{}').notNull(),
+  exhausted: integer('exhausted', { mode: 'boolean' }).default(false).notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  index('for_you_feed_sessions_user_idx').on(table.userId, table.createdAt),
+  index('for_you_feed_sessions_expiry_idx').on(table.expiresAt),
+]);
+
+export const forYouFeedItems = sqliteTable('for_you_feed_items', {
+  sessionId: text('session_id').notNull().references(() => forYouFeedSessions.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull(),
+  postKey: text('post_key').notNull(),
+  feedMetaJson: text('feed_meta_json').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
+}, (table) => [
+  primaryKey({ name: 'for_you_feed_items_pk', columns: [table.sessionId, table.position] }),
+  uniqueIndex('for_you_feed_items_post_unique_idx').on(table.sessionId, table.postKey),
+]);
+
+
 
 // ============================================
 // SWARM - Node Discovery Network

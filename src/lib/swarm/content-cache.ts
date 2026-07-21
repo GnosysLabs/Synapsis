@@ -57,12 +57,12 @@ const SYNC_LEASE_MS = 45_000;
 const SUCCESS_REFRESH_MS = 5 * 60_000;
 const FAILURE_BACKOFF_BASE_MS = 60_000;
 const FAILURE_BACKOFF_MAX_MS = 60 * 60_000;
-const MAX_POSTS_PER_NODE = 250;
-const CACHE_RETENTION_MS = 90 * 24 * 60 * 60_000;
 const MAX_CACHED_QUERY_ROWS = 400;
 
 export interface CachedTimelineOptions {
   limit?: number;
+  /** Return every eligible cached post for whole-corpus ranking. */
+  complete?: boolean;
   cursor?: Date | string | FeedCursorPosition | null;
   includeNsfw?: boolean;
   query?: string;
@@ -285,15 +285,6 @@ async function cacheValidatedPosts(
     if (cachedRow) await indexRemotePostContent(cachedRow.id, post.content);
   }
 
-  const overflow = await db.select({ id: remotePosts.id })
-    .from(remotePosts)
-    .where(eq(remotePosts.nodeDomain, domain))
-    .orderBy(desc(remotePosts.feedActivityAt), desc(remotePosts.id))
-    .limit(100)
-    .offset(MAX_POSTS_PER_NODE);
-  if (overflow.length > 0) {
-    await db.delete(remotePosts).where(inArray(remotePosts.id, overflow.map((row) => row.id)));
-  }
   return posts.length;
 }
 
@@ -699,19 +690,28 @@ async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: nu
     const [cacheState] = await db.select({ count: sql<number>`count(*)` })
       .from(remotePosts)
       .where(eq(remotePosts.nodeDomain, peer.domain));
-    // A persisted cursor without its corresponding cache can happen after an
-    // interrupted migration or manual recovery. Asking only for later changes
-    // would leave the peer permanently empty, so rebuild from a bounded full
-    // snapshot whenever the cache is missing.
-    const requestFullSnapshot = Number(cacheState?.count || 0) === 0;
+    // A new peer starts at sequence zero so the coalesced change stream walks
+    // every current story in bounded pages. A non-empty historical high-water
+    // mark distinguishes a genuinely empty node from a lost local cache.
+    const cacheIsMissingAfterPriorContent = Number(cacheState?.count || 0) === 0
+      && peer.highWaterAt !== null;
+    const requestFullSnapshot = peer.changeCursor === null || cacheIsMissingAfterPriorContent;
+    const syncPeerState = cacheIsMissingAfterPriorContent
+      ? { ...peer, highWaterAt: null, highWaterId: null, changeCursor: null }
+      : peer;
     const timelineUrl = new URL(`https://${peer.domain}/api/swarm/timeline`);
     timelineUrl.searchParams.set('limit', '50');
-    timelineUrl.searchParams.set('accountsSince', String(peer.accountChangeCursor ?? 0));
-    if (!requestFullSnapshot && peer.changeCursor !== null && peer.changeCursor >= 0) {
-      timelineUrl.searchParams.set('changesSince', String(peer.changeCursor));
-    } else if (!requestFullSnapshot && peer.changeCursor === -1 && peer.highWaterAt) {
-      timelineUrl.searchParams.set('since', peer.highWaterAt.toISOString());
-      if (peer.highWaterId) timelineUrl.searchParams.set('sinceId', peer.highWaterId);
+    timelineUrl.searchParams.set('accountsSince', String(syncPeerState.accountChangeCursor ?? 0));
+    if (requestFullSnapshot) {
+      timelineUrl.searchParams.set('changesSince', '0');
+    } else if (syncPeerState.changeCursor !== null && syncPeerState.changeCursor >= 0) {
+      timelineUrl.searchParams.set('changesSince', String(syncPeerState.changeCursor));
+    } else if (syncPeerState.changeCursor === -1 && syncPeerState.highWaterAt) {
+      // Nodes without change streams remain compatible during rolling
+      // upgrades. They cannot provide complete history, but can still deliver
+      // later posts without being polled from sequence zero forever.
+      timelineUrl.searchParams.set('since', syncPeerState.highWaterAt.toISOString());
+      if (syncPeerState.highWaterId) timelineUrl.searchParams.set('sinceId', syncPeerState.highWaterId);
     }
     const response = await signedFederationRead(
       timelineUrl.toString(),
@@ -726,14 +726,15 @@ async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: nu
     }
     const payload = response.json();
     const parsed = parseRemoteTimelineResponse(payload, peer.domain);
-    if (!requestFullSnapshot && peer.changeCursor !== null && peer.changeCursor >= 0) {
+    const requestedChangesSince = timelineUrl.searchParams.get('changesSince');
+    if (requestedChangesSince !== null) {
       const signedBundle = payload && typeof payload === 'object'
         ? (payload as { signedChangeBundle?: unknown }).signedChangeBundle
         : undefined;
       if (signedBundle !== undefined) {
         try {
           const verified = await verifySignedChangeBundle(signedBundle, peer.domain);
-          if (verified.fromCursor !== peer.changeCursor
+          if (verified.fromCursor !== Number(requestedChangesSince)
             || verified.toCursor !== parsed.changeCursor
             || verified.hasMoreChanges !== (parsed.hasMoreChanges === true)
             || JSON.stringify(verified.signed.bundle.changes)
@@ -746,7 +747,7 @@ async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: nu
         }
       }
     }
-    const cached = await applyParsedPeerSync(peer, parsed, {
+    const cached = await applyParsedPeerSync(syncPeerState, parsed, {
       requestFullSnapshot,
       directOriginRead: true,
     });
@@ -817,7 +818,7 @@ async function applyParsedPeerSync(
       await db.delete(remotePosts).where(eq(remotePosts.nodeDomain, peer.domain));
       throw new Error(`Content origin ${peer.domain} was blocked while caching`);
     }
-    const highWater = parsed.posts.reduce<{ at: Date; id: string } | null>((newest, post) => {
+    const highWater = snapshots.reduce<{ at: Date; id: string } | null>((newest, post) => {
       const activityAt = new Date(post.feedActivityAt || post.createdAt);
       return !newest
         || activityAt > newest.at
@@ -949,11 +950,6 @@ export async function syncSwarmContentBatch(): Promise<ContentSyncResult> {
       ));
   const peers = await claimDuePeers(effectiveBatchSize);
   const domains = await mapWithConcurrency(peers, SYNC_CONCURRENCY, syncPeer);
-  const staleBefore = new Date(Date.now() - CACHE_RETENTION_MS);
-  await db.delete(remotePosts).where(and(
-    lt(remotePosts.fetchedAt, staleBefore),
-    lt(remotePosts.publishedAt, staleBefore),
-  ));
   return {
     claimed: peers.length,
     synced: domains.filter((item) => !item.error).length,
@@ -1031,6 +1027,7 @@ export async function syncSwarmContentNoticeOrigin(
 export async function getCachedSwarmTimeline(
   options: CachedTimelineOptions = {},
 ): Promise<CachedTimelineResult> {
+  const complete = options.complete === true;
   const limit = Math.max(1, Math.min(options.limit ?? 30, 200));
   const cursor = normalizedCursor(options.cursor);
   const excludeDomains = Array.from(options.excludeDomains || [])
@@ -1087,14 +1084,16 @@ export async function getCachedSwarmTimeline(
       eq(remotePosts.nodeIsNsfw, false),
     ] : []),
   ];
-  const rows = await db.select().from(remotePosts)
+  const rowQuery = db.select().from(remotePosts)
     .where(and(...conditions))
     .orderBy(
       desc(remotePosts.feedActivityAt),
       desc(remotePosts.nodeDomain),
       desc(remotePosts.originalPostId),
-    )
-    .limit(Math.min(limit * 2 + 1, MAX_CACHED_QUERY_ROWS));
+    );
+  const rows = complete
+    ? await rowQuery
+    : await rowQuery.limit(Math.min(limit * 2 + 1, MAX_CACHED_QUERY_ROWS));
 
   const cachedDomains = Array.from(new Set(rows
     .map((row) => row.nodeDomain)
@@ -1128,7 +1127,7 @@ export async function getCachedSwarmTimeline(
           )
         : undefined;
       if (post) posts.push(post);
-      if (posts.length >= limit) break;
+      if (!complete && posts.length >= limit) break;
     } catch {
       // A corrupt/legacy row cannot enter a feed; the next sync replaces it.
     }
@@ -1146,7 +1145,7 @@ export async function getCachedSwarmTimeline(
     posts,
     sources,
     fetchedAt: new Date().toISOString(),
-    continuationDate: posts.length === limit && oldest
+    continuationDate: !complete && posts.length === limit && oldest
       ? (oldest.feedActivityAt || oldest.createdAt)
       : null,
   };

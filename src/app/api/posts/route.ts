@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { db, posts, users, media, follows, mutes, blocks, mutedNodes, remoteReposts, userSwarmReposts, notifications, feedStories, remoteFeedStories, collectionPosts } from '@/db';
+import { randomUUID } from 'node:crypto';
+import { db, posts, users, media, follows, mutes, blocks, mutedNodes, remoteReposts, userSwarmReposts, notifications, feedStories, remoteFeedStories, collectionPosts, forYouFeedSessions, forYouFeedItems } from '@/db';
 import { getSession, requireAuth } from '@/lib/auth';
 import { requireSignedAction, SignedActionError, type SignedAction } from '@/lib/auth/verify-signature';
 import {
@@ -7,21 +8,27 @@ import {
     requireCliSignedAction,
     signedActionErrorStatus,
 } from '@/lib/auth/cli-credentials';
-import { eq, and, desc, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { eq, and, asc, desc, gt, gte, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { hasPublishablePostContent } from '@/lib/posts/content-policy';
-import { decodeFeedCursor, decodeFeedCursorPosition, encodeFeedCursor, newestDate, selectFeedWindow } from '@/lib/posts/feed-pagination';
+import { decodeFeedCursor, decodeFeedCursorPosition, encodeFeedCursor } from '@/lib/posts/feed-pagination';
 import { mapSwarmPostToPost } from '@/lib/swarm/feed-post';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { parseBoundedInteger } from '@/lib/http/query';
 import {
-    CURATED_FEED_WEIGHTS,
-    CURATED_FEED_WINDOW_HOURS,
-    rankCuratedFeed,
-} from '@/lib/posts/curated-feed';
+    FOR_YOU_ALGORITHM,
+    FOR_YOU_SESSION_TTL_MS,
+    canonicalForYouAuthor,
+    emptyForYouDiversityState,
+    forYouPostKey,
+    parseForYouDiversityState,
+    rankForYouFeed,
+    type ForYouFeedMeta,
+} from '@/lib/posts/for-you-feed';
+import { buildForYouViewerSignals } from '@/lib/posts/for-you-signals';
 import { registerPostMentions } from '@/lib/mentions/delivery';
 import {
     assembleNodeFeedStories,
@@ -58,8 +65,7 @@ import {
 import { canonicalizeMentionsInContent } from '@/lib/mentions/parser';
 
 const POST_MAX_LENGTH = 600;
-const CURATION_SEED_MULTIPLIER = 5;
-const CURATION_SEED_CAP = 200;
+const FOR_YOU_CURSOR_PREFIX = 'fy:v1';
 
 function getLocalAccountHomeDomain(): string {
     return requireCanonicalAccountHomeDomain(
@@ -82,13 +88,36 @@ type FeedPostWithChildren = {
     repostedBy?: Array<{
         id: string;
         handle: string;
-        displayName: string | null;
-        avatarUrl: string | null;
-        isNsfw: boolean;
+        displayName?: string | null;
+        avatarUrl?: string | null;
+        isNsfw?: boolean;
         nodeDomain?: string | null;
     }>;
     repostedByCount?: number;
 };
+
+function encodeForYouCursor(sessionId: string, position: number): string {
+    return `${FOR_YOU_CURSOR_PREFIX}:${sessionId}:${position}`;
+}
+
+function decodeForYouCursor(cursor: string | null): { sessionId: string; position: number } | null {
+    if (!cursor) return null;
+    const match = /^fy:v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(\d+)$/i.exec(cursor);
+    if (!match) return null;
+    const position = Number(match[2]);
+    return Number.isSafeInteger(position) && position >= 0
+        ? { sessionId: match[1], position }
+        : null;
+}
+
+function parseStoredFeedMeta(value: string): ForYouFeedMeta | null {
+    try {
+        const parsed = JSON.parse(value) as ForYouFeedMeta;
+        return parsed?.algorithm === FOR_YOU_ALGORITHM ? parsed : null;
+    } catch {
+        return null;
+    }
+}
 
 function mapUserSwarmRepostToFeedPost(
     row: typeof userSwarmReposts.$inferSelect,
@@ -242,7 +271,7 @@ const feedPostRelations = {
     },
 } as const;
 
-async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<FeedPostWithChildren[]> {
+async function getLocalNodeFeed(cursor: string | null, limit: number | null): Promise<FeedPostWithChildren[]> {
     const localNodeDomain = getLocalAccountHomeDomain();
     const cursorPosition = decodeFeedCursorPosition(cursor);
     const cursorCondition = cursorPosition
@@ -254,7 +283,7 @@ async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<F
             )] : []),
         )
         : undefined;
-    const activityRows = await db.select({
+    const activityQuery = db.select({
         storyId: feedStories.storyId,
         latestActivityAt: feedStories.latestActivityAt,
     }).from(feedStories)
@@ -267,8 +296,10 @@ async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<F
             eq(users.isLocalAccount, true),
             cursorCondition,
         ))
-        .orderBy(desc(feedStories.latestActivityAt), desc(feedStories.storyId))
-        .limit(limit);
+        .orderBy(desc(feedStories.latestActivityAt), desc(feedStories.storyId));
+    const activityRows = limit === null
+        ? await activityQuery
+        : await activityQuery.limit(limit);
     const storyIds = activityRows.map((row) => row.storyId);
 
     if (storyIds.length === 0) {
@@ -318,7 +349,7 @@ async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<F
 
 async function getLocallyRepostedRemoteStories(
     cursor: string | null,
-    limit: number,
+    limit: number | null,
 ): Promise<FeedPostWithChildren[]> {
     const cursorPosition = decodeFeedCursorPosition(cursor);
     const localDomain = getLocalAccountHomeDomain();
@@ -332,7 +363,7 @@ async function getLocallyRepostedRemoteStories(
             )] : []),
         )
         : undefined;
-    const activityRows = await db.select({
+    const activityQuery = db.select({
         nodeDomain: remoteFeedStories.nodeDomain,
         originalPostId: remoteFeedStories.originalPostId,
         latestActivityAt: remoteFeedStories.latestActivityAt,
@@ -345,8 +376,10 @@ async function getLocallyRepostedRemoteStories(
             desc(remoteFeedStories.latestActivityAt),
             desc(remoteFeedStories.nodeDomain),
             desc(remoteFeedStories.originalPostId),
-        )
-        .limit(limit);
+        );
+    const activityRows = limit === null
+        ? await activityQuery
+        : await activityQuery.limit(limit);
 
     if (activityRows.length === 0) return [];
 
@@ -867,8 +900,9 @@ export async function GET(request: Request) {
             viewerMutedNodes.forEach((row) => excludedRemoteDomains.add(normalizeNodeDomain(row.nodeDomain)));
         }
 
-        let feedPosts;
+        let feedPosts: FeedPostWithChildren[] = [];
         let explicitNextCursor: string | null | undefined;
+        let forYouResponseMeta: Record<string, unknown> | undefined;
         // Base filter excludes removed posts and replies (replies only show on detail/profile)
         const baseFilter = {
             isRemoved: false,
@@ -982,78 +1016,197 @@ export async function GET(request: Request) {
                 orderBy: (posts, { desc }) => [desc(posts.createdAt)],
                 limit,
             });
-        } else if (type === 'curated') {
-            // Curated feed - swarm posts only
-            const viewer = requestSession?.user ?? null;
+        } else if (type === 'for-you' || type === 'curated') {
+            // For You ranks the complete eligible local + cached network corpus.
+            // A short-lived server session remembers only served items and
+            // diversity state, giving infinite scroll a stable snapshot without
+            // imposing a global candidate-window cap.
+            const viewer = requestSession?.user;
+            if (!viewer) {
+                return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+            }
             const includeNsfw = shouldIncludeNsfwFeed({
                 viewer,
                 localNodeIsNsfw,
             });
-
-            const cursorDate = await getMixedFeedCursorDate(cursor);
-            const swarmResult = await getCachedSwarmTimeline({
-                limit: Math.min(limit * CURATION_SEED_MULTIPLIER, CURATION_SEED_CAP),
-                includeNsfw,
-                cursor: decodeFeedCursorPosition(cursor) || cursorDate,
-                excludeDomains: excludedRemoteDomains,
-            });
-
-            console.log('[Curated Feed] Swarm result:', {
-                postsCount: swarmResult.posts.length,
-                sources: swarmResult.sources,
-                includeNsfw,
-            });
-
             const localDomain = getLocalAccountHomeDomain();
-            const swarmPosts = swarmResult.posts.map((post) => mapSwarmPostToPost(post, { localDomain }));
-            const locallyRepostedRemoteStories = await getLocallyRepostedRemoteStories(cursor, limit);
+            const now = new Date();
+            await db.delete(forYouFeedSessions).where(lt(forYouFeedSessions.expiresAt, now));
 
-            let mutedIds = new Set<string>();
-            let blockedIds = new Set<string>();
-
-            if (viewer) {
-                const muteRows = await db.select({ mutedUserId: mutes.mutedUserId })
-                    .from(mutes)
-                    .where(eq(mutes.userId, viewer.id));
-                mutedIds = new Set(muteRows.map(row => row.mutedUserId));
-
-                const blockRows = await db.select({ blockedUserId: blocks.blockedUserId })
-                    .from(blocks)
-                    .where(eq(blocks.userId, viewer.id));
-                blockedIds = new Set(blockRows.map(row => row.blockedUserId));
+            const decodedCursor = decodeForYouCursor(cursor);
+            if (cursor && !decodedCursor) {
+                return NextResponse.json({ error: 'Invalid For You cursor' }, { status: 400 });
             }
 
+            let session: typeof forYouFeedSessions.$inferSelect;
+            let requestedPosition = decodedCursor?.position ?? 0;
+            if (decodedCursor) {
+                const [existingSession] = await db.select().from(forYouFeedSessions).where(and(
+                    eq(forYouFeedSessions.id, decodedCursor.sessionId),
+                    eq(forYouFeedSessions.userId, viewer.id),
+                    gt(forYouFeedSessions.expiresAt, now),
+                )).limit(1);
+                if (!existingSession) {
+                    return NextResponse.json({ error: 'For You cursor expired', restart: true }, { status: 410 });
+                }
+                if (requestedPosition > existingSession.nextPosition) {
+                    return NextResponse.json({ error: 'Invalid For You cursor position' }, { status: 400 });
+                }
+                session = existingSession;
+            } else {
+                const snapshotAt = now;
+                session = {
+                    id: randomUUID(),
+                    userId: viewer.id,
+                    snapshotAt,
+                    nextPosition: 0,
+                    diversityStateJson: JSON.stringify(emptyForYouDiversityState()),
+                    exhausted: false,
+                    expiresAt: new Date(snapshotAt.getTime() + FOR_YOU_SESSION_TTL_MS),
+                    createdAt: now,
+                    updatedAt: now,
+                };
+                await db.insert(forYouFeedSessions).values(session);
+                requestedPosition = 0;
+            }
+
+            const [localStories, locallyRepostedRemoteStories, swarmResult, muteRows, blockRows] = await Promise.all([
+                getLocalNodeFeed(null, null),
+                getLocallyRepostedRemoteStories(null, null),
+                getCachedSwarmTimeline({
+                    complete: true,
+                    includeNsfw,
+                    excludeDomains: excludedRemoteDomains,
+                }),
+                db.select({ mutedUserId: mutes.mutedUserId })
+                    .from(mutes)
+                    .where(eq(mutes.userId, viewer.id)),
+                db.select({ userId: blocks.userId, blockedUserId: blocks.blockedUserId })
+                    .from(blocks)
+                    .where(or(eq(blocks.userId, viewer.id), eq(blocks.blockedUserId, viewer.id))),
+            ]);
+            const mutedIds = new Set(muteRows.map((row) => row.mutedUserId));
+            const blockedIds = new Set(blockRows.map((row) => (
+                row.userId === viewer.id ? row.blockedUserId : row.userId
+            )));
+            const excludedUserIds = Array.from(new Set([...mutedIds, ...blockedIds]));
+            const excludedUsers = excludedUserIds.length > 0
+                ? await db.select({ id: users.id, handle: users.handle, homeDomain: users.homeDomain })
+                    .from(users)
+                    .where(inArray(users.id, excludedUserIds))
+                : [];
+            const excludedHandles = new Set(excludedUsers.map((account) => (
+                canonicalForYouAuthor(account.handle, account.homeDomain)
+            )));
+            const swarmPosts = swarmResult.posts.map((post) => mapSwarmPostToPost(post, { localDomain }));
             const eligiblePosts = collapseSharedFeedPosts([
+                ...localStories as unknown as Post[],
                 ...swarmPosts,
                 ...locallyRepostedRemoteStories as unknown as Post[],
             ], localDomain)
-                .filter((post) => !mutedIds.has(post.author.id) && !blockedIds.has(post.author.id));
-            const pageWindow = selectFeedWindow(eligiblePosts, limit);
-            const rankedPosts = rankCuratedFeed(pageWindow.posts, { limit });
-            const localRepostContinuation = locallyRepostedRemoteStories.length >= limit
-                ? new Date(locallyRepostedRemoteStories[locallyRepostedRemoteStories.length - 1].feedActivityAt || locallyRepostedRemoteStories[locallyRepostedRemoteStories.length - 1].createdAt)
-                : null;
-            const sourceContinuation = newestDate([
-                swarmResult.continuationDate ? new Date(swarmResult.continuationDate) : null,
-                localRepostContinuation,
-            ]);
-            explicitNextCursor = pageWindow.hasOverflow && pageWindow.oldestActivityAt && pageWindow.oldestPostId
-                ? encodeFeedCursor({
-                    at: pageWindow.oldestActivityAt,
-                    id: pageWindow.oldestPostId,
-                })
-                : sourceContinuation
-                    ? encodeFeedCursor({ at: sourceContinuation, id: '\uffff' })
+                .flatMap((post) => {
+                    const createdAt = new Date(post.createdAt).getTime();
+                    const activityAt = new Date(post.feedActivityAt || post.createdAt).getTime();
+                    if (!Number.isFinite(createdAt)
+                        || createdAt > session.snapshotAt.getTime()
+                        || (!includeNsfw && Boolean(
+                            post.isNsfw
+                            || post.author.isNsfw
+                            || post.nodeIsNsfw
+                            || post.author.nodeIsNsfw
+                        ))
+                        || mutedIds.has(post.author.id)
+                        || blockedIds.has(post.author.id)
+                        || excludedHandles.has(canonicalForYouAuthor(
+                            post.author.handle,
+                            post.nodeDomain || post.author.nodeDomain || localDomain,
+                        ))) {
+                        return [];
+                    }
+                    // A repost that happens after this session began must not
+                    // make an older story disappear or jump forward mid-scroll.
+                    return [{
+                        ...post,
+                        feedActivityAt: Number.isFinite(activityAt)
+                            && activityAt <= session.snapshotAt.getTime()
+                            ? post.feedActivityAt
+                            : post.createdAt,
+                    }];
+                });
+            const candidateByKey = new Map(eligiblePosts.map((post) => [forYouPostKey(post), post]));
+
+            if (requestedPosition < session.nextPosition) {
+                const storedItems = await db.select().from(forYouFeedItems).where(and(
+                    eq(forYouFeedItems.sessionId, session.id),
+                    gte(forYouFeedItems.position, requestedPosition),
+                    lt(forYouFeedItems.position, requestedPosition + limit),
+                )).orderBy(asc(forYouFeedItems.position));
+                feedPosts = storedItems.flatMap((item) => {
+                    const post = candidateByKey.get(item.postKey);
+                    const feedMeta = parseStoredFeedMeta(item.feedMetaJson);
+                    return post && feedMeta ? [{ ...post, feedMeta }] : [];
+                });
+                const nextPosition = Math.min(requestedPosition + limit, session.nextPosition);
+                explicitNextCursor = nextPosition < session.nextPosition || !session.exhausted
+                    ? encodeForYouCursor(session.id, nextPosition)
                     : null;
-
-            console.log('[Curated Feed] After ranking:', {
-                swarmPostsCount: swarmPosts.length,
-                afterMuteFilter: eligiblePosts.length,
-                rankedPostsCount: rankedPosts.length,
-                limit,
-            });
-
-            feedPosts = rankedPosts;
+                forYouResponseMeta = {
+                    algorithm: FOR_YOU_ALGORITHM,
+                    candidateCount: eligiblePosts.length,
+                    sessionExpiresAt: session.expiresAt.toISOString(),
+                };
+            } else if (session.exhausted) {
+                feedPosts = [];
+                explicitNextCursor = null;
+                forYouResponseMeta = {
+                    algorithm: FOR_YOU_ALGORITHM,
+                    candidateCount: eligiblePosts.length,
+                    remainingCount: 0,
+                    sessionExpiresAt: session.expiresAt.toISOString(),
+                };
+            } else {
+                const servedRows = await db.select({ postKey: forYouFeedItems.postKey })
+                    .from(forYouFeedItems)
+                    .where(eq(forYouFeedItems.sessionId, session.id));
+                const servedKeys = new Set(servedRows.map((row) => row.postKey));
+                const unservedCandidates = eligiblePosts.filter((post) => !servedKeys.has(forYouPostKey(post)));
+                const viewerSignals = await buildForYouViewerSignals({
+                    viewer,
+                    candidates: eligiblePosts,
+                    snapshotAt: session.snapshotAt,
+                    localNodeDomain: localDomain,
+                });
+                const ranked = rankForYouFeed(unservedCandidates, viewerSignals, {
+                    limit,
+                    snapshotAt: session.snapshotAt.getTime(),
+                    state: parseForYouDiversityState(session.diversityStateJson),
+                });
+                if (ranked.posts.length > 0) {
+                    await db.insert(forYouFeedItems).values(ranked.posts.map((post, index) => ({
+                        sessionId: session.id,
+                        position: session.nextPosition + index,
+                        postKey: forYouPostKey(post),
+                        feedMetaJson: JSON.stringify(post.feedMeta),
+                    })));
+                }
+                const nextPosition = session.nextPosition + ranked.posts.length;
+                const exhausted = ranked.remainingCount === 0;
+                await db.update(forYouFeedSessions).set({
+                    nextPosition,
+                    diversityStateJson: JSON.stringify(ranked.state),
+                    exhausted,
+                    updatedAt: now,
+                }).where(eq(forYouFeedSessions.id, session.id));
+                feedPosts = ranked.posts;
+                explicitNextCursor = exhausted ? null : encodeForYouCursor(session.id, nextPosition);
+                forYouResponseMeta = {
+                    algorithm: FOR_YOU_ALGORITHM,
+                    candidateCount: eligiblePosts.length,
+                    remainingCount: ranked.remainingCount,
+                    personalizationConfidence: Number(viewerSignals.personalizationConfidence.toFixed(3)),
+                    sessionExpiresAt: session.expiresAt.toISOString(),
+                };
+            }
         } else {
             // Home timeline - need auth
             try {
@@ -1263,18 +1416,11 @@ export async function GET(request: Request) {
 
         return NextResponse.json({
             posts: serializedFeedPosts,
-            meta: type === 'curated' ? {
-                algorithm: 'curated-v2-diversity',
-                windowHours: CURATED_FEED_WINDOW_HOURS,
-                seedLimit: Math.min(limit * CURATION_SEED_MULTIPLIER, CURATION_SEED_CAP),
-                weights: {
-                    ...CURATED_FEED_WEIGHTS,
-                },
-            } : undefined,
+            meta: forYouResponseMeta,
             nextCursor: explicitNextCursor !== undefined
                 ? explicitNextCursor
                 : (feedPosts?.length === limit)
-                ? (type === 'home' || type === 'curated' || type === 'local'
+                ? (type === 'home' || type === 'local'
                     ? (lastFeedPost
                         ? encodeFeedCursor({
                             at: lastFeedPost.feedActivityAt || lastFeedPost.createdAt,
