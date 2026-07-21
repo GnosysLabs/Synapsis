@@ -15,7 +15,10 @@ const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve:
 const signingKey = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
 const did = generateDID(signingKey);
 
-function portableReply(parentPostId: string) {
+function portableReply(
+  parentPostId: string,
+  signedPresentation: { displayName?: string; avatarUrl?: string } = {},
+) {
   // This fixture is a historical v2 proof; its signed handle must stay byte-for-byte bare.
   const replyId = '22222222-2222-4222-8222-222222222222';
   const ts = Date.now() - 60_000;
@@ -57,7 +60,13 @@ function portableReply(parentPostId: string) {
       id: replyId,
       content: 'Proven third-party reply',
       createdAt: new Date(ts + 2_000).toISOString(),
-      author: { handle: 'alice', did, publicKey: signingKey, isNsfw: false },
+      author: {
+        handle: 'alice',
+        did,
+        publicKey: signingKey,
+        isNsfw: false,
+        ...signedPresentation,
+      },
       nodeDomain: 'author.social',
       nodeIsNsfw: false,
       isNsfw: false,
@@ -265,6 +274,28 @@ describe('remote profile and post validation', () => {
       verifyIdentityContinuity: async () => false,
     });
     expect(conflictingIdentity).toEqual([]);
+  });
+
+  it('uses author presentation from the original signed envelope, never the relay copy', async () => {
+    const parentPostId = '11111111-1111-4111-8111-111111111111';
+    const replies = await parseRemoteRepliesResponse({
+      postId: parentPostId,
+      nodeDomain: 'source.social',
+      replies: [portableReply(parentPostId, {
+        displayName: 'Alice',
+        avatarUrl: 'https://stuffbox.xyz/alice.png',
+      })],
+    }, 'source.social', parentPostId, {
+      verifyNodeProof: async () => true,
+      verifyIdentityContinuity: async () => true,
+    });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0].author).toMatchObject({
+      handle: 'alice@author.social',
+      displayName: 'Alice',
+      avatarUrl: 'https://stuffbox.xyz/alice.png',
+    });
   });
 
   it('bounds profile activity lists and drops unsigned third-party objects', () => {

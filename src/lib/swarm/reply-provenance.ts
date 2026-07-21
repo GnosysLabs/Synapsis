@@ -134,6 +134,8 @@ export interface VerifiedRelayedReply {
   nodeDomain: string;
   authorDid: string;
   authorHandle: string;
+  authorDisplayName: string | null;
+  authorAvatarUrl: string | null;
   media: Array<{
     url: string;
     altText?: string | null;
@@ -275,6 +277,10 @@ export async function verifyRelayedReplyProvenance(input: {
     nodeDomain: sourceDomain,
     authorDid: payload.userAction.did,
     authorHandle: actorAddress.canonical,
+    // Presentation comes only from the original home-node-signed envelope.
+    // The relay's editable presentation is never trusted for these fields.
+    authorDisplayName: payload.reply.author.displayName?.trim() || null,
+    authorAvatarUrl: payload.reply.author.avatarUrl || null,
     media: signedMedia.map((item) => ({
       url: item.url,
       altText: item.altText,

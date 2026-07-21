@@ -77,6 +77,7 @@ function payload() {
       author: {
         handle: 'alice',
         displayName: 'Alice',
+        avatarUrl: 'https://stuffbox.xyz/alice.png',
         did: userDid,
         publicKey: userPublicKey,
         isNsfw: false,
@@ -139,6 +140,8 @@ describe('portable federated reply provenance', () => {
       nodeDomain: 'author.social',
       authorDid: userDid,
       authorHandle: 'alice@author.social',
+      authorDisplayName: 'Alice',
+      authorAvatarUrl: 'https://stuffbox.xyz/alice.png',
       isNsfw: false,
       nodeIsNsfw: false,
       media: [{ url: 'https://stuffbox.xyz/reply.jpg' }],

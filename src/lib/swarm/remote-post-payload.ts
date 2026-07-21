@@ -480,7 +480,8 @@ export async function parseRemoteRepliesResponse(
         nodeIsNsfw: verified.nodeIsNsfw,
         author: {
           handle: verified.authorHandle,
-          displayName: verified.authorHandle,
+          displayName: verified.authorDisplayName || verified.authorHandle,
+          ...(verified.authorAvatarUrl ? { avatarUrl: verified.authorAvatarUrl } : {}),
           nodeDomain: verified.nodeDomain,
           isNsfw: verified.isNsfw,
           nodeIsNsfw: verified.nodeIsNsfw,
