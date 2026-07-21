@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   viewerAccess: vi.fn(),
   signedFederationRead: vi.fn(),
   knownNodeNsfw: vi.fn(),
+  requireSignedAction: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
@@ -28,7 +29,21 @@ vi.mock('@/lib/auth', () => ({
   requireAuth: vi.fn().mockRejectedValue(new Error('skip interaction lookup')),
 }));
 
-import { GET } from './route';
+vi.mock('@/lib/auth/verify-signature', () => ({
+  DELETE_ACTION_REQUESTS_PER_MINUTE: 10,
+  requireSignedAction: mocks.requireSignedAction,
+  SignedActionError: class SignedActionError extends Error {
+    readonly code: string;
+
+    constructor(code: string) {
+      super(code);
+      this.code = code;
+    }
+  },
+}));
+
+import { DELETE, GET } from './route';
+import { SignedActionError } from '@/lib/auth/verify-signature';
 
 const originPostId = '11111111-1111-4111-8111-111111111111';
 const remoteReplyId = '22222222-2222-4222-8222-222222222222';
@@ -110,5 +125,33 @@ describe('GET /api/posts/[id] federated threads', () => {
     expect(body.post.repliesCount).toBe(0);
     expect(body.replies).toEqual([]);
     expect(JSON.stringify(body)).not.toContain('Sensitive reply body');
+  });
+});
+
+describe('DELETE /api/posts/[id] errors', () => {
+  it('returns an explanatory rate-limit response with retry guidance', async () => {
+    mocks.requireSignedAction.mockRejectedValue(new SignedActionError('RATE_LIMITED'));
+    const postId = '33333333-3333-4333-8333-333333333333';
+    const response = await DELETE(new Request(`https://viewer.social/api/posts/${postId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({
+        action: 'delete',
+        data: { postId },
+        did: 'did:key:viewer',
+        handle: 'viewer@viewer.social',
+        ts: Date.now(),
+        nonce: 'delete-rate-limit',
+        sig: 'signature',
+      }),
+    }), { params: Promise.resolve({ id: postId }) });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('60');
+    await expect(response.json()).resolves.toEqual({
+      error: 'You can delete up to 10 posts per minute. This post was not deleted. Wait 60 seconds and try again.',
+      code: 'RATE_LIMITED',
+      limit: 10,
+      windowSeconds: 60,
+    });
   });
 });

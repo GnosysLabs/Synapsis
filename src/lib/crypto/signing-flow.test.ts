@@ -213,6 +213,30 @@ describe('Cryptographic User Signing', () => {
         expect(mockIsRateLimited).toHaveBeenCalledWith('uuid-123:follow', 30, 60 * 1000);
     });
 
+    it('allows ten post deletion requests per minute', async () => {
+        const signed = await createSignedAction(
+            'delete',
+            { postId: 'post-1' },
+            testDid,
+            testHandle,
+        );
+
+        vi.mocked(db.query.users.findFirst).mockResolvedValue({
+            id: 'uuid-123',
+            did: testDid,
+            handle: testHandle,
+            publicKey: userPublicKeyBase64,
+        } as never);
+        vi.mocked(db.insert).mockReturnValue({
+            values: vi.fn().mockResolvedValue(true),
+        } as never);
+
+        const result = await verifyUserAction(signed);
+
+        expect(result.valid).toBe(true);
+        expect(mockIsRateLimited).toHaveBeenCalledWith('uuid-123:delete', 10, 60 * 1000);
+    });
+
     it('should reject an existing replay without charging quota or inserting again', async () => {
         const signed = await createSignedAction(
             'create_post',

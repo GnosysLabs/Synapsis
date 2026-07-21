@@ -28,6 +28,7 @@ vi.mock('@/lib/contexts/ToastContext', () => ({
 
 vi.mock('@/lib/contexts/DialogContext', () => ({
     useAppDialog: () => ({
+        showAlert: vi.fn(),
         showConfirm: vi.fn(),
         showPrompt: vi.fn(),
     }),

@@ -187,7 +187,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         isIdentityUnlocked,
     } = useAuth();
     const { showToast } = useToast();
-    const { showConfirm, showPrompt } = useAppDialog();
+    const { showAlert, showConfirm, showPrompt } = useAppDialog();
     const router = useRouter();
     const [revealedPost, setRevealedPost] = useState<Post | null>(null);
     const [revealedForViewerKey, setRevealedForViewerKey] = useState<string | null>(null);
@@ -601,18 +601,43 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
             tone: 'danger',
         });
         if (!confirmed) return;
-        if (!did || !currentUserHandle) return;
+        if (!did || !currentUserHandle) {
+            await showAlert({
+                title: 'Post was not deleted',
+                message: 'Synapsis could not authorize this deletion. Sign in again and retry. Nothing was deleted.',
+                confirmLabel: 'OK',
+                tone: 'danger',
+            });
+            return;
+        }
         setDeleting(true);
         try {
             const res = await signedAPI.deletePost(post.id, did, currentUserHandle);
             if (res.ok) {
                 onDelete?.(post.id);
             } else {
-                const data = await res.json();
-                showToast(data.error || 'Failed to delete post', 'error');
+                const data = await res.json().catch(() => null) as { error?: unknown } | null;
+                const serverMessage = typeof data?.error === 'string' ? data.error : null;
+                const retryAfter = Number.parseInt(res.headers.get('Retry-After') || '', 10);
+                const fallbackMessage = res.status === 429
+                    ? `Too many posts were deleted too quickly. Nothing was deleted. Wait ${Number.isFinite(retryAfter) ? retryAfter : 60} seconds and try again.`
+                    : `The post could not be deleted (${res.status}). Nothing was deleted. Try again.`;
+                await showAlert({
+                    title: 'Post was not deleted',
+                    message: serverMessage || fallbackMessage,
+                    confirmLabel: 'OK',
+                    tone: 'danger',
+                });
             }
         } catch (error) {
-            showToast(error instanceof Error ? error.message : 'Failed to delete post', 'error');
+            await showAlert({
+                title: 'Post was not deleted',
+                message: error instanceof Error
+                    ? `Synapsis could not complete the deletion: ${error.message}. Nothing was deleted.`
+                    : 'Synapsis could not complete the deletion. Nothing was deleted. Check your connection and try again.',
+                confirmLabel: 'OK',
+                tone: 'danger',
+            });
         } finally {
             setDeleting(false);
         }

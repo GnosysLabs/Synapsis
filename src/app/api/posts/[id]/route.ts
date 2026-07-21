@@ -18,7 +18,11 @@ import {
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 import { createSignedPayload, verifySwarmRequest } from '@/lib/swarm/signature';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
-import { requireSignedAction } from '@/lib/auth/verify-signature';
+import {
+    DELETE_ACTION_REQUESTS_PER_MINUTE,
+    requireSignedAction,
+    SignedActionError,
+} from '@/lib/auth/verify-signature';
 import { signedUserActionSchema, type SignedUserAction } from '@/lib/e2ee/protocol';
 import {
     createFederationActionContext,
@@ -694,14 +698,39 @@ export async function DELETE(
                         if (deleteRes.status >= 200 && deleteRes.status < 300) {
                             return NextResponse.json({ success: true });
                         } else {
-                            return NextResponse.json({ error: 'Failed to delete on remote node' }, { status: deleteRes.status });
+                            let remoteReason: string | null = null;
+                            try {
+                                const body = deleteRes.json() as { error?: unknown };
+                                remoteReason = typeof body.error === 'string'
+                                    ? body.error.trim().slice(0, 300)
+                                    : null;
+                            } catch {
+                            }
+                            const retryAfterHeader = deleteRes.headers['retry-after'];
+                            const retryAfter = Array.isArray(retryAfterHeader)
+                                ? retryAfterHeader[0]
+                                : retryAfterHeader;
+                            return NextResponse.json({
+                                error: remoteReason
+                                    ? `The origin node did not delete this post: ${remoteReason} Nothing was deleted locally.`
+                                    : `The origin node rejected the deletion with status ${deleteRes.status}. Nothing was deleted locally.`,
+                            }, {
+                                status: deleteRes.status,
+                                headers: deleteRes.status === 429 && retryAfter
+                                    ? { 'Retry-After': retryAfter }
+                                    : undefined,
+                            });
                         }
                     } else {
-                        return NextResponse.json({ error: 'Remote post not found for verification' }, { status: 404 });
+                        return NextResponse.json({
+                            error: `The origin node could not verify this post (status ${res.status}). Nothing was deleted.`,
+                        }, { status: res.status });
                     }
                 } catch (err) {
                     console.error('[Swarm] Error deleting remote post:', err);
-                    return NextResponse.json({ error: 'Failed to communicate with remote node' }, { status: 502 });
+                    return NextResponse.json({
+                        error: 'The origin node could not be reached. Nothing was deleted. Check your connection and try again.',
+                    }, { status: 502 });
                 }
         }
 
@@ -726,7 +755,9 @@ export async function DELETE(
         }
 
         if (!isPostOwner && !isParentPostOwner) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+            return NextResponse.json({
+                error: 'You can only delete your own posts or replies posted on your own thread. Nothing was deleted.',
+            }, { status: 403 });
         }
 
         // If this is a reply to a swarm post, notify the origin before making
@@ -778,12 +809,35 @@ export async function DELETE(
 
         return NextResponse.json({ success: true });
     } catch (error) {
-        console.error('Delete post error:', error);
         if (error instanceof z.ZodError) {
             return NextResponse.json({ error: 'Invalid signed deletion' }, { status: 400 });
         }
+        if (error instanceof SignedActionError) {
+            if (error.code === 'RATE_LIMITED') {
+                return NextResponse.json({
+                    error: `You can delete up to ${DELETE_ACTION_REQUESTS_PER_MINUTE} posts per minute. This post was not deleted. Wait 60 seconds and try again.`,
+                    code: error.code,
+                    limit: DELETE_ACTION_REQUESTS_PER_MINUTE,
+                    windowSeconds: 60,
+                }, {
+                    status: 429,
+                    headers: { 'Retry-After': '60' },
+                });
+            }
+            if (error.code === 'REPLAYED_NONCE') {
+                return NextResponse.json({
+                    error: 'This delete request was already processed. Refresh the page to check whether the post is gone.',
+                    code: error.code,
+                }, { status: 409 });
+            }
+            return NextResponse.json({
+                error: 'Synapsis could not verify this delete request. Sign in again and retry. Nothing was deleted.',
+                code: error.code,
+            }, { status: 403 });
+        }
+        console.error('Delete post error:', error);
         return NextResponse.json(
-            { error: 'Failed to delete post' },
+            { error: 'The post could not be deleted because of a server error. Nothing was deleted. Try again.' },
             { status: 500 }
         );
     }

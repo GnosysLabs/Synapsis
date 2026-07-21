@@ -23,10 +23,12 @@ const DEDUPE_CLEANUP_INTERVAL_MS = 60 * 1000;
 const P256_SIGNATURE_BYTES = 64;
 const DEFAULT_ACTION_REQUESTS_PER_MINUTE = 5;
 const RELATIONSHIP_ACTION_REQUESTS_PER_MINUTE = 30;
+export const DELETE_ACTION_REQUESTS_PER_MINUTE = 10;
 let nextDedupeCleanupAt = 0;
 
 function actionRequestsPerMinute(action: string): number {
   if (action === 'chat_e2ee') return 120;
+  if (action === 'delete') return DELETE_ACTION_REQUESTS_PER_MINUTE;
   if (action === 'follow' || action === 'unfollow') {
     return RELATIONSHIP_ACTION_REQUESTS_PER_MINUTE;
   }
