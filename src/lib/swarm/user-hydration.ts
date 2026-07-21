@@ -5,6 +5,7 @@ import {
     parseAccountAddress,
 } from '@/lib/identity/account-address';
 import { getCanonicalSwarmSeedDomain } from './node-domain';
+import { isNodeBlocked } from './node-blocklist';
 
 const MAX_REMOTE_USERS_TO_HYDRATE = 50;
 const MAX_CONCURRENT_PROFILE_HYDRATIONS = 6;
@@ -56,6 +57,7 @@ export async function hydrateSwarmUsers(
     // We'll just run them concurrently with a limit
 
     const hydratedMap = new Map<string, Partial<HydratedUser>>();
+    const blockedUserIds = new Set<string>();
 
     await mapWithConcurrency(
         needsHydration,
@@ -88,6 +90,10 @@ export async function hydrateSwarmUsers(
                     isNsfw: response.profile.isNsfw,
                     nodeIsNsfw: response.profile.nodeIsNsfw,
                 });
+            } else if (await isNodeBlocked(domain)) {
+                // A transient profile fetch failure may use the cached summary,
+                // but an administrator block is a hard visibility boundary.
+                blockedUserIds.add(user.id);
             }
         } catch (e) {
             // Just ignore failures and keep original data
@@ -97,7 +103,7 @@ export async function hydrateSwarmUsers(
     );
 
     // Merge results
-    return users.map(user => {
+    return users.filter(user => !blockedUserIds.has(user.id)).map(user => {
         const freshdiv = hydratedMap.get(user.id);
         if (freshdiv) {
             return {

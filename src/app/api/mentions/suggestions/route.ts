@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, like, or } from 'drizzle-orm';
+import { and, eq, isNull, like, or } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db, blocks, mutedNodes, mutes, remoteFollows, users } from '@/db';
@@ -20,6 +20,7 @@ import {
   parseAccountAddress,
   requireCanonicalAccountHomeDomain,
 } from '@/lib/identity/account-address';
+import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 
 const querySchema = z.object({
   q: z.string().max(280),
@@ -160,8 +161,11 @@ export async function GET(request: NextRequest) {
 
       const domain = canonicalAccountHomeDomain(requestedDomain);
       if (!domain) return NextResponse.json({ suggestions: [] });
-      const mutedDomains = await mutedNodeDomains(viewer.id);
-      if (mutedDomains.has(domain)) {
+      const [mutedDomains, blockedNodeDomains] = await Promise.all([
+        mutedNodeDomains(viewer.id),
+        getBlockedNodeDomains(),
+      ]);
+      if (mutedDomains.has(domain) || blockedNodeDomains.has(domain)) {
         return NextResponse.json({ suggestions: [] });
       }
 
@@ -174,8 +178,9 @@ export async function GET(request: NextRequest) {
     }
 
     const local = await localSuggestions(query, parsed.data.limit, excludedIds, localNodeIsNsfw);
-    const [mutedDomains, knownRemote] = await Promise.all([
+    const [mutedDomains, blockedNodeDomains, knownRemote] = await Promise.all([
       mutedNodeDomains(viewer.id),
+      getBlockedNodeDomains(),
       db.select({
       handle: remoteFollows.targetHandle,
       displayName: remoteFollows.displayName,
@@ -184,6 +189,7 @@ export async function GET(request: NextRequest) {
         .from(remoteFollows)
         .where(and(
           eq(remoteFollows.followerId, viewer.id),
+          isNull(remoteFollows.suspendedAt),
           or(
             like(remoteFollows.targetHandle, `${query}%`),
             like(remoteFollows.displayName, `${query}%`),
@@ -191,11 +197,12 @@ export async function GET(request: NextRequest) {
         ))
         .limit(parsed.data.limit),
     ]);
+    const excludedNodeDomains = new Set([...mutedDomains, ...blockedNodeDomains]);
 
     const seen = new Set(local.map((item) => item.handle.toLowerCase()));
     const followedRemote = knownRemote.flatMap<MentionSuggestion>((row) => {
       const address = parseAccountAddress(row.handle);
-      if (!address || mutedDomains.has(address.homeDomain)) return [];
+      if (!address || excludedNodeDomains.has(address.homeDomain)) return [];
       if (seen.has(address.canonical)) return [];
       seen.add(address.canonical);
       return [{
@@ -213,7 +220,7 @@ export async function GET(request: NextRequest) {
     const discoveredRemote = await searchKnownSwarmUsers(query, {
       limit: parsed.data.limit,
       localDomain,
-      excludedDomains: mutedDomains,
+      excludedDomains: excludedNodeDomains,
       timeoutMs: MENTION_SWARM_TIMEOUT_MS,
     });
     const remote = await excludeBlockedRemoteSuggestions(

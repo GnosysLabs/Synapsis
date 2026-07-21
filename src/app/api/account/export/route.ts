@@ -24,6 +24,7 @@ import { encryptionKeyIdFromPublicKey } from '@/lib/e2ee/bundle-proof';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { accountUsername, resolveAccountAddress } from '@/lib/identity/account-address';
+import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 
 // We'll use a simple in-memory zip approach
 // For production, consider using a streaming zip library
@@ -241,9 +242,16 @@ export async function POST(req: NextRequest) {
             },
         });
 
-        const userRemoteFollowing = await db.query.remoteFollows.findMany({
-            where: { followerId: user.id },
+        const blockedNodeDomains = await getBlockedNodeDomains();
+        const storedRemoteFollowing = await db.query.remoteFollows.findMany({
+            where: { AND: [
+                { followerId: user.id },
+                { suspendedAt: { isNull: true } },
+            ] },
         });
+        const userRemoteFollowing = storedRemoteFollowing.filter(
+            (follow) => !blockedNodeDomains.has(follow.targetNodeDomain),
+        );
 
         // Fetch DMs
         const userConversations = await db.query.chatConversations.findMany({

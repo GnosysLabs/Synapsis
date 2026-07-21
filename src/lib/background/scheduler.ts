@@ -18,12 +18,14 @@ import { syncSwarmContentBatch } from '@/lib/swarm/content-cache';
 import { markBackgroundStarted, markBackgroundTask } from '@/lib/background/health';
 import { reconcilePostSearchIndex } from '@/lib/search/post-index';
 import { processChangeNoticeCycle } from '@/lib/swarm/change-notice';
+import { reconcileBlockedNodeQuarantines } from '@/lib/swarm/node-blocklist';
 
 const GOSSIP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const REMOTE_SYNC_INTERVAL_MS = 60 * 1000; // 1 minute - keep feeds fresh
 const MENTION_DELIVERY_INTERVAL_MS = 30 * 1000;
 const PUSH_DELIVERY_INTERVAL_MS = 15 * 1000;
 const CHANGE_NOTICE_INTERVAL_MS = 1_000;
+const NODE_QUARANTINE_INTERVAL_MS = 60 * 1000;
 const STARTUP_DELAY_MS = 10 * 1000; // Wait 10s for server to be ready
 
 let isStarted = false;
@@ -60,6 +62,20 @@ async function runPushDeliveries() {
   } catch (error) {
     markBackgroundTask('push', { success: false, error });
     log('PUSH', `Outbox error: ${error}`);
+  }
+}
+
+async function runNodeBlockQuarantines() {
+  try {
+    const result = await reconcileBlockedNodeQuarantines();
+    if (result.attempted > 0) {
+      log(
+        'NODE_BLOCK',
+        `Quarantine reconciliation: ${result.completed} completed, ${result.failed} failed`,
+      );
+    }
+  } catch (error) {
+    log('NODE_BLOCK', `Quarantine reconciliation error: ${error}`);
   }
 }
 
@@ -185,6 +201,7 @@ export function startBackgroundTasks(origin?: string) {
     
     await runMentionDeliveries();
     await runPushDeliveries();
+    await runNodeBlockQuarantines();
     
     // Run initial remote sync (after 15s to let server stabilize)
     setTimeout(() => runRemoteSync(syncOrigin), 15 * 1000);
@@ -196,6 +213,7 @@ export function startBackgroundTasks(origin?: string) {
     // Schedule recurring tasks
     setInterval(runMentionDeliveries, MENTION_DELIVERY_INTERVAL_MS);
     setInterval(runPushDeliveries, PUSH_DELIVERY_INTERVAL_MS);
+    setInterval(runNodeBlockQuarantines, NODE_QUARANTINE_INTERVAL_MS);
     if (publicSwarmEnabled) {
       setInterval(runSwarmGossip, GOSSIP_INTERVAL_MS);
       setInterval(runSwarmContentSync, REMOTE_SYNC_INTERVAL_MS);

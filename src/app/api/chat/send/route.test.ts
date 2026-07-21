@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   handleRegistryFindFirst: vi.fn(),
   blockFindFirst: vi.fn(),
   followFindFirst: vi.fn(),
+  markRemoteNodeAccessDenied: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/verify-signature', () => {
@@ -39,6 +40,11 @@ vi.mock('@/lib/swarm/node-blocklist', () => ({
 
 vi.mock('@/lib/swarm/safe-federation-http', () => ({
   safeFederationRequest: mocks.safeFederationRequest,
+}));
+
+vi.mock('@/lib/swarm/remote-access', () => ({
+  markRemoteNodeAccessDenied: mocks.markRemoteNodeAccessDenied,
+  NODE_BLOCKED_CODE: 'NODE_BLOCKED',
 }));
 
 vi.mock('@/lib/push/messages', () => ({
@@ -247,5 +253,24 @@ describe('outbound federated E2EE recipient identity', () => {
 
     expect(response.status).toBe(502);
     expect(mocks.safeFederationRequest).toHaveBeenCalledOnce();
+  });
+
+  it('treats a typed remote node block as terminal federation policy', async () => {
+    mocks.handleRegistryFindFirst.mockResolvedValue({
+      handle: 'bob@remote.social',
+      did: recipientDid,
+      nodeDomain: 'remote.social',
+      identityVerified: true,
+    });
+    mocks.safeFederationRequest.mockResolvedValue({
+      status: 403,
+      json: () => ({ error: 'Blocked node', code: 'NODE_BLOCKED' }),
+    });
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ code: 'NODE_BLOCKED' });
+    expect(mocks.markRemoteNodeAccessDenied).toHaveBeenCalledWith('remote.social');
   });
 });

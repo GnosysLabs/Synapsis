@@ -1,6 +1,6 @@
 /** Durable, fair refresh scheduling for accounts followed by local users. */
 import crypto from 'node:crypto';
-import { db, remoteFollowSyncStates } from '@/db';
+import { db, remoteFollowSyncStates, swarmNodes } from '@/db';
 import { and, asc, eq, isNull, lte, or, sql } from 'drizzle-orm';
 import { mapWithConcurrency } from '@/lib/async/concurrency';
 import { cacheSwarmUserPosts, isSwarmNode } from '@/lib/swarm/interactions';
@@ -49,10 +49,16 @@ export async function seedFollowSyncStates(
     )
     select
       lower(target_handle),
-      lower(substr(target_handle, instr(target_handle, '@') + 1))
+      lower(target_node_domain)
     from remote_follows
-    where instr(target_handle, '@') > 1
+    where suspended_at is null
+      and instr(target_handle, '@') > 1
       and instr(target_handle, '@') < length(target_handle)
+      and not exists (
+        select 1 from ${swarmNodes}
+        where ${swarmNodes.domain} = remote_follows.target_node_domain
+          and ${swarmNodes.isBlocked} = 1
+      )
     group by lower(target_handle)
     on conflict (${sql.identifier('target_handle')}) do update set
       ${sql.identifier('node_domain')} = excluded.node_domain
@@ -62,6 +68,12 @@ export async function seedFollowSyncStates(
     where not exists (
       select 1 from remote_follows
       where lower(remote_follows.target_handle) = ${remoteFollowSyncStates.targetHandle}
+        and remote_follows.suspended_at is null
+        and not exists (
+          select 1 from ${swarmNodes}
+          where ${swarmNodes.domain} = remote_follows.target_node_domain
+            and ${swarmNodes.isBlocked} = 1
+        )
     )
   `);
 }
@@ -74,6 +86,11 @@ async function claimTargets(): Promise<ClaimedTarget[]> {
     nodeDomain: remoteFollowSyncStates.nodeDomain,
   }).from(remoteFollowSyncStates).where(and(
     lte(remoteFollowSyncStates.nextAttemptAt, now),
+    sql<boolean>`not exists (
+      select 1 from ${swarmNodes}
+      where ${swarmNodes.domain} = ${remoteFollowSyncStates.nodeDomain}
+        and ${swarmNodes.isBlocked} = 1
+    )`,
     or(
       isNull(remoteFollowSyncStates.leaseExpiresAt),
       lte(remoteFollowSyncStates.leaseExpiresAt, now),
@@ -96,6 +113,11 @@ async function claimTargets(): Promise<ClaimedTarget[]> {
     }).where(and(
       eq(remoteFollowSyncStates.targetHandle, candidate.targetHandle),
       lte(remoteFollowSyncStates.nextAttemptAt, now),
+      sql<boolean>`not exists (
+        select 1 from ${swarmNodes}
+        where ${swarmNodes.domain} = ${remoteFollowSyncStates.nodeDomain}
+          and ${swarmNodes.isBlocked} = 1
+      )`,
       or(
         isNull(remoteFollowSyncStates.leaseExpiresAt),
         lte(remoteFollowSyncStates.leaseExpiresAt, now),

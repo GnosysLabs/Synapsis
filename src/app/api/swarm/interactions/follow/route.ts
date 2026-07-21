@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import {
@@ -13,6 +13,7 @@ import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import {
   FederatedIdentityContinuityError,
   FEDERATED_ACTION_PROTOCOL,
+  federatedActionFailureBody,
   federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
       maxActionsPerMinute: 30,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
+      return NextResponse.json(federatedActionFailureBody(verified), federatedActionFailureInit(verified));
     }
 
     const targetAddress = resolveAccountAddress(data.targetHandle, verified.destinationDomain);
@@ -128,14 +129,39 @@ export async function POST(request: NextRequest) {
         state: true,
         userAction: verified.userAction,
       }, async () => {
-        const [inserted] = await tx.insert(remoteFollowers).values({
-          userId: targetUser.id,
-          actorUrl,
-          inboxUrl: `https://${actorDomain}/api/swarm/interactions/inbox`,
-          handle: verified.actorHandle,
-          activityId: verified.replayId,
-        }).onConflictDoNothing().returning({ id: remoteFollowers.id });
-        if (!inserted) return 'unchanged' as const;
+        const existingFollower = await tx.query.remoteFollowers.findFirst({
+          where: { AND: [{ userId: targetUser.id }, { actorUrl }] },
+        });
+        let relationshipChanged = false;
+        let relationshipOutcome: 'created' | 'reactivated' | 'unchanged' = 'unchanged';
+
+        if (existingFollower?.suspendedAt) {
+          const [reactivated] = await tx.update(remoteFollowers).set({
+            actorNodeDomain: actorDomain,
+            inboxUrl: `https://${actorDomain}/api/swarm/interactions/inbox`,
+            handle: verified.actorHandle,
+            activityId: verified.replayId,
+            suspendedAt: null,
+            suspensionReason: null,
+          }).where(and(
+            eq(remoteFollowers.id, existingFollower.id),
+            isNotNull(remoteFollowers.suspendedAt),
+          )).returning({ id: remoteFollowers.id });
+          relationshipChanged = Boolean(reactivated);
+          relationshipOutcome = reactivated ? 'reactivated' : 'unchanged';
+        } else if (!existingFollower) {
+          const [inserted] = await tx.insert(remoteFollowers).values({
+            userId: targetUser.id,
+            actorUrl,
+            actorNodeDomain: actorDomain,
+            inboxUrl: `https://${actorDomain}/api/swarm/interactions/inbox`,
+            handle: verified.actorHandle,
+            activityId: verified.replayId,
+          }).onConflictDoNothing().returning({ id: remoteFollowers.id });
+          relationshipChanged = Boolean(inserted);
+          relationshipOutcome = inserted ? 'created' : 'unchanged';
+        }
+        if (!relationshipChanged) return relationshipOutcome;
 
         await tx.update(users)
           .set({ followersCount: sql`${users.followersCount} + 1` })
@@ -149,7 +175,7 @@ export async function POST(request: NextRequest) {
           interactionId: `follow:remote:${actorDomain}:${verified.replayId}`,
           type: 'follow',
         }).onConflictDoNothing();
-        return 'created' as const;
+        return relationshipOutcome;
       });
       if (!ordered.applied) {
         return ordered.reason === 'duplicate' ? 'replay' as const : 'stale' as const;

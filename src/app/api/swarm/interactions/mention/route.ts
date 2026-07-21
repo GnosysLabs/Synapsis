@@ -11,6 +11,7 @@ import { parseMentions, uniqueMentions } from '@/lib/mentions/parser';
 import {
   FederatedIdentityContinuityError,
   FEDERATED_ACTION_PROTOCOL,
+  federatedActionFailureBody,
   federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
@@ -107,7 +108,7 @@ export async function POST(request: NextRequest) {
       maxActionsPerMinute: 120,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
+      return NextResponse.json(federatedActionFailureBody(verified), federatedActionFailureInit(verified));
     }
 
     const actionData = postActionDataSchema.safeParse(verified.userAction.data);

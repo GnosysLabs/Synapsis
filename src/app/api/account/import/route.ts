@@ -36,6 +36,7 @@ import {
     requireCanonicalAccountHomeDomain,
     resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import { isNodeBlocked } from '@/lib/swarm/node-blocklist';
 
 const isoTimestampSchema = z.iso.datetime({ offset: true });
 const didSchema = z.string().min(8).max(2_048).regex(/^did:/);
@@ -895,13 +896,18 @@ export async function POST(req: NextRequest) {
                     })
                     : null;
                 if (!targetUser) {
+                    const targetBlocked = await isNodeBlocked(followAddress.homeDomain);
                     await db.insert(remoteFollows).values({
                         followerId: newUser.id,
                         targetHandle: followAddress.canonical,
+                        targetNodeDomain: followAddress.homeDomain,
                         targetActorUrl: follow.actorUrl || `${sourceNodeProtocol(followAddress.homeDomain)}://${followAddress.homeDomain}/users/${followAddress.username}`,
                         inboxUrl: follow.inboxUrl || `${sourceNodeProtocol(followAddress.homeDomain)}://${followAddress.homeDomain}/inbox`,
                         activityId: follow.activityId || `migrate-${uuid()}`,
+                        suspendedAt: targetBlocked ? new Date() : null,
+                        suspensionReason: targetBlocked ? 'node_block' : null,
                     });
+                    if (targetBlocked) continue;
                 } else {
                     await db.insert(follows).values({
                         followerId: newUser.id,

@@ -23,6 +23,7 @@ import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 import { parseAccountAddress } from '@/lib/identity/account-address';
+import { markRemoteNodeAccessDenied, NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access';
 
 function validateCiphertextLengths(envelope: z.infer<typeof e2eeMessageEnvelopeSchema>): void {
   if (Buffer.from(envelope.nonce, 'base64url').length !== 24) throw new Error('Invalid message nonce');
@@ -356,10 +357,17 @@ export async function POST(request: NextRequest) {
       } catch {
         // Preserve a generic delivery error for non-JSON remote failures.
       }
+      const remotelyBlocked = remoteResponse.status === 403
+        && remoteBody?.code === NODE_BLOCKED_CODE;
+      if (remotelyBlocked) {
+        await markRemoteNodeAccessDenied(targetDomain);
+      }
       return NextResponse.json({
         error: remoteBody?.error || 'Recipient node rejected the encrypted message',
         code: remoteBody?.code || 'E2EE_REMOTE_DELIVERY_FAILED',
-      }, { status: remoteResponse.status === 426 ? 409 : 502 });
+      }, {
+        status: remotelyBlocked ? 403 : remoteResponse.status === 426 ? 409 : 502,
+      });
     }
 
     await db.transaction(async (tx) => {

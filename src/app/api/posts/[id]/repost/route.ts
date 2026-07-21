@@ -10,6 +10,7 @@ import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { fetchRemotePostSnapshot } from '@/lib/swarm/remote-post-snapshot';
 import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
 import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
+import { isNodeBlocked } from '@/lib/swarm/node-blocklist';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -122,6 +123,12 @@ export async function POST(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
             }
             const { domain: targetDomain, originalPostId } = parsedSwarmId;
+            if (await isNodeBlocked(targetDomain)) {
+                return NextResponse.json({
+                    error: 'This node is blocked by the local administrator.',
+                    code: 'NODE_BLOCKED_LOCALLY',
+                }, { status: 403 });
+            }
 
             const existingRepost = await db.query.userSwarmReposts.findFirst({
                 where: { AND: [{ userId: user.id }, { nodeDomain: targetDomain }, { originalPostId: originalPostId }] },
@@ -342,6 +349,15 @@ export async function DELETE(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
             }
             const { domain: targetDomain, originalPostId } = parsedSwarmId;
+            if (await isNodeBlocked(targetDomain)) {
+                await removeLocalSwarmRepost(user.id, targetDomain, originalPostId);
+                return NextResponse.json({
+                    success: true,
+                    reposted: false,
+                    localOnly: true,
+                    message: 'The repost was removed locally while this node is blocked.',
+                });
+            }
 
             // Deliver unrepost directly to the origin node
             const { deliverSwarmUnrepost } = await import('@/lib/swarm/interactions');

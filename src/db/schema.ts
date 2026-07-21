@@ -94,6 +94,7 @@ export const users = sqliteTable('users', {
   index('users_suspended_idx').on(table.isSuspended),
   index('users_silenced_idx').on(table.isSilenced),
   index('users_nsfw_idx').on(table.isNsfw),
+  index('users_remote_home_idx').on(table.homeDomain, table.isLocalAccount),
 ]);
 
 /**
@@ -226,6 +227,7 @@ export const posts = sqliteTable('posts', {
   index('posts_user_id_idx').on(table.userId),
   index('posts_user_created_idx').on(table.userId, table.createdAt),
   index('posts_feed_filter_idx').on(table.isRemoved, table.replyToId, table.swarmReplyToId, table.createdAt),
+  index('posts_swarm_reply_idx').on(table.swarmReplyToId),
   index('posts_created_at_idx').on(table.createdAt),
   index('posts_reply_to_idx').on(table.replyToId),
   index('posts_removed_idx').on(table.isRemoved),
@@ -314,6 +316,7 @@ export const remoteFollows = sqliteTable('remote_follows', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   followerId: text('follower_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   targetHandle: text('target_handle').notNull(), // Canonical username@domain
+  targetNodeDomain: text('target_node_domain').notNull(), // Explicit moderation boundary
   targetActorUrl: text('target_actor_url').notNull(),
   inboxUrl: text('inbox_url').notNull(),
   activityId: text('activity_id').notNull(), // UUID token for activity URL
@@ -321,10 +324,16 @@ export const remoteFollows = sqliteTable('remote_follows', {
   displayName: text('display_name'),
   bio: text('bio'),
   avatarUrl: text('avatar_url'),
+  // A hard node block removes this relationship from every active projection
+  // without losing the local user's historical intent. It is never restored
+  // implicitly; a fresh signed follow must reactivate it after unblock.
+  suspendedAt: integer('suspended_at', { mode: 'timestamp' }),
+  suspensionReason: text('suspension_reason'),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
   index('remote_follows_follower_idx').on(table.followerId),
   index('remote_follows_target_idx').on(table.targetHandle),
+  index('remote_follows_domain_active_idx').on(table.targetNodeDomain, table.suspendedAt),
   uniqueIndex('remote_follows_user_target_unique_idx').on(table.followerId, table.targetHandle),
 ]);
 
@@ -336,14 +345,18 @@ export const remoteFollowers = sqliteTable('remote_followers', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }), // Local user being followed
   actorUrl: text('actor_url').notNull(), // Remote actor URL
+  actorNodeDomain: text('actor_node_domain').notNull(), // Explicit moderation boundary
   inboxUrl: text('inbox_url').notNull(), // Remote user's inbox
   sharedInboxUrl: text('shared_inbox_url'), // Optional shared inbox
   handle: text('handle'), // Canonical remote username@home-domain
   activityId: text('activity_id'), // The Follow activity ID
+  suspendedAt: integer('suspended_at', { mode: 'timestamp' }),
+  suspensionReason: text('suspension_reason'),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
   index('remote_followers_user_idx').on(table.userId),
   index('remote_followers_actor_idx').on(table.actorUrl),
+  index('remote_followers_domain_active_idx').on(table.actorNodeDomain, table.suspendedAt),
   uniqueIndex('remote_followers_user_actor_unique').on(table.userId, table.actorUrl),
 ]);
 
@@ -425,6 +438,7 @@ export const remoteLikes = sqliteTable('remote_likes', {
 }, (table) => [
   index('remote_likes_post_idx').on(table.postId),
   index('remote_likes_actor_idx').on(table.actorHandle, table.actorNodeDomain),
+  index('remote_likes_domain_idx').on(table.actorNodeDomain),
   uniqueIndex('remote_likes_unique').on(table.postId, table.actorHandle, table.actorNodeDomain),
 ]);
 
@@ -511,6 +525,7 @@ export const remoteReposts = sqliteTable('remote_reposts', {
 }, (table) => [
   index('remote_reposts_post_idx').on(table.postId),
   index('remote_reposts_actor_idx').on(table.actorHandle, table.actorNodeDomain),
+  index('remote_reposts_domain_idx').on(table.actorNodeDomain),
   uniqueIndex('remote_reposts_unique').on(table.postId, table.actorHandle, table.actorNodeDomain),
 ]);
 
@@ -599,6 +614,8 @@ export const notifications = sqliteTable('notifications', {
   index('notifications_created_idx').on(table.createdAt),
   index('notifications_user_created_idx').on(table.userId, table.createdAt),
   index('notifications_user_read_created_idx').on(table.userId, table.readAt, table.createdAt),
+  index('notifications_actor_domain_idx').on(table.actorNodeDomain),
+  index('notifications_remote_post_domain_idx').on(table.remotePostDomain),
   uniqueIndex('notifications_interaction_unique_idx').on(table.interactionId),
 ]);
 
@@ -676,6 +693,7 @@ export const mentionDeliveries = sqliteTable('mention_deliveries', {
 }, (table) => [
   uniqueIndex('mention_deliveries_target_unique_idx').on(table.postId, table.targetHandle, table.targetDomain),
   index('mention_deliveries_due_idx').on(table.status, table.nextAttemptAt),
+  index('mention_deliveries_domain_status_idx').on(table.targetDomain, table.status),
 ]);
 
 
@@ -845,6 +863,10 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
   isBlocked: integer('is_blocked', { mode: 'boolean' }).default(false).notNull(),
   blockReason: text('block_reason'),
   blockedAt: integer('blocked_at', { mode: 'timestamp' }),
+  // The perimeter flag is committed before projection cleanup. If cleanup is
+  // interrupted, the node stays blocked and the durable reconciler retries.
+  quarantineCompletedAt: integer('quarantine_completed_at', { mode: 'timestamp' }),
+  quarantineError: text('quarantine_error'),
   // This peer told us that our node is blocked at its origin. This is distinct
   // from the local administrator's block and can clear after a later signed
   // content read succeeds.
@@ -864,6 +886,7 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
   index('swarm_nodes_trust_idx').on(table.trustScore),
   index('swarm_nodes_nsfw_idx').on(table.isNsfw),
   index('swarm_nodes_blocked_idx').on(table.isBlocked),
+  index('swarm_nodes_block_quarantine_idx').on(table.isBlocked, table.quarantineCompletedAt),
   index('swarm_nodes_remote_denied_idx').on(table.remoteAccessDeniedAt),
   index('swarm_nodes_eligible_seen_idx').on(table.isActive, table.isBlocked, table.trustScore, table.lastSeenAt),
 ]);
@@ -1185,6 +1208,7 @@ export const chatMessages = sqliteTable('chat_messages', {
   index('chat_messages_created_idx').on(table.createdAt),
   index('chat_messages_conversation_created_idx').on(table.conversationId, table.createdAt),
   index('chat_messages_swarm_id_idx').on(table.swarmMessageId),
+  index('chat_messages_sender_domain_idx').on(table.senderNodeDomain),
   uniqueIndex('chat_messages_conversation_client_id_unique').on(table.conversationId, table.clientMessageId),
 ]);
 

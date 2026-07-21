@@ -7,6 +7,7 @@ import {
   pushSubscriptions,
 } from '@/db';
 import { openPushDeliveryToken } from '@/lib/push/credentials';
+import { isNodeBlocked } from '@/lib/swarm/node-blocklist';
 
 const DEFAULT_RELAY_URL = 'https://push.synapsis.social';
 const MAX_DELIVERY_ATTEMPTS = 12;
@@ -122,6 +123,12 @@ async function deliverOne(
   if (!preferenceAllows(subscription, notification.type)) {
     return updateFailure(delivery, 'Notification type is disabled for this device', false);
   }
+  if (
+    await isNodeBlocked(notification.actorNodeDomain)
+    || await isNodeBlocked(notification.remotePostDomain)
+  ) {
+    return updateFailure(delivery, 'Notification belongs to a blocked node', false);
+  }
 
   const response = await sendRelayEvent(subscription, {
     eventId: delivery.id,
@@ -183,6 +190,9 @@ async function deliverMessage(
 
   if (!subscription || !message || subscription.disabledAt) {
     return updateMessageFailure(delivery, 'Subscription or message no longer exists', false);
+  }
+  if (await isNodeBlocked(message.senderNodeDomain)) {
+    return updateMessageFailure(delivery, 'Message belongs to a blocked node', false);
   }
 
   const response = await sendRelayEvent(subscription, {

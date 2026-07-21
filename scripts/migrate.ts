@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/tursodatabase/migrator';
 import { closeDb, db } from '../src/db';
 import { reconcilePostSearchIndex } from '../src/lib/search/post-index';
+import { reconcileBlockedNodeQuarantines } from '../src/lib/swarm/node-blocklist';
 import {
   getCanonicalSwarmSeedDomain,
   normalizeNodeDomain,
@@ -377,6 +378,12 @@ async function main() {
 
     await db.run(sql.raw('PRAGMA foreign_keys = ON'));
     foreignKeysDisabled = false;
+    const quarantine = await reconcileBlockedNodeQuarantines();
+    if (quarantine.failed > 0) {
+      console.warn(
+        `Blocked-node quarantine is still pending for ${quarantine.failed} node(s); the runtime reconciler will retry.`,
+      );
+    }
     await backfillPostSearchIndex();
     await assertForeignKeyIntegrity();
     await db.run(sql.raw('PRAGMA wal_checkpoint(TRUNCATE)'));

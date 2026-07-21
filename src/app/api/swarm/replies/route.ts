@@ -16,6 +16,7 @@ import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/sw
 import { upsertRemoteUser } from '@/lib/swarm/user-cache';
 import {
   FederatedIdentityContinuityError,
+  federatedActionFailureBody,
   federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
@@ -126,7 +127,7 @@ export async function POST(request: NextRequest) {
       maxActionsPerMinute: 30,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
+      return NextResponse.json(federatedActionFailureBody(verified), federatedActionFailureInit(verified));
     }
 
     const actionData = replyActionDataSchema.safeParse(verified.userAction.data);
@@ -335,7 +336,7 @@ export async function DELETE(request: NextRequest) {
       maxActionsPerMinute: 30,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
+      return NextResponse.json(federatedActionFailureBody(verified), federatedActionFailureInit(verified));
     }
     const actionData = deleteReplyActionDataSchema.safeParse(verified.userAction.data);
     if (!actionData.success

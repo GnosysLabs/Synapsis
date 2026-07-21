@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, lte, or } from 'drizzle-orm';
+import { and, eq, lte, notInArray, or } from 'drizzle-orm';
 
 import {
   db,
@@ -22,6 +22,10 @@ import {
   requireCanonicalAccountHomeDomain,
   resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import {
+  getBlockedNodeDomains,
+  isNodeBlocked,
+} from '@/lib/swarm/node-blocklist';
 
 const MAX_DELIVERY_ATTEMPTS = 12;
 const PROCESSING_LEASE_MS = 2 * 60 * 1000;
@@ -147,7 +151,7 @@ export async function registerPostMentions(
     }
 
     const targetDomain = canonicalAccountHomeDomain(mention.domain);
-    if (!targetDomain) {
+    if (!targetDomain || await isNodeBlocked(targetDomain)) {
       result.skipped += 1;
       continue;
     }
@@ -191,6 +195,22 @@ async function markDeliveryFailure(
 async function attemptMentionDelivery(
   delivery: typeof mentionDeliveries.$inferSelect,
 ): Promise<'delivered' | 'retry' | 'dead'> {
+  const targetDomain = canonicalAccountHomeDomain(delivery.targetDomain);
+  if (!targetDomain) {
+    return markDeliveryFailure(delivery, {
+      success: false,
+      retryable: false,
+      error: 'Mention target has an invalid destination node',
+    });
+  }
+  if (await isNodeBlocked(targetDomain)) {
+    return markDeliveryFailure(delivery, {
+      success: false,
+      retryable: false,
+      error: `Mention destination ${targetDomain} is blocked`,
+    });
+  }
+
   const post = await db.query.posts.findFirst({
     where: { id: delivery.postId },
     with: { author: true },
@@ -214,19 +234,18 @@ async function attemptMentionDelivery(
     });
   }
 
-  let knownNode = await isSwarmNode(delivery.targetDomain);
-  if (!knownNode) knownNode = (await discoverNode(delivery.targetDomain)).success;
+  let knownNode = await isSwarmNode(targetDomain);
+  if (!knownNode) knownNode = (await discoverNode(targetDomain)).success;
   if (!knownNode) {
     return markDeliveryFailure(delivery, {
       success: false,
       retryable: true,
-      error: `Unable to discover Synapsis node ${delivery.targetDomain}`,
+      error: `Unable to discover Synapsis node ${targetDomain}`,
     });
   }
 
-  const targetDomain = canonicalAccountHomeDomain(delivery.targetDomain);
   const targetAddress = resolveAccountAddress(delivery.targetHandle, targetDomain);
-  if (!targetDomain || !targetAddress || targetAddress.homeDomain !== targetDomain) {
+  if (!targetAddress || targetAddress.homeDomain !== targetDomain) {
     return markDeliveryFailure(delivery, {
       success: false,
       retryable: false,
@@ -234,7 +253,7 @@ async function attemptMentionDelivery(
     });
   }
 
-  const response = await deliverSwarmMention(delivery.targetDomain, {
+  const response = await deliverSwarmMention(targetDomain, {
     userAction,
     mentionedHandle: targetAddress.canonical,
     mention: {
@@ -269,21 +288,41 @@ async function runMentionDeliveryOutbox(limit: number): Promise<MentionOutboxRes
   const result: MentionOutboxResult = { delivered: 0, retried: 0, dead: 0 };
   const now = new Date();
   const staleBefore = new Date(now.getTime() - PROCESSING_LEASE_MS);
+  const blockedDomains = Array.from(await getBlockedNodeDomains());
+  const unblockedTarget = blockedDomains.length > 0
+    ? notInArray(mentionDeliveries.targetDomain, blockedDomains)
+    : undefined;
 
   await db.update(mentionDeliveries).set({ status: 'retry', nextAttemptAt: now, updatedAt: now })
     .where(and(
       eq(mentionDeliveries.status, 'processing'),
       lte(mentionDeliveries.lastAttemptAt, staleBefore),
+      unblockedTarget,
     ));
 
   const due = await db.select().from(mentionDeliveries)
     .where(and(
       or(eq(mentionDeliveries.status, 'pending'), eq(mentionDeliveries.status, 'retry')),
       lte(mentionDeliveries.nextAttemptAt, now),
+      unblockedTarget,
     ))
     .limit(Math.max(1, Math.min(limit, 100)));
 
   for (const delivery of due) {
+    if (await isNodeBlocked(delivery.targetDomain)) {
+      const cancelled = await db.update(mentionDeliveries).set({
+        status: 'dead',
+        nextAttemptAt: now,
+        lastError: 'Mention destination was blocked before delivery',
+        updatedAt: now,
+      }).where(and(
+        eq(mentionDeliveries.id, delivery.id),
+        or(eq(mentionDeliveries.status, 'pending'), eq(mentionDeliveries.status, 'retry')),
+      )).returning({ id: mentionDeliveries.id });
+      if (cancelled.length > 0) result.dead += 1;
+      continue;
+    }
+
     const claimed = await db.update(mentionDeliveries).set({
       status: 'processing',
       lastAttemptAt: new Date(),

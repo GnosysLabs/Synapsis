@@ -47,6 +47,7 @@ import {
   type VerifiedChangeBundle,
 } from './change-bundle';
 import { resolveAccountAddress } from '@/lib/identity/account-address';
+import { isNodeBlocked } from './node-blocklist';
 
 const DEFAULT_SYNC_BATCH_SIZE = 8;
 const MAX_SYNC_BATCH_SIZE = 64;
@@ -209,6 +210,7 @@ async function claimDuePeers(batchSize: number, onlyDomain?: string): Promise<Cl
   const claimed: ClaimedPeer[] = [];
   for (const candidate of candidates) {
     if (claimed.length >= batchSize) break;
+    if (await isNodeBlocked(candidate.domain)) continue;
     const leaseOwner = crypto.randomUUID();
     const [row] = await db.update(swarmContentSyncStates)
       .set({
@@ -444,15 +446,19 @@ export async function applyRemoteAccountDeletions(
       const outgoingFollowOwners = await tx.select({
         userId: remoteFollows.followerId,
         count: sql<number>`count(*)`,
-      }).from(remoteFollows).where(sql<boolean>`
-        lower(ltrim(${remoteFollows.targetHandle}, '@')) = ${qualifiedHandle}
-      `).groupBy(remoteFollows.followerId);
+      }).from(remoteFollows).where(and(
+        sql<boolean>`lower(ltrim(${remoteFollows.targetHandle}, '@')) = ${qualifiedHandle}`,
+        isNull(remoteFollows.suspendedAt),
+      )).groupBy(remoteFollows.followerId);
       const incomingFollowOwners = await tx.select({
         userId: remoteFollowers.userId,
         count: sql<number>`count(*)`,
-      }).from(remoteFollowers).where(or(
-        sql<boolean>`lower(ltrim(${remoteFollowers.handle}, '@')) = ${qualifiedHandle}`,
-        eq(remoteFollowers.actorUrl, actorUrl),
+      }).from(remoteFollowers).where(and(
+        or(
+          sql<boolean>`lower(ltrim(${remoteFollowers.handle}, '@')) = ${qualifiedHandle}`,
+          eq(remoteFollowers.actorUrl, actorUrl),
+        ),
+        isNull(remoteFollowers.suspendedAt),
       )).groupBy(remoteFollowers.userId);
       const likeTargets = await tx.select({
         postId: remoteLikes.postId,
@@ -687,6 +693,9 @@ async function reconcileLegacyPeerReferences(peer: ClaimedPeer): Promise<{
 
 async function syncPeer(peer: ClaimedPeer): Promise<{ domain: string; cached: number; error?: string }> {
   try {
+    if (await isNodeBlocked(peer.domain)) {
+      throw new Error(`Content origin ${peer.domain} is blocked`);
+    }
     const [cacheState] = await db.select({ count: sql<number>`count(*)` })
       .from(remotePosts)
       .where(eq(remotePosts.nodeDomain, peer.domain));
@@ -756,6 +765,9 @@ async function applyParsedPeerSync(
   parsed: ParsedTimeline,
   options: { requestFullSnapshot: boolean; directOriginRead: boolean },
 ): Promise<number> {
+    if (await isNodeBlocked(peer.domain)) {
+      throw new Error(`Content origin ${peer.domain} is blocked`);
+    }
     if (peer.changeCursor !== null && peer.changeCursor >= 0
       && parsed.changeCursor !== undefined
       && parsed.changeCursor < peer.changeCursor) {
@@ -801,6 +813,10 @@ async function applyParsedPeerSync(
     ));
     const snapshots = parsed.changes.length > 0 ? changedPosts : parsed.posts;
     const cached = await cacheValidatedPosts(peer.domain, snapshots, authoritativeNodeIsNsfw);
+    if (await isNodeBlocked(peer.domain)) {
+      await db.delete(remotePosts).where(eq(remotePosts.nodeDomain, peer.domain));
+      throw new Error(`Content origin ${peer.domain} was blocked while caching`);
+    }
     const highWater = parsed.posts.reduce<{ at: Date; id: string } | null>((newest, post) => {
       const activityAt = new Date(post.feedActivityAt || post.createdAt);
       return !newest
@@ -850,6 +866,7 @@ async function fetchChangeBundleFromRelays(
   afterCursor: number,
   relayHints: readonly string[],
 ): Promise<VerifiedChangeBundle | null> {
+  if (await isNodeBlocked(origin)) return null;
   const ourDomain = getPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
   const candidates = Array.from(new Set(relayHints))
     .map(getPublicSwarmDomain)
@@ -891,6 +908,9 @@ async function applyVerifiedChangeBundle(
   bundle: VerifiedChangeBundle,
   targetCursor: number,
 ): Promise<number> {
+  if (bundle.origin !== peer.domain || await isNodeBlocked(bundle.origin)) {
+    throw new Error('Cannot apply a change bundle from a blocked or mismatched origin');
+  }
   const afterCursor = peer.changeCursor ?? -1;
   if (afterCursor < 0
     || bundle.fromCursor > afterCursor
@@ -965,8 +985,13 @@ export async function syncSwarmContentNoticeOrigin(
   },
 ): Promise<{ domain: string; cached: number; error?: string } | null> {
   const normalizedDomain = normalizeNodeDomain(domain);
+  if (await isNodeBlocked(normalizedDomain)) return null;
   const [peer] = await claimDuePeers(1, normalizedDomain);
   if (!peer) return null;
+  if (await isNodeBlocked(peer.domain)) {
+    await deferClaimedPeer(peer, new Date(Date.now() + SUCCESS_REFRESH_MS));
+    return null;
+  }
 
   const fallbackAt = options.directFallbackAt?.getTime() ?? 0;
   try {
@@ -1053,6 +1078,7 @@ export async function getCachedSwarmTimeline(
       select 1 from ${remoteFollows}
       where ${remoteFollows.followerId} = ${options.followedByUserId}
         and ${remoteFollows.targetHandle} = ${remotePosts.authorHandle}
+        and ${remoteFollows.suspendedAt} is null
     )`] : []),
     ...(indexedPostIds ? [inArray(remotePosts.id, indexedPostIds)] : []),
     ...(!options.includeNsfw ? [

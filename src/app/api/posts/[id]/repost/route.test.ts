@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     update: vi.fn(),
     updateSet: vi.fn(),
     updateWhere: vi.fn(),
+    isNodeBlocked: vi.fn(),
 }));
 
 const tables = vi.hoisted(() => ({
@@ -53,6 +54,10 @@ vi.mock('@/lib/swarm/remote-post-snapshot', () => ({
     fetchRemotePostSnapshot: vi.fn(),
 }));
 
+vi.mock('@/lib/swarm/node-blocklist', () => ({
+    isNodeBlocked: mocks.isNodeBlocked,
+}));
+
 import { DELETE } from './route';
 import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
 
@@ -88,6 +93,7 @@ describe('remote unrepost cleanup', () => {
             isSilenced: false,
         });
         mocks.findStoredRepost.mockResolvedValue({ id: 'stored-repost-1' });
+        mocks.isNodeBlocked.mockResolvedValue(false);
         mocks.delete.mockReturnValue({ where: mocks.deleteWhere });
         mocks.updateSet.mockReturnValue({ where: mocks.updateWhere });
         mocks.update.mockReturnValue({ set: mocks.updateSet });
@@ -124,5 +130,20 @@ describe('remote unrepost cleanup', () => {
         expect(response.status).toBe(502);
         expect(mocks.transaction).not.toHaveBeenCalled();
         expect(mocks.delete).not.toHaveBeenCalled();
+    });
+
+    it('removes the local repost without delivery when this node blocked the origin', async () => {
+        mocks.isNodeBlocked.mockResolvedValue(true);
+
+        const response = await DELETE(signedUnrepostRequest(), routeContext);
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({
+            success: true,
+            reposted: false,
+            localOnly: true,
+        });
+        expect(mocks.deliverSwarmUnrepost).not.toHaveBeenCalled();
+        expect(mocks.delete).toHaveBeenCalledWith(tables.userSwarmReposts);
     });
 });

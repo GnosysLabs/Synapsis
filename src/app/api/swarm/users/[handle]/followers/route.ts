@@ -5,13 +5,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { db, follows, users } from '@/db';
-import { and, eq } from 'drizzle-orm';
+import { db, follows, remoteFollowers, users } from '@/db';
+import { and, eq, isNull, notInArray } from 'drizzle-orm';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 import { parseBoundedInteger } from '@/lib/http/query';
+import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 import {
   requireCanonicalAccountHomeDomain,
   resolveAccountAddress,
@@ -113,10 +114,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
       }));
 
     // Get remote followers
-    const userRemoteFollowers = await db.query.remoteFollowers.findMany({
-      where: { userId: user.id },
-      limit,
-    });
+    const blockedNodeDomains = Array.from(await getBlockedNodeDomains());
+    const userRemoteFollowers = await db.select().from(remoteFollowers).where(and(
+      eq(remoteFollowers.userId, user.id),
+      isNull(remoteFollowers.suspendedAt),
+      ...(blockedNodeDomains.length > 0
+        ? [notInArray(remoteFollowers.actorNodeDomain, blockedNodeDomains)]
+        : []),
+    )).limit(limit);
 
     const remoteFollowersList: SwarmFollowerUser[] = userRemoteFollowers.flatMap((f) => {
       const address = f.handle ? resolveAccountAddress(f.handle) : null;

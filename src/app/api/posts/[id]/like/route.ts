@@ -9,6 +9,7 @@ import { fetchRemotePostSnapshot } from '@/lib/swarm/remote-post-snapshot';
 import { normalizeSameNodePostId, parseSwarmPostId } from '@/lib/swarm/post-id';
 import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
 import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
+import { isNodeBlocked } from '@/lib/swarm/node-blocklist';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -104,6 +105,12 @@ export async function POST(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
             }
             const { domain: targetDomain, originalPostId } = parsedSwarmId;
+            if (await isNodeBlocked(targetDomain)) {
+                return NextResponse.json({
+                    error: 'This node is blocked by the local administrator.',
+                    code: 'NODE_BLOCKED_LOCALLY',
+                }, { status: 403 });
+            }
 
             // Deliver like directly to the origin node
             const { deliverSwarmLike } = await import('@/lib/swarm/interactions');
@@ -310,6 +317,19 @@ export async function DELETE(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: 'Invalid swarm post ID' }, { status: 400 });
             }
             const { domain: targetDomain, originalPostId } = parsedSwarmId;
+            if (await isNodeBlocked(targetDomain)) {
+                await db.delete(userSwarmLikes).where(and(
+                    eq(userSwarmLikes.userId, user.id),
+                    eq(userSwarmLikes.nodeDomain, targetDomain),
+                    eq(userSwarmLikes.originalPostId, originalPostId),
+                ));
+                return NextResponse.json({
+                    success: true,
+                    liked: false,
+                    localOnly: true,
+                    message: 'The like was removed locally while this node is blocked.',
+                });
+            }
 
             // Deliver unlike directly to the origin node
             const { deliverSwarmUnlike } = await import('@/lib/swarm/interactions');

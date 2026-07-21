@@ -53,6 +53,8 @@ type AdminNode = {
     isBlocked: boolean;
     blockReason?: string | null;
     blockedAt?: string | null;
+    quarantineCompletedAt?: string | null;
+    quarantineError?: string | null;
     remoteAccessDeniedAt?: string | null;
     remoteAccessDeniedReason?: string | null;
     lastSeenAt?: string | null;
@@ -66,7 +68,7 @@ const formatDate = (value: string) => {
 };
 
 export default function ModerationPage() {
-    const { showPrompt } = useAppDialog();
+    const { showAlert, showConfirm, showPrompt } = useAppDialog();
     const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
     const [tab, setTab] = useState<'reports' | 'posts' | 'users' | 'nodes'>('reports');
     const [reports, setReports] = useState<Report[]>([]);
@@ -217,14 +219,48 @@ export default function ModerationPage() {
     };
 
     const handleNodeAction = async (action: 'block' | 'unblock', domain: string, reason?: string) => {
-        await fetch('/api/admin/nodes', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action, domain, reason }),
-        });
-        setNodeDomain('');
-        setNodeReason('');
-        loadNodes();
+        try {
+            const response = await fetch('/api/admin/nodes', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action, domain, reason }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'The node moderation change failed.');
+            }
+
+            if (action === 'block') {
+                const affected = data.quarantine
+                    ? Object.values(data.quarantine as Record<string, number>)
+                        .reduce((sum, value) => sum + Number(value || 0), 0)
+                    : 0;
+                await showAlert({
+                    title: data.quarantinePending ? 'Node blocked; cleanup pending' : 'Node quarantined',
+                    message: data.quarantinePending
+                        ? `The network perimeter for ${domain} is active. Cleanup will retry automatically. ${data.node?.quarantineError || ''}`.trim()
+                        : `${domain} is blocked. ${affected} active or cached projections were suspended, removed, or redacted. Existing relationships will not return automatically after an unblock.`,
+                    tone: data.quarantinePending ? 'danger' : 'default',
+                });
+            } else {
+                await showAlert({
+                    title: data.reconnect?.verified ? 'Node unblocked and verified' : 'Node unblocked; reconnect pending',
+                    message: data.reconnect?.verified
+                        ? `${domain} passed direct rediscovery. Old follows and followers remain suspended; each side must make a fresh signed follow to reconnect.`
+                        : `${domain} is allowed again, but direct rediscovery did not verify it yet. It remains inactive, and old relationships remain suspended. ${data.reconnect?.error || ''}`.trim(),
+                });
+            }
+
+            setNodeDomain('');
+            setNodeReason('');
+            await loadNodes();
+        } catch (error) {
+            await showAlert({
+                title: 'Node moderation failed',
+                message: error instanceof Error ? error.message : 'The node moderation change failed.',
+                tone: 'danger',
+            });
+        }
     };
 
     const reportCounts = useMemo(() => {
@@ -543,7 +579,7 @@ export default function ModerationPage() {
                         <div className="card" style={{ padding: '16px', marginBottom: '16px' }}>
                             <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Block node</h2>
                             <p style={{ color: 'var(--foreground-secondary)', marginBottom: '12px' }}>
-                                Blocked nodes cannot deliver swarm interactions, appear in swarm feeds, or exchange chat with this node.
+                                A block is a hard quarantine. It pauses follows and followers, removes that node&apos;s active interactions and caches, cancels queued delivery, and makes chat history read-only. Identity proofs and local history remain. Unblocking never silently restores relationships.
                             </p>
                             <div style={{ display: 'grid', gap: '12px' }}>
                                 <input
@@ -603,6 +639,11 @@ export default function ModerationPage() {
                                                             blocked us
                                                         </span>
                                                     )}
+                                                    {node.isBlocked && !node.quarantineCompletedAt && (
+                                                        <span style={{ fontSize: '11px', color: 'rgb(245, 158, 11)', textTransform: 'uppercase' }}>
+                                                            cleanup pending
+                                                        </span>
+                                                    )}
                                                     {node.isNsfw && (
                                                         <span style={{ fontSize: '11px', color: 'rgb(245, 158, 11)' }}>
                                                             NSFW
@@ -629,6 +670,11 @@ export default function ModerationPage() {
                                                         Reason: {node.blockReason}
                                                     </div>
                                                 )}
+                                                {node.quarantineError && (
+                                                    <div style={{ fontSize: '13px', color: 'rgb(239, 68, 68)', marginTop: '6px' }}>
+                                                        Cleanup retry: {node.quarantineError}
+                                                    </div>
+                                                )}
                                                 {node.remoteAccessDeniedAt && (
                                                     <div style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginTop: '6px' }}>
                                                         Remote denial {formatDate(node.remoteAccessDeniedAt)}
@@ -638,7 +684,14 @@ export default function ModerationPage() {
                                             </div>
                                             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                                                 {node.isBlocked ? (
-                                                    <button className="btn btn-ghost btn-sm" onClick={() => handleNodeAction('unblock', node.domain)}>
+                                                    <button className="btn btn-ghost btn-sm" onClick={async () => {
+                                                        const confirmed = await showConfirm({
+                                                            title: 'Unblock node',
+                                                            message: `Allow ${node.domain} again and verify it directly. Old follows, followers, queued work, and cached interactions will not be restored.`,
+                                                            confirmLabel: 'Unblock and verify',
+                                                        });
+                                                        if (confirmed) await handleNodeAction('unblock', node.domain);
+                                                    }}>
                                                         Unblock
                                                     </button>
                                                 ) : (
@@ -647,7 +700,7 @@ export default function ModerationPage() {
                                                         onClick={async () => {
                                                             const reason = await showPrompt({
                                                                 title: 'Block node',
-                                                                message: `Block ${node.domain} from this node. You can optionally record a reason.`,
+                                                                message: `Hard-quarantine ${node.domain}. Active follows/followers and interactions will be suspended or removed, delivery will stop, and chat will become read-only. Identity proofs and local history remain; an unblock will not restore relationships automatically.`,
                                                                 inputLabel: 'Reason (optional)',
                                                                 placeholder: 'Add a reason',
                                                                 confirmLabel: 'Block node',

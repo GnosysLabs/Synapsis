@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { db, follows, users, notifications, remoteFollows } from '@/db';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth';
 import { requireSignedAction, SignedActionError } from '@/lib/auth/verify-signature';
 import { signedUserActionSchema } from '@/lib/e2ee/protocol';
@@ -11,6 +11,7 @@ import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 import { z } from 'zod';
 import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
+import { isNodeBlocked } from '@/lib/swarm/node-blocklist';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -35,6 +36,28 @@ function signedRelationshipError(error: unknown, action: 'follow' | 'unfollow') 
     }, { status: error.code === 'REPLAYED_NONCE' ? 409 : 403 });
 }
 
+async function removeRemoteFollowLocally(followerId: string, targetHandle: string): Promise<boolean> {
+    return db.transaction(async (tx) => {
+        const storedFollow = await tx.query.remoteFollows.findFirst({
+            where: { AND: [{ followerId }, { targetHandle }] },
+        });
+        if (!storedFollow) return false;
+
+        const [deleted] = await tx.delete(remoteFollows)
+            .where(eq(remoteFollows.id, storedFollow.id))
+            .returning({ id: remoteFollows.id });
+        if (!deleted) return false;
+
+        // Node-block suspension already removed this row from the active count.
+        if (!storedFollow.suspendedAt) {
+            await tx.update(users)
+                .set({ followingCount: sql`max(0, ${users.followingCount} - 1)` })
+                .where(eq(users.id, followerId));
+        }
+        return true;
+    });
+}
+
 // Check follow status
 export async function GET(request: Request, context: RouteContext) {
     try {
@@ -52,9 +75,16 @@ export async function GET(request: Request, context: RouteContext) {
             if (!db) {
                 return NextResponse.json({ error: 'Database not available' }, { status: 503 });
             }
+            if (await isNodeBlocked(remote.domain)) {
+                return NextResponse.json({ following: false, remote: true, blocked: true });
+            }
             const targetHandle = cleanHandle;
             const existingRemoteFollow = await db.query.remoteFollows.findFirst({
-                where: { AND: [{ followerId: currentUser.id }, { targetHandle: targetHandle }] },
+                where: { AND: [
+                    { followerId: currentUser.id },
+                    { targetHandle },
+                    { suspendedAt: { isNull: true } },
+                ] },
             });
             return NextResponse.json({ following: !!existingRemoteFollow, remote: true });
         }
@@ -123,12 +153,18 @@ export async function POST(request: Request, context: RouteContext) {
 
         if (remote) {
             const targetHandle = cleanHandle;
+            if (await isNodeBlocked(remote.domain)) {
+                return NextResponse.json({
+                    error: 'This node is blocked by the local administrator.',
+                    code: 'NODE_BLOCKED_LOCALLY',
+                }, { status: 403 });
+            }
 
             // Check if already following
             const existingRemoteFollow = await db.query.remoteFollows.findFirst({
                 where: { AND: [{ followerId: currentUser.id }, { targetHandle: targetHandle }] },
             });
-            if (existingRemoteFollow) {
+            if (existingRemoteFollow && !existingRemoteFollow.suspendedAt) {
                 return NextResponse.json({
                     success: true,
                     following: true,
@@ -183,11 +219,32 @@ export async function POST(request: Request, context: RouteContext) {
                 const alreadyStored = await tx.query.remoteFollows.findFirst({
                     where: { AND: [{ followerId: currentUser.id }, { targetHandle }] },
                 });
-                if (alreadyStored) return false;
+                if (alreadyStored && !alreadyStored.suspendedAt) return false;
+
+                if (alreadyStored) {
+                    const [reactivated] = await tx.update(remoteFollows).set({
+                        targetNodeDomain: remote.domain,
+                        targetActorUrl: `swarm://${remote.domain}/${remote.handle}`,
+                        inboxUrl: `https://${remote.domain}/api/swarm/interactions/inbox`,
+                        activityId,
+                        suspendedAt: null,
+                        suspensionReason: null,
+                    }).where(and(
+                        eq(remoteFollows.id, alreadyStored.id),
+                        isNotNull(remoteFollows.suspendedAt),
+                    )).returning({ id: remoteFollows.id });
+                    if (!reactivated) return false;
+
+                    await tx.update(users)
+                        .set({ followingCount: sql`${users.followingCount} + 1` })
+                        .where(eq(users.id, currentUser.id));
+                    return true;
+                }
 
                 await tx.insert(remoteFollows).values({
                     followerId: currentUser.id,
                     targetHandle,
+                    targetNodeDomain: remote.domain,
                     targetActorUrl: `swarm://${remote.domain}/${remote.handle}`,
                     inboxUrl: `https://${remote.domain}/api/swarm/interactions/inbox`,
                     activityId,
@@ -295,6 +352,23 @@ export async function DELETE(request: Request, context: RouteContext) {
                 return NextResponse.json({ error: 'Database not available' }, { status: 503 });
             }
             const targetHandle = cleanHandle;
+            const storedFollow = await db.query.remoteFollows.findFirst({
+                where: { AND: [{ followerId: currentUser.id }, { targetHandle }] },
+            });
+            const locallyBlocked = await isNodeBlocked(remote.domain);
+            if (storedFollow?.suspendedAt || locallyBlocked) {
+                const changed = await removeRemoteFollowLocally(currentUser.id, targetHandle);
+                return NextResponse.json({
+                    success: true,
+                    following: false,
+                    changed,
+                    remote: true,
+                    swarm: true,
+                    localOnly: true,
+                    message: 'The follow was removed locally while federation with this node is blocked.',
+                });
+            }
+
             // Use swarm protocol for unfollow
             const result = await deliverSwarmUnfollow(remote.domain, {
                 userAction: signedAction,
@@ -309,6 +383,18 @@ export async function DELETE(request: Request, context: RouteContext) {
 
             if (!result.success) {
                 console.warn(`[Swarm] Unfollow delivery failed: ${result.error}`);
+                if (await isNodeBlocked(remote.domain)) {
+                    const changed = await removeRemoteFollowLocally(currentUser.id, targetHandle);
+                    return NextResponse.json({
+                        success: true,
+                        following: false,
+                        changed,
+                        remote: true,
+                        swarm: true,
+                        localOnly: true,
+                        message: 'The follow was removed locally while federation with this node is blocked.',
+                    });
+                }
                 if (result.code === NODE_BLOCKED_CODE) {
                     return NextResponse.json({
                         error: 'This origin has blocked federation access from this node.',
@@ -320,18 +406,7 @@ export async function DELETE(request: Request, context: RouteContext) {
                 }, { status: 502 });
             }
 
-            const changed = await db.transaction(async (tx) => {
-                const storedFollow = await tx.query.remoteFollows.findFirst({
-                    where: { AND: [{ followerId: currentUser.id }, { targetHandle }] },
-                });
-                if (!storedFollow) return false;
-
-                await tx.delete(remoteFollows).where(eq(remoteFollows.id, storedFollow.id));
-                await tx.update(users)
-                    .set({ followingCount: sql`max(0, ${users.followingCount} - 1)` })
-                    .where(eq(users.id, currentUser.id));
-                return true;
-            });
+            const changed = await removeRemoteFollowLocally(currentUser.id, targetHandle);
 
             console.log(`[Swarm] Unfollow delivered to ${remote.domain}`);
             return NextResponse.json({ success: true, following: false, changed, remote: true, swarm: true });

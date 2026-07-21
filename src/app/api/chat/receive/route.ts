@@ -24,6 +24,7 @@ import { isNodeBlocked } from '@/lib/swarm/node-blocklist';
 import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
 import {
   FederatedIdentityContinuityError,
+  federatedActionFailureBody,
   federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
@@ -102,7 +103,7 @@ export async function POST(request: NextRequest) {
       maxNodeActionsPerMinute: 600,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
+      return NextResponse.json(federatedActionFailureBody(verified), federatedActionFailureInit(verified));
     }
 
     const signedAction = verified.userAction;
@@ -144,7 +145,11 @@ export async function POST(request: NextRequest) {
     }
     if (recipient.dmPrivacy === 'following') {
       const followsSender = await db.query.remoteFollows.findFirst({
-        where: { AND: [{ followerId: recipient.id }, { targetHandle: verified.actorHandle }] },
+        where: { AND: [
+          { followerId: recipient.id },
+          { targetHandle: verified.actorHandle },
+          { suspendedAt: { isNull: true } },
+        ] },
       });
       if (!followsSender) {
         return NextResponse.json({ error: 'Recipient only accepts messages from accounts they follow' }, { status: 403 });

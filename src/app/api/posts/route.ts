@@ -43,7 +43,7 @@ import {
     NODE_BLOCKED_CODE,
     ORIGIN_UNAVAILABLE_CONTENT,
 } from '@/lib/swarm/remote-access-protocol';
-import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
+import { getBlockedNodeDomains, isNodeBlocked } from '@/lib/swarm/node-blocklist';
 import { federationMediaUrlSchema } from '@/lib/utils/federation';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { getCachedSwarmTimeline } from '@/lib/swarm/content-cache';
@@ -503,6 +503,12 @@ export async function POST(request: Request) {
                 { error: 'Federated reply node domain must be canonical' },
                 { status: 400 },
             );
+        }
+        if (swarmReplyOriginDomain && await isNodeBlocked(swarmReplyOriginDomain)) {
+            return NextResponse.json({
+                error: 'This node is blocked by the local administrator.',
+                code: 'NODE_BLOCKED_LOCALLY',
+            }, { status: 403 });
         }
 
         if (data.swarmReplyTo?.author) {

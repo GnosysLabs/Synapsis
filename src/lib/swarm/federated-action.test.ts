@@ -190,6 +190,25 @@ describe('federated user action verification', () => {
     expect(mocks.signingPublicKeyFromDid).not.toHaveBeenCalled();
   });
 
+  it('returns a typed terminal response for an administratively blocked node', async () => {
+    mocks.verifySwarmRequestDetailed.mockResolvedValue({
+      ok: false,
+      reason: 'blocked',
+      status: 403,
+    });
+
+    const result = await verifyFederatedUserAction(verificationInput());
+
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      error: 'Blocked node',
+      code: 'NODE_BLOCKED',
+    });
+    expect(mocks.consumeFederationNodeActionQuota).not.toHaveBeenCalled();
+    expect(mocks.signingPublicKeyFromDid).not.toHaveBeenCalled();
+  });
+
   it('enforces the durable node quota after node verification and before user proof acceptance', async () => {
     mocks.consumeFederationNodeActionQuota.mockResolvedValue({
       allowed: false,

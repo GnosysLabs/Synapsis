@@ -39,7 +39,9 @@ describe('SQLite synchronization state seeding', () => {
       );
       CREATE TABLE remote_follows (
         id text PRIMARY KEY,
-        target_handle text NOT NULL
+        target_handle text NOT NULL,
+        target_node_domain text NOT NULL,
+        suspended_at integer
       );
       CREATE TABLE remote_follow_sync_states (
         target_handle text PRIMARY KEY NOT NULL,
@@ -56,9 +58,14 @@ describe('SQLite synchronization state seeding', () => {
     await client.exec(`
       INSERT INTO swarm_nodes (
         id, domain, public_key, discovered_via, nsfw_classification_known
-      ) VALUES ('peer', 'remote.social', 'PINNED KEY', 'direct', 1);
-      INSERT INTO remote_follows (id, target_handle)
-      VALUES ('follow', 'Alice@Remote.Social');
+      ) VALUES
+        ('peer', 'remote.social', 'PINNED KEY', 'direct', 1),
+        ('blocked-peer', 'blocked.social', 'PINNED KEY', 'direct', 1);
+      UPDATE swarm_nodes SET is_blocked = 1 WHERE id = 'blocked-peer';
+      INSERT INTO remote_follows (id, target_handle, target_node_domain)
+      VALUES
+        ('follow', 'Alice@Remote.Social', 'remote.social'),
+        ('blocked-follow', 'mallory@blocked.social', 'blocked.social');
     `);
 
     const runnableDatabase = database as Pick<typeof productionDatabase, 'run'>;

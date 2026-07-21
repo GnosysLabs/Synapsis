@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, follows, mutedNodes, users, posts, remoteFollows } from '@/db';
-import { like, or, and, eq, inArray } from 'drizzle-orm';
+import { like, or, and, eq, inArray, isNull, notInArray } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { probeTransientNode } from '@/lib/swarm/transient-node-probe';
 import type { SwarmDirectoryUser } from '@/lib/swarm/user-directory';
@@ -21,6 +21,7 @@ import {
     parseAccountAddress,
     requireCanonicalAccountHomeDomain,
 } from '@/lib/identity/account-address';
+import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 
 const embeddedPostRelations = {
     author: true,
@@ -299,6 +300,7 @@ export async function GET(request: Request) {
         const followedLocalIds = new Set<string>();
         const followedRemoteHandles = new Set<string>();
         if (viewer && searchUsers.length > 0) {
+            const blockedNodeDomains = Array.from(await getBlockedNodeDomains());
             const localUserIds = searchUsers
                 .filter((searchUser) => searchUser.isRemote !== true)
                 .map((searchUser) => searchUser.id);
@@ -324,6 +326,10 @@ export async function GET(request: Request) {
                     .where(and(
                         eq(remoteFollows.followerId, viewer.id),
                         inArray(remoteFollows.targetHandle, remoteHandles),
+                        isNull(remoteFollows.suspendedAt),
+                        ...(blockedNodeDomains.length > 0
+                            ? [notInArray(remoteFollows.targetNodeDomain, blockedNodeDomains)]
+                            : []),
                     ));
                 remoteFollowRows.forEach((follow) => {
                     followedRemoteHandles.add(follow.targetHandle.toLowerCase());

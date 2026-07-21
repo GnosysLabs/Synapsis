@@ -13,6 +13,7 @@ import {
     requireCanonicalAccountHomeDomain,
     resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 
 const markSchema = z.object({
     ids: z.array(z.string().uuid()).optional(),
@@ -73,7 +74,7 @@ export async function GET(request: Request) {
             localNodeIsNsfw,
         });
 
-        const rows = await db.query.notifications.findMany({
+        const queriedRows = await db.query.notifications.findMany({
             where: {
                 userId: user.id,
                 ...(unreadOnly ? { readAt: { isNull: true as const } } : {}),
@@ -89,6 +90,13 @@ export async function GET(request: Request) {
                 },
             },
         });
+        // Cleanup is durable/retryable, but a pending quarantine must still be
+        // invisible immediately at the read boundary.
+        const blockedDomains = await getBlockedNodeDomains();
+        const rows = queriedRows.filter((row) => (
+            !blockedDomains.has(canonicalAccountHomeDomain(row.actorNodeDomain) || '')
+            && !blockedDomains.has(canonicalAccountHomeDomain(row.remotePostDomain) || '')
+        ));
 
         const actorIds = Array.from(new Set(
             rows

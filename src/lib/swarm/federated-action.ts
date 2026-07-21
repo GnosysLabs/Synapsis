@@ -21,6 +21,7 @@ import {
 } from './node-domain';
 import { verifySwarmRequestDetailed } from './signature';
 import { scheduleInboundFederationReplayCleanup } from './replay';
+import { NODE_BLOCKED_CODE } from './remote-access-protocol';
 import {
   consumeFederationNodeActionQuota,
   DEFAULT_FEDERATED_NODE_ACTIONS_PER_WINDOW,
@@ -82,6 +83,7 @@ export interface FederatedActionVerificationFailure {
   ok: false;
   error: string;
   status: 400 | 403 | 429 | 503;
+  code?: typeof NODE_BLOCKED_CODE;
 }
 
 export type FederatedActionVerificationResult =
@@ -256,8 +258,18 @@ export function createFederationActionContext(input: {
 function fail(
   status: FederatedActionVerificationFailure['status'],
   error: string,
+  code?: FederatedActionVerificationFailure['code'],
 ): FederatedActionVerificationFailure {
-  return { ok: false, status, error };
+  return { ok: false, status, error, ...(code ? { code } : {}) };
+}
+
+export function federatedActionFailureBody(
+  failure: FederatedActionVerificationFailure,
+): { error: string; code?: typeof NODE_BLOCKED_CODE } {
+  return {
+    error: failure.error,
+    ...(failure.code ? { code: failure.code } : {}),
+  };
 }
 
 export function federatedActionFailureInit(
@@ -342,6 +354,9 @@ export async function verifyFederatedUserAction(input: {
     }
     if (nodeVerification.reason === 'identity-unavailable') {
       return fail(503, 'Source node identity is temporarily unavailable');
+    }
+    if (nodeVerification.reason === 'blocked') {
+      return fail(403, 'Blocked node', NODE_BLOCKED_CODE);
     }
     return fail(403, 'Invalid node signature');
   }

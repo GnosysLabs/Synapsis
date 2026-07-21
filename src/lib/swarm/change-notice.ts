@@ -16,6 +16,7 @@ import {
   isNotNull,
   lt,
   lte,
+  notInArray,
   or,
   sql,
 } from 'drizzle-orm';
@@ -25,6 +26,10 @@ import { getNodesForChangeNotice, getTrustedSwarmReadPeerPublicKey } from './reg
 import { safeFederationRequest } from './safe-federation-http';
 import { getNodePrivateKey, signPayload, verifySignature } from './signature';
 import { syncSwarmContentNoticeOrigin } from './content-cache';
+import {
+  getBlockedNodeDomains,
+  isNodeBlocked,
+} from './node-blocklist';
 
 export const CHANGE_NOTICE_MAX_BODY_BYTES = 64 * 1024;
 export const CHANGE_NOTICE_MAX_BATCH = 50;
@@ -267,6 +272,7 @@ async function scheduleContentPull(
   pullAt: Date,
   now: Date,
 ): Promise<void> {
+  if (await isNodeBlocked(origin)) return;
   await db.update(swarmNodes).set({
     contentSequence: sql`max(coalesce(${swarmNodes.contentSequence}, 0), ${cursor})`,
     updatedAt: now,
@@ -301,6 +307,9 @@ export async function acceptChangeNotice(
   }
   if (origin === getPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN)) {
     return { status: 'rejected', reason: 'self notice' };
+  }
+  if (await isNodeBlocked(origin)) {
+    return { status: 'rejected', reason: 'blocked origin' };
   }
   const timingError = validateChangeNoticeTiming(notice);
   if (timingError) return { status: 'rejected', reason: timingError };
@@ -338,6 +347,9 @@ export async function acceptChangeNotice(
   if (!publicKey) return { status: 'rejected', reason: 'unknown origin' };
   if (!verifySignature(notice, entry.signature, publicKey)) {
     return { status: 'rejected', reason: 'invalid origin signature' };
+  }
+  if (await isNodeBlocked(origin)) {
+    return { status: 'rejected', reason: 'blocked origin' };
   }
 
   const now = new Date();
@@ -407,6 +419,18 @@ export async function acceptChangeNotice(
     setWhere: lt(swarmChangeNoticeStates.sequence, notice.cursor),
   }).returning({ sequence: swarmChangeNoticeStates.sequence });
   if (inserted.length === 0) return { status: 'duplicate' };
+  if (await isNodeBlocked(origin)) {
+    await db.update(swarmChangeNoticeStates).set({
+      status: 'dead',
+      pullScheduledAt: null,
+      lastError: 'Notice origin was blocked while accepting the notice',
+      updatedAt: new Date(),
+    }).where(and(
+      eq(swarmChangeNoticeStates.originDomain, origin),
+      eq(swarmChangeNoticeStates.sequence, notice.cursor),
+    ));
+    return { status: 'rejected', reason: 'blocked origin' };
+  }
 
   await scheduleContentPull(origin, notice.cursor, schedule.pullAt, now);
   console.log(`[ChangeNotice] Accepted ${origin} cursor ${notice.cursor} after ${delayMs}ms`);
@@ -416,6 +440,10 @@ export async function acceptChangeNotice(
 async function claimDueNotices(): Promise<Array<typeof swarmChangeNoticeStates.$inferSelect>> {
   const now = new Date();
   const staleBefore = new Date(now.getTime() - PROCESSING_LEASE_MS);
+  const blockedDomains = Array.from(await getBlockedNodeDomains());
+  const unblockedOrigin = blockedDomains.length > 0
+    ? notInArray(swarmChangeNoticeStates.originDomain, blockedDomains)
+    : undefined;
   await db.update(swarmChangeNoticeStates).set({
     status: 'retry',
     nextAttemptAt: now,
@@ -423,6 +451,7 @@ async function claimDueNotices(): Promise<Array<typeof swarmChangeNoticeStates.$
   }).where(and(
     eq(swarmChangeNoticeStates.status, 'processing'),
     lte(swarmChangeNoticeStates.lastAttemptAt, staleBefore),
+    unblockedOrigin,
   ));
   await db.update(swarmChangeNoticeStates).set({
     status: 'dead',
@@ -441,6 +470,7 @@ async function claimDueNotices(): Promise<Array<typeof swarmChangeNoticeStates.$
     lte(swarmChangeNoticeStates.nextAttemptAt, now),
     gt(swarmChangeNoticeStates.expiresAt, now),
     lt(swarmChangeNoticeStates.relayRound, CHANGE_NOTICE_RELAY_ROUNDS),
+    unblockedOrigin,
   )).orderBy(
     asc(swarmChangeNoticeStates.nextAttemptAt),
     asc(swarmChangeNoticeStates.firstSeenAt),
@@ -448,6 +478,7 @@ async function claimDueNotices(): Promise<Array<typeof swarmChangeNoticeStates.$
 
   const claimed = [];
   for (const row of due) {
+    if (await isNodeBlocked(row.originDomain)) continue;
     const result = await db.update(swarmChangeNoticeStates).set({
       status: 'processing',
       lastAttemptAt: now,
@@ -486,7 +517,25 @@ async function releaseClaimedNotices(
 }
 
 async function relayDueNotices(): Promise<{ relayed: number; targets: number }> {
-  const rows = await claimDueNotices();
+  const claimedRows = await claimDueNotices();
+  if (claimedRows.length === 0) return { relayed: 0, targets: 0 };
+
+  const rows: Array<typeof swarmChangeNoticeStates.$inferSelect> = [];
+  for (const row of claimedRows) {
+    if (!(await isNodeBlocked(row.originDomain))) {
+      rows.push(row);
+      continue;
+    }
+    await db.update(swarmChangeNoticeStates).set({
+      status: 'dead',
+      lastError: 'Notice origin was blocked before relay',
+      updatedAt: new Date(),
+    }).where(and(
+      eq(swarmChangeNoticeStates.originDomain, row.originDomain),
+      eq(swarmChangeNoticeStates.sequence, row.sequence),
+      eq(swarmChangeNoticeStates.status, 'processing'),
+    ));
+  }
   if (rows.length === 0) return { relayed: 0, targets: 0 };
 
   const entries: SignedChangeNotice[] = [];
@@ -594,6 +643,7 @@ async function relayDueNotices(): Promise<{ relayed: number; targets: number }> 
 
 async function pullNoticePrioritizedOrigins(): Promise<{ pulled: number; failed: number }> {
   const now = new Date();
+  const blockedDomains = Array.from(await getBlockedNodeDomains());
   const candidates = await db.select({
     origin: swarmChangeNoticeStates.originDomain,
     cursor: swarmChangeNoticeStates.sequence,
@@ -609,6 +659,9 @@ async function pullNoticePrioritizedOrigins(): Promise<{ pulled: number; failed:
       isNotNull(swarmChangeNoticeStates.pullScheduledAt),
       lte(swarmChangeNoticeStates.pullScheduledAt, now),
       sql`coalesce(${swarmContentSyncStates.changeCursor}, -1) < ${swarmChangeNoticeStates.sequence}`,
+      ...(blockedDomains.length > 0
+        ? [notInArray(swarmChangeNoticeStates.originDomain, blockedDomains)]
+        : []),
     ))
     .orderBy(asc(swarmChangeNoticeStates.pullScheduledAt))
     .limit(8);

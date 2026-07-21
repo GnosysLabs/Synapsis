@@ -18,6 +18,7 @@ import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
 import { parseRemoteTimelineResponse } from './remote-timeline-payload';
 import { getTrustedSwarmReadPeerPublicKey } from './registry';
 import { getNodePrivateKey, signPayload, verifySignature } from './signature';
+import { isNodeBlocked } from './node-blocklist';
 
 export const CHANGE_BUNDLE_LIFETIME_MS = 5 * 60_000;
 export const CHANGE_BUNDLE_CLOCK_SKEW_MS = 30_000;
@@ -165,6 +166,9 @@ export async function verifySignedChangeBundle(
 ): Promise<VerifiedChangeBundle> {
   const signed = signedChangeBundleSchema.parse(value);
   const contents = validateBundleContents(signed, expectedOrigin);
+  if (await isNodeBlocked(contents.origin)) {
+    throw new Error('Change bundle origin is blocked');
+  }
   const publicKey = await getTrustedSwarmReadPeerPublicKey(contents.origin);
   if (!publicKey || !verifySignature(signed.bundle, signed.signature, publicKey)) {
     throw new Error('Invalid change bundle origin signature');
@@ -179,6 +183,9 @@ export async function verifySignedChangeBundle(
 
 /** Persist only a fully verified bundle, then keep the short-lived cache bounded. */
 export async function cacheVerifiedChangeBundle(bundle: VerifiedChangeBundle): Promise<void> {
+  if (await isNodeBlocked(bundle.origin)) {
+    throw new Error('Cannot cache a change bundle from a blocked origin');
+  }
   const bundleJson = JSON.stringify(bundle.signed.bundle);
   if (Buffer.byteLength(bundleJson, 'utf8') > CHANGE_BUNDLE_MAX_BYTES) {
     throw new Error('Change bundle exceeds cache byte limit');
@@ -209,6 +216,10 @@ export async function cacheVerifiedChangeBundle(bundle: VerifiedChangeBundle): P
       lastAccessedAt: now,
     },
   });
+  if (await isNodeBlocked(bundle.origin)) {
+    await db.delete(swarmChangeBundles).where(eq(swarmChangeBundles.originDomain, bundle.origin));
+    throw new Error('Change bundle origin was blocked while caching');
+  }
   await db.delete(swarmChangeBundles).where(lt(swarmChangeBundles.expiresAt, now));
 
   const overflow = await db.select({
@@ -258,7 +269,7 @@ export async function getCachedVerifiedChangeBundle(
   afterCursor: number,
 ): Promise<VerifiedChangeBundle | null> {
   const origin = getPublicSwarmDomain(originInput);
-  if (!origin || origin !== originInput) return null;
+  if (!origin || origin !== originInput || await isNodeBlocked(origin)) return null;
   const now = new Date();
   const rows = await db.select().from(swarmChangeBundles).where(and(
     eq(swarmChangeBundles.originDomain, origin),

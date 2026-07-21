@@ -7,6 +7,7 @@ import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import {
   FederatedIdentityContinuityError,
   FEDERATED_ACTION_PROTOCOL,
+  federatedActionFailureBody,
   federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
       maxActionsPerMinute: 30,
     });
     if (!verified.ok) {
-      return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
+      return NextResponse.json(federatedActionFailureBody(verified), federatedActionFailureInit(verified));
     }
 
     const targetAddress = resolveAccountAddress(data.targetHandle, verified.destinationDomain);
@@ -110,8 +111,11 @@ export async function POST(request: NextRequest) {
         const [deleted] = await tx.delete(remoteFollowers).where(and(
           eq(remoteFollowers.userId, targetUser.id),
           eq(remoteFollowers.actorUrl, actorUrl),
-        )).returning({ id: remoteFollowers.id });
-        if (deleted) {
+        )).returning({
+          id: remoteFollowers.id,
+          suspendedAt: remoteFollowers.suspendedAt,
+        });
+        if (deleted && !deleted.suspendedAt) {
           await tx.update(users)
             .set({ followersCount: sql`max(0, ${users.followersCount} - 1)` })
             .where(eq(users.id, targetUser.id));
