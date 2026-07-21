@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { db, follows, users, notifications, remoteFollows } from '@/db';
 import { eq, sql } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth';
-import { requireSignedAction } from '@/lib/auth/verify-signature';
+import { requireSignedAction, SignedActionError } from '@/lib/auth/verify-signature';
 import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import { isSwarmNode, deliverSwarmFollow, deliverSwarmUnfollow, cacheSwarmUserPosts } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
@@ -15,6 +15,25 @@ import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
 type RouteContext = { params: Promise<{ handle: string }> };
 
 const followActionDataSchema = z.strictObject({ targetHandle: z.string().min(3).max(320) });
+
+function signedRelationshipError(error: unknown, action: 'follow' | 'unfollow') {
+    if (!(error instanceof SignedActionError)) return null;
+
+    if (error.code === 'RATE_LIMITED') {
+        return NextResponse.json({
+            error: `Too many ${action} requests. Wait a minute and try again.`,
+            code: error.code,
+        }, {
+            status: 429,
+            headers: { 'Retry-After': '60' },
+        });
+    }
+
+    return NextResponse.json({
+        error: `${action === 'follow' ? 'Follow' : 'Unfollow'} request was rejected.`,
+        code: error.code,
+    }, { status: error.code === 'REPLAYED_NONCE' ? 409 : 403 });
+}
 
 // Check follow status
 export async function GET(request: Request, context: RouteContext) {
@@ -247,6 +266,8 @@ export async function POST(request: Request, context: RouteContext) {
         if (error instanceof Error && error.message === 'Authentication required') {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
         }
+        const signedActionResponse = signedRelationshipError(error, 'follow');
+        if (signedActionResponse) return signedActionResponse;
         console.error('Follow error:', error);
         return NextResponse.json({ error: 'Failed to follow' }, { status: 500 });
     }
@@ -357,6 +378,8 @@ export async function DELETE(request: Request, context: RouteContext) {
         if (error instanceof Error && error.message === 'Authentication required') {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
         }
+        const signedActionResponse = signedRelationshipError(error, 'unfollow');
+        if (signedActionResponse) return signedActionResponse;
         console.error('Unfollow error:', error);
         return NextResponse.json({ error: 'Failed to unfollow' }, { status: 500 });
     }

@@ -1,0 +1,8 @@
+[Unit]
+Description=Consume an immediate update request for Synapsis instance %i
+Wants=synapsis-%i-update.service
+Before=synapsis-%i-update.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rm -f /var/lib/synapsis-%i/update-requested

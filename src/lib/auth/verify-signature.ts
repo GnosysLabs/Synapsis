@@ -21,7 +21,17 @@ const cryptoSubtle = globalThis.crypto?.subtle || crypto.webcrypto.subtle;
 const DEDUPE_RETENTION_MS = 10 * 60 * 1000;
 const DEDUPE_CLEANUP_INTERVAL_MS = 60 * 1000;
 const P256_SIGNATURE_BYTES = 64;
+const DEFAULT_ACTION_REQUESTS_PER_MINUTE = 5;
+const RELATIONSHIP_ACTION_REQUESTS_PER_MINUTE = 30;
 let nextDedupeCleanupAt = 0;
+
+function actionRequestsPerMinute(action: string): number {
+  if (action === 'chat_e2ee') return 120;
+  if (action === 'follow' || action === 'unfollow') {
+    return RELATIONSHIP_ACTION_REQUESTS_PER_MINUTE;
+  }
+  return DEFAULT_ACTION_REQUESTS_PER_MINUTE;
+}
 
 function parseCanonicalP256Signature(sig: string): Buffer | null {
   // Node's base64url decoder accepts padding, ignored characters, and
@@ -220,7 +230,7 @@ export async function verifyUserAction(signedAction: SignedAction<unknown>): Pro
     return { valid: false, error: 'INVALID_SIGNATURE' };
   }
 
-  const requestsPerMinute = payload.action === 'chat_e2ee' ? 120 : 5;
+  const requestsPerMinute = actionRequestsPerMinute(payload.action);
   const acceptanceError = await recordVerifiedAction({
     canonicalPayload: payload,
     identity: payload.did,

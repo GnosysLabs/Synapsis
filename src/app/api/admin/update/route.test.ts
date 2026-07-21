@@ -50,6 +50,20 @@ describe('POST /api/admin/update', () => {
         });
     });
 
+    it('uses the installation data directory for a multi-instance node', async () => {
+        delete process.env.SYNAPSIS_UPDATE_REQUEST_PATH;
+        vi.stubEnv('DATABASE_PATH', '/var/lib/synapsis-rprh/synapsis.db');
+
+        const response = await POST();
+
+        expect(response.status).toBe(202);
+        expect(mocks.writeFile).toHaveBeenCalledWith(
+            '/var/lib/synapsis-rprh/update-requested',
+            expect.any(String),
+            expect.any(Object),
+        );
+    });
+
     it('rejects non-admin users without touching the request file', async () => {
         mocks.requireAdmin.mockRejectedValue(new Error('Admin required'));
 
