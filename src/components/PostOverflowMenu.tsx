@@ -107,11 +107,11 @@ export function PostOverflowMenu({
             )}
             <button type="button" role="menuitem" onClick={onMuteUser} style={menuItemStyle}>
                 <VolumeX size={16} />
-                Mute
+                Mute User
             </button>
             <button type="button" role="menuitem" onClick={onBlockUser} style={menuItemStyle}>
                 <UserX size={16} />
-                Block
+                Block User
             </button>
             {showMuteNode && (
                 <button

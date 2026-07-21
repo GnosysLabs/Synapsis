@@ -19,6 +19,8 @@ describe('PostOverflowMenu', () => {
         const html = renderMenu();
 
         expect(html).toContain('role="menu"');
+        expect(html).toContain('Mute User');
+        expect(html).toContain('Block User');
         expect(html).toContain('Report post');
         expect(html).not.toContain('Mute node');
     });
