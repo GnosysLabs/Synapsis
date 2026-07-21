@@ -589,7 +589,7 @@ export default function ProfilePage() {
     const isOwnProfile = Boolean(authenticatedViewer
         && sameAccountAddress(authenticatedViewer.handle, user.handle));
     const followUnavailable = authLoading || isRestoring || followStatusLoading || followPending;
-    const visibleTabs = ['posts', 'collections', 'replies', 'likes', 'followers', 'following'] as const;
+    const visibleTabs = ['posts', 'replies', 'likes', 'collections', 'followers', 'following'] as const;
 
     return (
         <div style={{ maxWidth: '600px', margin: '0 auto', minHeight: '100vh' }}>
