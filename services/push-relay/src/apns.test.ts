@@ -7,6 +7,7 @@ const event: PushEvent = {
   notificationId: '00000000-0000-4000-8000-000000000002',
   type: 'mention',
   actorName: 'Alice',
+  actorAvatarUrl: 'https://cdn.example/alice.png',
   postId: 'post-1',
   subscriptionId: '00000000-0000-4000-8000-000000000003',
 };
@@ -18,6 +19,8 @@ describe('APNs payload', () => {
     expect(payload.synapsis).toEqual({
       notificationId: event.notificationId,
       type: 'mention',
+      actorName: 'Alice',
+      actorAvatarUrl: event.actorAvatarUrl,
       postId: 'post-1',
       subscriptionId: event.subscriptionId,
     });
@@ -46,6 +49,7 @@ describe('APNs payload', () => {
     expect(payload.aps['thread-id']).toBe('messages');
     expect(payload.synapsis).toEqual({
       type: 'message',
+      actorName: 'Charlie',
       messageId: messageEvent.messageId,
       subscriptionId: messageEvent.subscriptionId,
     });

@@ -88,6 +88,7 @@ describe('push relay protocol', () => {
       notificationId: crypto.randomUUID(),
       type: 'mention',
       actorName: 'Alice',
+      actorAvatarUrl: 'https://cdn.example/alice.png',
       postId: crypto.randomUUID(),
     };
     const deliver = () => fetch(

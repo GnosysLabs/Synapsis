@@ -23,11 +23,17 @@ const registrationSchema = z.object({
   appVersion: z.string().min(1).max(64),
 }).strict();
 
+const avatarURLSchema = z.url().max(2048).refine((value) => {
+  const url = new URL(value);
+  return url.protocol === 'https:' && !url.username && !url.password;
+}, 'Avatar URL must be a credential-free HTTPS URL');
+
 const notificationEventSchema = z.object({
   eventId: z.uuid(),
   notificationId: z.uuid(),
   type: z.enum(['follow', 'reply', 'mention', 'like', 'repost']),
   actorName: z.string().min(1).max(160),
+  actorAvatarUrl: avatarURLSchema.optional(),
   postId: z.string().min(1).max(256).optional(),
 }).strict();
 
@@ -36,6 +42,7 @@ const messageEventSchema = z.object({
   messageId: z.string().min(1).max(256),
   type: z.literal('message'),
   actorName: z.string().min(1).max(160),
+  actorAvatarUrl: avatarURLSchema.optional(),
 }).strict();
 
 const eventSchema = z.discriminatedUnion('type', [

@@ -8,6 +8,7 @@ import type { PushRelayConfiguration } from './config';
 interface PushEventBase {
   eventId: string;
   actorName: string;
+  actorAvatarUrl?: string;
   subscriptionId?: string;
 }
 
@@ -52,6 +53,7 @@ export function notificationTitle(event: PushEvent): string {
 }
 
 export function buildApnsPayload(event: PushEvent): string {
+  const actorName = cleanActorName(event.actorName);
   const routing = event.type === 'message'
     ? { messageId: event.messageId }
     : {
@@ -68,10 +70,13 @@ export function buildApnsPayload(event: PushEvent): string {
       },
       sound: 'default',
       badge: 1,
+      'mutable-content': 1,
       'thread-id': event.type === 'message' ? 'messages' : 'notifications',
     },
     synapsis: {
       type: event.type,
+      actorName,
+      ...(event.actorAvatarUrl ? { actorAvatarUrl: event.actorAvatarUrl } : {}),
       ...routing,
       ...(event.subscriptionId ? { subscriptionId: event.subscriptionId } : {}),
     },

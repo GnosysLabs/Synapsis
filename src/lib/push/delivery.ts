@@ -25,11 +25,18 @@ export function pushNotificationActorName(notification: {
   actorDisplayName: string | null;
   actorHandle: string;
 }): string {
-  // Remote presentation text is safe in-app because the verified handle is
-  // displayed beside it. A lock-screen push has no such identity context.
-  return notification.actorId
-    ? notification.actorDisplayName || notification.actorHandle
-    : notification.actorHandle;
+  return notification.actorDisplayName?.trim() || notification.actorHandle;
+}
+
+export function pushActorAvatarUrl(value: string | null | undefined): string | undefined {
+  if (!value || value.length > 2_048) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function retryDelayMs(attempt: number): number {
@@ -135,6 +142,7 @@ async function deliverOne(
     notificationId: notification.id,
     type: notification.type,
     actorName: pushNotificationActorName(notification),
+    actorAvatarUrl: pushActorAvatarUrl(notification.actorAvatarUrl),
     postId: notification.postId || notification.remotePostId || undefined,
   });
 
@@ -200,6 +208,7 @@ async function deliverMessage(
     messageId: message.clientMessageId || message.id,
     type: 'message',
     actorName: message.senderDisplayName || message.senderHandle,
+    actorAvatarUrl: pushActorAvatarUrl(message.senderAvatarUrl),
   });
   if (response.ok) {
     const now = new Date();
