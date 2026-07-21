@@ -6,6 +6,14 @@ import {
   pushMessageDeliveries,
   pushSubscriptions,
 } from '@/db';
+import {
+  canonicalAccountHomeDomain,
+  requireCanonicalAccountHomeDomain,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
+import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { isUserSensitive } from '@/lib/nsfw/content-visibility';
+import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { openPushDeliveryToken } from '@/lib/push/credentials';
 import { isNodeBlocked } from '@/lib/swarm/node-blocklist';
 
@@ -37,6 +45,113 @@ export function pushActorAvatarUrl(value: string | null | undefined): string | u
   } catch {
     return undefined;
   }
+}
+
+export function pushDiceBearAvatarUrl(
+  actorHandle: string,
+  actorNodeDomain?: string | null,
+): string {
+  const canonical = resolveAccountAddress(actorHandle, actorNodeDomain)?.canonical;
+  const normalized = (canonical || actorHandle)
+    .trim()
+    .replace(/^@+/, '')
+    .slice(0, 640) || 'synapsis-user';
+  const url = new URL('https://api.dicebear.com/9.x/bottts-neutral/png');
+  url.searchParams.set('seed', normalized);
+  return url.toString();
+}
+
+export interface PushAvatarVisibilityInput {
+  actorHandle: string;
+  actorNodeDomain?: string | null;
+  actorAvatarUrl?: string | null;
+  actorAccountIsNsfw?: boolean;
+  actorNodeIsNsfw?: boolean;
+  actorIsRemote: boolean;
+  recipientNsfwEnabled?: boolean;
+  recipientAgeVerifiedAt?: Date | string | null;
+  localNodeIsNsfw: boolean;
+}
+
+// Resolve the safe URL before contacting the relay. A restricted custom URL
+// must never enter the relay payload, APNs payload, or notification extension.
+export function pushActorAvatarUrlForViewer(input: PushAvatarVisibilityInput): string {
+  const canViewSensitive = shouldIncludeNsfwFeed({
+    viewer: {
+      nsfwEnabled: input.recipientNsfwEnabled,
+      ageVerifiedAt: input.recipientAgeVerifiedAt,
+    },
+    localNodeIsNsfw: input.localNodeIsNsfw,
+  });
+  const actorIsSensitive = isUserSensitive({
+    accountIsNsfw: input.actorAccountIsNsfw,
+    nodeIsNsfw: input.actorNodeIsNsfw,
+    isRemote: input.actorIsRemote,
+  });
+  const placeholder = pushDiceBearAvatarUrl(input.actorHandle, input.actorNodeDomain);
+
+  if (actorIsSensitive && !canViewSensitive) return placeholder;
+  return pushActorAvatarUrl(input.actorAvatarUrl) || placeholder;
+}
+
+interface PushActorPresentationInput {
+  recipientUserId: string;
+  actorId?: string | null;
+  actorHandle: string;
+  actorNodeDomain: string;
+  actorAvatarUrl?: string | null;
+  localNodeIsNsfw: boolean;
+}
+
+async function resolvedPushActorAvatarUrl(input: PushActorPresentationInput): Promise<string> {
+  const actorAddress = resolveAccountAddress(input.actorHandle, input.actorNodeDomain);
+  const canonicalActorHandle = actorAddress?.canonical || input.actorHandle;
+  const [recipient, actorByIdentity] = await Promise.all([
+    db.query.users.findFirst({ where: { id: input.recipientUserId } }),
+    input.actorId
+      ? db.query.users.findFirst({ where: { id: input.actorId } })
+      : db.query.users.findFirst({ where: { handle: canonicalActorHandle } }),
+  ]);
+  if (!recipient) throw new Error('Push recipient no longer exists');
+
+  const actorUser = actorByIdentity || (input.actorId
+    ? await db.query.users.findFirst({ where: { handle: canonicalActorHandle } })
+    : undefined);
+  const localDomain = requireCanonicalAccountHomeDomain(
+    process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN || 'localhost:43821',
+  );
+  const actorDomain = canonicalAccountHomeDomain(actorUser?.homeDomain)
+    || actorAddress?.homeDomain
+    || requireCanonicalAccountHomeDomain(input.actorNodeDomain);
+  const actorIsRemote = actorUser
+    ? !actorUser.isLocalAccount
+    : actorDomain !== localDomain;
+  const actorNode = actorIsRemote
+    ? await db.query.swarmNodes.findFirst({
+        where: { domain: actorDomain },
+        columns: {
+          isNsfw: true,
+          nsfwClassificationKnown: true,
+        },
+      })
+    : undefined;
+  const actorNodeIsNsfw = actorIsRemote
+    ? actorNode?.isNsfw === true
+      ? true
+      : actorNode?.nsfwClassificationKnown === true ? false : undefined
+    : input.localNodeIsNsfw;
+
+  return pushActorAvatarUrlForViewer({
+    actorHandle: canonicalActorHandle,
+    actorNodeDomain: actorDomain,
+    actorAvatarUrl: input.actorAvatarUrl,
+    actorAccountIsNsfw: actorUser?.isNsfw,
+    actorNodeIsNsfw,
+    actorIsRemote,
+    recipientNsfwEnabled: recipient.nsfwEnabled,
+    recipientAgeVerifiedAt: recipient.ageVerifiedAt,
+    localNodeIsNsfw: input.localNodeIsNsfw,
+  });
 }
 
 function retryDelayMs(attempt: number): number {
@@ -118,6 +233,7 @@ async function updateFailure(
 
 async function deliverOne(
   delivery: typeof pushDeliveries.$inferSelect,
+  localNodeIsNsfw: boolean,
 ): Promise<'delivered' | 'retry' | 'dead'> {
   const [subscription, notification] = await Promise.all([
     db.query.pushSubscriptions.findFirst({ where: { id: delivery.subscriptionId } }),
@@ -137,12 +253,21 @@ async function deliverOne(
     return updateFailure(delivery, 'Notification belongs to a blocked node', false);
   }
 
+  const actorAvatarUrl = await resolvedPushActorAvatarUrl({
+    recipientUserId: subscription.userId,
+    actorId: notification.actorId,
+    actorHandle: notification.actorHandle,
+    actorNodeDomain: notification.actorNodeDomain,
+    actorAvatarUrl: notification.actorAvatarUrl,
+    localNodeIsNsfw,
+  });
+
   const response = await sendRelayEvent(subscription, {
     eventId: delivery.id,
     notificationId: notification.id,
     type: notification.type,
     actorName: pushNotificationActorName(notification),
-    actorAvatarUrl: pushActorAvatarUrl(notification.actorAvatarUrl),
+    actorAvatarUrl,
     postId: notification.postId || notification.remotePostId || undefined,
   });
 
@@ -190,6 +315,7 @@ async function updateMessageFailure(
 
 async function deliverMessage(
   delivery: typeof pushMessageDeliveries.$inferSelect,
+  localNodeIsNsfw: boolean,
 ): Promise<'delivered' | 'retry' | 'dead'> {
   const [subscription, message] = await Promise.all([
     db.query.pushSubscriptions.findFirst({ where: { id: delivery.subscriptionId } }),
@@ -203,12 +329,20 @@ async function deliverMessage(
     return updateMessageFailure(delivery, 'Message belongs to a blocked node', false);
   }
 
+  const actorAvatarUrl = await resolvedPushActorAvatarUrl({
+    recipientUserId: subscription.userId,
+    actorHandle: message.senderHandle,
+    actorNodeDomain: message.senderNodeDomain,
+    actorAvatarUrl: message.senderAvatarUrl,
+    localNodeIsNsfw,
+  });
+
   const response = await sendRelayEvent(subscription, {
     eventId: delivery.id,
     messageId: message.clientMessageId || message.id,
     type: 'message',
     actorName: message.senderDisplayName || message.senderHandle,
-    actorAvatarUrl: pushActorAvatarUrl(message.senderAvatarUrl),
+    actorAvatarUrl,
   });
   if (response.ok) {
     const now = new Date();
@@ -236,6 +370,11 @@ async function runPushDeliveryOutbox(limit: number): Promise<PushOutboxResult> {
   const result: PushOutboxResult = { delivered: 0, retried: 0, dead: 0 };
   const now = new Date();
   const staleBefore = new Date(now.getTime() - PROCESSING_LEASE_MS);
+  let localNodeNsfwPromise: Promise<boolean> | undefined;
+  const localNodeIsNsfw = () => {
+    localNodeNsfwPromise ||= requireLocalNodeNsfwClassification();
+    return localNodeNsfwPromise;
+  };
 
   await db.update(pushDeliveries).set({ status: 'retry', nextAttemptAt: now, updatedAt: now })
     .where(and(
@@ -260,7 +399,7 @@ async function runPushDeliveryOutbox(limit: number): Promise<PushOutboxResult> {
     if (claimed.length === 0) continue;
 
     try {
-      const state = await deliverOne(delivery);
+      const state = await deliverOne(delivery, await localNodeIsNsfw());
       result[state === 'retry' ? 'retried' : state] += 1;
     } catch (error) {
       const state = await updateFailure(
@@ -301,7 +440,7 @@ async function runPushDeliveryOutbox(limit: number): Promise<PushOutboxResult> {
     if (claimed.length === 0) continue;
 
     try {
-      const state = await deliverMessage(delivery);
+      const state = await deliverMessage(delivery, await localNodeIsNsfw());
       result[state === 'retry' ? 'retried' : state] += 1;
     } catch (error) {
       const state = await updateMessageFailure(
