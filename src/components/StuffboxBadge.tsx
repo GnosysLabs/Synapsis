@@ -29,18 +29,16 @@ export function StuffboxBadge({
             title={description}
         >
             <span className="stuffbox-badge-icon" aria-hidden="true">
-                {supporter ? (
-                    <svg viewBox="0 0 20 20" role="presentation">
-                        <circle cx="10" cy="10" r="8.5" />
-                        <path className="stuffbox-badge-check" d="m6.2 10.1 2.35 2.35 5.25-5.25" />
-                        <path className="stuffbox-badge-spark" d="m15.9 2 .45 1.15L17.5 3.6l-1.15.45-.45 1.15-.45-1.15-1.15-.45 1.15-.45L15.9 2Z" />
-                    </svg>
-                ) : (
-                    <svg viewBox="0 0 20 20" role="presentation">
-                        <circle cx="10" cy="10" r="8.5" />
-                        <path className="stuffbox-badge-check" d="m6.2 10.1 2.35 2.35 5.25-5.25" />
-                    </svg>
-                )}
+                <svg viewBox="0 0 24 24" role="presentation">
+                    <path
+                        className="stuffbox-badge-seal"
+                        d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"
+                    />
+                    <path className="stuffbox-badge-check" d="m8.5 12.2 2.25 2.25 4.9-4.9" />
+                    {supporter && (
+                        <path className="stuffbox-badge-spark" d="m20 1.2.48 1.22 1.22.48-1.22.48L20 4.6l-.48-1.22-1.22-.48 1.22-.48L20 1.2Z" />
+                    )}
+                </svg>
             </span>
         </span>
     );
