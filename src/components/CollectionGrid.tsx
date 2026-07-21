@@ -8,6 +8,9 @@ import { CollectionCover } from '@/components/CollectionCover';
 import { CollectionEditorModal } from '@/components/CollectionEditorModal';
 import type { CollectionSummary } from '@/lib/collections/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { useDomain } from '@/lib/contexts/ConfigContext';
+import { canonicalAccountAddress, sameAccountAddress } from '@/lib/identity/account-address';
+import { getProfilePath } from '@/lib/utils/handle';
 
 interface CollectionGridProps {
   handle: string;
@@ -15,17 +18,19 @@ interface CollectionGridProps {
 
 export function CollectionGrid({ handle }: CollectionGridProps) {
   const { user } = useAuth();
+  const domain = useDomain();
+  const canonicalHandle = canonicalAccountAddress(handle, domain) || handle;
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<CollectionSummary | 'new' | null>(null);
-  const isOwner = Boolean(user && !handle.includes('@') && user.handle === handle.replace(/^@/, ''));
+  const isOwner = Boolean(user && sameAccountAddress(user.handle, canonicalHandle));
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/users/${encodeURIComponent(handle)}/collections`, { cache: 'no-store' });
+      const response = await fetch(`/api/users/${encodeURIComponent(canonicalHandle)}/collections`, { cache: 'no-store' });
       const data = await response.json().catch(() => ({})) as { collections?: CollectionSummary[]; error?: string };
       if (!response.ok) throw new Error(data.error || 'Could not load collections');
       setCollections(data.collections || []);
@@ -34,7 +39,7 @@ export function CollectionGrid({ handle }: CollectionGridProps) {
     } finally {
       setLoading(false);
     }
-  }, [handle]);
+  }, [canonicalHandle]);
 
   useEffect(() => {
     void load();
@@ -66,7 +71,7 @@ export function CollectionGrid({ handle }: CollectionGridProps) {
           {collections.map((collection) => (
             <div className="collection-card-wrap" key={collection.id}>
               <Link
-                href={`/u/${encodeURIComponent(handle)}/collections/${collection.id}`}
+                href={`${getProfilePath(canonicalHandle)}/collections/${encodeURIComponent(collection.id)}`}
                 className="collection-card"
               >
                 <CollectionCover
@@ -97,7 +102,7 @@ export function CollectionGrid({ handle }: CollectionGridProps) {
 
       {editing && (
         <CollectionEditorModal
-          handle={handle}
+          handle={canonicalHandle}
           collection={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={(saved) => {

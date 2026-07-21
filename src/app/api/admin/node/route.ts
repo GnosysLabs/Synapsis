@@ -4,13 +4,16 @@ import { nodes, users } from '@/db';
 import { eq, isNull } from 'drizzle-orm';
 import { requireAdmin } from '@/lib/auth/admin';
 import { resolveNodeNsfwTransition } from '@/lib/node/nsfw-classification';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 export async function PATCH(req: NextRequest) {
     try {
         await requireAdmin();
         const data = await req.json();
 
-        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const domain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
 
         let node = await db.query.nodes.findFirst({
             where: { domain: domain },

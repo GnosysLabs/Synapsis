@@ -22,6 +22,7 @@ import { createSignedPayload } from '@/lib/swarm/signature';
 import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
+import { parseAccountAddress } from '@/lib/identity/account-address';
 
 function validateCiphertextLengths(envelope: z.infer<typeof e2eeMessageEnvelopeSchema>): void {
   if (Buffer.from(envelope.nonce, 'base64url').length !== 24) throw new Error('Invalid message nonce');
@@ -45,6 +46,7 @@ function messageValues(input: {
   senderDisplayName: string | null;
   senderAvatarUrl: string | null;
   senderDid: string;
+  senderHomeDomain: string;
   envelope: z.infer<typeof e2eeMessageEnvelopeSchema>;
   signedAction: SignedAction;
   createdAt: Date;
@@ -55,7 +57,7 @@ function messageValues(input: {
     senderHandle: input.senderHandle,
     senderDisplayName: input.senderDisplayName,
     senderAvatarUrl: input.senderAvatarUrl,
-    senderNodeDomain: null,
+    senderNodeDomain: input.senderHomeDomain,
     senderDid: input.senderDid,
     content: null,
     protocolVersion: E2EE_PROTOCOL_VERSION,
@@ -78,7 +80,18 @@ export async function POST(request: NextRequest) {
     validateMessageBindings(envelope, signedAction);
     validateCiphertextLengths(envelope);
 
-    if (envelope.senderDid !== user.did || envelope.senderHandle !== user.handle) {
+    const senderAddress = parseAccountAddress(envelope.senderHandle);
+    const recipientAddress = parseAccountAddress(envelope.recipientHandle);
+    if (!senderAddress || senderAddress.canonical !== envelope.senderHandle
+      || !recipientAddress || recipientAddress.canonical !== envelope.recipientHandle) {
+      return NextResponse.json({ error: 'Encrypted messages require canonical account addresses' }, { status: 400 });
+    }
+
+    if (envelope.senderDid !== user.did
+      || envelope.senderHandle !== user.handle
+      || senderAddress.username !== user.username
+      || senderAddress.homeDomain !== user.homeDomain
+      || !user.isLocalAccount) {
       return NextResponse.json({ error: 'Sender identity mismatch' }, { status: 403 });
     }
 
@@ -102,9 +115,7 @@ export async function POST(request: NextRequest) {
     }
 
     const recipientUser = await db.query.users.findFirst({ where: { did: envelope.recipientDid } });
-    const isRemoteRecipient = !recipientUser
-      || recipientUser.handle.includes('@')
-      || recipientUser.id.startsWith('swarm:');
+    const isRemoteRecipient = !recipientUser || !recipientUser.isLocalAccount;
     const createdAt = new Date(envelope.createdAt);
 
     if (recipientUser && !isRemoteRecipient) {
@@ -235,6 +246,7 @@ export async function POST(request: NextRequest) {
           senderDisplayName: user.displayName,
           senderAvatarUrl: user.avatarUrl,
           senderDid: user.did,
+          senderHomeDomain: user.homeDomain,
           envelope,
           signedAction,
           createdAt,
@@ -247,6 +259,7 @@ export async function POST(request: NextRequest) {
           senderDisplayName: user.displayName,
           senderAvatarUrl: user.avatarUrl,
           senderDid: user.did,
+          senderHomeDomain: user.homeDomain,
           envelope,
           signedAction,
           createdAt,
@@ -268,8 +281,7 @@ export async function POST(request: NextRequest) {
         code: 'E2EE_RECIPIENT_KEY_STALE',
       }, { status: 409 });
     }
-    if (cachedRecipientKey.handle.toLowerCase().replace(/^@/, '')
-      !== envelope.recipientHandle.toLowerCase().replace(/^@/, '')) {
+    if (cachedRecipientKey.handle !== recipientAddress.canonical) {
       return NextResponse.json({ error: 'Recipient identity mismatch' }, { status: 403 });
     }
     if (recipientUser) {
@@ -281,12 +293,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const fullRecipientHandle = envelope.recipientHandle.toLowerCase().replace(/^@/, '');
-    const recipientHandleParts = fullRecipientHandle.split('@');
-    if (recipientHandleParts.length !== 2 || !recipientHandleParts[0] || !recipientHandleParts[1]) {
-      return NextResponse.json({ error: 'Recipient node not found' }, { status: 404 });
-    }
-    let targetDomain: string | null = normalizeNodeDomain(recipientHandleParts[1]);
+    const fullRecipientHandle = recipientAddress.canonical;
+    let targetDomain: string | null = recipientAddress.homeDomain;
     const registryEntry = await db.query.handleRegistry.findFirst({
       where: { handle: fullRecipientHandle },
     });
@@ -327,7 +335,7 @@ export async function POST(request: NextRequest) {
     const federatedPayload = {
       federation,
       userAction: signedAction,
-      fullSenderHandle: `${user.handle}@${federation.sourceDomain}`,
+      fullSenderHandle: user.handle,
       deliveryId: `${envelope.messageId}:${federation.destinationDomain}`,
     };
     const { payload, signature } = await createSignedPayload(federatedPayload);
@@ -394,6 +402,7 @@ export async function POST(request: NextRequest) {
         senderDisplayName: user.displayName,
         senderAvatarUrl: user.avatarUrl,
         senderDid: user.did,
+        senderHomeDomain: user.homeDomain,
         envelope,
         signedAction,
         createdAt,

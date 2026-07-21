@@ -4,7 +4,8 @@ import {
   federationMediaUrlSchema,
   nodeDomainSchema,
 } from '@/lib/utils/federation';
-import { getPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
+import { getCanonicalSwarmSeedDomain, normalizeNodeDomain } from './node-domain';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 const MAX_REMOTE_LIST_USERS = 50;
 const DEVELOPMENT_LOOPBACK_DOMAIN = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i;
@@ -57,7 +58,7 @@ export function canonicalizeRemoteUserListDomain(
   value: string | null | undefined,
 ): string | null {
   if (!value) return null;
-  return getPublicSwarmDomain(value) ?? developmentLoopbackDomain(value);
+  return getCanonicalSwarmSeedDomain(value) ?? developmentLoopbackDomain(value);
 }
 
 export function isValidRemoteUserListHandle(value: string): boolean {
@@ -78,43 +79,38 @@ function canonicalizeEntry(
   sourceDomain: string,
 ): ParsedRemoteUserListEntry {
   const claimedNodeDomain = canonicalizeClaimedDomain(rawEntry.nodeDomain);
-  const normalizedHandle = rawEntry.handle.toLowerCase();
-  let bareHandle: string;
-  let accountDomain: string;
+  let address: ReturnType<typeof resolveAccountAddress>;
 
   if (rawEntry.isRemote) {
-    const parts = normalizedHandle.split('@');
-    if (parts.length !== 2 || !localHandleSchema.safeParse(parts[0]).success) {
+    address = resolveAccountAddress(rawEntry.handle);
+    if (!address) {
       throw new Error('Remote user list contains a malformed federated handle');
     }
-    bareHandle = parts[0];
-    accountDomain = canonicalizeClaimedDomain(parts[1]);
-    if (accountDomain !== claimedNodeDomain) {
+    if (canonicalizeClaimedDomain(address.homeDomain) !== claimedNodeDomain) {
       throw new Error('Remote user list handle and node domain do not match');
     }
   } else {
-    if (!localHandleSchema.safeParse(normalizedHandle).success) {
+    address = resolveAccountAddress(rawEntry.handle, sourceDomain);
+    if (!address) {
       throw new Error('Remote user list contains a malformed local handle');
     }
-    if (claimedNodeDomain !== sourceDomain) {
+    if (claimedNodeDomain !== sourceDomain || address.homeDomain !== sourceDomain) {
       throw new Error('Remote user list attempted a cross-node local identity claim');
     }
-    bareHandle = normalizedHandle;
-    accountDomain = sourceDomain;
   }
 
-  const handle = `${bareHandle}@${accountDomain}`;
+  const handle = address.canonical;
   return {
     id: handle,
     handle,
-    displayName: rawEntry.displayName ?? bareHandle,
+    displayName: rawEntry.displayName ?? address.username,
     avatarUrl: rawEntry.avatarUrl ?? undefined,
     bio: rawEntry.bio ?? undefined,
     isRemote: true,
     isNsfw: rawEntry.isNsfw,
     nodeIsNsfw: rawEntry.nodeIsNsfw,
-    nodeDomain: accountDomain,
-    isSourceOwned: accountDomain === sourceDomain,
+    nodeDomain: address.homeDomain,
+    isSourceOwned: address.homeDomain === sourceDomain,
   };
 }
 

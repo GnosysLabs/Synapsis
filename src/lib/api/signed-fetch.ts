@@ -128,7 +128,7 @@ export const signedAPI = {
    */
   async followUser(targetHandle: string, userDid: string, userHandle: string) {
     return signedFetch(
-      `/api/users/${targetHandle}/follow`,
+      `/api/users/${encodeURIComponent(targetHandle)}/follow`,
       'follow',
       { targetHandle },
       userDid,
@@ -141,7 +141,7 @@ export const signedAPI = {
    */
   async unfollowUser(targetHandle: string, userDid: string, userHandle: string) {
     return signedFetch(
-      `/api/users/${targetHandle}/follow`,
+      `/api/users/${encodeURIComponent(targetHandle)}/follow`,
       'unfollow',
       { targetHandle },
       userDid,
@@ -309,7 +309,7 @@ export const signedAPI = {
    */
   async blockUser(handle: string, userDid: string, userHandle: string) {
     return signedFetch(
-      `/api/users/${handle}/block`,
+      `/api/users/${encodeURIComponent(handle)}/block`,
       'block',
       { handle },
       userDid,

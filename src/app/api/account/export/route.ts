@@ -23,6 +23,7 @@ import {
 import { encryptionKeyIdFromPublicKey } from '@/lib/e2ee/bundle-proof';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import { accountUsername, resolveAccountAddress } from '@/lib/identity/account-address';
 
 // We'll use a simple in-memory zip approach
 // For production, consider using a streaming zip library
@@ -143,15 +144,16 @@ async function exportE2EEContinuityAnchor(
         publicKey: string;
         proofAction: string;
     } | undefined,
-    user: { did: string; handle: string; publicKey: string },
+    user: { did: string; handle: string; homeDomain: string; publicKey: string },
 ): Promise<ExportE2EEContinuityAnchor | null> {
     if (!row) return null;
 
     const proof = signedUserActionSchema.parse(JSON.parse(row.proofAction));
     const bundle = e2eeKeyBundleSchema.parse(proof.data);
+    const proofAddress = resolveAccountAddress(proof.handle, user.homeDomain);
     if (proof.action !== E2EE_KEY_BUNDLE_ACTION
         || proof.did !== user.did
-        || proof.handle.toLowerCase() !== user.handle.toLowerCase()
+        || proofAddress?.canonical !== user.handle
         || row.did !== proof.did
         || row.keyId !== bundle.keyId
         || row.keyVersion !== bundle.version
@@ -274,8 +276,10 @@ export async function POST(req: NextRequest) {
             // Local follows
             ...userFollowing.map(f => {
                 const followingUser = f.following as { handle: string };
+                const username = accountUsername(followingUser.handle);
+                if (!username) throw new Error('Followed account identity is not canonical');
                 return {
-                    actorUrl: `https://${nodeDomain}/users/${followingUser.handle}`,
+                    actorUrl: `https://${nodeDomain}/users/${username}`,
                     handle: followingUser.handle,
                     isRemote: false,
                 };

@@ -38,8 +38,10 @@ import { GET } from './route';
 
 const adultUser = {
   id: 'adult-user',
-  handle: 'adult',
-  nodeId: null,
+  handle: 'adult@adult.example',
+  username: 'adult',
+  homeDomain: 'adult.example',
+  isLocalAccount: true,
   displayName: 'PRIVATE DISPLAY NAME',
   bio: 'PRIVATE BIO',
   avatarUrl: 'https://adult.example/private-avatar.jpg',
@@ -138,10 +140,10 @@ describe('GET /api/swarm/users/[handle] read authorization', () => {
     expect(mocks.findUser).not.toHaveBeenCalled();
   });
 
-  it('rejects a user row linked to a remote node even when its handle is unqualified', async () => {
+  it('rejects a user row not explicitly owned by this node', async () => {
     mocks.findUser.mockResolvedValue({
       ...adultUser,
-      nodeId: 'remote-node-id',
+      isLocalAccount: false,
     });
 
     const response = await GET(
@@ -154,8 +156,9 @@ describe('GET /api/swarm/users/[handle] read authorization', () => {
     expect(mocks.findUser).toHaveBeenCalledWith({
       where: {
         AND: [
-          { handle: 'adult' },
-          { nodeId: { isNull: true } },
+          { username: 'adult' },
+          { homeDomain: 'adult.example' },
+          { isLocalAccount: true },
         ],
       },
     });

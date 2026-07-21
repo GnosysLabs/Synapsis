@@ -24,6 +24,7 @@ import {
   upsertRemoteHandleHints,
 } from '@/lib/federation/handles';
 import { buildAnnouncement, discoverNode } from './discovery';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from './node-domain';
 import { safeFederationRequest } from './safe-federation-http';
 import { sql } from 'drizzle-orm';
@@ -132,6 +133,7 @@ export async function establishDirectGossipPeer(
  */
 export async function buildGossipPayload(since?: string): Promise<SwarmGossipPayload> {
   const ourDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+  const ourAccountDomain = requireCanonicalAccountHomeDomain(ourDomain);
 
   // Get nodes to share
   let nodes: SwarmNodeInfo[];
@@ -166,7 +168,7 @@ export async function buildGossipPayload(since?: string): Promise<SwarmGossipPay
     const handleEntries = await db.query.handleRegistry.findMany({
       where: {
         AND: [
-          { nodeDomain: ourDomain },
+          { nodeDomain: ourAccountDomain },
           { identityVerified: true },
           { deletedAt: { isNull: true } },
           ...(sinceDate ? [{ updatedAt: { gt: sinceDate } }] : []),

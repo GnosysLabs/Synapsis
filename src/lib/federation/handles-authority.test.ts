@@ -7,7 +7,7 @@ import { canonicalHandleEntry } from './handles';
 describe('authoritative handle entries', () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it('qualifies remote handles and keeps local handles bare', () => {
+  it('keeps both remote and local handles canonically qualified', () => {
     vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'local.social');
     expect(canonicalHandleEntry({
       handle: 'Alice',
@@ -18,7 +18,7 @@ describe('authoritative handle entries', () => {
       handle: '@Alice',
       did: 'did:key:alice',
       nodeDomain: 'local.social',
-    }, 'local.social')?.handle).toBe('alice');
+    }, 'local.social')?.handle).toBe('alice@local.social');
   });
 
   it('rejects claims for a domain other than the direct authority', () => {

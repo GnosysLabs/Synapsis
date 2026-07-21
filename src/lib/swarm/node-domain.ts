@@ -84,3 +84,15 @@ export function getCanonicalSwarmSeedDomain(value: string | null | undefined): s
 
   return LEGACY_SWARM_SEED_DOMAINS[domain] ?? domain;
 }
+
+/** Hosts that may still store or advertise the same canonical seed identity. */
+export function getSwarmSeedDomainAliases(value: string): string[] {
+  const canonical = getCanonicalSwarmSeedDomain(value);
+  if (!canonical) return [];
+  return [
+    canonical,
+    ...Object.entries(LEGACY_SWARM_SEED_DOMAINS)
+      .filter(([, replacement]) => replacement === canonical)
+      .map(([alias]) => alias),
+  ];
+}

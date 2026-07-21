@@ -11,11 +11,8 @@ import { Check, ChevronDown, Globe, LogOut, Plus, Settings2 } from 'lucide-react
 import { AuthScreen } from '@/components/AuthScreen';
 import { AvatarImage } from './AvatarImage';
 import { ANONYMOUS_APP_DESTINATION } from '@/lib/posts/home-feed';
-
-function shortHandle(handle: string) {
-    const cleanHandle = handle.startsWith('@') ? handle.slice(1) : handle;
-    return `@${cleanHandle.split('@')[0]}`;
-}
+import { displayAccountAddress } from '@/lib/identity/account-address';
+import { getProfilePath } from '@/lib/utils/handle';
 
 export function Sidebar() {
     const { user, accounts, isAdmin, logout, switchAccount } = useAuth();
@@ -32,7 +29,8 @@ export function Sidebar() {
     const accountTriggerRef = useRef<HTMLButtonElement | null>(null);
     const accountPopupRef = useRef<HTMLDivElement | null>(null);
     const [accountPopupStyle, setAccountPopupStyle] = useState<React.CSSProperties | null>(null);
-    const formattedHandle = user ? shortHandle(user.handle) : '';
+    const formattedHandle = user ? displayAccountAddress(user.handle) : '';
+    const profilePath = user ? getProfilePath(user.handle) : '/u';
 
     useEffect(() => {
         const loadLogo = () => fetch('/api/node', { cache: 'no-store' })
@@ -299,7 +297,7 @@ export function Sidebar() {
                     </Link>
                 )}
                 {user ? (
-                    <Link href={`/u/${user.handle}`} className={`nav-item ${pathname === '/u/' + user.handle ? 'active' : ''}`} title="Profile">
+                    <Link href={profilePath} className={`nav-item ${pathname === profilePath ? 'active' : ''}`} title="Profile">
                         <UserIcon />
                         <span>Profile</span>
                     </Link>
@@ -380,7 +378,7 @@ export function Sidebar() {
                                                     {account.displayName || account.handle}
                                                 </div>
                                                 <div style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                    {shortHandle(account.handle)}
+                                                    {displayAccountAddress(account.handle)}
                                                 </div>
                                             </div>
                                             <div style={{ width: '24px', display: 'flex', justifyContent: 'center', color: 'var(--accent)', flexShrink: 0 }}>

@@ -6,6 +6,7 @@ import {
 } from '@/lib/crypto/did-key';
 import { and, eq } from 'drizzle-orm';
 import { withSqliteLockRetry } from '@/lib/db/sqlite-lock-retry';
+import { parseAccountAddress } from '@/lib/identity/account-address';
 
 export interface RemoteProfile {
     handle: string;
@@ -62,7 +63,7 @@ async function upsertVerifiedRemoteUser(
     const existing = byHandle || byDid;
 
     if (existing) {
-        if (!existing.handle.includes('@')) {
+        if (existing.isLocalAccount) {
             throw new Error('Federation cannot modify a local user');
         }
         if (existing.handle !== profile.handle) {
@@ -96,6 +97,9 @@ async function upsertVerifiedRemoteUser(
         await database.insert(users).values({
             did: profile.did,
             handle: profile.handle,
+            username: parseAccountAddress(profile.handle)!.username,
+            homeDomain: parseAccountAddress(profile.handle)!.homeDomain,
+            isLocalAccount: false,
             displayName: profile.displayName || profile.handle,
             avatarUrl: profile.avatarUrl || null,
             publicKey: profile.publicKey,
@@ -122,7 +126,8 @@ export async function upsertRemoteUser(
         if (!options.identityVerified) {
             throw new Error('Remote identity cache requires a verified user proof');
         }
-        if (!profile.handle.includes('@')) {
+        const address = parseAccountAddress(profile.handle);
+        if (!address) {
             throw new Error('Remote user cache requires a fully qualified handle');
         }
         if (!profile.publicKey) {
@@ -134,7 +139,7 @@ export async function upsertRemoteUser(
         }
         const verifiedProfile: VerifiedRemoteProfile = {
             ...profile,
-            handle: profile.handle.toLowerCase().replace(/^@/, ''),
+            handle: address.canonical,
             publicKey: normalizedPublicKey,
         };
 

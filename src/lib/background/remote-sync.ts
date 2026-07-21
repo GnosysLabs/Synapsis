@@ -4,6 +4,7 @@ import { db, remoteFollowSyncStates } from '@/db';
 import { and, asc, eq, isNull, lte, or, sql } from 'drizzle-orm';
 import { mapWithConcurrency } from '@/lib/async/concurrency';
 import { cacheSwarmUserPosts, isSwarmNode } from '@/lib/swarm/interactions';
+import { parseAccountAddress } from '@/lib/identity/account-address';
 
 const MIN_SYNC_INTERVAL_MS = 5 * 60_000;
 const RETRY_BACKOFF_BASE_MS = 60_000;
@@ -136,15 +137,16 @@ async function finishTarget(
 
 async function syncTarget(target: ClaimedTarget): Promise<{ handle: string; cached: number; error?: string }> {
   try {
-    const atIndex = target.targetHandle.lastIndexOf('@');
-    const handle = target.targetHandle.slice(0, atIndex);
-    if (atIndex <= 0 || !await isSwarmNode(target.nodeDomain)) {
+    const address = parseAccountAddress(target.targetHandle);
+    if (!address
+      || address.homeDomain !== target.nodeDomain
+      || !await isSwarmNode(address.homeDomain)) {
       throw new Error('Target node is not an active trusted swarm peer');
     }
     const result = await cacheSwarmUserPosts(
-      handle,
-      target.nodeDomain,
-      target.targetHandle,
+      address.username,
+      address.homeDomain,
+      address.canonical,
       20,
     );
     if (!result.success) throw new Error('Remote profile refresh failed');

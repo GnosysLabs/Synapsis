@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { requireAdmin } from '@/lib/auth/admin';
 import { getVersionedNodeAssetUrl } from '@/lib/node/assets';
 import { MediaMetadataError, stripMediaMetadataBytes } from '@/lib/media/strip-metadata';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 // Logo constraints
 const MAX_LOGO_SIZE = 2 * 1024 * 1024; // 2MB
@@ -98,7 +99,9 @@ export async function POST(req: NextRequest) {
     const dataUrl = `data:${mimeType};base64,${base64Data}`;
 
     // Get current node
-    const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+    const domain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
     let node = await db.query.nodes.findFirst({
       where: { domain: domain },
     });

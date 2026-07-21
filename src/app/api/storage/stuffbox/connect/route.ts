@@ -4,6 +4,7 @@ import { configuredStuffboxUrl, createConnectionRequest, StuffboxApiError } from
 import { saveStuffboxConnectionState } from '@/lib/stuffbox/connection-state';
 import { generatePkce } from '@/lib/stuffbox/crypto';
 import { STUFFBOX_SCOPES } from '@/lib/stuffbox/types';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 function nodeOrigin(request: NextRequest): string {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
@@ -15,10 +16,9 @@ function nodeOrigin(request: NextRequest): string {
 }
 
 function accountLabel(handle: string, origin: string): string {
-  const normalizedHandle = handle.trim().replace(/^@/, '');
-  return normalizedHandle.includes('@')
-    ? `@${normalizedHandle}`
-    : `@${normalizedHandle}@${new URL(origin).host}`;
+  const address = resolveAccountAddress(handle, new URL(origin).host);
+  if (!address) throw new Error('Account identity is not canonical');
+  return `@${address.canonical}`;
 }
 
 export async function POST(request: NextRequest) {

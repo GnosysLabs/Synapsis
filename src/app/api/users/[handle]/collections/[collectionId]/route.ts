@@ -94,7 +94,12 @@ export async function GET(request: Request, context: RouteContext) {
     }
 
     const user = await db.query.users.findFirst({
-      where: { handle: resolvedHandle.canonicalHandle },
+      where: {
+        AND: [
+          { handle: resolvedHandle.canonicalHandle },
+          { isLocalAccount: true },
+        ],
+      },
     });
     if (!user || user.isSuspended) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
@@ -142,7 +147,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (
       resolvedHandle.remote
       || resolvedHandle.canonicalHandle !== currentUser.handle
-      || data.handle.toLowerCase().replace(/^@/, '') !== currentUser.handle
+      || data.handle !== currentUser.handle
       || data.collectionId !== collectionId
     ) {
       return NextResponse.json({ error: 'Collection owner mismatch' }, { status: 403 });
@@ -187,7 +192,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     if (
       resolvedHandle.remote
       || resolvedHandle.canonicalHandle !== currentUser.handle
-      || data.handle.toLowerCase().replace(/^@/, '') !== currentUser.handle
+      || data.handle !== currentUser.handle
       || data.collectionId !== collectionId
     ) {
       return NextResponse.json({ error: 'Collection owner mismatch' }, { status: 403 });

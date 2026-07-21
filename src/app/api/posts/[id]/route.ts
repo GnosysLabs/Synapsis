@@ -28,6 +28,10 @@ import {
     parseRemotePostDetailResponse,
     parseRemoteRepliesResponse,
 } from '@/lib/swarm/remote-post-payload';
+import {
+    requireCanonicalAccountHomeDomain,
+    resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 interface SwarmReplyDeletionPayload {
     replyId: string;
@@ -150,17 +154,13 @@ function mapSwarmDetailPost(post: SwarmDetailPostInput, fallbackDomain: string):
         repostOf: post.repostOf ? mapSwarmDetailPost(post.repostOf, post.repostOf.nodeDomain || effectiveDomain) : null,
         repostedBy: post.repostedBy?.map((reposter) => {
             const reposterDomain = reposter.nodeDomain || effectiveDomain;
-            const bareHandle = reposter.handle.includes('@')
-                ? reposter.handle.slice(0, reposter.handle.lastIndexOf('@'))
-                : reposter.handle;
+            const address = resolveAccountAddress(reposter.handle, reposterDomain);
             return {
                 ...reposter,
                 id: reposter.id?.startsWith('swarm:')
                     ? reposter.id
-                    : `swarm:${reposterDomain}:${bareHandle}`,
-                handle: reposter.handle.includes('@')
-                    ? reposter.handle
-                    : `${reposter.handle}@${reposterDomain}`,
+                    : `swarm:${reposterDomain}:${address?.username || reposter.handle}`,
+                handle: address?.canonical || reposter.handle,
                 nodeDomain: reposterDomain,
                 isSwarm: true,
                 isRemote: true,
@@ -168,8 +168,8 @@ function mapSwarmDetailPost(post: SwarmDetailPostInput, fallbackDomain: string):
         }),
         repostedByCount: post.repostedByCount,
         author: post.author ? {
-            id: `swarm:${effectiveDomain}:${post.author.handle}`,
-            handle: post.author.handle.includes('@') ? post.author.handle : `${post.author.handle}@${effectiveDomain}`,
+            id: `swarm:${effectiveDomain}:${resolveAccountAddress(post.author.handle, effectiveDomain)?.username || post.author.handle}`,
+            handle: resolveAccountAddress(post.author.handle, effectiveDomain)?.canonical || post.author.handle,
             displayName: post.author.displayName,
             avatarUrl: post.author.avatarUrl,
             isSwarm: true,
@@ -201,12 +201,9 @@ function postRecordIsSensitive(
         ? value.author as Record<string, unknown>
         : null;
     const nodeDomain = typeof value.nodeDomain === 'string' ? value.nodeDomain : null;
-    const authorHandle = typeof author?.handle === 'string' ? author.handle : '';
     const isRemote = value.isSwarm === true
         || value.isRemote === true
         || author?.isRemote === true
-        || (author?.nodeId !== null && author?.nodeId !== undefined)
-        || authorHandle.includes('@')
         || Boolean(nodeDomain && nodeDomain !== localNodeDomain);
     const sensitive = isPostSensitive({
         postIsNsfw: typeof value.isNsfw === 'boolean' ? value.isNsfw : undefined,
@@ -236,7 +233,9 @@ export async function GET(
     try {
         const { id: rawId } = await params;
         // Decode URL-encoded characters (e.g., %3A -> :)
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const nodeDomain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
         const id = normalizeSameNodePostId(decodeURIComponent(rawId), nodeDomain);
 
         // Adult-only nodes are never browsable anonymously, including direct
@@ -372,10 +371,16 @@ export async function GET(
                             const { getViewerSwarmRepostedPostIds } = await import('@/lib/swarm/reposts');
                             const viewer = await requireAuth();
 
-                            const likeCheckRes = await signedFederationRead(
-                                `${protocol}://${originDomain}/api/swarm/posts/${originalPostId}/likes?checkHandle=${viewer.handle}&checkDomain=${nodeDomain}`,
-                                { timeoutMs: 3_000, maxResponseBytes: 32 * 1024 }
+                            const likeCheckUrl = new URL(
+                                `/api/swarm/posts/${encodeURIComponent(originalPostId)}/likes`,
+                                `${protocol}://${originDomain}`,
                             );
+                            likeCheckUrl.searchParams.set('checkHandle', viewer.handle);
+                            likeCheckUrl.searchParams.set('checkDomain', nodeDomain);
+                            const likeCheckRes = await signedFederationRead(likeCheckUrl.toString(), {
+                                timeoutMs: 3_000,
+                                maxResponseBytes: 32 * 1024,
+                            });
 
                             if (likeCheckRes.status >= 200 && likeCheckRes.status < 300) {
                                 const likeData = likeCheckRes.json() as { isLiked?: boolean };
@@ -567,7 +572,9 @@ export async function DELETE(
     try {
         const signedAction = signedUserActionSchema.parse(await request.json());
         const user = await requireSignedAction(signedAction, 'delete');
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const nodeDomain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
         const { id: rawId } = await params;
         const decodedId = decodeURIComponent(rawId);
         const deleteData = z.strictObject({ postId: z.string().min(1).max(512) })
@@ -623,8 +630,10 @@ export async function DELETE(
                         // AND (remotePost.author.handle ends with @nodeDomain OR remotePost.nodeDomain == nodeDomain?)
 
                         const normalizedLocalDomain = normalizeNodeDomain(nodeDomain);
-                        const isAuthor = remotePost.author?.handle
-                            === `${user.handle}@${normalizedLocalDomain}`;
+                        const remoteAuthorAddress = remotePost.author?.handle
+                            ? resolveAccountAddress(remotePost.author.handle, normalizedLocalDomain)
+                            : null;
+                        const isAuthor = remoteAuthorAddress?.canonical === user.handle;
 
                         if (!isAuthor) {
                             return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });

@@ -33,7 +33,7 @@ import {
   E2EE_FEDERATION_MAX_REQUEST_BYTES,
 } from '@/lib/swarm/safe-federation-http';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
-import { localHandleSchema } from '@/lib/utils/federation';
+import { parseAccountAddress } from '@/lib/identity/account-address';
 
 const PATH = '/api/chat/receive' as const;
 const CHAT_INGRESS_QUOTA_WINDOW_MS = 24 * 60 * 60 * 1_000;
@@ -74,12 +74,8 @@ export async function POST(request: NextRequest) {
     if (!sourceDomain) {
       return NextResponse.json({ error: 'Invalid source node' }, { status: 403 });
     }
-    const senderHandle = body.fullSenderHandle.toLowerCase().replace(/^@/, '');
-    const senderParts = senderHandle.split('@');
-    const actorHandle = senderParts.length === 2
-      ? localHandleSchema.safeParse(senderParts[0])
-      : null;
-    if (!actorHandle?.success || federationActionDomain(senderParts[1]) !== sourceDomain) {
+    const senderAddress = parseAccountAddress(body.fullSenderHandle);
+    if (!senderAddress || senderAddress.homeDomain !== sourceDomain) {
       return NextResponse.json({ error: 'Federated sender handle mismatch' }, { status: 403 });
     }
     if (await isNodeBlocked(sourceDomain)) {
@@ -93,10 +89,10 @@ export async function POST(request: NextRequest) {
       expectedMethod: 'POST',
       expectedPath: PATH,
       expectedAction: E2EE_CHAT_ACTION,
-      actorHandle: actorHandle.data,
+      actorHandle: senderAddress.canonical,
       replayBinding: {
         deliveryId: body.deliveryId,
-        fullSenderHandle: senderHandle,
+        fullSenderHandle: senderAddress.canonical,
       },
       maxActionsPerMinute: 120,
       maxNodeActionsPerMinute: 600,
@@ -115,7 +111,7 @@ export async function POST(request: NextRequest) {
     if (body.deliveryId !== `${envelope.messageId}:${verified.destinationDomain}`) {
       return NextResponse.json({ error: 'Federated delivery identity mismatch' }, { status: 403 });
     }
-    if (senderHandle !== `${verified.actorHandle}@${verified.sourceDomain}`) {
+    if (senderAddress.canonical !== verified.actorHandle) {
       return NextResponse.json({ error: 'Federated sender handle mismatch' }, { status: 403 });
     }
     const ciphertextBytes = Buffer.from(envelope.ciphertext, 'base64url').length;
@@ -130,14 +126,12 @@ export async function POST(request: NextRequest) {
     // Reject nonexistent, unwilling, or stale-key recipients before resolving
     // or persisting any attacker-controlled remote user profile.
     const recipient = await db.query.users.findFirst({ where: { did: envelope.recipientDid } });
-    if (!recipient || recipient.handle.includes('@') || recipient.id.startsWith('swarm:')) {
+    if (!recipient || !recipient.isLocalAccount) {
       return NextResponse.json({ error: 'Recipient not found on this node' }, { status: 404 });
     }
-    const envelopeRecipientHandle = envelope.recipientHandle.toLowerCase().replace(/^@/, '');
-    const recipientHandleParts = envelopeRecipientHandle.split('@');
-    const recipientHandleMatches = recipientHandleParts.length === 2
-      && recipientHandleParts[0] === recipient.handle.toLowerCase()
-      && federationActionDomain(recipientHandleParts[1]) === verified.destinationDomain;
+    const envelopeRecipientAddress = parseAccountAddress(envelope.recipientHandle);
+    const recipientHandleMatches = envelopeRecipientAddress?.canonical === recipient.handle
+      && envelopeRecipientAddress.homeDomain === verified.destinationDomain;
     if (!recipientHandleMatches) {
       return NextResponse.json({ error: 'Recipient identity mismatch' }, { status: 403 });
     }
@@ -146,7 +140,7 @@ export async function POST(request: NextRequest) {
     }
     if (recipient.dmPrivacy === 'following') {
       const followsSender = await db.query.remoteFollows.findFirst({
-        where: { AND: [{ followerId: recipient.id }, { targetHandle: senderHandle }] },
+        where: { AND: [{ followerId: recipient.id }, { targetHandle: verified.actorHandle }] },
       });
       if (!followsSender) {
         return NextResponse.json({ error: 'Recipient only accepts messages from accounts they follow' }, { status: 403 });
@@ -179,13 +173,12 @@ export async function POST(request: NextRequest) {
 
     const [senderByDid, senderByHandle] = await Promise.all([
       db.query.users.findFirst({ where: { did: signedAction.did } }),
-      db.query.users.findFirst({ where: { handle: senderHandle } }),
+      db.query.users.findFirst({ where: { handle: verified.actorHandle } }),
     ]);
-    if ((senderByDid && !senderByDid.handle.includes('@') && !senderByDid.id.startsWith('swarm:'))
-      || (senderByHandle && !senderByHandle.handle.includes('@') && !senderByHandle.id.startsWith('swarm:'))) {
+    if (senderByDid?.isLocalAccount || senderByHandle?.isLocalAccount) {
       return NextResponse.json({ error: 'A remote node cannot claim a local identity' }, { status: 403 });
     }
-    if ((senderByDid && senderByDid.handle !== senderHandle)
+    if ((senderByDid && senderByDid.handle !== verified.actorHandle)
       || (senderByHandle && senderByHandle.did !== signedAction.did)
       || (senderByDid && senderByHandle && senderByDid.id !== senderByHandle.id)) {
       throw new FederatedIdentityContinuityError();
@@ -205,7 +198,7 @@ export async function POST(request: NextRequest) {
     // profile cache is authoritative for those fields. Attachments remain inside
     // the signed opaque ciphertext and are validated client-side only after
     // successful decryption.
-    const senderDisplayName = verified.actorHandle;
+    const senderDisplayName = verified.actorUsername;
     const senderAvatarUrl = null;
     if (senderUser) {
       const blocked = await db.query.blocks.findFirst({
@@ -235,13 +228,13 @@ export async function POST(request: NextRequest) {
 
       let [conversation] = await tx.select().from(chatConversations).where(and(
         eq(chatConversations.participant1Id, recipient.id),
-        eq(chatConversations.participant2Handle, senderHandle),
+        eq(chatConversations.participant2Handle, verified.actorHandle),
       )).limit(1);
       let createdConversation = false;
       if (!conversation) {
         [conversation] = await tx.insert(chatConversations).values({
           participant1Id: recipient.id,
-          participant2Handle: senderHandle,
+          participant2Handle: verified.actorHandle,
           lastMessageAt: createdAt,
           lastMessagePreview: 'Encrypted message',
           encryptionMode: 'e2ee',
@@ -256,7 +249,7 @@ export async function POST(request: NextRequest) {
           // conversations never consume the first-contact admission budget.
           [conversation] = await tx.select().from(chatConversations).where(and(
             eq(chatConversations.participant1Id, recipient.id),
-            eq(chatConversations.participant2Handle, senderHandle),
+            eq(chatConversations.participant2Handle, verified.actorHandle),
           )).limit(1);
         }
       }
@@ -344,7 +337,7 @@ export async function POST(request: NextRequest) {
       }
       const [message] = await tx.insert(chatMessages).values({
         conversationId: conversation.id,
-        senderHandle,
+        senderHandle: verified.actorHandle,
         senderDisplayName,
         senderAvatarUrl,
         senderNodeDomain: sourceDomain,

@@ -1,4 +1,5 @@
 import { db } from '@/db';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 export type TurnstileAction = 'login' | 'register';
 
@@ -27,7 +28,9 @@ function normalizedHostname(value: string): string {
 }
 
 async function findLocalNode() {
-    const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+    const domain = requireCanonicalAccountHomeDomain(
+        process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
     const exact = await db.query.nodes.findFirst({ where: { domain } });
     if (exact) return exact;
     const fallback = await db.query.nodes.findMany({ limit: 2 });

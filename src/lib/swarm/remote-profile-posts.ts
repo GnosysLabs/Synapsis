@@ -1,4 +1,5 @@
 import { resolveUserHandle } from './user-handle';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 export const parseRemoteHandle = (handle: string) => resolveUserHandle(handle).remote;
 
@@ -44,6 +45,12 @@ export function mapRemoteProfilePost(post: RemoteProfilePost, remoteDomain: stri
   const isAlreadySwarm = post.id.startsWith('swarm:');
   const rawOriginalId = post.originalPostId || (isAlreadySwarm ? post.id.split(':').pop() || post.id : post.id);
   const effectiveDomain = post.nodeDomain || remoteDomain;
+  const authorAddress = post.author
+    ? resolveAccountAddress(post.author.handle, effectiveDomain)
+    : null;
+  if (post.author && (!authorAddress || authorAddress.homeDomain !== effectiveDomain)) {
+    throw new Error('Remote profile post author address does not match its node');
+  }
 
   return {
     ...post,
@@ -55,10 +62,8 @@ export function mapRemoteProfilePost(post: RemoteProfilePost, remoteDomain: stri
       ...post.author,
       id: post.author.id?.startsWith('swarm:')
         ? post.author.id
-        : `swarm:${effectiveDomain}:${post.author.handle.includes('@') ? post.author.handle : post.author.handle}`,
-      handle: post.author.handle.includes('@')
-        ? post.author.handle
-        : `${post.author.handle}@${effectiveDomain}`,
+        : `swarm:${effectiveDomain}:${authorAddress!.username}`,
+      handle: authorAddress!.canonical,
     } : post.author,
     media: post.media?.map((item, index) => ({
       ...item,
@@ -66,17 +71,16 @@ export function mapRemoteProfilePost(post: RemoteProfilePost, remoteDomain: stri
     })),
     repostedBy: post.repostedBy?.map((reposter) => {
       const reposterDomain = reposter.nodeDomain || effectiveDomain;
-      const bareHandle = reposter.handle.includes('@')
-        ? reposter.handle.slice(0, reposter.handle.lastIndexOf('@'))
-        : reposter.handle;
+      const address = resolveAccountAddress(reposter.handle, reposterDomain);
+      if (!address || address.homeDomain !== reposterDomain) {
+        throw new Error('Remote profile reposter address does not match its node');
+      }
       return {
         ...reposter,
         id: reposter.id?.startsWith('swarm:')
           ? reposter.id
-          : `swarm:${reposterDomain}:${bareHandle}`,
-        handle: reposter.handle.includes('@')
-          ? reposter.handle
-          : `${reposter.handle}@${reposterDomain}`,
+          : `swarm:${reposterDomain}:${address.username}`,
+        handle: address.canonical,
         nodeDomain: reposterDomain,
       };
     }),

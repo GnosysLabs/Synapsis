@@ -11,6 +11,12 @@ import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/sw
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { isPostSensitive } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
+import { federatedHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import {
+  getCanonicalSwarmSeedDomain,
+  normalizeNodeDomain,
+} from '@/lib/swarm/node-domain';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -19,9 +25,14 @@ const postIdSchema = z.string().uuid('Invalid post ID format');
 
 // Schema for query parameters
 const likesQuerySchema = z.object({
-  checkHandle: z.string().min(3).max(30).optional(),
-  checkDomain: z.string().min(1).max(100).optional(),
+  checkHandle: federatedHandleSchema.optional(),
+  checkDomain: nodeDomainSchema.optional(),
 });
+
+function canonicalNodeDomain(value: string): string {
+  const normalized = normalizeNodeDomain(value);
+  return getCanonicalSwarmSeedDomain(normalized) ?? normalized;
+}
 
 /**
  * GET /api/swarm/posts/[id]/likes
@@ -95,10 +106,22 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     // If checking a specific handle
     if (checkHandle) {
+      const authenticatedSource = trustedReadSource
+        ? canonicalNodeDomain(trustedReadSource)
+        : null;
+      const claimedSource = checkDomain ? canonicalNodeDomain(checkDomain) : null;
+      const actorAddress = claimedSource
+        ? resolveAccountAddress(checkHandle, claimedSource)
+        : null;
+
       // Actor-specific state may only be queried by that actor's home node.
       // A node signature authenticates the peer; it does not authorize that
       // peer to enumerate arbitrary local users' relationship state.
-      if (!checkDomain || checkDomain !== trustedReadSource) {
+      if (!authenticatedSource
+        || !claimedSource
+        || claimedSource !== authenticatedSource
+        || !actorAddress
+        || actorAddress.homeDomain !== authenticatedSource) {
         return NextResponse.json(
           { error: 'Like-state checks must be scoped to the authenticated source node' },
           { status: 403, headers: privateHeaders },
@@ -106,15 +129,21 @@ export async function GET(request: NextRequest, context: RouteContext) {
       }
 
       const remoteLike = await db.query.remoteLikes.findFirst({
-        where: { AND: [{ postId }, { actorHandle: checkHandle }, { actorNodeDomain: checkDomain }] },
+        where: {
+          AND: [
+            { postId },
+            { actorHandle: actorAddress.canonical },
+            { actorNodeDomain: authenticatedSource },
+          ],
+        },
       });
 
       return NextResponse.json({
         postId,
         likesCount: post.likesCount,
         isLiked: !!remoteLike,
-        checkedHandle: checkHandle,
-        checkedDomain: checkDomain,
+        checkedHandle: actorAddress.canonical,
+        checkedDomain: authenticatedSource,
       }, { headers: privateHeaders });
     }
 

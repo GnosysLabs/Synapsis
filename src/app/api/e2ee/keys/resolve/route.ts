@@ -15,6 +15,7 @@ import {
 import { isNodeBlocked, normalizeNodeDomain } from '@/lib/swarm/node-blocklist';
 import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
+import { resolveAccountAddress, parseAccountAddress } from '@/lib/identity/account-address';
 
 const querySchema = z.object({
   did: z.string().min(8).max(2_048).regex(/^did:/),
@@ -42,10 +43,10 @@ export async function GET(request: NextRequest) {
     });
 
     const localUser = await db.query.users.findFirst({ where: { did: query.did } });
-    const isLocal = localUser && !localUser.handle.includes('@') && !localUser.id.startsWith('swarm:');
+    const isLocal = localUser?.isLocalAccount === true;
     if (isLocal) {
-      const requestedHandle = query.handle.toLowerCase().replace(/^@/, '').split('@')[0];
-      if (requestedHandle !== localUser.handle.toLowerCase()) {
+      const requestedAddress = resolveAccountAddress(query.handle, localUser.homeDomain);
+      if (!requestedAddress || requestedAddress.canonical !== localUser.handle) {
         return NextResponse.json({ error: 'Recipient identity mismatch' }, { status: 409 });
       }
       const [bundle, vault] = await Promise.all([
@@ -72,12 +73,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(response, { headers: { 'Cache-Control': 'no-store' } });
     }
 
-    const handleParts = query.handle.toLowerCase().replace(/^@/, '').split('@');
-    if (handleParts.length !== 2 || !handleParts[0] || !handleParts[1]) {
+    const requestedAddress = parseAccountAddress(query.handle);
+    if (!requestedAddress) {
       return NextResponse.json({ error: 'Remote recipient domain is missing' }, { status: 400 });
     }
-    const remoteHandle = handleParts[0];
-    const normalizedDomain = normalizeNodeDomain(handleParts.at(-1) || '');
+    const remoteHandle = requestedAddress.username;
+    const normalizedDomain = requestedAddress.homeDomain;
     const isDevelopmentLoopback = process.env.NODE_ENV === 'development'
       && /^localhost(?::\d{1,5})?$/i.test(normalizedDomain);
     const domain = isDevelopmentLoopback
@@ -112,7 +113,10 @@ export async function GET(request: NextRequest) {
     }
 
     const response = e2eePublicBundleResponseSchema.parse(remote.json());
-    if (response.proof.handle.toLowerCase() !== remoteHandle || !await verifyE2EEPublicBundle(response, query.did)) {
+    const proofAddress = resolveAccountAddress(response.proof.handle, domain);
+    if (!proofAddress
+      || proofAddress.canonical !== requestedAddress.canonical
+      || !await verifyE2EEPublicBundle(response, query.did)) {
       return NextResponse.json({ error: 'Recipient encryption key proof is invalid' }, { status: 502 });
     }
     const resolvedSigningPublicKey = normalizeSigningPublicKey(response.signingPublicKey);
@@ -123,7 +127,7 @@ export async function GET(request: NextRequest) {
       || resolvedSigningPublicKey;
 
     const now = new Date();
-    const qualifiedHandle = `${remoteHandle}@${domain}`;
+    const qualifiedHandle = requestedAddress.canonical;
     const persistedValues = {
       did: query.did,
       handle: qualifiedHandle,
@@ -141,7 +145,7 @@ export async function GET(request: NextRequest) {
         // bundle so a crash or concurrent first contact cannot split them.
         await pinVerifiedFederatedActorIdentity({
           sourceDomain: domain,
-          actorHandle: remoteHandle,
+          actorHandle: qualifiedHandle,
           did: query.did,
         }, tx);
 
@@ -151,7 +155,7 @@ export async function GET(request: NextRequest) {
             did: e2eeRemoteKeyBundles.did,
             handle: e2eeRemoteKeyBundles.handle,
           }).from(e2eeRemoteKeyBundles).where(sql<boolean>`
-            lower(ltrim(${e2eeRemoteKeyBundles.handle}, '@')) = ${qualifiedHandle}
+            lower(${e2eeRemoteKeyBundles.handle}) = ${qualifiedHandle}
           `).limit(2),
         ]);
         if (cachedForHandle.some((candidate) => candidate.did !== query.did)) {
@@ -160,7 +164,7 @@ export async function GET(request: NextRequest) {
             'Recipient handle is already bound to another verified identity',
           );
         }
-        if (cached && cached.handle.toLowerCase().replace(/^@/, '') !== qualifiedHandle) {
+        if (cached && cached.handle.toLowerCase() !== qualifiedHandle) {
           throw new RemoteKeyContinuityError(
             'E2EE_IDENTITY_KEY_CHANGED',
             'Recipient identity is already bound to another handle',

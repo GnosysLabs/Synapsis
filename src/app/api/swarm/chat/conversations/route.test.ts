@@ -51,7 +51,10 @@ describe('GET /api/swarm/chat/conversations', () => {
       user: {
         id: 'owner-id',
         did: 'did:key:owner',
-        handle: 'owner',
+        handle: 'owner@local.example',
+        username: 'owner',
+        homeDomain: 'local.example',
+        isLocalAccount: true,
         publicKey: 'owner-signing-key',
       },
     });
@@ -82,13 +85,17 @@ describe('GET /api/swarm/chat/conversations', () => {
           avatarUrl: null,
           did: 'did:key:alice',
           publicKey: 'alice-signing-key',
+          homeDomain: 'offline.example',
+          isLocalAccount: false,
         },
         {
-          handle: 'bob',
+          handle: 'bob@local.example',
           displayName: 'Bob',
           avatarUrl: '/bob.png',
           did: 'did:key:bob',
           publicKey: 'bob-signing-key',
+          homeDomain: 'local.example',
+          isLocalAccount: true,
         },
       ]));
 
@@ -113,7 +120,7 @@ describe('GET /api/swarm/chat/conversations', () => {
       },
       {
         id: 'local-conversation',
-        participant2: { handle: 'bob', displayName: 'Bob' },
+        participant2: { handle: 'bob@local.example', displayName: 'Bob' },
         unreadCount: 0,
       },
     ]);
@@ -132,6 +139,7 @@ describe('GET /api/swarm/chat/conversations', () => {
 
   it('resolves an encrypted preview signing key by sender DID across nodes', async () => {
     const senderDid = 'did:synapsis:remote-alice';
+    // Historical encrypted payloads retain their exact signed bare handles.
     const encryptedEnvelope = {
       protocol: 'synapsis-e2ee-v1',
       cipherSuite: 'x25519+xchacha20poly1305+blake2b-v1',
@@ -182,6 +190,8 @@ describe('GET /api/swarm/chat/conversations', () => {
         avatarUrl: null,
         did: senderDid,
         publicKey: 'alice-signing-key',
+        homeDomain: 'canonical.example',
+        isLocalAccount: false,
       }]));
 
     const response = await GET(request());

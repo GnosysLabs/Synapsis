@@ -152,6 +152,7 @@ const senderKeyId = 'k1_sender_key_01';
 const recipientKeyId = 'k1_recipient_key_01';
 
 function encryptedEnvelope(recipientHandle = 'bob@local.social') {
+  // Historical v2 envelopes keep their exact bare signed sender handle.
   return {
     protocol: 'synapsis-e2ee-v1',
     cipherSuite: 'x25519+xchacha20poly1305+blake2b-v1',
@@ -236,7 +237,8 @@ describe('federated encrypted-message receiver', () => {
     ));
     mocks.verifyFederatedUserAction.mockImplementation(async ({ payload: verifiedPayload }) => ({
       ok: true,
-      actorHandle: 'alice',
+      actorHandle: 'alice@remote.social',
+      actorUsername: 'alice',
       sourceDomain: 'remote.social',
       destinationDomain: 'local.social',
       userAction: verifiedPayload.userAction,
@@ -246,7 +248,7 @@ describe('federated encrypted-message receiver', () => {
       mocks.transactionEvents.push('identity');
       return {
         sourceDomain: 'remote.social',
-        actorHandle: 'alice',
+        actorHandle: 'alice@remote.social',
         qualifiedHandle: 'alice@remote.social',
         did: senderDid,
       };
@@ -256,7 +258,10 @@ describe('federated encrypted-message receiver', () => {
         return {
           id: 'recipient-id',
           did: recipientDid,
-          handle: 'bob',
+          handle: 'bob@local.social',
+          username: 'bob',
+          homeDomain: 'local.social',
+          isLocalAccount: true,
           dmPrivacy: 'all',
         };
       }
@@ -298,7 +303,7 @@ describe('federated encrypted-message receiver', () => {
       expectedMethod: 'POST',
       expectedPath: '/api/chat/receive',
       expectedAction: 'chat_e2ee',
-      actorHandle: 'alice',
+      actorHandle: 'alice@remote.social',
       replayBinding: {
         deliveryId: `${messageId}:local.social`,
         fullSenderHandle: 'alice@remote.social',
@@ -307,7 +312,7 @@ describe('federated encrypted-message receiver', () => {
     expect(mocks.transactionEvents).toEqual(['identity', 'receipt', 'conversation', 'quota', 'message']);
     expect(mocks.pinVerifiedFederatedActorIdentity).toHaveBeenCalledWith({
       sourceDomain: 'remote.social',
-      actorHandle: 'alice',
+      actorHandle: 'alice@remote.social',
       did: senderDid,
     }, expect.anything());
     expect(mocks.messageValues).toHaveBeenCalledWith(expect.objectContaining({
@@ -463,7 +468,10 @@ describe('federated encrypted-message receiver', () => {
         return {
           id: 'recipient-id',
           did: recipientDid,
-          handle: 'bob',
+          handle: 'bob@local.social',
+          username: 'bob',
+          homeDomain: 'local.social',
+          isLocalAccount: true,
           dmPrivacy: 'all',
         };
       }

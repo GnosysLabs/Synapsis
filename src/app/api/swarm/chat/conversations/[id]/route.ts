@@ -9,6 +9,10 @@ import { db, chatConversations } from '@/db';
 import { eq } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
 import { z } from 'zod';
+import {
+  requireCanonicalAccountHomeDomain,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 // Schema for conversation ID parameter
 const conversationIdSchema = z.string().uuid('Invalid conversation ID format');
@@ -62,7 +66,22 @@ export async function DELETE(
 
     if (deleteFor === 'both') {
       const participant2Handle = conversation.participant2Handle;
-      if (participant2Handle.includes('@')) {
+      const localDomain = requireCanonicalAccountHomeDomain(
+        process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+      );
+      const participantAddress = resolveAccountAddress(participant2Handle, localDomain);
+      const recipientUser = participantAddress
+        ? await db.query.users.findFirst({
+            where: {
+              AND: [
+                { username: participantAddress.username },
+                { homeDomain: participantAddress.homeDomain },
+                { isLocalAccount: true },
+              ],
+            },
+          })
+        : null;
+      if (!recipientUser || participantAddress?.homeDomain !== localDomain) {
         return NextResponse.json({
           error: 'Delete for everyone is not supported across nodes. You can still delete this conversation for yourself.',
           code: 'REMOTE_DELETE_FOR_EVERYONE_UNSUPPORTED',
@@ -73,10 +92,6 @@ export async function DELETE(
       await db.delete(chatConversations).where(eq(chatConversations.id, id));
 
       // Local user - find and delete their conversation too.
-      const recipientUser = await db.query.users.findFirst({
-        where: { handle: participant2Handle },
-      });
-
       if (recipientUser) {
         // Find their conversation with us
         const recipientConversation = await db.query.chatConversations.findFirst({

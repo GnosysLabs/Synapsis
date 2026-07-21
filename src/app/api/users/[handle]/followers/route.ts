@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, follows, users } from '@/db';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { hydrateSwarmUsers } from '@/lib/swarm/user-hydration';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { fetchSwarmUserProfile } from '@/lib/swarm/interactions';
@@ -14,6 +14,7 @@ import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
 import { parseBoundedInteger } from '@/lib/http/query';
+import { parseAccountAddress } from '@/lib/identity/account-address';
 import {
     canonicalizeRemoteUserListDomain,
     isValidRemoteUserListHandle,
@@ -130,7 +131,7 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Find the user
         const user = await db.query.users.findFirst({
-            where: { handle: cleanHandle },
+            where: { AND: [{ handle: cleanHandle }, { isLocalAccount: true }] },
         });
 
         if (!user) {
@@ -158,7 +159,10 @@ export async function GET(request: Request, context: RouteContext) {
             })
             .from(follows)
             .innerJoin(users, eq(follows.followerId, users.id))
-            .where(eq(follows.followingId, user.id))
+            .where(and(
+                eq(follows.followingId, user.id),
+                eq(users.isLocalAccount, true),
+            ))
             .limit(limit);
 
         const localFollowers = userFollowers.map(f => ({
@@ -178,15 +182,19 @@ export async function GET(request: Request, context: RouteContext) {
             limit,
         });
 
-        const remoteFollowersList = userRemoteFollowers.map(f => ({
-            id: f.actorUrl,
-            handle: f.handle || 'unknown',
-            displayName: f.handle?.split('@')[0] || 'Unknown',
-            avatarUrl: null,
-            bio: null,
-            isRemote: true,
-            nodeDomain: f.handle?.split('@').pop(),
-        }));
+        const remoteFollowersList = userRemoteFollowers.flatMap((f) => {
+            const address = f.handle ? parseAccountAddress(f.handle) : null;
+            if (!address) return [];
+            return [{
+                id: f.actorUrl,
+                handle: address.canonical,
+                displayName: address.username,
+                avatarUrl: null,
+                bio: null,
+                isRemote: true,
+                nodeDomain: address.homeDomain,
+            }];
+        });
 
         // Merge and return
         const allFollowers = [...localFollowers, ...remoteFollowersList].slice(0, limit);

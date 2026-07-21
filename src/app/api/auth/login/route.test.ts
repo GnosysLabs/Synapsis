@@ -71,7 +71,10 @@ describe('POST /api/auth/login adaptive protection', () => {
         mocks.isLocalNodeNsfw.mockResolvedValue(false);
         mocks.authenticateUser.mockResolvedValue({
             id: 'user-id',
-            handle: 'alice',
+            handle: 'alice@node.social',
+            username: 'alice',
+            homeDomain: 'node.social',
+            isLocalAccount: true,
             displayName: 'Alice',
             did: 'did:synapsis:alice',
             publicKey: 'PUBLIC KEY',
@@ -90,6 +93,14 @@ describe('POST /api/auth/login adaptive protection', () => {
         expect(mocks.verifyTurnstileToken).not.toHaveBeenCalled();
         expect(mocks.createSession).toHaveBeenCalledWith('user-id');
         expect(mocks.clearLoginFailures).toHaveBeenCalled();
+        await expect(response.json()).resolves.toMatchObject({
+            user: {
+                handle: 'alice@node.social',
+                username: 'alice',
+                homeDomain: 'node.social',
+                isLocalAccount: true,
+            },
+        });
     });
 
     it('requires a token when repeated failures trigger a configured challenge', async () => {

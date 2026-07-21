@@ -7,13 +7,17 @@ import type {
 import {
   federationMediaUrlSchema,
   federationWebUrlSchema,
+  federatedHandleSchema,
 } from '@/lib/utils/federation';
-import { normalizeNodeDomain } from './node-domain';
+import {
+  canonicalAccountHomeDomain,
+  requireCanonicalAccountHomeDomain,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 const MAX_REMOTE_POSTS = 50;
 const boundedCount = z.number().int().nonnegative().max(1_000_000_000);
 const timestamp = z.string().datetime();
-const localHandle = z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/);
 
 const mediaSchema = z.object({
   url: federationMediaUrlSchema,
@@ -29,7 +33,7 @@ const previewMediaSchema = z.object({
 });
 
 const authorSchema = z.object({
-  handle: localHandle,
+  handle: federatedHandleSchema,
   displayName: z.string().min(1).max(50),
   avatarUrl: federationMediaUrlSchema.optional(),
   isNsfw: z.boolean().optional(),
@@ -91,7 +95,7 @@ const changeSchema = z.discriminatedUnion('type', [
 ]);
 const accountChangeSchema = z.object({
   sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  handle: localHandle,
+  handle: federatedHandleSchema,
   did: z.string().min(16).max(2_048),
   deletedAt: timestamp,
 });
@@ -113,8 +117,12 @@ function validatePostOriginAndTime(
   post: z.infer<typeof shallowPostSchema>,
   sourceDomain: string,
 ): void {
-  if (normalizeNodeDomain(post.nodeDomain) !== sourceDomain) {
+  if (canonicalAccountHomeDomain(post.nodeDomain) !== sourceDomain) {
     throw new Error('Remote timeline attempted to assert a different node origin');
+  }
+  const authorAddress = resolveAccountAddress(post.author.handle, sourceDomain);
+  if (!authorAddress || authorAddress.homeDomain !== sourceDomain) {
+    throw new Error('Remote timeline attempted a cross-node author claim');
   }
   const maximumTimestamp = Date.now() + 5 * 60 * 1_000;
   if (new Date(post.createdAt).getTime() > maximumTimestamp
@@ -128,26 +136,19 @@ function normalizeReposters(
   sourceDomain: string,
 ): z.infer<typeof reposterSchema>[] | undefined {
   return repostedBy?.flatMap((reposter) => {
-    const normalizedHandle = reposter.handle.trim().replace(/^@/, '').toLowerCase();
-    const atIndex = normalizedHandle.lastIndexOf('@');
-    const bareHandle = atIndex === -1
-      ? normalizedHandle
-      : normalizedHandle.slice(0, atIndex);
-    const claimedDomain = atIndex === -1
-      ? sourceDomain
-      : normalizeNodeDomain(normalizedHandle.slice(atIndex + 1));
+    const address = resolveAccountAddress(reposter.handle, sourceDomain);
 
-    if (!localHandle.safeParse(bareHandle).success
-      || claimedDomain !== sourceDomain
+    if (!address
+      || address.homeDomain !== sourceDomain
       || (reposter.nodeDomain
-        && normalizeNodeDomain(reposter.nodeDomain) !== sourceDomain)) {
+        && canonicalAccountHomeDomain(reposter.nodeDomain) !== sourceDomain)) {
       return [];
     }
 
     return [{
       ...reposter,
-      id: `swarm:${sourceDomain}:${bareHandle}`,
-      handle: bareHandle,
+      id: `swarm:${sourceDomain}:${address.username}`,
+      handle: address.canonical,
       nodeDomain: sourceDomain,
       isNsfw: reposter.isNsfw ?? true,
       nodeIsNsfw: reposter.nodeIsNsfw ?? true,
@@ -170,13 +171,13 @@ export function parseRemoteTimelineResponse(
   hasMoreAccountChanges?: boolean;
   nodeIsNsfw?: boolean;
 } {
-  const sourceDomain = normalizeNodeDomain(sourceDomainInput);
+  const sourceDomain = requireCanonicalAccountHomeDomain(sourceDomainInput);
   const parsed = responseSchema.safeParse(value);
   if (!parsed.success) {
     throw new Error('Remote timeline response failed validation');
   }
   if (parsed.data.nodeDomain
-    && normalizeNodeDomain(parsed.data.nodeDomain) !== sourceDomain) {
+    && canonicalAccountHomeDomain(parsed.data.nodeDomain) !== sourceDomain) {
     throw new Error('Remote timeline returned a different node identity');
   }
 
@@ -197,16 +198,28 @@ export function parseRemoteTimelineResponse(
     if (new Date(change.deletedAt).getTime() > Date.now() + 5 * 60 * 1_000) {
       throw new Error('Remote timeline contains a future-dated account deletion');
     }
+    const address = resolveAccountAddress(change.handle, sourceDomain);
+    if (!address || address.homeDomain !== sourceDomain) {
+      throw new Error('Remote timeline contains a cross-node account deletion');
+    }
   }
 
   const posts = parsed.data.posts.map((post) => ({
     ...post,
     nodeDomain: sourceDomain,
+    author: {
+      ...post.author,
+      handle: resolveAccountAddress(post.author.handle, sourceDomain)!.canonical,
+    },
     repostedBy: normalizeReposters(post.repostedBy, sourceDomain),
     repostOf: post.repostOf
       ? {
         ...post.repostOf,
         nodeDomain: sourceDomain,
+        author: {
+          ...post.repostOf.author,
+          handle: resolveAccountAddress(post.repostOf.author.handle, sourceDomain)!.canonical,
+        },
         repostedBy: normalizeReposters(post.repostOf.repostedBy, sourceDomain),
       }
       : post.repostOf,
@@ -218,11 +231,22 @@ export function parseRemoteTimelineResponse(
       post: {
         ...change.post,
         nodeDomain: sourceDomain,
+        author: {
+          ...change.post.author,
+          handle: resolveAccountAddress(change.post.author.handle, sourceDomain)!.canonical,
+        },
         repostedBy: normalizeReposters(change.post.repostedBy, sourceDomain),
         repostOf: change.post.repostOf
           ? {
               ...change.post.repostOf,
               nodeDomain: sourceDomain,
+              author: {
+                ...change.post.repostOf.author,
+                handle: resolveAccountAddress(
+                  change.post.repostOf.author.handle,
+                  sourceDomain,
+                )!.canonical,
+              },
               repostedBy: normalizeReposters(change.post.repostOf.repostedBy, sourceDomain),
             }
           : change.post.repostOf,
@@ -235,7 +259,10 @@ export function parseRemoteTimelineResponse(
     changes,
     changeCursor: parsed.data.changeCursor,
     hasMoreChanges: parsed.data.hasMoreChanges,
-    accountChanges: parsed.data.accountChanges || [],
+    accountChanges: (parsed.data.accountChanges || []).map((change) => ({
+      ...change,
+      handle: resolveAccountAddress(change.handle, sourceDomain)!.canonical,
+    })),
     accountChangeCursor: parsed.data.accountChangeCursor,
     hasMoreAccountChanges: parsed.data.hasMoreAccountChanges,
     nodeIsNsfw: parsed.data.nodeIsNsfw,

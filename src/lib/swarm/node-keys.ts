@@ -10,6 +10,7 @@ import { db, nodes } from '@/db';
 import { eq } from 'drizzle-orm';
 import { generateKeyPair } from '@/lib/crypto/keys';
 import crypto from 'crypto';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
 let cachedKeypair: { privateKey: string; publicKey: string } | null = null;
@@ -79,7 +80,9 @@ async function loadNodeKeypair(): Promise<{ privateKey: string; publicKey: strin
     throw new Error('Database not available');
   }
 
-  const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+  const domain = requireCanonicalAccountHomeDomain(
+    process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+  );
 
   // Try to get existing node
   const node = await db.query.nodes.findFirst({
@@ -155,7 +158,9 @@ export async function getNodePublicKey(): Promise<string | null> {
 
   if (cachedKeypair) return cachedKeypair.publicKey;
 
-  const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+  const domain = requireCanonicalAccountHomeDomain(
+    process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+  );
   const node = await db.query.nodes.findFirst({
     where: { domain: domain },
   });

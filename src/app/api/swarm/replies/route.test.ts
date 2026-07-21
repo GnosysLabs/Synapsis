@@ -58,7 +58,8 @@ vi.mock('@/db', () => ({
     displayName: 'users.displayName',
     avatarUrl: 'users.avatarUrl',
     isNsfw: 'users.isNsfw',
-    nodeId: 'users.nodeId',
+    homeDomain: 'users.homeDomain',
+    isLocalAccount: 'users.isLocalAccount',
   },
   media: {},
   notifications: {},
@@ -115,6 +116,7 @@ const actionIssuedAt = Date.now();
 const deletionTimestamp = new Date().toISOString();
 
 function deletionUserAction(postId = replyId) {
+  // Historical v2 proofs keep their exact bare signed handles.
   return {
     action: 'delete',
     data: { postId },
@@ -230,7 +232,7 @@ describe('swarm reply authorization and sensitivity', () => {
     });
     mocks.pinVerifiedFederatedActorIdentity.mockResolvedValue({
       sourceDomain: 'source.social',
-      actorHandle: 'alice',
+      actorHandle: 'alice@source.social',
       qualifiedHandle: 'alice@source.social',
       did: authorDid,
     });
@@ -270,7 +272,8 @@ describe('swarm reply authorization and sensitivity', () => {
   it('rolls an authoritative reply-ID conflict back before materializing its actor', async () => {
     mocks.verifyFederatedUserAction.mockResolvedValue({
       ok: true,
-      actorHandle: 'alice',
+      actorHandle: 'alice@source.social',
+      actorUsername: 'alice',
       sourceDomain: 'source.social',
       destinationDomain: 'target.social',
       userAction: replyUserAction(),
@@ -281,7 +284,12 @@ describe('swarm reply authorization and sensitivity', () => {
         id: parentId,
         userId: 'parent-user-id',
         isRemoved: false,
-        author: { handle: 'owner', nodeId: null },
+        author: {
+          handle: 'owner@target.social',
+          username: 'owner',
+          homeDomain: 'target.social',
+          isLocalAccount: true,
+        },
       })
       .mockResolvedValueOnce(null);
     mocks.txPostFindFirst.mockResolvedValue({
@@ -301,7 +309,8 @@ describe('swarm reply authorization and sensitivity', () => {
   it('accepts a policy-suppressed remote reply without identity, replay, or state writes', async () => {
     mocks.verifyFederatedUserAction.mockResolvedValue({
       ok: true,
-      actorHandle: 'alice',
+      actorHandle: 'alice@source.social',
+      actorUsername: 'alice',
       sourceDomain: 'source.social',
       destinationDomain: 'target.social',
       userAction: replyUserAction(),
@@ -312,7 +321,12 @@ describe('swarm reply authorization and sensitivity', () => {
         id: parentId,
         userId: 'parent-user-id',
         isRemoved: false,
-        author: { handle: 'owner', nodeId: null },
+        author: {
+          handle: 'owner@target.social',
+          username: 'owner',
+          homeDomain: 'target.social',
+          isLocalAccount: true,
+        },
       })
       .mockResolvedValueOnce(null);
     mocks.shouldSuppressRemoteInteraction.mockResolvedValue(true);
@@ -328,7 +342,7 @@ describe('swarm reply authorization and sensitivity', () => {
       'parent-user-id',
       {
         did: authorDid,
-        handle: 'alice',
+        handle: 'alice@source.social',
         domain: 'source.social',
       },
     );
@@ -383,7 +397,8 @@ describe('swarm reply authorization and sensitivity', () => {
   it('rejects deletion when the verified DID does not own the stored reply', async () => {
     mocks.verifyFederatedUserAction.mockResolvedValue({
       ok: true,
-      actorHandle: 'alice',
+      actorHandle: 'alice@source.social',
+      actorUsername: 'alice',
       sourceDomain: 'source.social',
       destinationDomain: 'target.social',
       userAction: deletionUserAction(),
@@ -412,7 +427,8 @@ describe('swarm reply authorization and sensitivity', () => {
   it('deletes only the signed source namespace and resynchronizes its parent', async () => {
     mocks.verifyFederatedUserAction.mockResolvedValue({
       ok: true,
-      actorHandle: 'alice',
+      actorHandle: 'alice@source.social',
+      actorUsername: 'alice',
       sourceDomain: 'source.social',
       destinationDomain: 'target.social',
       userAction: deletionUserAction(),
@@ -472,7 +488,13 @@ describe('swarm reply authorization and sensitivity', () => {
     mocks.findFirst.mockResolvedValue({
       id: parentId,
       isNsfw: true,
-      author: { handle: 'local-author', nodeId: null, isNsfw: false },
+      author: {
+        handle: 'local-author@target.social',
+        username: 'local-author',
+        homeDomain: 'target.social',
+        isLocalAccount: true,
+        isNsfw: false,
+      },
     });
     const response = await GET(new Request(
       `https://target.social/api/swarm/replies?postId=${parentId}`,
@@ -486,7 +508,13 @@ describe('swarm reply authorization and sensitivity', () => {
     mocks.findFirst.mockResolvedValue({
       id: parentId,
       isNsfw: false,
-      author: { handle: 'local-author', nodeId: null, isNsfw: false },
+      author: {
+        handle: 'local-author@target.social',
+        username: 'local-author',
+        homeDomain: 'target.social',
+        isLocalAccount: true,
+        isNsfw: false,
+      },
     });
     mocks.limit.mockResolvedValue([{
       id: replyId,
@@ -495,11 +523,12 @@ describe('swarm reply authorization and sensitivity', () => {
       likesCount: 0,
       repostsCount: 0,
       repliesCount: 0,
-      authorHandle: 'legacy_remote',
+      authorHandle: 'legacy_remote@remote.social',
       authorDisplayName: 'Legacy remote',
       authorAvatarUrl: 'https://remote.social/secret-avatar.jpg',
       authorIsNsfw: false,
-      authorNodeId: 'remote-node-row',
+      authorHomeDomain: 'remote.social',
+      authorIsLocalAccount: false,
       postIsNsfw: false,
     }]);
     const response = await GET(new Request(
@@ -518,7 +547,13 @@ describe('swarm reply authorization and sensitivity', () => {
     mocks.findFirst.mockResolvedValue({
       id: parentId,
       isNsfw: false,
-      author: { handle: 'local-author', nodeId: null, isNsfw: false },
+      author: {
+        handle: 'local-author@target.social',
+        username: 'local-author',
+        homeDomain: 'target.social',
+        isLocalAccount: true,
+        isNsfw: false,
+      },
     });
     mocks.limit.mockResolvedValue([{
       id: 'origin-cache-row',
@@ -532,7 +567,8 @@ describe('swarm reply authorization and sensitivity', () => {
       authorDisplayName: 'Alice',
       authorAvatarUrl: null,
       authorIsNsfw: true,
-      authorNodeId: 'source-node-row',
+      authorHomeDomain: 'source.social',
+      authorIsLocalAccount: false,
       postIsNsfw: true,
     }]);
 
@@ -551,7 +587,7 @@ describe('swarm reply authorization and sensitivity', () => {
       replyCount: 4,
       isNsfw: true,
       author: {
-        handle: 'alice',
+        handle: 'alice@source.social',
         isNsfw: true,
       },
     });

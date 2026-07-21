@@ -7,6 +7,11 @@ import { signedAPI } from '@/lib/api/signed-fetch';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
 import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
+import {
+    canonicalAccountAddress,
+    displayAccountAddress,
+    sameAccountAddress,
+} from '@/lib/identity/account-address';
 
 export interface UserListItemUser {
     id: string;
@@ -43,10 +48,11 @@ function FollowButton({ targetHandle, initialFollowing }: FollowButtonProps) {
         setPending(false);
     }, [initialFollowing, targetHandle]);
 
-    const cleanTargetHandle = targetHandle.replace(/^@/, '');
-    const isOwnAccount = user?.handle.toLowerCase() === cleanTargetHandle.toLowerCase();
+    const canonicalTargetHandle = canonicalAccountAddress(targetHandle);
+    const isOwnAccount = Boolean(user && canonicalTargetHandle
+        && sameAccountAddress(user.handle, canonicalTargetHandle));
 
-    if (!user || isOwnAccount) return null;
+    if (!user || !canonicalTargetHandle || isOwnAccount) return null;
 
     const handleFollowChange = async () => {
         if (authLoading || isRestoring || pending) return;
@@ -64,8 +70,8 @@ function FollowButton({ targetHandle, initialFollowing }: FollowButtonProps) {
 
         try {
             const response = wasFollowing
-                ? await signedAPI.unfollowUser(cleanTargetHandle, did, currentHandle)
-                : await signedAPI.followUser(cleanTargetHandle, did, currentHandle);
+                ? await signedAPI.unfollowUser(canonicalTargetHandle, did, currentHandle)
+                : await signedAPI.followUser(canonicalTargetHandle, did, currentHandle);
             const data = await response.json().catch(() => ({})) as {
                 error?: string;
                 following?: boolean;
@@ -98,7 +104,7 @@ function FollowButton({ targetHandle, initialFollowing }: FollowButtonProps) {
             disabled={authLoading || isRestoring || pending}
             aria-busy={pending}
             aria-pressed={isFollowing}
-            aria-label={`${isFollowing ? 'Unfollow' : 'Follow'} @${cleanTargetHandle}`}
+            aria-label={`${isFollowing ? 'Unfollow' : 'Follow'} ${displayAccountAddress(canonicalTargetHandle)}`}
         >
             {pending
                 ? (isFollowing ? 'Unfollowing…' : 'Following…')

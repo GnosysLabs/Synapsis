@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   findUser: vi.fn(),
@@ -34,9 +34,12 @@ import { GET } from './route';
 describe('GET /api/swarm/users/[handle]/followers local origin boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'local.example');
     mocks.localNodeIsNsfw.mockResolvedValue(false);
     mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
   });
+
+  afterEach(() => vi.unstubAllEnvs());
 
   it('rejects a qualified remote target before querying the user cache', async () => {
     const response = await GET(
@@ -48,11 +51,13 @@ describe('GET /api/swarm/users/[handle]/followers local origin boundary', () => 
     expect(mocks.findUser).not.toHaveBeenCalled();
   });
 
-  it('rejects an unqualified target row linked to a remote node', async () => {
+  it('rejects a target row not explicitly owned by this node', async () => {
     mocks.findUser.mockResolvedValue({
       id: 'remote-user-id',
-      handle: 'remoteuser',
-      nodeId: 'remote-node-id',
+      handle: 'remoteuser@local.example',
+      username: 'remoteuser',
+      homeDomain: 'local.example',
+      isLocalAccount: false,
       isSuspended: false,
     });
 
@@ -66,8 +71,9 @@ describe('GET /api/swarm/users/[handle]/followers local origin boundary', () => 
     expect(mocks.findUser).toHaveBeenCalledWith({
       where: {
         AND: [
-          { handle: 'remoteuser' },
-          { nodeId: { isNull: true } },
+          { username: 'remoteuser' },
+          { homeDomain: 'local.example' },
+          { isLocalAccount: true },
         ],
       },
     });

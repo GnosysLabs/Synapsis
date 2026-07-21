@@ -1,7 +1,11 @@
 import { db, handleRegistry } from '@/db';
 import { and, eq, gte, isNull, lt, or, sql } from 'drizzle-orm';
 import { withSqliteLockRetry } from '@/lib/db/sqlite-lock-retry';
-import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import {
+    getCanonicalSwarmSeedDomain,
+    getPublicSwarmDomain,
+    normalizeNodeDomain,
+} from '@/lib/swarm/node-domain';
 
 export type HandleEntry = {
     handle: string;
@@ -85,7 +89,12 @@ function canonicalDomain(value: string): string | null {
     const normalized = normalizeNodeDomain(value);
     const developmentLoopback = process.env.NODE_ENV !== 'production'
         && /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i.test(normalized);
-    return developmentLoopback ? normalized : getPublicSwarmDomain(normalized);
+    const publicDomain = getPublicSwarmDomain(normalized);
+    return developmentLoopback
+        ? normalized
+        : publicDomain
+            ? getCanonicalSwarmSeedDomain(publicDomain) ?? publicDomain
+            : null;
 }
 
 export function canonicalHandleEntry(
@@ -103,13 +112,9 @@ export function canonicalHandleEntry(
 
     const bareHandle = parts[0];
     if (!/^[a-z0-9_]{3,30}$/i.test(bareHandle)) return null;
-    const localDomain = canonicalDomain(
-        process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
-    );
-
     return {
         ...entry,
-        handle: entryDomain === localDomain ? bareHandle : `${bareHandle}@${entryDomain}`,
+        handle: `${bareHandle}@${entryDomain}`,
         nodeDomain: entryDomain,
     };
 }

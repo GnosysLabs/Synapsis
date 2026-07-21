@@ -6,6 +6,7 @@ import { useDomain, useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { isRemoteAvatarSensitivityUnknown } from '@/lib/nsfw/content-visibility';
 import { shouldBlurProfileMedia } from '@/lib/nsfw/profile-media';
 import { isTrustedFederationMediaUrl } from '@/lib/utils/federation';
+import { isAccountOnNode, resolveAccountAddress } from '@/lib/identity/account-address';
 
 export function ProfileBanner({
     url,
@@ -33,14 +34,14 @@ export function ProfileBanner({
     const { user } = useAuth();
     const { config } = useRuntimeConfig();
     const localNodeDomain = useDomain();
-    const qualifiedHandleDomain = accountHandle.includes('@')
-        ? accountHandle.slice(accountHandle.lastIndexOf('@') + 1).toLowerCase()
-        : null;
-    const normalizedLocalDomain = localNodeDomain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
-    const effectiveIsRemote = isRemote === true || [nodeDomain, qualifiedHandleDomain].some((candidate) => Boolean(
-        candidate
-        && candidate.trim().replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase() !== normalizedLocalDomain
-    ));
+    const accountAddress = resolveAccountAddress(
+        accountHandle,
+        nodeDomain || localNodeDomain,
+    );
+    const nodeAddress = nodeDomain ? resolveAccountAddress('account', nodeDomain) : null;
+    const assertedAddress = accountAddress || nodeAddress;
+    const effectiveIsRemote = isRemote === true
+        || Boolean(assertedAddress && !isAccountOnNode(assertedAddress.canonical, localNodeDomain));
     const localNodeClassificationKnown = config?.classificationKnown === true;
     const localNodeIsNsfw = localNodeClassificationKnown && config?.isNsfw === true;
     const inferredRemoteSensitivityUnknown = isRemoteAvatarSensitivityUnknown({

@@ -14,6 +14,10 @@ import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
+import {
+  requireCanonicalAccountHomeDomain,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -41,7 +45,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
     const postId = postIdValidation.data;
     const nodeIsNsfw = await requireLocalNodeNsfwClassification();
-    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
+    const nodeDomain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
     const trustedRead = true;
     const serializePost = (value: Record<string, unknown>) => redactSensitivePostForViewer(
       value,
@@ -112,9 +118,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
             isNsfw: true,
             nodeIsNsfw: true,
             author: {
-              handle: remoteRepost.authorHandle.includes('@')
-                ? remoteRepost.authorHandle
-                : `${remoteRepost.authorHandle}@${remoteRepost.nodeDomain}`,
+              handle: resolveAccountAddress(
+                remoteRepost.authorHandle,
+                remoteRepost.nodeDomain,
+              )?.canonical || remoteRepost.authorHandle,
               displayName: remoteRepost.authorDisplayName,
               avatarUrl: remoteRepost.authorAvatarUrl,
               isNsfw: true,

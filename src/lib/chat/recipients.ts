@@ -12,12 +12,15 @@ function asRecipient(value: unknown): ChatRecipient | null {
     if (!value || typeof value !== 'object') return null;
     const candidate = value as Record<string, unknown>;
     if (typeof candidate.handle !== 'string' || !candidate.handle.trim()) return null;
+    const nodeDomain = typeof candidate.nodeDomain === 'string' ? candidate.nodeDomain : null;
+    const handle = canonicalAccountAddress(candidate.handle, nodeDomain);
+    if (!handle) return null;
     return {
-        handle: candidate.handle.trim(),
+        handle,
         displayName: typeof candidate.displayName === 'string' ? candidate.displayName : null,
         avatarUrl: typeof candidate.avatarUrl === 'string' ? candidate.avatarUrl : null,
         isRemote: candidate.isRemote === true,
-        ...(typeof candidate.nodeDomain === 'string' ? { nodeDomain: candidate.nodeDomain } : {}),
+        ...(nodeDomain ? { nodeDomain } : {}),
         ...(typeof candidate.isNsfw === 'boolean' ? { isNsfw: candidate.isNsfw } : {}),
         ...(typeof candidate.nodeIsNsfw === 'boolean' ? { nodeIsNsfw: candidate.nodeIsNsfw } : {}),
     };
@@ -28,15 +31,15 @@ export function uniqueChatRecipients(
     excludedHandle?: string | null,
 ): ChatRecipient[] {
     if (!Array.isArray(values)) return [];
-    const excluded = excludedHandle?.replace(/^@/, '').toLowerCase();
+    const excluded = excludedHandle ? canonicalAccountAddress(excludedHandle) : null;
     const seen = new Set<string>();
     const recipients: ChatRecipient[] = [];
 
     for (const value of values) {
         const recipient = asRecipient(value);
         if (!recipient) continue;
-        const key = recipient.handle.replace(/^@/, '').toLowerCase();
-        if (key === excluded || seen.has(key)) continue;
+        const key = recipient.handle;
+        if ((excluded && sameAccountAddress(key, excluded)) || seen.has(key)) continue;
         seen.add(key);
         recipients.push(recipient);
     }
@@ -60,8 +63,9 @@ export function recentChatRecipients(
 }
 
 export function buildChatShareHref(recipientHandle: string, sharedUrl: string): string {
+    const canonicalHandle = canonicalAccountAddress(recipientHandle);
     const search = new URLSearchParams({
-        compose: recipientHandle.replace(/^@/, ''),
+        ...(canonicalHandle ? { compose: canonicalHandle } : {}),
         share: sharedUrl,
     });
     return `/chat?${search.toString()}`;
@@ -71,3 +75,7 @@ export function buildChatShareContinuationHref(sharedUrl: string | null): string
     if (!sharedUrl) return '/chat';
     return `/chat?${new URLSearchParams({ share: sharedUrl }).toString()}`;
 }
+import {
+    canonicalAccountAddress,
+    sameAccountAddress,
+} from '@/lib/identity/account-address';

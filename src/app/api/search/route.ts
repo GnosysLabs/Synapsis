@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
 import { db, follows, mutedNodes, users, posts, remoteFollows } from '@/db';
-import { like, or, and, eq, inArray, isNull, notLike } from 'drizzle-orm';
+import { like, or, and, eq, inArray } from 'drizzle-orm';
 import { fetchSwarmUserProfile, isSwarmNode } from '@/lib/swarm/interactions';
 import { probeTransientNode } from '@/lib/swarm/transient-node-probe';
-import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import type { SwarmDirectoryUser } from '@/lib/swarm/user-directory';
 import { searchKnownSwarmUsers } from '@/lib/swarm/user-directory-search';
 import { getCachedSwarmTimeline } from '@/lib/swarm/content-cache';
@@ -17,6 +16,11 @@ import {
 } from '@/lib/nsfw/content-visibility';
 import { parseBoundedInteger } from '@/lib/http/query';
 import { searchIndexedPostIds } from '@/lib/search/post-index';
+import {
+    canonicalAccountHomeDomain,
+    parseAccountAddress,
+    requireCanonicalAccountHomeDomain,
+} from '@/lib/identity/account-address';
 
 const embeddedPostRelations = {
     author: true,
@@ -77,17 +81,22 @@ function mergeSearchUsers(local: SearchUser[], remote: SearchUser[], limit: numb
 }
 
 function toSearchUser(user: SwarmDirectoryUser): SearchUser {
+    const address = parseAccountAddress(user.handle);
+    const nodeDomain = canonicalAccountHomeDomain(user.nodeDomain);
+    if (!address || !nodeDomain || address.homeDomain !== nodeDomain) {
+        throw new Error('Search directory returned an invalid account address');
+    }
     return {
-        id: `swarm:${user.nodeDomain}:${user.handle.split('@')[0]}`,
-        handle: user.handle,
+        id: `swarm:${nodeDomain}:${address.username}`,
+        handle: address.canonical,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
         bio: null,
-        profileUrl: `https://${user.nodeDomain}/@${user.handle.split('@')[0]}`,
+        profileUrl: `https://${nodeDomain}/@${address.username}`,
         isRemote: true,
         isNsfw: user.isNsfw,
         nodeIsNsfw: user.nodeIsNsfw,
-        nodeDomain: user.nodeDomain,
+        nodeDomain,
     };
 }
 
@@ -139,9 +148,10 @@ export async function GET(request: Request) {
                 .from(mutedNodes)
                 .where(eq(mutedNodes.userId, viewer.id))
             : [];
-        const mutedDomains = new Set(
-            mutedNodeRows.map((row) => normalizeNodeDomain(row.nodeDomain)),
-        );
+        const mutedDomains = new Set(mutedNodeRows.flatMap((row) => {
+            const domain = canonicalAccountHomeDomain(row.nodeDomain);
+            return domain ? [domain] : [];
+        }));
 
         // Normalize query for local user search
         // Strip leading @ and local domain if present
@@ -150,10 +160,12 @@ export async function GET(request: Request) {
             localSearchQuery = localSearchQuery.slice(1);
         }
         // Remove local domain if searching like "admin2@dev.syn.quest"
-        const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN;
+        const localDomain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN || 'localhost:43821',
+        );
         if (localDomain && localSearchQuery.includes('@')) {
             const parts = localSearchQuery.split('@');
-            if (parts[1] === localDomain) {
+            if (canonicalAccountHomeDomain(parts[1]) === localDomain) {
                 localSearchQuery = parts[0];
             }
         }
@@ -177,9 +189,9 @@ export async function GET(request: Request) {
                 })
                     .from(users)
                     .where(and(
-                        eq(users.handle, localSearchQuery),
-                        isNull(users.nodeId),
-                        notLike(users.handle, '%@%'),
+                        eq(users.username, localSearchQuery.toLowerCase()),
+                        eq(users.homeDomain, localDomain),
+                        eq(users.isLocalAccount, true),
                         eq(users.isSuspended, false),
                         eq(users.isSilenced, false)
                     ))
@@ -193,12 +205,12 @@ export async function GET(request: Request) {
             if (searchUsers.length === 0) {
                 const userConditions = and(
                     or(
-                        like(users.handle, searchPattern),
+                        like(users.username, searchPattern),
                         like(users.displayName, searchPattern),
                         like(users.bio, searchPattern)
                     ),
-                    isNull(users.nodeId),
-                    notLike(users.handle, '%@%'),
+                    eq(users.homeDomain, localDomain),
+                    eq(users.isLocalAccount, true),
                     eq(users.isSuspended, false),
                     eq(users.isSilenced, false)
                 );
@@ -214,8 +226,7 @@ export async function GET(request: Request) {
                     .where(userConditions)
                     .limit(limit);
 
-                // Filter out remote placeholder users (those with @ in handle)
-                searchUsers = localUsers.filter(u => !u.handle.includes('@'));
+                searchUsers = localUsers;
             }
             searchUsers = searchUsers.map((searchUser) => redactSensitiveUserSummary({
                 ...searchUser,
@@ -386,7 +397,7 @@ export async function GET(request: Request) {
             // Search the continuously refreshed, validated cache. Search latency and
             // availability therefore do not grow with the peer count.
             if (localSearchQuery.length >= 2) {
-                const normalizedLocalDomain = normalizeNodeDomain(localDomain || 'localhost:43821');
+                const normalizedLocalDomain = localDomain;
                 const excludedDomains = new Set(mutedDomains);
                 excludedDomains.add(normalizedLocalDomain);
                 const swarmResults = await getCachedSwarmTimeline({

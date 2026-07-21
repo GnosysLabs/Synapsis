@@ -14,6 +14,10 @@ import { E2EE_CHAT_ACTION, E2EE_PROTOCOL_VERSION, e2eeMessageEnvelopeSchema } fr
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
+import {
+  requireCanonicalAccountHomeDomain,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 // Schema for query parameters
 const messagesQuerySchema = z.object({
@@ -118,19 +122,26 @@ export async function GET(request: NextRequest) {
       // Resolve fresh user data
       const user = msg.senderDid ? usersByDid[msg.senderDid] : usersByHandle[msg.senderHandle];
 
-      const displayName = user?.displayName || msg.senderDisplayName || msg.senderHandle;
-      const avatarUrl = user?.avatarUrl || msg.senderAvatarUrl;
-      const senderDomain = msg.senderNodeDomain || (
-        msg.senderHandle.includes('@') ? msg.senderHandle.split('@').pop() || null : null
+      const localDomain = requireCanonicalAccountHomeDomain(
+        process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN || 'localhost:43821',
       );
-      const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN || 'localhost:43821';
-      const senderIsRemote = Boolean(senderDomain && senderDomain !== localDomain);
+      const senderAddress = resolveAccountAddress(
+        msg.senderHandle,
+        msg.senderNodeDomain || localDomain,
+      );
+      const canonicalSenderHandle = senderAddress?.canonical || msg.senderHandle;
+      const displayName = user?.displayName || msg.senderDisplayName || canonicalSenderHandle;
+      const avatarUrl = user?.avatarUrl || msg.senderAvatarUrl;
+      const senderDomain = user?.homeDomain || senderAddress?.homeDomain || null;
+      const senderIsRemote = user
+        ? !user.isLocalAccount
+        : Boolean(senderDomain && senderDomain !== localDomain);
       // Imported and historical messages may outlive their sender row. Stored
       // avatar snapshots have no trustworthy classifier, so fail closed unless
       // this is the authenticated viewer's own message.
       const senderClassifierMissing = !user && !isSentByMe;
       const senderProfile = redactSensitiveUserSummary({
-        handle: msg.senderHandle,
+        handle: canonicalSenderHandle,
         displayName,
         avatarUrl,
         isRemote: senderIsRemote || senderClassifierMissing,
@@ -166,7 +177,7 @@ export async function GET(request: NextRequest) {
       return {
         id: msg.id,
         clientMessageId: msg.clientMessageId,
-        senderHandle: msg.senderHandle,
+        senderHandle: canonicalSenderHandle,
         senderDisplayName: senderProfile.displayName,
         senderAvatarUrl: senderProfile.avatarUrl,
         senderNodeDomain: senderProfile.nodeDomain,

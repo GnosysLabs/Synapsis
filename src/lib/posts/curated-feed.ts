@@ -1,4 +1,5 @@
 import type { Post } from '@/lib/types';
+import { parseAccountAddress } from '@/lib/identity/account-address';
 
 export const CURATED_FEED_WINDOW_HOURS = 72;
 
@@ -51,7 +52,7 @@ interface Candidate {
 }
 
 function normalizedHandle(handle: string): string {
-  return handle.trim().toLowerCase().replace(/^@/, '').split('@')[0];
+  return parseAccountAddress(handle)?.canonical ?? handle.trim().toLowerCase();
 }
 
 function nodeKeyFor(post: Post): string {
@@ -59,7 +60,7 @@ function nodeKeyFor(post: Post): string {
 }
 
 function authorKeyFor(post: Post): string {
-  return `${nodeKeyFor(post)}:${normalizedHandle(post.author.handle)}`;
+  return normalizedHandle(post.author.handle);
 }
 
 function formatFor(post: Post): CuratedFormat {

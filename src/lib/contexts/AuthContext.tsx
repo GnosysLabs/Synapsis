@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { useUserIdentity } from '@/lib/hooks/useUserIdentity';
 import { unlockE2EEFromSignIn } from '@/lib/e2ee/sign-in-unlock';
+import { parseAccountAddress } from '@/lib/identity/account-address';
 
 const AUTH_SYNC_CHANNEL = 'synapsis-auth-state';
 const AUTH_SYNC_STORAGE_KEY = 'synapsis:auth-state-changed';
@@ -10,6 +11,9 @@ const AUTH_SYNC_STORAGE_KEY = 'synapsis:auth-state-changed';
 export interface User {
     id: string;
     handle: string;
+    username?: string;
+    homeDomain?: string;
+    isLocalAccount?: boolean;
     displayName: string;
     email?: string;
     avatarUrl?: string | null;
@@ -63,6 +67,19 @@ const AuthContext = createContext<AuthContextType>({
     signUserAction: async () => Promise.reject('Not initialized'),
 });
 
+function canonicalAuthUser<T extends User>(user: T): T {
+    const address = parseAccountAddress(user.handle);
+    if (!address) {
+        throw new Error('Authentication response contained a non-canonical account address');
+    }
+    return {
+        ...user,
+        handle: address.canonical,
+        username: address.username,
+        homeDomain: address.homeDomain,
+    };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [accounts, setAccounts] = useState<AuthAccount[]>([]);
@@ -93,16 +110,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, []);
 
     const applyAuthState = useCallback(async (data: { user: User | null; accounts?: AuthAccount[] | null }) => {
-        const nextAccounts = data.accounts ?? [];
+        const nextUser = data.user ? canonicalAuthUser(data.user) : null;
+        const nextAccounts = (data.accounts ?? []).map((account) => canonicalAuthUser(account));
         setAccounts(nextAccounts);
-        setUser(data.user);
+        setUser(nextUser);
 
-        if (data.user?.did && data.user?.publicKey) {
+        if (nextUser?.did && nextUser?.publicKey) {
             await initializeIdentity({
-                did: data.user.did,
-                handle: data.user.handle,
-                publicKey: data.user.publicKey,
-                privateKeyEncrypted: data.user.privateKeyEncrypted,
+                did: nextUser.did,
+                handle: nextUser.handle,
+                publicKey: nextUser.publicKey,
+                privateKeyEncrypted: nextUser.privateKeyEncrypted,
             });
             await checkAdmin();
         } else {

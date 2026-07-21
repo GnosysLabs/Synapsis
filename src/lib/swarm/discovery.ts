@@ -5,7 +5,7 @@
  */
 
 import { db, users, posts, media } from '@/db';
-import { isNotNull, sql } from 'drizzle-orm';
+import { eq, isNotNull, sql } from 'drizzle-orm';
 import type { SwarmAnnouncement, SwarmNodeInfo, SwarmCapability } from './types';
 import { getCurrentBuildInfo } from '@/lib/version';
 import { upsertSwarmNode, getSeedNodes, markNodeSuccess, markNodeFailure } from './registry';
@@ -18,6 +18,7 @@ import {
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { safeFederationRequest } from './safe-federation-http';
 import { parseDirectNodeInfo } from './node-payload';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 const PUBLIC_SWARM_DOMAIN_ERROR = 'Public swarm participation requires a real ICANN domain';
 
@@ -25,7 +26,9 @@ const PUBLIC_SWARM_DOMAIN_ERROR = 'Public swarm participation requires a real IC
  * Build this node's announcement payload
  */
 export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
-  const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+  const domain = requireCanonicalAccountHomeDomain(
+    process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+  );
   const buildInfo = getCurrentBuildInfo();
   
   let name = 'Synapsis Node';
@@ -56,7 +59,7 @@ export async function buildAnnouncement(): Promise<SwarmAnnouncement> {
     // Get counts
     const userResult = await db.select({ count: sql<number>`count(*)` })
       .from(users)
-      .where(sql`${users.handle} NOT LIKE '%@%'`);
+      .where(eq(users.isLocalAccount, true));
     const postResult = await db.select({ count: sql<number>`count(*)` }).from(posts);
     const mediaResult = await db.select({ count: sql<number>`count(*)` })
       .from(media)

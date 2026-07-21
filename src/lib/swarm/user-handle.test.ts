@@ -4,9 +4,9 @@ import { resolveUserHandle } from './user-handle';
 describe('resolveUserHandle', () => {
   it('normalizes an unqualified local handle', () => {
     expect(resolveUserHandle('  @Alice  ', 'social.example.org')).toEqual({
-      canonicalHandle: 'alice',
+      canonicalHandle: 'alice@social.example.org',
       handle: 'alice',
-      domain: null,
+      domain: 'social.example.org',
       isQualified: false,
       isLocal: true,
       remote: null,
@@ -15,7 +15,7 @@ describe('resolveUserHandle', () => {
 
   it('canonicalizes a same-node qualified handle to its local database handle', () => {
     expect(resolveUserHandle('Alice@Social.Example.org', 'https://social.example.org/')).toEqual({
-      canonicalHandle: 'alice',
+      canonicalHandle: 'alice@social.example.org',
       handle: 'alice',
       domain: 'social.example.org',
       isQualified: true,
@@ -40,7 +40,7 @@ describe('resolveUserHandle', () => {
 
   it('compares development domains including ports', () => {
     expect(resolveUserHandle('Alice@localhost:43821', 'http://localhost:43821')).toMatchObject({
-      canonicalHandle: 'alice',
+      canonicalHandle: 'alice@localhost:43821',
       isLocal: true,
       remote: null,
     });
@@ -55,7 +55,7 @@ describe('resolveUserHandle', () => {
     expect(resolveUserHandle('alice@@social.example.org', 'social.example.org')).toMatchObject({
       canonicalHandle: 'alice@@social.example.org',
       isQualified: false,
-      isLocal: true,
+      isLocal: false,
       remote: null,
     });
   });

@@ -18,6 +18,7 @@ import { and, eq, or, sql } from 'drizzle-orm';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { verifyPassword } from '@/lib/auth';
 import { cookies } from 'next/headers';
+import { parseAccountAddress } from '@/lib/identity/account-address';
 
 export async function POST(request: Request) {
     try {
@@ -55,8 +56,13 @@ export async function POST(request: Request) {
         const userId = user.id;
         const userDid = user.did;
 
-        const nodeDomain = (process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821').toLowerCase();
-        const qualifiedHandle = `${user.handle.toLowerCase()}@${nodeDomain}`;
+        const address = parseAccountAddress(user.handle);
+        if (!address
+            || address.username !== user.username
+            || address.homeDomain !== user.homeDomain
+            || !user.isLocalAccount) {
+            throw new Error('Account identity is not canonical');
+        }
 
         // The deletion marker, all post tombstones, and all local removal happen
         // in one transaction. A crash can therefore leave either the complete
@@ -69,7 +75,9 @@ export async function POST(request: Request) {
                     OR: [
                         { participant1Id: userId },
                         { participant2Handle: user.handle },
-                        { participant2Handle: qualifiedHandle },
+                        // Authoritative local compatibility boundary for
+                        // conversations created before canonical addresses.
+                        { participant2Handle: user.username },
                     ],
                 },
             });
@@ -106,7 +114,9 @@ export async function POST(request: Request) {
             if (!clock) throw new Error('Federation change clock is unavailable');
 
             await tx.insert(swarmAccountTombstones).values({
-                handle: user.handle.toLowerCase(),
+                handle: address.canonical,
+                username: address.username,
+                homeDomain: address.homeDomain,
                 did: userDid,
                 sequence: clock.sequence,
                 deletedAt: new Date(),
@@ -116,7 +126,7 @@ export async function POST(request: Request) {
                 updatedAt: new Date(),
             }).where(and(
                 eq(handleRegistry.did, userDid),
-                eq(handleRegistry.nodeDomain, nodeDomain),
+                eq(handleRegistry.nodeDomain, address.homeDomain),
             ));
             await tx.delete(users).where(eq(users.id, userId));
         });

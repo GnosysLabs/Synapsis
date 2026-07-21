@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, follows, users } from '@/db';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { hydrateSwarmUsers } from '@/lib/swarm/user-hydration';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { fetchSwarmUserProfile } from '@/lib/swarm/interactions';
@@ -14,6 +14,7 @@ import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
 import { parseBoundedInteger } from '@/lib/http/query';
+import { parseAccountAddress } from '@/lib/identity/account-address';
 import {
     canonicalizeRemoteUserListDomain,
     isValidRemoteUserListHandle,
@@ -130,7 +131,7 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Find the user
         const user = await db.query.users.findFirst({
-            where: { handle: cleanHandle },
+            where: { AND: [{ handle: cleanHandle }, { isLocalAccount: true }] },
         });
 
         if (!user) {
@@ -158,7 +159,10 @@ export async function GET(request: Request, context: RouteContext) {
             })
             .from(follows)
             .innerJoin(users, eq(follows.followingId, users.id))
-            .where(eq(follows.followerId, user.id))
+            .where(and(
+                eq(follows.followerId, user.id),
+                eq(users.isLocalAccount, true),
+            ))
             .limit(limit);
 
         const localFollowing = userFollowing.map(f => ({
@@ -178,15 +182,19 @@ export async function GET(request: Request, context: RouteContext) {
             limit,
         });
 
-        const remoteFollowing = userRemoteFollowing.map(f => ({
-            id: f.targetActorUrl,
-            handle: f.targetHandle,
-            displayName: f.displayName || f.targetHandle.split('@')[0], // Use stored display name or username part
-            avatarUrl: f.avatarUrl,
-            bio: f.bio,
-            isRemote: true,
-            nodeDomain: f.targetHandle.split('@').pop(),
-        }));
+        const remoteFollowing = userRemoteFollowing.flatMap((f) => {
+            const address = parseAccountAddress(f.targetHandle);
+            if (!address) return [];
+            return [{
+                id: f.targetActorUrl,
+                handle: address.canonical,
+                displayName: f.displayName || address.username,
+                avatarUrl: f.avatarUrl,
+                bio: f.bio,
+                isRemote: true,
+                nodeDomain: address.homeDomain,
+            }];
+        });
 
         // Merge and return
         const allFollowing = [...localFollowing, ...remoteFollowing].slice(0, limit);

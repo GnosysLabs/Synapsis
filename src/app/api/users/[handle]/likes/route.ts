@@ -17,6 +17,7 @@ import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
 import { parseBoundedInteger } from '@/lib/http/query';
 import { parseRemotePostListResponse } from '@/lib/swarm/remote-post-payload';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 type LikedPost = {
@@ -158,7 +159,7 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Find the user
         const user = await db.query.users.findFirst({
-            where: { handle: cleanHandle },
+            where: { AND: [{ handle: cleanHandle }, { isLocalAccount: true }] },
         });
         const isRemotePlaceholder = Boolean(user && remote);
 
@@ -219,7 +220,9 @@ export async function GET(request: Request, context: RouteContext) {
             limit,
         });
 
-        const swarmLikedPosts = swarmLikedRows.map((like) => ({
+        const swarmLikedPosts = swarmLikedRows.map((like) => {
+            const authorAddress = resolveAccountAddress(like.authorHandle, like.nodeDomain);
+            return ({
             id: `swarm:${like.nodeDomain}:${like.originalPostId}`,
             originalPostId: like.originalPostId,
             content: like.content,
@@ -228,8 +231,8 @@ export async function GET(request: Request, context: RouteContext) {
             repostsCount: like.repostsCount,
             repliesCount: like.repliesCount,
             author: {
-                id: `swarm:${like.nodeDomain}:${like.authorHandle}`,
-                handle: `${like.authorHandle}@${like.nodeDomain}`,
+                id: `swarm:${like.nodeDomain}:${authorAddress?.username || like.authorHandle}`,
+                handle: authorAddress?.canonical || like.authorHandle,
                 displayName: like.authorDisplayName || like.authorHandle,
                 avatarUrl: like.authorAvatarUrl,
             },
@@ -245,7 +248,8 @@ export async function GET(request: Request, context: RouteContext) {
             nodeDomain: like.nodeDomain,
             likedAt: like.likedAt.toISOString(),
             isLiked: false,
-        }));
+            });
+        });
 
         let likedPosts: LikedPost[] = [
             ...localLikedPosts.map((post) => ({

@@ -1,6 +1,10 @@
 import { tokenizePostContent } from '@/lib/mentions/parser';
-import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import {
+  getCanonicalSwarmSeedDomain,
+  normalizeNodeDomain,
+} from '@/lib/swarm/node-domain';
 import { parseSwarmPostId } from '@/lib/swarm/post-id';
+import { canonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEVELOPMENT_LOOPBACK_DOMAIN = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i;
@@ -15,7 +19,7 @@ export interface ChatPostLink {
 
 function sourceNodeDomain(host: string): string | null {
   const normalized = normalizeNodeDomain(host);
-  return getPublicSwarmDomain(normalized)
+  return getCanonicalSwarmSeedDomain(normalized)
     ?? (process.env.NODE_ENV === 'development' && DEVELOPMENT_LOOPBACK_DOMAIN.test(normalized)
       ? normalized
       : null);
@@ -41,7 +45,8 @@ export function parseChatPostLink(
 
     const sourceDomain = sourceNodeDomain(url.host);
     if (!sourceDomain) return null;
-    const localDomain = normalizeNodeDomain(localNodeDomain);
+    const localDomain = canonicalAccountHomeDomain(localNodeDomain);
+    if (!localDomain) return null;
     return {
       url: url.toString(),
       postId: sourceDomain === localDomain

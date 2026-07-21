@@ -1,5 +1,6 @@
 import { db } from '@/db';
 import { normalizeNodeDomain } from './node-domain';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 export interface VerifiedRemoteActorIdentity {
   did: string;
@@ -12,10 +13,11 @@ export type RemoteInteractionPolicyDatabase = Pick<typeof db, 'query'>;
 interface CachedActorRow {
   id: string;
   handle: string;
+  isLocalAccount: boolean;
 }
 
 function cachedRemoteActorId(row: CachedActorRow | null | undefined): string | null {
-  return row && (row.handle.includes('@') || row.id.startsWith('swarm:'))
+  return row && !row.isLocalAccount
     ? row.id
     : null;
 }
@@ -33,8 +35,9 @@ export async function shouldSuppressRemoteInteraction(
   database: RemoteInteractionPolicyDatabase = db,
 ): Promise<boolean> {
   const actorDomain = normalizeNodeDomain(actor.domain);
-  const actorHandle = actor.handle.trim().replace(/^@/, '').toLowerCase();
-  const fullActorHandle = `${actorHandle}@${actorDomain}`;
+  const actorAddress = resolveAccountAddress(actor.handle, actorDomain);
+  if (!actorAddress || actorAddress.homeDomain !== actorDomain) return true;
+  const fullActorHandle = actorAddress.canonical;
 
   const nodeMute = await database.query.mutedNodes.findFirst({
     where: { AND: [{ userId: recipientUserId }, { nodeDomain: actorDomain }] },
@@ -48,11 +51,11 @@ export async function shouldSuppressRemoteInteraction(
   const [actorByDid, actorByHandle] = await Promise.all([
     database.query.users.findFirst({
       where: { did: actor.did },
-      columns: { id: true, handle: true },
+      columns: { id: true, handle: true, isLocalAccount: true },
     }),
     database.query.users.findFirst({
       where: { handle: fullActorHandle },
-      columns: { id: true, handle: true },
+      columns: { id: true, handle: true, isLocalAccount: true },
     }),
   ]);
   const cachedActorIds = [...new Set([

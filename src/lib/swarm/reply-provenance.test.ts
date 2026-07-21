@@ -20,6 +20,7 @@ const userPublicKey = userKeys.publicKey
 const userDid = generateDID(userPublicKey);
 
 function userAction() {
+  // This fixture is a historical v2 proof; its signed handle must stay byte-for-byte bare.
   const unsigned = {
     action: 'post',
     data: {
@@ -129,7 +130,7 @@ describe('portable federated reply provenance', () => {
       createdAt: new Date(actionTs).toISOString(),
       nodeDomain: 'author.social',
       authorDid: userDid,
-      authorHandle: 'alice',
+      authorHandle: 'alice@author.social',
       isNsfw: false,
       nodeIsNsfw: false,
       media: [{ url: 'https://stuffbox.xyz/reply.jpg' }],

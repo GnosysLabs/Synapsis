@@ -80,7 +80,10 @@ describe('adult-node registration', () => {
         mocks.update.mockReturnValue({ set: mocks.set });
         mocks.registerUser.mockResolvedValue({
             id: 'user-id',
-            handle: 'alice',
+            handle: 'alice@node.social',
+            username: 'alice',
+            homeDomain: 'node.social',
+            isLocalAccount: true,
             displayName: 'Alice',
             did: 'did:synapsis:alice',
             publicKey: 'PUBLIC KEY',
@@ -114,6 +117,10 @@ describe('adult-node registration', () => {
         expect(mocks.createSession).toHaveBeenCalledWith('user-id');
         await expect(response.json()).resolves.toMatchObject({
             user: {
+                handle: 'alice@node.social',
+                username: 'alice',
+                homeDomain: 'node.social',
+                isLocalAccount: true,
                 isNsfw: true,
                 nsfwEnabled: true,
                 ageVerifiedAt: expect.any(String),

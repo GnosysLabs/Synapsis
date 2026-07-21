@@ -7,8 +7,6 @@ const mocks = vi.hoisted(() => ({
   where: vi.fn(),
   orderBy: vi.fn(),
   limit: vi.fn(),
-  isNull: vi.fn((column: unknown) => ({ operator: 'isNull', column })),
-  notLike: vi.fn((column: unknown, pattern: string) => ({ operator: 'notLike', column, pattern })),
   localNodeIsNsfw: vi.fn(),
   authorizeFederationRead: vi.fn(),
 }));
@@ -17,9 +15,7 @@ vi.mock('drizzle-orm', () => ({
   and: vi.fn((...conditions: unknown[]) => ({ operator: 'and', conditions })),
   asc: vi.fn((column: unknown) => ({ operator: 'asc', column })),
   eq: vi.fn((column: unknown, value: unknown) => ({ operator: 'eq', column, value })),
-  isNull: mocks.isNull,
   like: vi.fn((column: unknown, pattern: string) => ({ operator: 'like', column, pattern })),
-  notLike: mocks.notLike,
   or: vi.fn((...conditions: unknown[]) => ({ operator: 'or', conditions })),
 }));
 
@@ -27,10 +23,11 @@ vi.mock('@/db', () => ({
   db: { select: mocks.select },
   users: {
     handle: 'users.handle',
+    username: 'users.username',
     displayName: 'users.displayName',
     avatarUrl: 'users.avatarUrl',
     isNsfw: 'users.isNsfw',
-    nodeId: 'users.nodeId',
+    isLocalAccount: 'users.isLocalAccount',
     isSuspended: 'users.isSuspended',
     isSilenced: 'users.isSilenced',
   },
@@ -59,28 +56,28 @@ describe('GET /api/swarm/users local origin boundary', () => {
     mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
   });
 
-  it('exports only unqualified users with a null nodeId', async () => {
+  it('exports only accounts explicitly owned by this node', async () => {
     mocks.limit.mockResolvedValue([
       {
-        handle: 'local',
+        handle: 'local@local.example',
         displayName: 'Local User',
         avatarUrl: 'https://local.example/avatar.jpg',
         isNsfw: false,
-        nodeId: null,
+        isLocalAccount: true,
       },
       {
         handle: 'cached@remote.example',
         displayName: 'Cached Remote',
         avatarUrl: 'https://remote.example/avatar.jpg',
         isNsfw: false,
-        nodeId: null,
+        isLocalAccount: false,
       },
       {
-        handle: 'linkedremote',
+        handle: 'linkedremote@remote.example',
         displayName: 'Linked Remote',
         avatarUrl: 'https://remote.example/linked.jpg',
         isNsfw: false,
-        nodeId: 'remote-node-id',
+        isLocalAccount: false,
       },
     ]);
 
@@ -89,14 +86,12 @@ describe('GET /api/swarm/users local origin boundary', () => {
 
     expect(response.status).toBe(200);
     expect(body.users).toEqual([{
-      handle: 'local',
+      handle: 'local@local.example',
       displayName: 'Local User',
       avatarUrl: 'https://local.example/avatar.jpg',
       isNsfw: false,
       isRemote: false,
       nodeIsNsfw: false,
     }]);
-    expect(mocks.isNull).toHaveBeenCalledWith('users.nodeId');
-    expect(mocks.notLike).toHaveBeenCalledWith('users.handle', '%@%');
   });
 });

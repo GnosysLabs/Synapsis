@@ -25,7 +25,7 @@ import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request
 import { isFreshFederationTimestamp } from '@/lib/swarm/signature';
 import {
   federationMediaUrlSchema,
-  localHandleSchema,
+  federatedHandleSchema,
   nodeDomainSchema,
 } from '@/lib/utils/federation';
 
@@ -36,7 +36,7 @@ const swarmLikeSchema = z.strictObject({
   userAction: signedUserActionSchema,
   postId: z.string().uuid(),
   like: z.strictObject({
-    actorHandle: localHandleSchema,
+    actorHandle: federatedHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
     actorAvatarUrl: federationMediaUrlSchema.optional(),
     actorNodeDomain: nodeDomainSchema,
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
           userId: post.userId,
           actorHandle: verified.actorHandle,
           // Display metadata asserted only by a hostile node is not identity proof.
-          actorDisplayName: verified.actorHandle,
+          actorDisplayName: verified.actorUsername,
           actorAvatarUrl: null,
           actorNodeDomain: actorDomain,
           postId: data.postId,

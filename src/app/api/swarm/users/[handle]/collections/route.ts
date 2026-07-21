@@ -6,6 +6,10 @@ import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 import { isTrustedFederationMediaUrl } from '@/lib/utils/federation';
+import {
+  requireCanonicalAccountHomeDomain,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -18,14 +22,21 @@ export async function GET(request: Request, context: RouteContext) {
     if (!/^[a-z0-9_]{1,64}$/.test(cleanHandle)) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
-    const user = await db.query.users.findFirst({
-      where: { AND: [{ handle: cleanHandle }, { nodeId: { isNull: true } }] },
-    });
+    const nodeDomain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
+    const address = resolveAccountAddress(cleanHandle, nodeDomain);
+    const user = address ? await db.query.users.findFirst({
+      where: { AND: [
+        { username: address.username },
+        { homeDomain: nodeDomain },
+        { isLocalAccount: true },
+      ] },
+    }) : null;
     if (!user || !hasStrictLocalUserOrigin(user) || user.isSuspended) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
     const nodeIsNsfw = await requireLocalNodeNsfwClassification();
     const collections = (await getLocalCollectionSummaries(user.id)).map((collection) => ({
       ...collection,

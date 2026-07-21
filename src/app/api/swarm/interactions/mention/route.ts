@@ -10,6 +10,7 @@ import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import { parseMentions, uniqueMentions } from '@/lib/mentions/parser';
 import {
   FederatedIdentityContinuityError,
+  FEDERATED_ACTION_PROTOCOL,
   federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
@@ -19,9 +20,10 @@ import {
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import {
   federationMediaUrlSchema,
-  localHandleSchema,
+  federatedHandleSchema,
   nodeDomainSchema,
 } from '@/lib/utils/federation';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 const PATH = '/api/swarm/interactions/mention' as const;
 const MAX_MENTION_DELIVERY_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -29,9 +31,9 @@ const MAX_MENTION_DELIVERY_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const swarmMentionSchema = z.strictObject({
   federation: federationActionContextSchema,
   userAction: signedUserActionSchema,
-  mentionedHandle: localHandleSchema,
+  mentionedHandle: federatedHandleSchema,
   mention: z.strictObject({
-    actorHandle: localHandleSchema,
+    actorHandle: federatedHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
     actorAvatarUrl: federationMediaUrlSchema.optional(),
     actorNodeDomain: nodeDomainSchema,
@@ -109,8 +111,15 @@ export async function POST(request: NextRequest) {
     }
 
     const actionData = postActionDataSchema.safeParse(verified.userAction.data);
-    const mentionedHandle = data.mentionedHandle.toLowerCase();
+    const mentionedAddress = resolveAccountAddress(
+      data.mentionedHandle,
+      verified.destinationDomain,
+    );
     if (!actionData.success
+      || !mentionedAddress
+      || mentionedAddress.homeDomain !== verified.destinationDomain
+      || (data.federation.protocol === FEDERATED_ACTION_PROTOCOL
+        && data.mentionedHandle !== mentionedAddress.canonical)
       || actionData.data.clientPostId !== data.mention.postId
       || actionData.data.content.trim() !== data.mention.postContent) {
       return NextResponse.json({ error: 'Mention content is not user-authorized' }, { status: 403 });
@@ -118,20 +127,25 @@ export async function POST(request: NextRequest) {
     const authorizedMention = uniqueMentions(
       parseMentions(actionData.data.content, verified.sourceDomain),
     ).some((mention) => !mention.isLocal
-      && mention.handle === mentionedHandle
-      && mention.domain === verified.destinationDomain);
+      && mention.canonicalHandle === mentionedAddress.canonical);
     if (!authorizedMention) {
       return NextResponse.json({ error: 'Mention target is not user-authorized' }, { status: 403 });
     }
 
-    const mentionedUser = await db.query.users.findFirst({ where: { handle: mentionedHandle } });
+    const mentionedUser = await db.query.users.findFirst({
+      where: {
+        AND: [
+          { handle: mentionedAddress.canonical },
+          { isLocalAccount: true },
+        ],
+      },
+    });
     if (!mentionedUser || mentionedUser.isSuspended
-      || mentionedUser.nodeId !== null || mentionedUser.handle.includes('@')) {
+      || !mentionedUser.isLocalAccount) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
-    const fullActorHandle = `${verified.actorHandle}@${actorDomain}`;
     const cachedActor = await db.query.users.findFirst({
-      where: { handle: fullActorHandle },
+      where: { handle: verified.actorHandle },
       columns: { id: true },
     });
     if (!(await acceptsRemoteMention(mentionedUser.id, actorDomain, cachedActor?.id || null))) {
@@ -155,7 +169,7 @@ export async function POST(request: NextRequest) {
       await tx.insert(notifications).values({
         userId: mentionedUser.id,
         actorHandle: verified.actorHandle,
-        actorDisplayName: verified.actorHandle,
+        actorDisplayName: verified.actorUsername,
         actorAvatarUrl: null,
         actorNodeDomain: actorDomain,
         remotePostId: data.mention.postId,

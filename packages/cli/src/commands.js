@@ -9,6 +9,7 @@ import {
   requireProfile,
   selectProfile,
   storeProfile,
+  canonicalCliAccountHandle,
 } from './config.js';
 import { normalizeNodeUrl, requestJson, signedRequest, sleep } from './http.js';
 import { uploadMediaFile } from './media.js';
@@ -208,22 +209,26 @@ async function connect(args, io, dependencies) {
       dependencies.fetch,
     );
     if (result.status === 'approved') {
-      const profileName = requestedProfileName || `${result.account.handle}@${new URL(nodeUrl).host}`;
+      const account = {
+        ...result.account,
+        handle: canonicalCliAccountHandle(result.account.handle, nodeUrl),
+      };
+      const profileName = requestedProfileName || account.handle;
       const profile = {
         nodeUrl,
         credentialId: result.credential.id,
         credentialName: result.credential.name,
         scopes: result.credential.scopes,
         expiresAt: result.credential.expiresAt,
-        account: result.account,
+        account,
         publicKey: keyPair.publicKey,
         privateKey: keyPair.privateKey,
         fingerprint: keyPair.fingerprint,
         connectedAt: new Date().toISOString(),
       };
       await storeProfile(profileName, profile, dependencies.environment);
-      const output = { profile: profileName, nodeUrl, account: result.account, expiresAt: result.credential.expiresAt };
-      write(io.stdout, json ? JSON.stringify({ event: 'connected', ...output }) : `Connected ${profileName} as @${result.account.handle}.`);
+      const output = { profile: profileName, nodeUrl, account, expiresAt: result.credential.expiresAt };
+      write(io.stdout, json ? JSON.stringify({ event: 'connected', ...output }) : `Connected ${profileName} as @${account.handle}.`);
       return;
     }
     if (result.status !== 'pending') throw new Error(`Authorization ended with status: ${result.status}`);

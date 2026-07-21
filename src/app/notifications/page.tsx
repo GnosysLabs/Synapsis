@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { getProfilePath } from '@/lib/utils/handle';
 import { AvatarImage } from '@/components/AvatarImage';
 import { getNotificationPostPreview } from '@/lib/notifications/post-preview';
+import { displayAccountAddress } from '@/lib/identity/account-address';
 
 interface NotificationActor {
     id: string;
@@ -197,7 +198,7 @@ function NotificationItem({
 }) {
     const isUnread = !notification.readAt;
     const actor = notification.actor;
-    const actorProfilePath = actor ? getProfilePath(actor.handle) : '#';
+    const actorProfilePath = actor ? getProfilePath(actor.handle, actor.nodeDomain) : '#';
     const postPreview = notification.post
         ? getNotificationPostPreview(notification.post)
         : null;
@@ -232,7 +233,11 @@ function NotificationItem({
                         href={actorProfilePath}
                         style={{ fontWeight: 600, color: 'var(--foreground)', textDecoration: 'none' }}
                     >
-                        {actor?.displayName || actor?.handle || 'Someone'} <span style={{ fontWeight: 400, color: 'var(--foreground-tertiary)' }}>@{actor?.handle}</span>
+                        {actor?.displayName || (actor ? displayAccountAddress(actor.handle) : 'Someone')} {actor && (
+                            <span style={{ fontWeight: 400, color: 'var(--foreground-tertiary)' }}>
+                                {displayAccountAddress(actor.handle)}
+                            </span>
+                        )}
                     </Link>
                     <span style={{ color: 'var(--foreground-secondary)' }}>
                         {getNotificationText(notification)}

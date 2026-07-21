@@ -8,9 +8,14 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
-import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
+import {
+    canonicalAccountHomeDomain,
+    requireCanonicalAccountHomeDomain,
+    resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
-const handleParamSchema = z.string().min(3).max(40).regex(/^[a-zA-Z0-9_]+(@[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,})?$/, 'Invalid handle format');
+const handleParamSchema = z.string().min(3).max(320);
 
 const parseHandleWithDomain = (handle: string) => {
     const clean = normalizeHandle(handle);
@@ -49,12 +54,17 @@ export async function GET(request: Request) {
         if (parsed && !canonicalDomain) {
             return NextResponse.json({ error: 'Handle node is invalid' }, { status: 400 });
         }
-        const lookupHandle = parsed
-            ? `${parsed.handle}@${canonicalDomain}`
-            : normalizeHandle(handleParam);
-        const localDomain = normalizeNodeDomain(
+        const localDomain = requireCanonicalAccountHomeDomain(
             process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
         );
+        const lookupAddress = resolveAccountAddress(
+            handleParam,
+            parsed ? canonicalDomain : localDomain,
+        );
+        if (!lookupAddress) {
+            return NextResponse.json({ error: 'Invalid handle format' }, { status: 400 });
+        }
+        const lookupHandle = lookupAddress.canonical;
         const [localEntry] = await db.select().from(handleRegistry).where(and(
             eq(handleRegistry.handle, lookupHandle),
             liveHandleRegistryEntryWhere(),
@@ -70,7 +80,7 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'Handle was deleted' }, { status: 410 });
         }
 
-        if (localEntry && normalizeNodeDomain(localEntry.nodeDomain)
+        if (localEntry && canonicalAccountHomeDomain(localEntry.nodeDomain)
             === (canonicalDomain || localDomain)) {
             return NextResponse.json({
                 handle: localEntry.handle,
@@ -99,23 +109,31 @@ export async function GET(request: Request) {
         const rawEntry = Array.isArray(data.handles) ? data.handles[0] : null;
 
         const entrySchema = z.object({
-            handle: z.string().min(3).max(30),
+            handle: z.string().min(3).max(255),
             did: z.string().min(1).max(1_024),
             nodeDomain: z.string().min(1).max(253),
             updatedAt: z.string().datetime().optional(),
         });
         const parsedEntry = entrySchema.safeParse(rawEntry);
+        const remoteAddress = parsedEntry.success
+            ? resolveAccountAddress(parsedEntry.data.handle, canonicalDomain)
+            : null;
         if (!parsedEntry.success
-            || normalizeHandle(parsedEntry.data.handle) !== parsed.handle
+            || !remoteAddress
+            || remoteAddress.canonical !== lookupAddress.canonical
+            || remoteAddress.homeDomain !== canonicalDomain
             || getPublicSwarmDomain(parsedEntry.data.nodeDomain) !== canonicalDomain) {
             return NextResponse.json({ error: 'Handle not found' }, { status: 404 });
         }
 
-        await upsertRemoteHandleHints([parsedEntry.data], canonicalDomain!);
+        await upsertRemoteHandleHints([{
+            ...parsedEntry.data,
+            handle: remoteAddress.canonical,
+        }], canonicalDomain!);
 
         return NextResponse.json({
             ...parsedEntry.data,
-            handle: `${parsed.handle}@${canonicalDomain}`,
+            handle: remoteAddress.canonical,
             nodeDomain: canonicalDomain,
         });
     } catch (error) {

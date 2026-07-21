@@ -4,20 +4,24 @@ import { didKeyMatchesPublicKey, normalizeSigningPublicKey } from '@/lib/crypto/
 import {
   federationMediaUrlSchema,
   federationWebUrlSchema,
+  federatedHandleSchema,
   nodeDomainSchema,
 } from '@/lib/utils/federation';
-import { normalizeNodeDomain } from './node-domain';
 import {
   relayedReplyProvenanceSchema,
   verifyRelayedReplyProvenance,
   type NodeProofVerifier,
 } from './reply-provenance';
+import {
+  canonicalAccountHomeDomain,
+  requireCanonicalAccountHomeDomain,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 const MAX_REMOTE_POSTS = 50;
 const MAX_REMOTE_REPLIES = 50;
 const MAX_FUTURE_SKEW_MS = 5 * 60 * 1_000;
 const boundedCount = z.number().int().nonnegative().max(1_000_000_000);
-const localHandle = z.string().min(1).max(64).regex(/^[a-zA-Z0-9_]+$/);
 const timestamp = z.string().datetime();
 
 const mediaSchema = z.object({
@@ -91,7 +95,7 @@ const relayedReplyCandidateSchema = shallowPostSchema.extend({
 });
 
 const profileSchema = z.object({
-  handle: localHandle,
+  handle: federatedHandleSchema,
   displayName: z.string().min(1).max(50),
   bio: z.string().max(160).optional(),
   avatarUrl: federationMediaUrlSchema.optional(),
@@ -148,18 +152,15 @@ function assertNotFuture(value: string, label: string): void {
 }
 
 function sourceOwnedHandle(value: string, sourceDomain: string): string {
-  const normalized = value.trim().replace(/^@/, '').toLowerCase();
-  const atIndex = normalized.lastIndexOf('@');
-  const bareHandle = atIndex === -1 ? normalized : normalized.slice(0, atIndex);
-  const claimedDomain = atIndex === -1 ? sourceDomain : normalizeNodeDomain(normalized.slice(atIndex + 1));
-  if (!localHandle.safeParse(bareHandle).success || claimedDomain !== sourceDomain) {
+  const address = resolveAccountAddress(value, sourceDomain);
+  if (!address || address.homeDomain !== sourceDomain) {
     throw new Error('Remote payload attempted a cross-node identity claim');
   }
-  return bareHandle;
+  return address.canonical;
 }
 
 function assertSourceDomain(value: string | null | undefined, sourceDomain: string): void {
-  if (value && normalizeNodeDomain(value) !== sourceDomain) {
+  if (value && canonicalAccountHomeDomain(value) !== sourceDomain) {
     throw new Error('Remote payload attempted to assert a different node origin');
   }
 }
@@ -178,7 +179,10 @@ function normalizePost(
   if (post.feedActivityAt) assertNotFuture(post.feedActivityAt, 'Remote post activity');
 
   const authorHandle = sourceOwnedHandle(post.author.handle, sourceDomain);
-  if (expectedAuthor && authorHandle !== expectedAuthor) {
+  const expectedAuthorAddress = expectedAuthor
+    ? resolveAccountAddress(expectedAuthor, sourceDomain)
+    : null;
+  if (expectedAuthor && authorHandle !== expectedAuthorAddress?.canonical) {
     throw new Error('Remote profile post author does not match the requested account');
   }
 
@@ -214,7 +218,7 @@ function normalizePost(
       const handle = sourceOwnedHandle(reposter.handle, sourceDomain);
       return [{
         ...reposter,
-        id: `swarm:${sourceDomain}:${handle}`,
+        id: `swarm:${sourceDomain}:${resolveAccountAddress(handle)!.username}`,
         handle,
         nodeDomain: sourceDomain,
         isNsfw: reposter.isNsfw ?? true,
@@ -246,10 +250,16 @@ function normalizePost(
 }
 
 function validateProfileIdentity(profile: RemoteSwarmProfile, sourceDomain: string, expectedHandle: string): void {
-  if (profile.handle.toLowerCase() !== expectedHandle
-    || normalizeNodeDomain(profile.nodeDomain) !== sourceDomain) {
+  const profileAddress = resolveAccountAddress(profile.handle, sourceDomain);
+  const expectedAddress = resolveAccountAddress(expectedHandle, sourceDomain);
+  if (!profileAddress
+    || !expectedAddress
+    || profileAddress.homeDomain !== sourceDomain
+    || profileAddress.canonical !== expectedAddress.canonical
+    || canonicalAccountHomeDomain(profile.nodeDomain) !== sourceDomain) {
     throw new Error('Remote profile returned a different account identity');
   }
+  profile.handle = profileAddress.canonical;
   assertNotFuture(profile.createdAt, 'Remote profile creation time');
   const normalizedKey = normalizeSigningPublicKey(profile.publicKey);
   if (!normalizedKey || !didKeyMatchesPublicKey(profile.did, normalizedKey)) {
@@ -264,11 +274,12 @@ export function parseRemoteProfileResponse(
   expectedHandleInput: string,
   postsLimit = MAX_REMOTE_POSTS,
 ): RemoteSwarmProfileResponse {
-  const sourceDomain = normalizeNodeDomain(sourceDomainInput);
-  const expectedHandle = expectedHandleInput.trim().replace(/^@/, '').toLowerCase();
+  const sourceDomain = requireCanonicalAccountHomeDomain(sourceDomainInput);
+  const expectedHandle = resolveAccountAddress(expectedHandleInput, sourceDomain)?.canonical;
+  if (!expectedHandle) throw new Error('Remote profile request has an invalid account address');
   const parsed = profileResponseSchema.safeParse(value);
   if (!parsed.success) throw new Error('Remote profile response failed validation');
-  if (normalizeNodeDomain(parsed.data.nodeDomain) !== sourceDomain) {
+  if (canonicalAccountHomeDomain(parsed.data.nodeDomain) !== sourceDomain) {
     throw new Error('Remote profile response returned a different node identity');
   }
   assertNotFuture(parsed.data.timestamp, 'Remote profile response');
@@ -296,7 +307,7 @@ export function parseRemotePostDetailResponse(
   sourceDomainInput: string,
   expectedPostId: string,
 ): { post: RemoteSwarmPost; replies: RemoteSwarmPost[] } {
-  const sourceDomain = normalizeNodeDomain(sourceDomainInput);
+  const sourceDomain = requireCanonicalAccountHomeDomain(sourceDomainInput);
   const parsed = detailResponseSchema.safeParse(value);
   if (!parsed.success) throw new Error('Remote post response failed validation');
   const post = normalizePost(parsed.data.post, sourceDomain);
@@ -326,11 +337,12 @@ export async function parseRemoteRepliesResponse(
     }) => Promise<boolean>;
   } = {},
 ): Promise<RemoteSwarmPost[]> {
-  const sourceDomain = normalizeNodeDomain(sourceDomainInput);
+  const sourceDomain = requireCanonicalAccountHomeDomain(sourceDomainInput);
   const parsed = repliesResponseSchema.safeParse(value);
   if (!parsed.success) throw new Error('Remote replies response failed validation');
   if ((parsed.data.postId && parsed.data.postId !== expectedPostId)
-    || (parsed.data.nodeDomain && normalizeNodeDomain(parsed.data.nodeDomain) !== sourceDomain)) {
+    || (parsed.data.nodeDomain
+      && canonicalAccountHomeDomain(parsed.data.nodeDomain) !== sourceDomain)) {
     throw new Error('Remote replies response identity mismatch');
   }
   const verifiedReplies = await mapWithConcurrency(
@@ -401,7 +413,7 @@ export function parseRemotePostListResponse(
   sourceDomainInput: string,
   postsLimit = MAX_REMOTE_POSTS,
 ): RemoteSwarmPost[] {
-  const sourceDomain = normalizeNodeDomain(sourceDomainInput);
+  const sourceDomain = requireCanonicalAccountHomeDomain(sourceDomainInput);
   const parsed = postListResponseSchema.safeParse(value);
   if (!parsed.success) throw new Error('Remote post list failed validation');
   const boundedLimit = Math.max(0, Math.min(MAX_REMOTE_POSTS, postsLimit));

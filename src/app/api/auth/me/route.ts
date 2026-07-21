@@ -35,6 +35,9 @@ export async function GET() {
             user: {
                 id: session.user.id,
                 handle: session.user.handle,
+                username: session.user.username,
+                homeDomain: session.user.homeDomain,
+                isLocalAccount: session.user.isLocalAccount,
                 displayName: session.user.displayName,
                 avatarUrl: session.user.avatarUrl,
                 bio: session.user.bio,
@@ -105,6 +108,9 @@ export async function PATCH(request: Request) {
                 user: {
                     id: currentUser.id,
                     handle: currentUser.handle,
+                    username: currentUser.username,
+                    homeDomain: currentUser.homeDomain,
+                    isLocalAccount: currentUser.isLocalAccount,
                     displayName: currentUser.displayName,
                     avatarUrl: currentUser.avatarUrl,
                     bio: currentUser.bio,
@@ -130,6 +136,9 @@ export async function PATCH(request: Request) {
             user: {
                 id: updatedUser.id,
                 handle: updatedUser.handle,
+                username: updatedUser.username,
+                homeDomain: updatedUser.homeDomain,
+                isLocalAccount: updatedUser.isLocalAccount,
                 displayName: updatedUser.displayName,
                 avatarUrl: updatedUser.avatarUrl,
                 bio: updatedUser.bio,

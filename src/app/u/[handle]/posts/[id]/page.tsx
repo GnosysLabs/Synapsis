@@ -9,12 +9,16 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { Post } from '@/lib/types';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
+import { useDomain } from '@/lib/contexts/ConfigContext';
+import { decodeAccountRouteSegment } from '@/lib/navigation/route-params';
+import { getProfilePath } from '@/lib/utils/handle';
 
 export default function PostDetailPage() {
     const params = useParams();
     const router = useRouter();
+    const domain = useDomain();
     const { user, did, handle: userHandle } = useAuth();
-    const handle = params.handle as string;
+    const handle = decodeAccountRouteSegment(params.handle as string, domain) || '';
     const id = params.id as string;
 
     const [post, setPost] = useState<Post | null>(null);
@@ -112,7 +116,7 @@ export default function PostDetailPage() {
 
     const handleDelete = (postId: string) => {
         if (postId === id) {
-            router.push(`/u/${handle}`);
+            router.push(getProfilePath(handle));
         } else {
             setReplies(prev => prev.filter(r => r.id !== postId));
             if (post) {

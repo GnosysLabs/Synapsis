@@ -16,9 +16,9 @@ describe('mention parser', () => {
     );
 
     expect(mentions.map(({ canonicalHandle, isLocal, raw }) => ({ canonicalHandle, isLocal, raw }))).toEqual([
-      { canonicalHandle: 'alice', isLocal: true, raw: '@Alice' },
+      { canonicalHandle: 'alice@local.example', isLocal: true, raw: '@Alice' },
       { canonicalHandle: 'bob@remote.example', isLocal: false, raw: '@bob@remote.example' },
-      { canonicalHandle: 'carol', isLocal: true, raw: '@carol@local.example' },
+      { canonicalHandle: 'carol@local.example', isLocal: true, raw: '@carol@local.example' },
     ]);
   });
 
@@ -48,7 +48,7 @@ describe('mention parser', () => {
   it('deduplicates aliases that resolve to the same local account', () => {
     const mentions = parseMentions('@alice @Alice@local.example @bob@remote.example @bob@remote.example', 'local.example');
     expect(uniqueMentions(mentions).map((mention) => mention.canonicalHandle)).toEqual([
-      'alice',
+      'alice@local.example',
       'bob@remote.example',
     ]);
   });
@@ -77,9 +77,9 @@ describe('composer mention queries', () => {
 
   it('replaces only the active query and returns the next caret position', () => {
     const active = getActiveMentionQuery('Hello @ali friend', 10)!;
-    expect(replaceMentionQuery('Hello @ali friend', active, 'alice')).toEqual({
-      content: 'Hello @alice friend',
-      caret: 12,
+    expect(replaceMentionQuery('Hello @ali friend', active, 'alice@local.example')).toEqual({
+      content: 'Hello @alice@local.example friend',
+      caret: 26,
     });
   });
 });

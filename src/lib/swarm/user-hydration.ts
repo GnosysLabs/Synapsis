@@ -1,6 +1,10 @@
 import { fetchSwarmUserProfile } from './interactions';
 import { mapWithConcurrency } from '@/lib/async/concurrency';
-import { getPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
+import {
+    canonicalAccountHomeDomain,
+    parseAccountAddress,
+} from '@/lib/identity/account-address';
+import { getCanonicalSwarmSeedDomain } from './node-domain';
 
 const MAX_REMOTE_USERS_TO_HYDRATE = 50;
 const MAX_CONCURRENT_PROFILE_HYDRATIONS = 6;
@@ -44,7 +48,7 @@ export async function hydrateSwarmUsers(
     if (needsHydration.length === 0) {
         return users.map(u => ({
             ...u,
-            displayName: u.displayName || u.handle.split('@')[0],
+            displayName: u.displayName || parseAccountAddress(u.handle)?.username || u.handle,
         }));
     }
 
@@ -60,16 +64,14 @@ export async function hydrateSwarmUsers(
         try {
             // Parse handle and domain
             // Handle format for remote users in lists is usually "user@domain.com"
-            const normalizedHandle = user.handle.trim().replace(/^@/, '').toLowerCase();
-            const parts = normalizedHandle.split('@');
-            if (parts.length !== 2) return; // Should be user@domain
-
-            const handle = parts[0];
-            const domain = getPublicSwarmDomain(parts[1]);
-            const assertedDomain = normalizeNodeDomain(user.nodeDomain || parts[1]);
-            if (!/^[a-z0-9_]{3,30}$/i.test(handle)
-                || !domain
-                || assertedDomain !== domain) return;
+            const address = parseAccountAddress(user.handle);
+            if (!address) return;
+            const handle = address.username;
+            const domain = getCanonicalSwarmSeedDomain(address.homeDomain);
+            const assertedDomain = canonicalAccountHomeDomain(
+                user.nodeDomain || address.homeDomain,
+            );
+            if (!domain || assertedDomain !== domain) return;
 
             // Fetch profile
             // We set a small timeout in fetchSwarmUserProfile (10s), but we might want shorter for lists?
@@ -102,12 +104,12 @@ export async function hydrateSwarmUsers(
                 ...user,
                 ...freshdiv,
                 // Ensure display name fallback
-                displayName: freshdiv.displayName || user.displayName || user.handle.split('@')[0],
+                displayName: freshdiv.displayName || user.displayName || parseAccountAddress(user.handle)?.username || user.handle,
             };
         }
         return {
             ...user,
-            displayName: user.displayName || user.handle.split('@')[0],
+            displayName: user.displayName || parseAccountAddress(user.handle)?.username || user.handle,
         };
     });
 }

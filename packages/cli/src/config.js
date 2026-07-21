@@ -18,12 +18,36 @@ function validateProfileName(name) {
   }
 }
 
+export function canonicalCliAccountHandle(handle, nodeUrl) {
+  if (typeof handle !== 'string' || typeof nodeUrl !== 'string') {
+    throw new Error('CLI profile account identity is incomplete');
+  }
+  const clean = handle.trim().replace(/^@/, '').toLowerCase();
+  const separators = [...clean].filter(character => character === '@').length;
+  if (separators === 1) return clean;
+  if (separators !== 0 || !/^[a-z0-9_]{3,30}$/.test(clean)) {
+    throw new Error(`CLI profile account handle is invalid: ${JSON.stringify(handle)}`);
+  }
+  return `${clean}@${new URL(nodeUrl).host.toLowerCase()}`;
+}
+
+function canonicalProfile(profile) {
+  if (!profile.account?.handle) return profile;
+  return {
+    ...profile,
+    account: {
+      ...profile.account,
+      handle: canonicalCliAccountHandle(profile.account.handle, profile.nodeUrl),
+    },
+  };
+}
+
 function safeProfiles(value) {
   const profiles = Object.create(null);
   if (!value || typeof value !== 'object' || Array.isArray(value)) return profiles;
   for (const [name, profile] of Object.entries(value)) {
     if (isValidProfileName(name) && profile && typeof profile === 'object' && !Array.isArray(profile)) {
-      profiles[name] = profile;
+      profiles[name] = canonicalProfile(profile);
     }
   }
   return profiles;

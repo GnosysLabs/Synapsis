@@ -104,8 +104,8 @@ describe('GET /api/mentions/suggestions', () => {
       }
       if ('isNsfw' in selection) {
         return queryBuilder([
-          { id: 'local-alex', handle: 'alex', displayName: 'Alex Local', avatarUrl: null, isNsfw: false },
-          { id: 'local-alice', handle: 'alice', displayName: 'Alice Local', avatarUrl: null, isNsfw: false },
+          { id: 'local-alex', handle: 'alex@local.com', displayName: 'Alex Local', avatarUrl: null, isNsfw: false },
+          { id: 'local-alice', handle: 'alice@local.com', displayName: 'Alice Local', avatarUrl: null, isNsfw: false },
         ]);
       }
       return queryBuilder([]);
@@ -135,9 +135,9 @@ describe('GET /api/mentions/suggestions', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       suggestions: [
-        { handle: 'alex', isRemote: false },
+        { handle: 'alex@local.com', isRemote: false },
         { handle: 'alex@one.com', isRemote: true },
-        { handle: 'alice', isRemote: false },
+        { handle: 'alice@local.com', isRemote: false },
         { handle: 'alina@two.com', isRemote: true },
       ],
     });

@@ -40,7 +40,10 @@ export const nodes = sqliteTable('nodes', {
 export const users = sqliteTable('users', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   did: text('did').notNull().unique(), // Decentralized Identifier
-  handle: text('handle').notNull().unique(), // @username (globally unique)
+  handle: text('handle').notNull().unique(), // Canonical username@home-domain address
+  username: text('username').notNull(), // Bare node-local username
+  homeDomain: text('home_domain').notNull(), // Authoritative account node
+  isLocalAccount: integer('is_local_account', { mode: 'boolean' }).notNull(), // Owned by this node, never inferred from handle shape
   email: text('email').unique(),
   passwordHash: text('password_hash'),
   displayName: text('display_name'),
@@ -85,6 +88,8 @@ export const users = sqliteTable('users', {
   index('users_handle_idx').on(table.handle),
   index('users_did_idx').on(table.did),
   uniqueIndex('users_handle_unique_idx').on(table.handle),
+  uniqueIndex('users_home_username_unique_idx').on(table.homeDomain, table.username),
+  index('users_local_username_idx').on(table.isLocalAccount, table.username),
   uniqueIndex('users_did_unique_idx').on(table.did),
   index('users_suspended_idx').on(table.isSuspended),
   index('users_silenced_idx').on(table.isSilenced),
@@ -308,7 +313,7 @@ export const follows = sqliteTable('follows', {
 export const remoteFollows = sqliteTable('remote_follows', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   followerId: text('follower_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  targetHandle: text('target_handle').notNull(), // username@domain
+  targetHandle: text('target_handle').notNull(), // Canonical username@domain
   targetActorUrl: text('target_actor_url').notNull(),
   inboxUrl: text('inbox_url').notNull(),
   activityId: text('activity_id').notNull(), // UUID token for activity URL
@@ -333,7 +338,7 @@ export const remoteFollowers = sqliteTable('remote_followers', {
   actorUrl: text('actor_url').notNull(), // Remote actor URL
   inboxUrl: text('inbox_url').notNull(), // Remote user's inbox
   sharedInboxUrl: text('shared_inbox_url'), // Optional shared inbox
-  handle: text('handle'), // Remote user's handle (e.g., user@other-node.com)
+  handle: text('handle'), // Canonical remote username@home-domain
   activityId: text('activity_id'), // The Follow activity ID
   createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
@@ -414,7 +419,7 @@ export const likes = sqliteTable('likes', {
 export const remoteLikes = sqliteTable('remote_likes', {
   id: text('id').primaryKey().$defaultFn(() => randomUUID()),
   postId: text('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
-  actorHandle: text('actor_handle').notNull(), // e.g., "user"
+  actorHandle: text('actor_handle').notNull(), // Canonical username@home-domain
   actorNodeDomain: text('actor_node_domain').notNull(), // e.g., "other.node"
   createdAt: integer('created_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
@@ -576,10 +581,10 @@ export const notifications = sqliteTable('notifications', {
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   // Actor info - stored directly instead of referencing placeholder users
   actorId: text('actor_id').references(() => users.id, { onDelete: 'cascade' }), // Optional - only for local actors
-  actorHandle: text('actor_handle').notNull(), // e.g., "user" or "user@remote.node"
+  actorHandle: text('actor_handle').notNull(), // Canonical username@home-domain
   actorDisplayName: text('actor_display_name'),
   actorAvatarUrl: text('actor_avatar_url'),
-  actorNodeDomain: text('actor_node_domain'), // null for local actors
+  actorNodeDomain: text('actor_node_domain').notNull(), // Explicit home domain for local and remote actors
   // Post reference
   postId: text('post_id').references(() => posts.id, { onDelete: 'cascade' }),
   remotePostId: text('remote_post_id'),
@@ -679,7 +684,7 @@ export const mentionDeliveries = sqliteTable('mention_deliveries', {
 // ============================================
 
 export const handleRegistry = sqliteTable('handle_registry', {
-  handle: text('handle').primaryKey(), // @username
+  handle: text('handle').primaryKey(), // Canonical username@home-domain
   did: text('did').notNull(),
   nodeDomain: text('node_domain').notNull(),
   // Directory gossip and direct node lookups provide routing hints, not user
@@ -700,12 +705,16 @@ export const handleRegistry = sqliteTable('handle_registry', {
 
 /** Durable local-account deletion marker; also prevents identity reuse. */
 export const swarmAccountTombstones = sqliteTable('swarm_account_tombstones', {
-  handle: text('handle').primaryKey(),
+  handle: text('handle').primaryKey(), // Canonical username@home-domain
+  username: text('username').notNull(),
+  homeDomain: text('home_domain').notNull(),
   did: text('did').notNull(),
   sequence: integer('sequence').notNull(),
   deletedAt: integer('deleted_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
   uniqueIndex('swarm_account_tombstones_sequence_idx').on(table.sequence),
+  uniqueIndex('swarm_account_tombstones_home_username_unique_idx')
+    .on(table.homeDomain, table.username),
   index('swarm_account_tombstones_deleted_idx').on(table.deletedAt),
 ]);
 
@@ -1088,7 +1097,7 @@ export const chatConversations = sqliteTable('chat_conversations', {
 
   // For direct chats, store both participants
   participant1Id: text('participant1_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  participant2Handle: text('participant2_handle').notNull(), // Can be local or remote (user@domain)
+  participant2Handle: text('participant2_handle').notNull(), // Canonical username@home-domain
 
   // Last message info for sorting
   lastMessageAt: integer('last_message_at', { mode: 'timestamp' }),
@@ -1145,10 +1154,10 @@ export const chatMessages = sqliteTable('chat_messages', {
   conversationId: text('conversation_id').notNull().references(() => chatConversations.id, { onDelete: 'cascade' }),
 
   // Sender info
-  senderHandle: text('sender_handle').notNull(), // Can be local or remote
+  senderHandle: text('sender_handle').notNull(), // Canonical username@home-domain
   senderDisplayName: text('sender_display_name'),
   senderAvatarUrl: text('sender_avatar_url'),
-  senderNodeDomain: text('sender_node_domain'), // null if local
+  senderNodeDomain: text('sender_node_domain').notNull(), // Explicit sender home domain
   senderDid: text('sender_did'), // DID for Signal Protocol
 
   // Message content (plain text for verified chat)

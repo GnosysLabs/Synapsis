@@ -25,6 +25,7 @@ describe('remote timeline payload validation', () => {
       nodeIsNsfw: false,
     }, 'source.social');
     expect(result.posts).toHaveLength(1);
+    expect(result.posts[0].author.handle).toBe('alice@source.social');
   });
 
   it('rejects cross-domain identity claims and future ranking timestamps', () => {
@@ -58,7 +59,7 @@ describe('remote timeline payload validation', () => {
 
     expect(result.posts[0].repostedBy).toEqual([expect.objectContaining({
       id: 'swarm:source.social:alice',
-      handle: 'alice',
+      handle: 'alice@source.social',
       nodeDomain: 'source.social',
       isRemote: true,
       isSwarm: true,
@@ -138,7 +139,7 @@ describe('remote timeline payload validation', () => {
     }, 'source.social');
     expect(parsed.accountChanges).toEqual([{
       sequence: 11,
-      handle: 'alice',
+      handle: 'alice@source.social',
       did: 'did:key:alice-deleted-identity',
       deletedAt,
     }]);

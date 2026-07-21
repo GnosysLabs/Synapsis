@@ -12,12 +12,16 @@ import {
   isSwarmNode,
   type SwarmInteractionResponse,
 } from '@/lib/swarm/interactions';
-import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { parseMentions, uniqueMentions } from './parser';
 import {
   signedUserActionSchema,
   type SignedUserAction,
 } from '@/lib/e2ee/protocol';
+import {
+  canonicalAccountHomeDomain,
+  requireCanonicalAccountHomeDomain,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 const MAX_DELIVERY_ATTEMPTS = 12;
 const PROCESSING_LEASE_MS = 2 * 60 * 1000;
@@ -87,7 +91,7 @@ async function insertMentionNotification(values: typeof notifications.$inferInse
 export async function registerPostMentions(
   input: RegisterPostMentionsInput,
 ): Promise<RegisterPostMentionsResult> {
-  const nodeDomain = normalizeNodeDomain(
+  const nodeDomain = requireCanonicalAccountHomeDomain(
     input.nodeDomain || process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
   );
   const mentions = uniqueMentions(parseMentions(input.content, nodeDomain));
@@ -100,7 +104,12 @@ export async function registerPostMentions(
   for (const mention of mentions) {
     if (mention.isLocal) {
       const mentionedUser = await db.query.users.findFirst({
-        where: { handle: mention.handle },
+        where: {
+          AND: [
+            { handle: mention.canonicalHandle },
+            { isLocalAccount: true },
+          ],
+        },
       });
       if (!mentionedUser
         || mentionedUser.id === input.actor.id
@@ -116,7 +125,7 @@ export async function registerPostMentions(
         actorHandle: input.actor.handle,
         actorDisplayName: input.actor.displayName,
         actorAvatarUrl: input.actor.avatarUrl,
-        actorNodeDomain: null,
+        actorNodeDomain: nodeDomain,
         postId: input.postId,
         postContent: input.content.slice(0, 200),
         interactionId: `mention:local:${input.postId}:${mentionedUser.id}`,
@@ -137,11 +146,16 @@ export async function registerPostMentions(
       continue;
     }
 
+    const targetDomain = canonicalAccountHomeDomain(mention.domain);
+    if (!targetDomain) {
+      result.skipped += 1;
+      continue;
+    }
     const inserted = await db.insert(mentionDeliveries).values({
       interactionId: randomUUID(),
       postId: input.postId,
-      targetHandle: mention.handle,
-      targetDomain: normalizeNodeDomain(mention.domain),
+      targetHandle: mention.canonicalHandle,
+      targetDomain,
       userActionJson: JSON.stringify(input.userAction),
       status: 'pending',
       nextAttemptAt: new Date(),
@@ -210,14 +224,26 @@ async function attemptMentionDelivery(
     });
   }
 
+  const targetDomain = canonicalAccountHomeDomain(delivery.targetDomain);
+  const targetAddress = resolveAccountAddress(delivery.targetHandle, targetDomain);
+  if (!targetDomain || !targetAddress || targetAddress.homeDomain !== targetDomain) {
+    return markDeliveryFailure(delivery, {
+      success: false,
+      retryable: false,
+      error: 'Mention target does not belong to its destination node',
+    });
+  }
+
   const response = await deliverSwarmMention(delivery.targetDomain, {
     userAction,
-    mentionedHandle: delivery.targetHandle,
+    mentionedHandle: targetAddress.canonical,
     mention: {
       actorHandle: post.author.handle,
       actorDisplayName: post.author.displayName || post.author.handle,
       actorAvatarUrl: post.author.avatarUrl || undefined,
-      actorNodeDomain: normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821'),
+      actorNodeDomain: requireCanonicalAccountHomeDomain(
+        process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+      ),
       actorDid: post.author.did,
       actorPublicKey: post.author.publicKey,
       postId: post.id,

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { ALLOWED_MEDIA_TYPES, getMaxMediaSize } from '@/lib/media/upload-policy';
 import { E2EE_MAX_MESSAGE_PLAINTEXT_BYTES } from '@/lib/e2ee/protocol';
-import { federationMediaUrlSchema } from '@/lib/utils/federation';
+import { accountAddressSchema, federationMediaUrlSchema } from '@/lib/utils/federation';
 
 export const CHAT_ATTACHMENT_LIMIT = 4;
 export const CHAT_MESSAGE_TEXT_MAX_BYTES = 8_000;
@@ -28,6 +28,8 @@ const chatAttachmentSchema = z.strictObject({
 
 const chatReplyReferenceSchema = z.strictObject({
   messageId: z.string().uuid(),
+  // Legacy encrypted payloads cannot be rewritten. New writes are checked in
+  // encodeChatMessageContent, while decode accepts their historical bare form.
   senderHandle: z.string().trim().min(1).max(640),
   senderDisplayName: z.string().trim().min(1).max(160).nullable(),
   preview: z.string().trim().min(1).max(160),
@@ -62,6 +64,9 @@ function assertContentSize(content: ChatMessageContent, encoded: string): void {
 export function encodeChatMessageContent(content: ChatMessageContent): string {
   if (!content.text.trim() && content.attachments.length === 0) {
     throw new Error('Add a message or an attachment before sending.');
+  }
+  if (content.replyTo && !accountAddressSchema.safeParse(content.replyTo.senderHandle).success) {
+    throw new Error('The replied-to account address is invalid. Reload the conversation and try again.');
   }
 
   const parsed = encryptedChatContentSchema.safeParse({

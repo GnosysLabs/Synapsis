@@ -17,6 +17,9 @@ export async function POST(request: Request) {
             user: {
                 id: session.user.id,
                 handle: session.user.handle,
+                username: session.user.username,
+                homeDomain: session.user.homeDomain,
+                isLocalAccount: session.user.isLocalAccount,
                 displayName: session.user.displayName,
                 avatarUrl: session.user.avatarUrl,
                 bio: session.user.bio,

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db, users } from '@/db';
 import { requireAdmin } from '@/lib/auth/admin';
-import { desc, sql } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 
 export async function GET(request: Request) {
     try {
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
             createdAt: users.createdAt,
         })
             .from(users)
-            .where(sql`${users.handle} NOT LIKE '%@%'`)
+            .where(eq(users.isLocalAccount, true))
             .orderBy(desc(users.createdAt))
             .limit(limit);
 

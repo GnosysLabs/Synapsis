@@ -85,6 +85,9 @@ export async function POST(request: Request) {
                 user: {
                     id: user.id,
                     handle: user.handle,
+                    username: user.username,
+                    homeDomain: user.homeDomain,
+                    isLocalAccount: user.isLocalAccount,
                     displayName: user.displayName,
                     did: user.did,
                     publicKey: user.publicKey,

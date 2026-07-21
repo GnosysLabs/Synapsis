@@ -1,7 +1,10 @@
 import { db } from '@/db';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 export async function getLocalNode() {
-    const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN || 'localhost:43821';
+    const domain = requireCanonicalAccountHomeDomain(
+        process.env.NEXT_PUBLIC_NODE_DOMAIN || process.env.NODE_DOMAIN || 'localhost:43821',
+    );
     let node = await db.query.nodes.findFirst({ where: { domain } });
 
     if (!node) {

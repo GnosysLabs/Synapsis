@@ -32,6 +32,8 @@ import {
   relayedReplyProvenanceSchema,
 } from '@/lib/swarm/reply-provenance';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
+import { federatedHandleSchema } from '@/lib/utils/federation';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 // The same exact schema is persisted with the source node signature so other
 // peers can independently verify a relayed reply instead of trusting us.
@@ -42,7 +44,7 @@ const swarmReplyDeletionSchema = z.object({
   userAction: signedUserActionSchema,
   replyId: z.string().uuid(),
   nodeDomain: z.string().min(1).max(253),
-  authorHandle: z.string().min(1).max(64),
+  authorHandle: federatedHandleSchema,
   timestamp: z.string().datetime(),
 }).strict();
 
@@ -180,7 +182,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, message: 'Reply received' });
     }
 
-    const remoteHandle = `${verified.actorHandle}@${sourceDomain}`;
+    const remoteHandle = verified.actorHandle;
     const signingPublicKey = signingPublicKeyFromDid(verified.userAction.did);
     if (!signingPublicKey) {
       return NextResponse.json({ error: 'Reply author DID is not self-certifying' }, { status: 403 });
@@ -216,7 +218,7 @@ export async function POST(request: NextRequest) {
       }, tx);
       await upsertRemoteUser({
         handle: remoteHandle,
-        displayName: verified.actorHandle,
+        displayName: verified.actorUsername,
         avatarUrl: null,
         did: verified.userAction.did,
         publicKey: signingPublicKey,
@@ -257,7 +259,7 @@ export async function POST(request: NextRequest) {
         await tx.insert(notifications).values({
           userId: parentPost.userId,
           actorHandle: verified.actorHandle,
-          actorDisplayName: verified.actorHandle,
+          actorDisplayName: verified.actorUsername,
           actorAvatarUrl: null,
           actorNodeDomain: sourceDomain,
           postId: data.postId,
@@ -356,7 +358,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: true, message: 'Reply not found or already deleted' });
     }
     if (existingReply.author.did !== verified.userAction.did
-      || existingReply.author.handle !== `${verified.actorHandle}@${sourceDomain}`) {
+      || existingReply.author.handle !== verified.actorHandle) {
       return NextResponse.json({ error: 'Reply author mismatch' }, { status: 403 });
     }
 
@@ -418,7 +420,9 @@ export async function GET(request: NextRequest) {
     }
     const postId = postIdValidation.data;
 
-    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
+    const nodeDomain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
     const localNodeIsNsfw = await (await import('@/lib/node/local-node'))
       .requireLocalNodeNsfwClassification();
     const trustedRead = true;
@@ -429,8 +433,7 @@ export async function GET(request: NextRequest) {
     if (!parentPost) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
-    const parentIsRemote = parentPost.author.handle.includes('@')
-      || (parentPost.author.nodeId !== null && parentPost.author.nodeId !== undefined);
+    const parentIsRemote = !parentPost.author.isLocalAccount;
     const parentIsSensitive = isPostSensitive({
       postIsNsfw: parentPost.isNsfw,
       authorIsNsfw: parentPost.author.isNsfw,
@@ -459,7 +462,8 @@ export async function GET(request: NextRequest) {
         authorDisplayName: users.displayName,
         authorAvatarUrl: users.avatarUrl,
         authorIsNsfw: users.isNsfw,
-        authorNodeId: users.nodeId,
+        authorHomeDomain: users.homeDomain,
+        authorIsLocalAccount: users.isLocalAccount,
         postIsNsfw: posts.isNsfw,
       })
       .from(posts)
@@ -475,16 +479,12 @@ export async function GET(request: NextRequest) {
 
     // Format replies for swarm consumption
     const formattedReplies = replies.map((reply) => {
-      const authorIsRemote = reply.authorHandle.includes('@')
-        || (reply.authorNodeId !== null && reply.authorNodeId !== undefined);
-      const handleParts = reply.authorHandle.split('@');
+      const authorIsRemote = !reply.authorIsLocalAccount;
       const parsedRemotePostId = reply.apId?.startsWith('swarm:')
         ? parseSwarmPostId(reply.apId)
         : null;
       const remoteDomain = parsedRemotePostId?.domain
-        || (authorIsRemote && handleParts.length > 1
-          ? handleParts[handleParts.length - 1]
-          : null);
+        || (authorIsRemote ? reply.authorHomeDomain : null);
       const provenance = parseStoredReplyProvenance(reply.federationReplyProvenanceJson);
       const provenanceActionData = provenance
         ? federatedReplyUserActionDataSchema.safeParse(provenance.payload.userAction.data)
@@ -520,12 +520,12 @@ export async function GET(request: NextRequest) {
           ? new Date(provenance!.payload.userAction.ts).toISOString()
           : reply.createdAt.toISOString(),
         author: {
-          handle: remoteDomain ? handleParts.slice(0, -1).join('@') : reply.authorHandle,
+          handle: reply.authorHandle,
           displayName: reply.authorDisplayName || reply.authorHandle,
           avatarUrl: reply.authorAvatarUrl || undefined,
           isNsfw: reply.authorIsNsfw,
           isRemote: authorIsRemote,
-          nodeId: reply.authorNodeId,
+          nodeId: null,
           nodeIsNsfw: authorIsRemote ? undefined : localNodeIsNsfw,
         },
         nodeDomain: remoteDomain || (authorIsRemote ? null : nodeDomain),

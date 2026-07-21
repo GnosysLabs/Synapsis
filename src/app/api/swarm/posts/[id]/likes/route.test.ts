@@ -33,7 +33,13 @@ const safeLocalPost = {
   isRemoved: false,
   isNsfw: false,
   likesCount: 3,
-  author: { handle: 'alice', nodeId: null, isNsfw: false },
+  author: {
+    handle: 'alice@node.social',
+    username: 'alice',
+    homeDomain: 'node.social',
+    isLocalAccount: true,
+    isNsfw: false,
+  },
 };
 
 describe('swarm like-state visibility', () => {
@@ -76,7 +82,17 @@ describe('swarm like-state visibility', () => {
     await expect(response.json()).resolves.toMatchObject({
       likesCount: 3,
       isLiked: true,
+      checkedHandle: 'alice@peer.social',
       checkedDomain: 'peer.social',
+    });
+    expect(mocks.findRemoteLike).toHaveBeenCalledWith({
+      where: {
+        AND: [
+          { postId },
+          { actorHandle: 'alice@peer.social' },
+          { actorNodeDomain: 'peer.social' },
+        ],
+      },
     });
     expect(response.headers.get('cache-control')).toContain('no-store');
   });
@@ -92,11 +108,17 @@ describe('swarm like-state visibility', () => {
     expect(mocks.findRemoteLike).not.toHaveBeenCalled();
   });
 
-  it('fails closed for a cached remote author with a bare handle and node id', async () => {
+  it('fails closed for a cached remote author with explicit remote ownership', async () => {
     mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.social' });
     mocks.findPost.mockResolvedValue({
       ...safeLocalPost,
-      author: { handle: 'legacy_remote', nodeId: 'remote-node-row', isNsfw: false },
+      author: {
+        handle: 'legacy_remote@remote.social',
+        username: 'legacy_remote',
+        homeDomain: 'remote.social',
+        isLocalAccount: false,
+        isNsfw: false,
+      },
     });
     const response = await GET(new Request(
       `https://node.social/api/swarm/posts/${postId}/likes`,

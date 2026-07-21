@@ -1,6 +1,9 @@
 export interface User {
     id: string;
     handle: string;
+    username?: string;
+    homeDomain?: string;
+    isLocalAccount?: boolean;
     displayName: string;
     avatarUrl?: string | null;
     bio?: string | null;

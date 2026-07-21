@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { AvatarImage } from './AvatarImage';
 import { ProfileBanner } from './ProfileBanner';
 import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
+import { canonicalAccountAddress, displayAccountAddress } from '@/lib/identity/account-address';
+import { getProfilePath } from '@/lib/utils/handle';
 
 interface Admin {
     handle: string;
@@ -14,6 +16,7 @@ interface Admin {
 }
 
 interface NodeInfo {
+    domain: string;
     name: string;
     description: string;
     longDescription: string;
@@ -39,6 +42,7 @@ export function RightSidebar() {
     const localNodeIsNsfw = config?.isNsfw ?? false;
     const fallbackDescription = process.env.NEXT_PUBLIC_NODE_DESCRIPTION || 'A swarm social network node.';
     const [nodeInfo, setNodeInfo] = useState<NodeInfo>({
+        domain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
         name: process.env.NEXT_PUBLIC_NODE_NAME || 'Synapsis Node',
         description: fallbackDescription,
         longDescription: '',
@@ -184,25 +188,28 @@ export function RightSidebar() {
                                 Admins
                             </h4>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                {nodeInfo.admins.map((admin) => (
+                                {nodeInfo.admins.map((admin) => {
+                                    const handle = canonicalAccountAddress(admin.handle, nodeInfo.domain) || admin.handle;
+                                    return (
                                     <Link
-                                        key={admin.handle}
-                                        href={`/u/${admin.handle}`}
+                                        key={handle}
+                                        href={getProfilePath(handle, nodeInfo.domain)}
                                         style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none', color: 'inherit' }}
                                     >
                                         <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
-                                            <AvatarImage avatarUrl={admin.avatarUrl} seed={admin.handle} isNsfw={admin.isNsfw} nodeIsNsfw={localNodeIsNsfw} alt={admin.displayName || admin.handle} />
+                                            <AvatarImage avatarUrl={admin.avatarUrl} seed={handle} nodeDomain={nodeInfo.domain} isNsfw={admin.isNsfw} nodeIsNsfw={localNodeIsNsfw} alt={admin.displayName || handle} />
                                         </div>
                                         <div>
                                             <div style={{ fontWeight: 500, fontSize: '14px' }}>
                                                 {admin.displayName || admin.handle}
                                             </div>
                                             <div style={{ color: 'var(--foreground-tertiary)', fontSize: '12px' }}>
-                                                @{admin.handle}
+                                                {displayAccountAddress(handle)}
                                             </div>
                                         </div>
                                     </Link>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     )}

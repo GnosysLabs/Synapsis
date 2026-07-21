@@ -2,7 +2,11 @@ import { and, asc, eq, inArray, isNull, like } from 'drizzle-orm';
 
 import { db, handleRegistry, swarmNodes } from '@/db';
 import { liveHandleRegistryEntryWhere } from '@/lib/federation/handles';
-import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import { getSwarmSeedDomainAliases } from '@/lib/swarm/node-domain';
+import {
+    canonicalAccountHomeDomain,
+    parseAccountAddress,
+} from '@/lib/identity/account-address';
 import {
     fetchSwarmUserDirectory,
     type SwarmDirectoryUser,
@@ -34,9 +38,15 @@ export async function searchKnownSwarmUsers(
         .orderBy(asc(handleRegistry.handle))
         .limit(Math.min(MAX_DIRECTORY_CANDIDATES, Math.max(options.limit * 4, options.limit)));
     const candidateDomains = [...new Set(
-        registryRows.map((row) => normalizeNodeDomain(row.nodeDomain)).filter(Boolean),
+        registryRows.flatMap((row) => {
+            const domain = canonicalAccountHomeDomain(row.nodeDomain);
+            return domain ? [domain] : [];
+        }),
     )];
     if (candidateDomains.length === 0) return [];
+    const lookupDomains = [...new Set(
+        candidateDomains.flatMap(getSwarmSeedDomainAliases),
+    )];
 
     // Resolve only matching directory domains locally; swarm size never changes this query's fan-out.
     const activeNodes = await db.select({
@@ -46,34 +56,36 @@ export async function searchKnownSwarmUsers(
     })
         .from(swarmNodes)
         .where(and(
-            inArray(swarmNodes.domain, candidateDomains),
+            inArray(swarmNodes.domain, lookupDomains),
             eq(swarmNodes.isActive, true),
             eq(swarmNodes.isBlocked, false),
             isNull(swarmNodes.remoteAccessDeniedAt),
         ));
 
-    const localDomain = normalizeNodeDomain(options.localDomain || '');
+    const localDomain = canonicalAccountHomeDomain(options.localDomain);
     const activeNodeByDomain = new Map(
-        activeNodes.map((node) => [normalizeNodeDomain(node.domain), {
-            ...node,
-            isNsfw: node.isNsfw
-                ? true
-                : node.nsfwClassificationKnown ? false : undefined,
-        }]),
+        activeNodes.flatMap((node) => {
+            const domain = canonicalAccountHomeDomain(node.domain);
+            return domain ? [[domain, {
+                ...node,
+                isNsfw: node.isNsfw
+                    ? true
+                    : node.nsfwClassificationKnown ? false : undefined,
+            }] as const] : [];
+        }),
     );
     const seen = new Set<string>();
     const candidates = registryRows.flatMap<SwarmDirectoryUser>((row) => {
-        const domain = normalizeNodeDomain(row.nodeDomain);
+        const domain = canonicalAccountHomeDomain(row.nodeDomain);
+        if (!domain) return [];
         const node = activeNodeByDomain.get(domain);
-        const normalizedStoredHandle = row.handle.toLowerCase().replace(/^@/, '');
-        const storedParts = normalizedStoredHandle.split('@');
-        const bareHandle = storedParts[0];
-        const canonicalHandle = `${bareHandle}@${domain}`;
+        const address = parseAccountAddress(row.handle);
+        const bareHandle = address?.username || '';
+        const canonicalHandle = address?.canonical || '';
         if (
-            !domain
-            || domain === localDomain
-            || storedParts.length !== 2
-            || normalizeNodeDomain(storedParts[1]) !== domain
+            domain === localDomain
+            || !address
+            || address.homeDomain !== domain
             || !node
             || options.excludedDomains?.has(domain)
             || seen.has(canonicalHandle)
@@ -88,8 +100,8 @@ export async function searchKnownSwarmUsers(
             nodeIsNsfw: node.isNsfw,
         }];
     }).sort((left, right) => {
-        const leftExact = left.handle.split('@')[0] === normalizedQuery ? 0 : 1;
-        const rightExact = right.handle.split('@')[0] === normalizedQuery ? 0 : 1;
+        const leftExact = parseAccountAddress(left.handle)?.username === normalizedQuery ? 0 : 1;
+        const rightExact = parseAccountAddress(right.handle)?.username === normalizedQuery ? 0 : 1;
         return leftExact - rightExact || left.handle.localeCompare(right.handle);
     }).slice(0, options.limit);
 

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth/admin';
-import { normalizeNodeDomain, unblockNode, upsertBlockedNode } from '@/lib/swarm/node-blocklist';
+import { unblockNode, upsertBlockedNode } from '@/lib/swarm/node-blocklist';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 const mutateNodeSchema = z.object({
   action: z.enum(['block', 'unblock']),
@@ -47,8 +48,10 @@ export async function PATCH(request: NextRequest) {
 
     const body = await request.json();
     const data = mutateNodeSchema.parse(body);
-    const domain = normalizeNodeDomain(data.domain);
-    const localDomain = normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821');
+    const domain = requireCanonicalAccountHomeDomain(data.domain);
+    const localDomain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
 
     if (domain === localDomain) {
       return NextResponse.json({ error: 'Cannot block this node itself' }, { status: 400 });

@@ -1,3 +1,13 @@
+import {
+    isAccountOnNode,
+    resolveAccountAddress,
+} from '@/lib/identity/account-address';
+
+function isSameNodeDomain(left: string, right: string): boolean {
+    const sentinel = resolveAccountAddress(`account@${left}`);
+    return Boolean(sentinel && isAccountOnNode(sentinel.canonical, right));
+}
+
 export interface SensitiveContentViewer {
     nsfwEnabled?: boolean;
     ageVerifiedAt?: string | Date | null;
@@ -234,12 +244,15 @@ export function redactSensitivePostForViewer<T extends SerializablePost>(
     const author = post.author || null;
     const authorHandle = typeof author?.handle === 'string' ? author.handle : '';
     const nodeDomain = typeof post.nodeDomain === 'string' ? post.nodeDomain : null;
+    const authorAddress = authorHandle
+        ? resolveAccountAddress(authorHandle, nodeDomain || localNodeDomain)
+        : null;
     const isRemote = post.isSwarm === true
         || post.isRemote === true
         || author?.isRemote === true
-        || (author?.nodeId !== null && author?.nodeId !== undefined)
-        || authorHandle.includes('@')
-        || Boolean(nodeDomain && nodeDomain !== localNodeDomain);
+        || Boolean(authorHandle && (!authorAddress
+            || !isAccountOnNode(authorAddress.canonical, localNodeDomain)))
+        || Boolean(nodeDomain && !isSameNodeDomain(nodeDomain, localNodeDomain));
     const nodeIsNsfw = typeof post.nodeIsNsfw === 'boolean'
         ? post.nodeIsNsfw
         : typeof author?.nodeIsNsfw === 'boolean'
@@ -307,11 +320,15 @@ export function redactSensitivePostForViewer<T extends SerializablePost>(
                 ? reposter.nodeDomain
                 : null;
             const reposterHandle = typeof reposter.handle === 'string' ? reposter.handle : '';
+            const reposterAddress = reposterHandle
+                ? resolveAccountAddress(reposterHandle, reposterDomain || localNodeDomain)
+                : null;
             return serializePublicUserSummary(redactSensitiveUserSummary({
                 ...reposter,
                 isRemote: reposter.isRemote === true
-                    || reposterHandle.includes('@')
-                    || Boolean(reposterDomain && reposterDomain !== localNodeDomain),
+                    || Boolean(reposterHandle && (!reposterAddress
+                        || !isAccountOnNode(reposterAddress.canonical, localNodeDomain)))
+                    || Boolean(reposterDomain && !isSameNodeDomain(reposterDomain, localNodeDomain)),
             }, canViewSensitive));
         }),
     } as unknown as T;
@@ -388,9 +405,7 @@ export function isRemoteAvatarSensitivityUnknown({
 }): boolean {
     const normalizedLocalDomain = localNodeDomain?.trim().replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
     const explicitDomain = nodeDomain?.trim().replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
-    const cleanSeed = seed.trim().replace(/^@/, '');
-    const separator = cleanSeed.lastIndexOf('@');
-    const handleDomain = separator > 0 ? cleanSeed.slice(separator + 1).toLowerCase() : null;
+    const handleDomain = resolveAccountAddress(seed, nodeDomain || localNodeDomain)?.homeDomain ?? null;
     const candidateDomains = [explicitDomain, handleDomain].filter(
         (domain): domain is string => Boolean(domain),
     );

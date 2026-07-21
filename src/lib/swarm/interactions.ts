@@ -21,7 +21,10 @@ import { serializeLinkPreviewMedia } from '@/lib/media/linkPreview';
 import { parseMentions } from '@/lib/mentions/parser';
 import { safeFederationRequest } from './safe-federation-http';
 import type { FederatedUserAction } from './federated-action';
-import { createFederationActionContext } from './federated-action';
+import {
+  createFederationActionContext,
+  LEGACY_FEDERATED_ACTION_PROTOCOL,
+} from './federated-action';
 import {
   parseRemotePostDetailResponse,
   parseRemoteProfileResponse,
@@ -38,6 +41,10 @@ import {
   markRemoteNodeAccessDenied,
   NODE_BLOCKED_CODE,
 } from './remote-access';
+import {
+  parseAccountAddress,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 // ============================================
 // TYPES
@@ -200,12 +207,7 @@ export async function getSwarmNodeInfo(domain: string): Promise<SwarmNodeInfo | 
  * Extract domain from a handle (e.g., "user@node.example.com" -> "node.example.com")
  */
 export function extractDomainFromHandle(handle: string): string | null {
-  const clean = handle.toLowerCase().replace(/^@/, '');
-  const parts = clean.split('@');
-  if (parts.length === 2) {
-    return parts[1];
-  }
-  return null;
+  return parseAccountAddress(handle)?.homeDomain ?? null;
 }
 
 /**
@@ -329,12 +331,22 @@ async function deliverSwarmInteraction(
 
     // Bind every node signature to the exact protocol, destination, method,
     // and route. State-changing receivers additionally require `userAction`.
+    const legacySignedHandle = 'userAction' in payload
+      && typeof payload.userAction === 'object'
+      && payload.userAction !== null
+      && 'handle' in payload.userAction
+      && typeof payload.userAction.handle === 'string'
+      && !parseAccountAddress(payload.userAction.handle);
     const authorizedPayload = {
       ...payload,
       federation: createFederationActionContext({
         destinationDomain: normalizedTargetDomain,
         method: 'POST',
         path: endpoint,
+        // A queued historical user action cannot be rewritten without
+        // invalidating its signature. Carry it in the v2 compatibility
+        // envelope; all newly signed canonical actions emit v3.
+        protocol: legacySignedHandle ? LEGACY_FEDERATED_ACTION_PROTOCOL : undefined,
       }),
     };
 
@@ -416,11 +428,12 @@ export async function fetchSwarmUserProfile(
         ? normalizedDomain
         : null;
     const targetDomain = publicDomain ?? developmentDomain;
-    const cleanHandle = handle.trim().replace(/^@/, '').toLowerCase();
+    const address = resolveAccountAddress(handle, targetDomain);
 
     if (
       !targetDomain ||
-      !/^[a-z0-9_]{1,64}$/.test(cleanHandle) ||
+      !address ||
+      address.homeDomain !== targetDomain ||
       (await isNodeBlocked(targetDomain)) ||
       (await isRemoteNodeAccessDenied(targetDomain))
     ) {
@@ -430,7 +443,7 @@ export async function fetchSwarmUserProfile(
     const baseUrl = developmentDomain
       ? `http://${targetDomain}`
       : `https://${targetDomain}`;
-    const url = new URL(`/api/swarm/users/${encodeURIComponent(cleanHandle)}`, baseUrl);
+    const url = new URL(`/api/swarm/users/${encodeURIComponent(address.username)}`, baseUrl);
     url.searchParams.set(
       'limit',
       String(Number.isSafeInteger(postsLimit) ? Math.min(Math.max(postsLimit, 0), 50) : 25)
@@ -452,7 +465,7 @@ export async function fetchSwarmUserProfile(
     const payload = parseRemoteProfileResponse(
       response.json(),
       targetDomain,
-      cleanHandle,
+      address.username,
       effectivePostsLimit,
     );
 
@@ -471,7 +484,7 @@ export async function fetchSwarmUserProfile(
 
     return payload;
   } catch (error) {
-    console.error(`[Swarm] Failed to fetch profile for ${handle}@${domain}:`, error);
+    console.error(`[Swarm] Failed to fetch profile for ${handle}:`, error);
     return null;
   }
 }
@@ -487,7 +500,12 @@ export async function cacheSwarmUserPosts(
   limit: number = 20
 ): Promise<{ cached: number; skipped: number; success: boolean }> {
   try {
-    const profileData = await fetchSwarmUserProfile(handle, domain, limit);
+    const canonicalDomain = getPublicSwarmDomain(domain) ?? normalizeNodeDomain(domain);
+    const address = resolveAccountAddress(fullHandle || handle, canonicalDomain);
+    if (!address || address.homeDomain !== canonicalDomain) {
+      return { cached: 0, skipped: 0, success: false };
+    }
+    const profileData = await fetchSwarmUserProfile(address.canonical, domain, limit);
 
     if (!profileData || !profileData.posts) {
       return { cached: 0, skipped: 0, success: false };
@@ -502,7 +520,7 @@ export async function cacheSwarmUserPosts(
     let cached = 0;
     let skipped = 0;
 
-    const actorUrl = `swarm://${domain}/${handle}`;
+    const actorUrl = `swarm://${domain}/${address.username}`;
     const profile = profileData.profile;
 
     const toTimelinePost = (post: RemoteSwarmPost): SwarmPost => ({
@@ -555,7 +573,6 @@ export async function cacheSwarmUserPosts(
     });
 
     for (const post of profileData.posts) {
-      const canonicalDomain = normalizeNodeDomain(domain);
       const apId = `swarm:${canonicalDomain}:${post.id}`;
       const snapshot = toTimelinePost(post);
       const values = {
@@ -563,9 +580,9 @@ export async function cacheSwarmUserPosts(
         nodeDomain: canonicalDomain,
         originalPostId: post.id,
         postJson: JSON.stringify(snapshot),
-        authorHandle: fullHandle,
+        authorHandle: address.canonical,
         authorActorUrl: actorUrl,
-        authorDisplayName: profile.displayName || handle,
+        authorDisplayName: profile.displayName || address.username,
         authorAvatarUrl: profile.avatarUrl || null,
         content: post.content,
         publishedAt: new Date(post.createdAt),

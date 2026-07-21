@@ -12,7 +12,13 @@ import { useToast } from '@/lib/contexts/ToastContext';
 import { parseVideoEmbedUrl, VideoEmbed } from '@/components/VideoEmbed';
 import BlurredImage from '@/components/BlurredImage';
 import BlurredVideo from '@/components/BlurredVideo';
-import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
+import {
+    getPostPath,
+    getProfilePath,
+    isHandleOnNode,
+    sameAccountHandle,
+    useFormattedHandle,
+} from '@/lib/utils/handle';
 import { useDomain, useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
@@ -29,6 +35,10 @@ import { PostOverflowMenu } from '@/components/PostOverflowMenu';
 import { PostCollectionPicker } from '@/components/PostCollectionPicker';
 import { isTrustedFederationMediaUrl } from '@/lib/utils/federation';
 import { normalizeSameNodePostId } from '@/lib/swarm/post-id';
+import {
+    displayAccountAddress,
+    resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 // Component for link preview image that hides on error
 function LinkPreviewImage({ src, alt }: { src: string; alt: string }) {
@@ -65,13 +75,16 @@ function parseLegacySwarmReplyAuthor(value: unknown): Post['swarmReplyToAuthor']
     if (typeof record.handle !== 'string' || !record.handle.trim() || record.handle.length > 640) {
         return null;
     }
+    const nodeDomain = typeof record.nodeDomain === 'string' ? record.nodeDomain : null;
+    const address = resolveAccountAddress(record.handle, nodeDomain);
+    if (!address) return null;
     return {
-        handle: record.handle,
+        handle: address.canonical,
         displayName: typeof record.displayName === 'string'
             ? record.displayName.slice(0, 160)
             : null,
         avatarUrl: typeof record.avatarUrl === 'string' ? record.avatarUrl : null,
-        nodeDomain: typeof record.nodeDomain === 'string' ? record.nodeDomain : null,
+        nodeDomain: address.homeDomain,
     };
 }
 
@@ -205,11 +218,20 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     const localNodeClassificationKnown = config?.classificationKnown === true;
     const localNodeIsNsfw = localNodeClassificationKnown && config?.isNsfw === true;
     const canRevealSensitiveContent = Boolean(currentUser?.ageVerifiedAt);
+    const authorAddress = resolveAccountAddress(
+        post.author.handle,
+        post.author.nodeDomain || post.nodeDomain || domain,
+    );
+    const authorCanonicalHandle = authorAddress?.canonical || post.author.handle;
+    const contentOriginDomain = post.nodeDomain
+        || post.author.nodeDomain
+        || authorAddress?.homeDomain
+        || domain;
     const isRemotePost = Boolean(
         post.isSwarm
         || post.author.isRemote
-        || post.author.handle.includes('@')
-        || (post.nodeDomain && post.nodeDomain !== domain)
+        || !authorAddress
+        || !isHandleOnNode(authorAddress.canonical, domain)
     );
     // Stored snapshots can outlive a parser deployment, and even a local
     // account can submit a tracking URL through an older client. Every media
@@ -233,14 +255,12 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         viewer: currentUser,
         localNodeIsNsfw,
     }) && !(sensitiveContentRevealed && revealBelongsToCurrentViewer);
-    const authorHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
+    const authorHandle = useFormattedHandle(authorCanonicalHandle, contentOriginDomain);
     const isOwnPost = Boolean(
         currentUser && (
             currentUser.id === post.author.id ||
-            (post.author.id.startsWith('swarm:') && (
-                post.author.handle === currentUser.handle ||
-                post.author.handle === `${currentUser.handle}@${domain}`
-            ))
+            (post.author.id.startsWith('swarm:')
+                && sameAccountHandle(authorCanonicalHandle, currentUser.handle))
         )
     );
     const localCollectionPostId = normalizeSameNodePostId(post.id, domain);
@@ -563,9 +583,9 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         }
 
         try {
-            const res = await signedAPI.blockUser(post.author.handle, did, currentUserHandle);
+            const res = await signedAPI.blockUser(authorCanonicalHandle, did, currentUserHandle);
             if (res.ok) {
-                showToast(`Blocked @${post.author.handle}`, 'success');
+                showToast(`Blocked ${displayAccountAddress(authorCanonicalHandle)}`, 'success');
                 onHide?.(post.id);
             } else {
                 showToast('Failed to block user', 'error');
@@ -588,9 +608,9 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         // For now, muting a user is the same as blocking but with different messaging
         // Could be expanded to just hide posts without breaking follows
         try {
-            const res = await signedAPI.blockUser(post.author.handle, did, currentUserHandle);
+            const res = await signedAPI.blockUser(authorCanonicalHandle, did, currentUserHandle);
             if (res.ok) {
-                showToast(`Muted @${post.author.handle}`, 'success');
+                showToast(`Muted ${displayAccountAddress(authorCanonicalHandle)}`, 'success');
                 onHide?.(post.id);
             } else {
                 showToast('Failed to mute user', 'error');
@@ -610,10 +630,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
             return;
         }
 
-        // Extract node domain from the post
-        const nodeDomain = post.nodeDomain || (post.author.handle.includes('@')
-            ? post.author.handle.split('@')[1]
-            : null);
+        const nodeDomain = post.nodeDomain || authorAddress?.homeDomain || null;
 
         if (!nodeDomain) {
             showToast('Cannot determine node for this post', 'error');
@@ -633,7 +650,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         }
     };
 
-    const postUrl = `/u/${post.author.handle}/posts/${post.id}`;
+    const postUrl = getPostPath(authorCanonicalHandle, post.id, contentOriginDomain);
 
     const getAbsolutePostUrl = () => new URL(postUrl, window.location.origin).toString();
 
@@ -689,7 +706,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                 title: `${post.author.displayName || post.author.handle} on Synapsis`,
                 text: hideSensitiveContent
                     ? 'Sensitive post on Synapsis'
-                    : post.content || `Media from @${authorHandle}`,
+                    : post.content || `Media from ${authorHandle}`,
                 url,
             });
         } catch (error) {
@@ -738,21 +755,6 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         }
     };
 
-    // Get the full handle for profile links (includes domain for remote users)
-    const getProfileHandle = () => {
-        // If handle already has domain, use it
-        if (post.author.handle.includes('@')) {
-            return post.author.handle;
-        }
-        // If this is a swarm post from a DIFFERENT node, append the node domain
-        if (post.nodeDomain && post.nodeDomain !== domain) {
-            return `${post.author.handle}@${post.nodeDomain}`;
-        }
-        // Local user
-        return post.author.handle;
-    };
-    const profileHandle = getProfileHandle();
-
     // Decode HTML entities from federated posts (e.g., &amp;rsquo; -> ')
     const decodeHtmlEntities = (text: string): string => {
         const entities: Record<string, string> = {
@@ -799,7 +801,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
 
     const renderContent = (content: string, hidePreviewUrl?: string) => {
         const decoded = decodeHtmlEntities(content);
-        const tokens = tokenizePostContent(decoded, domain);
+        const tokens = tokenizePostContent(decoded, contentOriginDomain);
         return tokens.map((token, index) => {
             if (token.type === 'mention') {
                 return (
@@ -808,9 +810,9 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                         href={getProfilePath(token.canonicalHandle)}
                         className="mention-link"
                         onClick={(event) => event.stopPropagation()}
-                        title={token.isQualified ? token.raw : `@${token.handle}@${domain}`}
+                        title={displayAccountAddress(token.canonicalHandle)}
                     >
-                        {token.raw}
+                        {displayAccountAddress(token.canonicalHandle)}
                     </Link>
                 );
             }
@@ -873,7 +875,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         effectiveReplyTo?.author?.handle || '',
         effectiveReplyTo?.nodeDomain,
     );
-    const repostHandle = useFormattedHandle(post.author.handle, post.nodeDomain);
+    const repostHandle = useFormattedHandle(authorCanonicalHandle, contentOriginDomain);
     const hasOwnContent = decodeHtmlEntities(post.content).trim().length > 0;
     const isRepostEvent = Boolean(post.repostOf);
     const uniqueReposters = dedupeReposters(reposters, domain);
@@ -1056,13 +1058,13 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         return (
             <article className={`post thread-parent ${isEmbedded ? 'embedded' : ''}`}>
                 <div className="post-header">
-                    <Link href={`/u/${profileHandle}`} className="avatar-link" onClick={(e) => e.stopPropagation()}>
+                    <Link href={getProfilePath(authorCanonicalHandle)} className="avatar-link" onClick={(e) => e.stopPropagation()}>
                         <div className="avatar">
                             <AvatarImage avatarUrl={post.author.avatarUrl} seed={post.author.handle} nodeDomain={post.author.nodeDomain || post.nodeDomain} isNsfw={post.author.isNsfw} nodeIsNsfw={post.author.nodeIsNsfw} alt={post.author.displayName || post.author.handle} />
                         </div>
                     </Link>
                     <div className="post-author">
-                        <Link href={`/u/${profileHandle}`} className="post-handle" onClick={(e) => e.stopPropagation()}>
+                        <Link href={getProfilePath(authorCanonicalHandle)} className="post-handle" onClick={(e) => e.stopPropagation()}>
                             {post.author.displayName || post.author.handle}
                         </Link>
                         <span className="post-time">{authorHandle}</span>
@@ -1084,7 +1086,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                             <RepeatIcon />
                         </span>
                         <span className="repost-event-text">
-                            <Link href={`/u/${profileHandle}`} onClick={(e) => e.stopPropagation()}>
+                            <Link href={getProfilePath(authorCanonicalHandle)} onClick={(e) => e.stopPropagation()}>
                                 {post.author.displayName || post.author.handle}
                             </Link>
                             <span className="repost-event-copy"> reposted</span>
@@ -1142,7 +1144,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                         <span className="repost-summary-avatars">
                             {visibleReposters.map((reposter) => (
                                 <Link
-                                    href={getProfilePath(reposter.handle)}
+                                    href={getProfilePath(reposter.handle, reposter.nodeDomain || post.nodeDomain)}
                                     className="repost-summary-avatar"
                                     title={reposter.displayName || reposter.handle}
                                     aria-label={reposter.displayName || reposter.handle}
@@ -1167,14 +1169,14 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                 )}
 
                 <div className="post-header">
-                    <Link href={`/u/${profileHandle}`} className="avatar-link" onClick={(e) => e.stopPropagation()}>
+                    <Link href={getProfilePath(authorCanonicalHandle)} className="avatar-link" onClick={(e) => e.stopPropagation()}>
                         <div className="avatar">
                             <AvatarImage avatarUrl={post.author.avatarUrl} seed={post.author.handle} nodeDomain={post.author.nodeDomain || post.nodeDomain} isNsfw={post.author.isNsfw} nodeIsNsfw={post.author.nodeIsNsfw} alt={post.author.displayName || post.author.handle} />
                         </div>
                     </Link>
                     <div className="post-author">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <Link href={`/u/${profileHandle}`} className="post-handle" onClick={(e) => e.stopPropagation()}>
+                            <Link href={getProfilePath(authorCanonicalHandle)} className="post-handle" onClick={(e) => e.stopPropagation()}>
                                 {post.author.displayName || post.author.handle}
                             </Link>
                         </div>
@@ -1226,7 +1228,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                                         onBlockUser={handleBlockUser}
                                         onMuteNode={handleMuteNode}
                                         onReport={handleReport}
-                                        showMuteNode={Boolean(post.nodeDomain || post.author.handle.includes('@'))}
+                                        showMuteNode={isRemotePost && Boolean(post.nodeDomain || authorAddress?.homeDomain)}
                                         reporting={reporting}
                                         ownerMode={isOwnPost}
                                         onAddToCollection={handleAddToCollection}
@@ -1241,7 +1243,10 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
 
                 {effectiveReplyTo && !showThread && (
                     <div className="post-reply-to">
-                        Replying to <Link href={`/u/${effectiveReplyTo.author.handle}`} onClick={(e) => e.stopPropagation()}>{replyToHandle}</Link>
+                        Replying to <Link href={getProfilePath(
+                            effectiveReplyTo.author.handle,
+                            effectiveReplyTo.author.nodeDomain || effectiveReplyTo.nodeDomain,
+                        )} onClick={(e) => e.stopPropagation()}>{replyToHandle}</Link>
                     </div>
                 )}
 

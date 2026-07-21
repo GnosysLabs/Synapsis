@@ -15,6 +15,7 @@ const signingKey = publicKey.export({ type: 'spki', format: 'der' }).toString('b
 const did = generateDID(signingKey);
 
 function portableReply(parentPostId: string) {
+  // This fixture is a historical v2 proof; its signed handle must stay byte-for-byte bare.
   const replyId = '22222222-2222-4222-8222-222222222222';
   const ts = Date.now() - 60_000;
   const unsignedAction = {
@@ -184,8 +185,8 @@ describe('remote profile and post validation', () => {
       nodeDomain: 'author.social',
       likesCount: 2,
       author: {
-        handle: 'alice',
-        displayName: 'alice',
+        handle: 'alice@author.social',
+        displayName: 'alice@author.social',
         nodeDomain: 'author.social',
       },
     });

@@ -5,15 +5,17 @@ import { signingPublicKeyFromDid } from '@/lib/crypto/did-key';
 import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import {
   federationMediaUrlSchema,
-  localHandleSchema,
+  federatedHandleSchema,
   nodeDomainSchema,
 } from '@/lib/utils/federation';
 import {
   FEDERATED_ACTION_MAX_AGE_MS,
+  FEDERATED_ACTION_PROTOCOL,
   federationActionContextSchema,
   federationActionDomain,
 } from './federated-action';
 import { verifySwarmRequest } from './signature';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 export const RELAYED_REPLY_PROVENANCE_PROTOCOL = 'synapsis-relayed-reply-v1' as const;
 const signedPresentationUrl = z.string().url().max(2_048);
@@ -75,7 +77,7 @@ export const federatedReplyEnvelopeSchema = z.strictObject({
     content: z.string().max(600),
     createdAt: z.string().datetime(),
     author: z.strictObject({
-      handle: localHandleSchema,
+      handle: federatedHandleSchema,
       displayName: z.string().max(50).optional().nullable(),
       avatarUrl: federationMediaUrlSchema.optional(),
       did: z.string().min(1).max(2_048),
@@ -148,11 +150,6 @@ export function createRelayedReplyProvenance(
   });
 }
 
-function canonicalLocalHandle(value: string): string | null {
-  const handle = value.trim().replace(/^@/, '').toLowerCase();
-  return localHandleSchema.safeParse(handle).success ? handle : null;
-}
-
 function mediaUrls(value: RelayedReplyPresentation['media']): string[] {
   return (value || []).map((item) => item.url);
 }
@@ -199,15 +196,21 @@ export async function verifyRelayedReplyProvenance(input: {
   }
 
   const actionData = federatedReplyUserActionDataSchema.safeParse(payload.userAction.data);
-  const actorHandle = canonicalLocalHandle(payload.userAction.handle);
-  const envelopeHandle = canonicalLocalHandle(payload.reply.author.handle);
-  const presentationHandle = canonicalLocalHandle(input.presentation.author.handle);
+  const actorAddress = resolveAccountAddress(payload.userAction.handle, sourceDomain);
+  const envelopeAddress = resolveAccountAddress(payload.reply.author.handle, sourceDomain);
+  const presentationAddress = resolveAccountAddress(input.presentation.author.handle, sourceDomain);
   const signingPublicKey = signingPublicKeyFromDid(payload.userAction.did);
   if (!actionData.success
     || payload.userAction.action !== 'post'
-    || !actorHandle
-    || envelopeHandle !== actorHandle
-    || presentationHandle !== actorHandle
+    || !actorAddress
+    || !envelopeAddress
+    || !presentationAddress
+    || actorAddress.homeDomain !== sourceDomain
+    || envelopeAddress.canonical !== actorAddress.canonical
+    || presentationAddress.canonical !== actorAddress.canonical
+    || (payload.federation.protocol === FEDERATED_ACTION_PROTOCOL
+      && (payload.userAction.handle !== actorAddress.canonical
+        || payload.reply.author.handle !== envelopeAddress.canonical))
     || payload.reply.author.did !== payload.userAction.did
     || !signingPublicKey
     || !await verifyActionSignature(
@@ -249,7 +252,7 @@ export async function verifyRelayedReplyProvenance(input: {
     createdAt: expectedCreatedAt,
     nodeDomain: sourceDomain,
     authorDid: payload.userAction.did,
-    authorHandle: actorHandle,
+    authorHandle: actorAddress.canonical,
     media: signedMedia.map((item) => ({
       url: item.url,
       altText: item.altText,

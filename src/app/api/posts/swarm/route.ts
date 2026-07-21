@@ -15,6 +15,7 @@ import { db, likes, posts, userSwarmLikes, userSwarmReposts } from '@/db';
 import { and, eq, inArray } from 'drizzle-orm';
 import { isLocalSwarmDomain } from '@/lib/swarm/post-id';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 type SwarmFeedPost = {
   id: string;
@@ -91,7 +92,9 @@ export async function GET(request: NextRequest) {
       cursor,
     });
 
-    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+    const nodeDomain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
     const allTimelinePosts = collectNestedSwarmPosts(timeline.posts as SwarmFeedPost[]);
     const localTimelinePosts = allTimelinePosts.filter(post =>
       isLocalSwarmDomain(post.nodeDomain, nodeDomain)

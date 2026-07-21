@@ -25,7 +25,7 @@ import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request
 import { isFreshFederationTimestamp } from '@/lib/swarm/signature';
 import {
   federationMediaUrlSchema,
-  localHandleSchema,
+  federatedHandleSchema,
   nodeDomainSchema,
 } from '@/lib/utils/federation';
 
@@ -36,7 +36,7 @@ const swarmRepostSchema = z.strictObject({
   userAction: signedUserActionSchema,
   postId: z.string().uuid(),
   repost: z.strictObject({
-    actorHandle: localHandleSchema,
+    actorHandle: federatedHandleSchema,
     actorDisplayName: z.string().min(1).max(50),
     actorAvatarUrl: federationMediaUrlSchema.optional(),
     actorIsNsfw: z.boolean(),
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
         const [inserted] = await tx.insert(remoteReposts).values({
           postId: data.postId,
           actorHandle: verified.actorHandle,
-          actorDisplayName: verified.actorHandle,
+          actorDisplayName: verified.actorUsername,
           actorAvatarUrl: null,
           // A hostile node cannot authoritatively downgrade an account to safe.
           actorIsNsfw: true,
@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
         await tx.insert(notifications).values({
           userId: post.userId,
           actorHandle: verified.actorHandle,
-          actorDisplayName: verified.actorHandle,
+          actorDisplayName: verified.actorUsername,
           actorAvatarUrl: null,
           actorNodeDomain: actorDomain,
           postId: data.postId,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, follows, users } from '@/db';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { parseBoundedInteger } from '@/lib/http/query';
@@ -33,7 +33,10 @@ export async function GET(request: NextRequest) {
                 isNsfw: users.isNsfw,
             })
             .from(users)
-            .where(sql`${users.isSuspended} IS FALSE AND ${users.handle} NOT LIKE '%@%'`)
+            .where(and(
+                eq(users.isSuspended, false),
+                eq(users.isLocalAccount, true),
+            ))
             .orderBy(desc(users.createdAt))
             .limit(limit);
 

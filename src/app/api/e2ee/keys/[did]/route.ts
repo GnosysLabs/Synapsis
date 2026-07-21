@@ -8,7 +8,7 @@ type RouteContext = { params: Promise<{ did: string }> };
 export async function GET(_request: Request, context: RouteContext) {
   const { did } = await context.params;
   const user = await db.query.users.findFirst({ where: { did } });
-  if (!user || user.handle.includes('@') || user.id.startsWith('swarm:')) {
+  if (!user || !user.isLocalAccount) {
     return NextResponse.json({ error: 'Encryption key not found' }, { status: 404 });
   }
 

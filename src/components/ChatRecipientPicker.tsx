@@ -10,6 +10,7 @@ import {
     uniqueChatRecipients,
     type ChatRecipient,
 } from '@/lib/chat/recipients';
+import { displayAccountAddress } from '@/lib/identity/account-address';
 
 interface ChatRecipientPickerProps {
     currentUserHandle?: string | null;
@@ -220,7 +221,7 @@ export function ChatRecipientPicker({ currentUserHandle, onClose, onSelect }: Ch
                                 <button
                                     type="button"
                                     className="chat-recipient-row"
-                                    key={recipient.handle.toLowerCase()}
+                                    key={recipient.handle}
                                     onClick={() => onSelect(recipient)}
                                 >
                                     <span className="avatar">
@@ -235,7 +236,7 @@ export function ChatRecipientPicker({ currentUserHandle, onClose, onSelect }: Ch
                                     </span>
                                     <span className="chat-recipient-copy">
                                         <strong>{recipient.displayName || recipient.handle}</strong>
-                                        <span>@{recipient.handle.replace(/^@/, '')}</span>
+                                        <span>{displayAccountAddress(recipient.handle)}</span>
                                     </span>
                                     <span className="chat-recipient-action">Open chat</span>
                                 </button>

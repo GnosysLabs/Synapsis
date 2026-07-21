@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { getPostPath } from '@/lib/utils/handle';
 
 export default function PostRedirect() {
     const params = useParams();
@@ -17,7 +18,11 @@ export default function PostRedirect() {
                     return;
                 }
                 const data = await res.json();
-                router.push(`/u/${data.post.author.handle}/posts/${id}`);
+                router.push(getPostPath(
+                    data.post.author.handle,
+                    id,
+                    data.post.author.nodeDomain || data.post.nodeDomain,
+                ));
             } catch {
                 router.push('/');
             }

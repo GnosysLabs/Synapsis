@@ -1,3 +1,5 @@
+import { canonicalAccountAddress } from '@/lib/identity/account-address';
+
 export interface MentionSuggestion {
     handle: string;
     displayName: string | null;
@@ -10,12 +12,14 @@ export interface MentionSuggestion {
 
 function uniqueSuggestions(suggestions: MentionSuggestion[]): MentionSuggestion[] {
     const seen = new Set<string>();
-    return suggestions.filter((suggestion) => {
-        const handle = suggestion.handle.toLowerCase();
-        if (seen.has(handle)) return false;
+    const unique: MentionSuggestion[] = [];
+    for (const suggestion of suggestions) {
+        const handle = canonicalAccountAddress(suggestion.handle, suggestion.nodeDomain);
+        if (!handle || seen.has(handle)) continue;
         seen.add(handle);
-        return true;
-    });
+        unique.push({ ...suggestion, handle });
+    }
+    return unique;
 }
 
 /**
@@ -28,9 +32,9 @@ export function mergeMentionSuggestions(
     limit: number,
 ): MentionSuggestion[] {
     const localQueue = uniqueSuggestions(local);
-    const localHandles = new Set(localQueue.map((suggestion) => suggestion.handle.toLowerCase()));
+    const localHandles = new Set(localQueue.map((suggestion) => suggestion.handle));
     const remoteQueue = uniqueSuggestions(remote)
-        .filter((suggestion) => !localHandles.has(suggestion.handle.toLowerCase()));
+        .filter((suggestion) => !localHandles.has(suggestion.handle));
     const merged: MentionSuggestion[] = [];
     let localIndex = 0;
     let remoteIndex = 0;

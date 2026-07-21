@@ -6,10 +6,13 @@ import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
 import { getKnownSwarmNodeNsfw } from '@/lib/swarm/registry';
 import { signedFederationRead } from '@/lib/swarm/signed-read';
 import { federationMediaUrlSchema } from '@/lib/utils/federation';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 const remoteDirectorySchema = z.object({
     users: z.array(z.object({
-        handle: z.string().min(1).max(30).regex(/^[a-zA-Z0-9_]+$/),
+        // Qualified addresses are the current protocol. Bare usernames remain
+        // readable only as a compatibility boundary for older peers.
+        handle: z.string().min(1).max(286),
         displayName: z.string().max(100).nullable(),
         avatarUrl: federationMediaUrlSchema.nullable(),
         isNsfw: z.boolean().optional(),
@@ -62,11 +65,15 @@ export async function fetchSwarmUserDirectory(
     const registryNodeIsNsfw = typeof options.nodeIsNsfw === 'boolean'
         ? options.nodeIsNsfw
         : await getKnownSwarmNodeNsfw(domain);
-    return parsed.data.users.map((user) => ({
-        ...user,
-        handle: `${user.handle.toLowerCase()}@${domain}`,
-        isRemote: true,
-        nodeDomain: domain,
-        nodeIsNsfw: registryNodeIsNsfw === true ? true : user.nodeIsNsfw,
-    }));
+    return parsed.data.users.flatMap((user) => {
+        const address = resolveAccountAddress(user.handle, publicDomain || domain);
+        if (!address || address.homeDomain !== (publicDomain || domain)) return [];
+        return [{
+            ...user,
+            handle: address.canonical,
+            isRemote: true as const,
+            nodeDomain: address.homeDomain,
+            nodeIsNsfw: registryNodeIsNsfw === true ? true : user.nodeIsNsfw,
+        }];
+    });
 }

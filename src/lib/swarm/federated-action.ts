@@ -12,8 +12,13 @@ import { canonicalize } from '@/lib/crypto/user-signing';
 import { signingPublicKeyFromDid } from '@/lib/crypto/did-key';
 import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import { isRateLimited } from '@/lib/rate-limit';
-import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
-import { getPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
+import { nodeDomainSchema } from '@/lib/utils/federation';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
+import {
+  getCanonicalSwarmSeedDomain,
+  getPublicSwarmDomain,
+  normalizeNodeDomain,
+} from './node-domain';
 import { verifySwarmRequestDetailed } from './signature';
 import { scheduleInboundFederationReplayCleanup } from './replay';
 import {
@@ -21,14 +26,20 @@ import {
   DEFAULT_FEDERATED_NODE_ACTIONS_PER_WINDOW,
 } from './action-quota';
 
-export const FEDERATED_ACTION_PROTOCOL = 'synapsis-federation-action-v2' as const;
+export const FEDERATED_ACTION_PROTOCOL = 'synapsis-federation-action-v3' as const;
+export const LEGACY_FEDERATED_ACTION_PROTOCOL = 'synapsis-federation-action-v2' as const;
 export const FEDERATED_ACTION_MAX_AGE_MS = 5 * 60 * 1_000;
 
 const DEVELOPMENT_LOOPBACK_DOMAIN =
   /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i;
 
 export const federationActionContextSchema = z.strictObject({
-  protocol: z.literal(FEDERATED_ACTION_PROTOCOL),
+  // v2 is accepted so queued historical user proofs and stored reply
+  // provenance remain verifiable. New envelopes are always v3.
+  protocol: z.union([
+    z.literal(FEDERATED_ACTION_PROTOCOL),
+    z.literal(LEGACY_FEDERATED_ACTION_PROTOCOL),
+  ]),
   sourceDomain: nodeDomainSchema,
   destinationDomain: nodeDomainSchema,
   method: z.enum(['POST', 'DELETE']),
@@ -60,6 +71,7 @@ export function unsignedFederatedUserAction(action: FederatedUserAction) {
 export interface FederatedActionVerificationSuccess {
   ok: true;
   actorHandle: string;
+  actorUsername: string;
   sourceDomain: string;
   destinationDomain: string;
   userAction: FederatedUserAction;
@@ -90,6 +102,7 @@ export interface VerifiedFederatedActorIdentity {
 }
 
 export interface PinnedFederatedActorIdentity extends VerifiedFederatedActorIdentity {
+  actorUsername: string;
   qualifiedHandle: string;
 }
 
@@ -105,7 +118,10 @@ function developmentFederationDomain(value: string): string | null {
 
 export function federationActionDomain(value: string | null | undefined): string | null {
   if (!value) return null;
-  return getPublicSwarmDomain(value) ?? developmentFederationDomain(value);
+  const publicDomain = getPublicSwarmDomain(value);
+  return publicDomain
+    ? getCanonicalSwarmSeedDomain(publicDomain) ?? publicDomain
+    : developmentFederationDomain(value);
 }
 
 /**
@@ -122,13 +138,14 @@ export async function pinVerifiedFederatedActorIdentity(
   database: HandleIdentityDatabase = db,
 ): Promise<PinnedFederatedActorIdentity> {
   const sourceDomain = federationActionDomain(input.sourceDomain);
-  const actorHandle = input.actorHandle.trim().replace(/^@/, '').toLowerCase();
-  const parsedHandle = localHandleSchema.safeParse(actorHandle);
-  if (!sourceDomain || !parsedHandle.success || !input.did) {
+  const address = sourceDomain
+    ? resolveAccountAddress(input.actorHandle, sourceDomain)
+    : null;
+  if (!sourceDomain || !address || address.homeDomain !== sourceDomain || !input.did) {
     throw new FederatedIdentityContinuityError();
   }
 
-  const qualifiedHandle = `${parsedHandle.data}@${sourceDomain}`;
+  const qualifiedHandle = address.canonical;
   const [existingDidOwner] = await withSqliteLockRetry(() => (
     database.select({
       handle: handleRegistry.handle,
@@ -204,7 +221,8 @@ export async function pinVerifiedFederatedActorIdentity(
 
   return {
     sourceDomain,
-    actorHandle: parsedHandle.data,
+    actorHandle: qualifiedHandle,
+    actorUsername: address.username,
     qualifiedHandle,
     did: input.did,
   };
@@ -215,6 +233,7 @@ export function createFederationActionContext(input: {
   method: 'POST' | 'DELETE';
   path: string;
   now?: number;
+  protocol?: typeof FEDERATED_ACTION_PROTOCOL | typeof LEGACY_FEDERATED_ACTION_PROTOCOL;
 }): FederationActionContext {
   const sourceDomain = federationActionDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
   const destinationDomain = federationActionDomain(input.destinationDomain);
@@ -224,7 +243,7 @@ export function createFederationActionContext(input: {
 
   const now = input.now ?? Date.now();
   return federationActionContextSchema.parse({
-    protocol: FEDERATED_ACTION_PROTOCOL,
+    protocol: input.protocol ?? FEDERATED_ACTION_PROTOCOL,
     sourceDomain,
     destinationDomain,
     method: input.method,
@@ -346,10 +365,19 @@ export async function verifyFederatedUserAction(input: {
   }
 
   const action = userAction.data;
-  const actorHandle = input.actorHandle.trim().replace(/^@/, '').toLowerCase();
-  if (action.action !== input.expectedAction
-    || action.handle.trim().replace(/^@/, '').toLowerCase() !== actorHandle) {
+  const actorAddress = resolveAccountAddress(input.actorHandle, sourceDomain);
+  const signedAddress = resolveAccountAddress(action.handle, sourceDomain);
+  if (!actorAddress
+    || !signedAddress
+    || actorAddress.homeDomain !== sourceDomain
+    || signedAddress.homeDomain !== sourceDomain
+    || action.action !== input.expectedAction
+    || signedAddress.canonical !== actorAddress.canonical) {
     return fail(403, 'Federated user action does not match its actor');
+  }
+  if (context.data.protocol === FEDERATED_ACTION_PROTOCOL
+    && (input.actorHandle !== actorAddress.canonical || action.handle !== signedAddress.canonical)) {
+    return fail(403, 'Federation v3 requires canonical account addresses');
   }
 
   const maxUserActionAgeMs = input.maxUserActionAgeMs ?? FEDERATED_ACTION_MAX_AGE_MS;
@@ -382,7 +410,7 @@ export async function verifyFederatedUserAction(input: {
   }
 
   const replayId = crypto.createHash('sha256').update(canonicalize({
-    protocol: FEDERATED_ACTION_PROTOCOL,
+    protocol: context.data.protocol,
     sourceDomain,
     destinationDomain: localDomain,
     method: input.expectedMethod,
@@ -395,7 +423,8 @@ export async function verifyFederatedUserAction(input: {
 
   return {
     ok: true,
-    actorHandle,
+    actorHandle: actorAddress.canonical,
+    actorUsername: actorAddress.username,
     sourceDomain,
     destinationDomain: localDomain,
     userAction: action,

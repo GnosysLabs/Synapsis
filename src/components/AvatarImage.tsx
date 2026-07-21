@@ -8,18 +8,16 @@ import { shouldBlurProfileMedia } from '@/lib/nsfw/profile-media';
 import { isRemoteAvatarSensitivityUnknown } from '@/lib/nsfw/content-visibility';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { isTrustedFederationMediaUrl } from '@/lib/utils/federation';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 export function getDiceBearAvatarSeed(
     seed: string,
     nodeDomain?: string | null,
     localNodeDomain?: string | null,
 ): string {
-    const cleanSeed = seed.trim().replace(/^@/, '');
     const effectiveDomain = nodeDomain || localNodeDomain;
-    const cleanDomain = effectiveDomain?.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
-
-    if (!cleanSeed || cleanSeed.includes('@') || !cleanDomain) return cleanSeed;
-    return `${cleanSeed}@${cleanDomain}`;
+    const address = resolveAccountAddress(seed, effectiveDomain);
+    return address?.canonical || seed.trim().replace(/^@/, '');
 }
 
 export function getDiceBearAvatarUrl(
@@ -51,8 +49,10 @@ export function AvatarImage({ avatarUrl, seed, isNsfw, nodeIsNsfw, nodeDomain, a
     const { config } = useRuntimeConfig();
     const localNodeDomain = useDomain();
     const customAvatar = avatarUrl?.trim();
-    const handleDomain = seed.includes('@') ? seed.slice(seed.lastIndexOf('@') + 1) : null;
-    const assertedDomain = nodeDomain || handleDomain;
+    const handleDomain = resolveAccountAddress(seed, nodeDomain || localNodeDomain)?.homeDomain ?? null;
+    const assertedDomain = handleDomain
+        || resolveAccountAddress('account', nodeDomain)?.homeDomain
+        || null;
     const isRemoteAvatar = Boolean(
         assertedDomain
         && normalizeNodeDomain(assertedDomain) !== normalizeNodeDomain(localNodeDomain)

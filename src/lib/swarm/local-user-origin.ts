@@ -1,15 +1,13 @@
 type LocalUserOriginCandidate = {
-  handle: string;
-  nodeId: string | null;
+  isLocalAccount: boolean;
 };
 
 /**
- * Federation export routes may only identify accounts created on this node as
- * local. Remote cache rows can have a null nodeId, so both signals are
- * required and any incomplete record fails closed.
+ * Local ownership is durable account metadata. It must never be inferred from
+ * punctuation, nullable cache fields, or the node currently viewing a record.
  */
 export function hasStrictLocalUserOrigin(
   user: LocalUserOriginCandidate,
 ): boolean {
-  return user.nodeId === null && !user.handle.includes('@');
+  return user.isLocalAccount === true;
 }

@@ -1,6 +1,7 @@
 import type { SwarmPost } from '@/app/api/swarm/timeline/route';
 import type { Post } from '@/lib/types';
 import { isLocalSwarmDomain } from './post-id';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 export type InteractiveSwarmPost = SwarmPost & {
     isLiked?: boolean;
@@ -13,9 +14,10 @@ export function mapSwarmPostToPost(
 ): Post {
     const isLocalPost = isLocalSwarmDomain(post.nodeDomain, options.localDomain);
     const normalizedId = isLocalPost ? post.id : `swarm:${post.nodeDomain}:${post.id}`;
-    const qualifiedAuthorHandle = post.author.handle.includes('@')
-        ? post.author.handle
-        : `${post.author.handle}@${post.nodeDomain}`;
+    const authorAddress = resolveAccountAddress(post.author.handle, post.nodeDomain);
+    if (!authorAddress || authorAddress.homeDomain !== post.nodeDomain) {
+        throw new Error('Swarm post author address does not match its node');
+    }
 
     return {
         id: normalizedId,
@@ -39,18 +41,16 @@ export function mapSwarmPostToPost(
             : null,
         repostedBy: post.repostedBy?.map((reposter) => {
             const reposterDomain = reposter.nodeDomain || post.nodeDomain;
-            const bareHandle = reposter.handle.includes('@')
-                ? reposter.handle.slice(0, reposter.handle.lastIndexOf('@'))
-                : reposter.handle;
-            const qualifiedHandle = reposter.handle.includes('@')
-                ? reposter.handle
-                : `${reposter.handle}@${reposterDomain}`;
+            const address = resolveAccountAddress(reposter.handle, reposterDomain);
+            if (!address || address.homeDomain !== reposterDomain) {
+                throw new Error('Swarm reposter address does not match its node');
+            }
             return {
                 ...reposter,
                 id: reposter.id?.startsWith('swarm:')
                     ? reposter.id
-                    : `swarm:${reposterDomain}:${bareHandle}`,
-                handle: qualifiedHandle,
+                    : `swarm:${reposterDomain}:${address.username}`,
+                handle: address.canonical,
                 nodeDomain: reposterDomain,
                 isSwarm: true,
                 isRemote: true,
@@ -58,8 +58,8 @@ export function mapSwarmPostToPost(
         }),
         repostedByCount: post.repostedByCount,
         author: {
-            id: `swarm:${post.nodeDomain}:${post.author.handle}`,
-            handle: qualifiedAuthorHandle,
+            id: `swarm:${post.nodeDomain}:${authorAddress.username}`,
+            handle: authorAddress.canonical,
             displayName: post.author.displayName,
             avatarUrl: post.author.avatarUrl,
             isSwarm: !isLocalPost,

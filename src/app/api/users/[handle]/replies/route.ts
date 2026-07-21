@@ -142,7 +142,7 @@ export async function GET(request: Request, context: RouteContext) {
     }
 
     const user = await db.query.users.findFirst({
-      where: { handle: cleanHandle },
+      where: { AND: [{ handle: cleanHandle }, { isLocalAccount: true }] },
     });
     const isRemotePlaceholder = Boolean(user && remote);
 

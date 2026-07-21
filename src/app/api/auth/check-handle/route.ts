@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, isDbAvailable } from '@/db';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 export async function GET(req: NextRequest) {
     try {
@@ -12,6 +13,9 @@ export async function GET(req: NextRequest) {
 
         const { searchParams } = new URL(req.url);
         const handle = searchParams.get('handle')?.toLowerCase().trim();
+        const homeDomain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
 
         if (!handle || handle.length < 3) {
             return NextResponse.json({ available: false, error: 'Handle too short' });
@@ -24,7 +28,7 @@ export async function GET(req: NextRequest) {
         let existingUser = null;
         try {
             existingUser = await db.query.users.findFirst({
-                where: { handle: handle },
+                where: { AND: [{ username: handle }, { homeDomain }] },
             });
         } catch (err: unknown) {
             // Handle fresh installs where the users table isn't created yet.
@@ -41,7 +45,7 @@ export async function GET(req: NextRequest) {
         }
 
         const deletedHandle = await db.query.swarmAccountTombstones.findFirst({
-            where: { handle },
+            where: { handle: `${handle}@${homeDomain}` },
         });
 
         return NextResponse.json({

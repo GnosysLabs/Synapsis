@@ -16,7 +16,7 @@ import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { applyOrderedFederatedRelationshipState } from '@/lib/swarm/relationship-ordering';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import { isFreshFederationTimestamp } from '@/lib/swarm/signature';
-import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import { federatedHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
 
 const PATH = '/api/swarm/interactions/unlike' as const;
 
@@ -25,7 +25,7 @@ const swarmUnlikeSchema = z.strictObject({
   userAction: signedUserActionSchema,
   postId: z.string().uuid(),
   unlike: z.strictObject({
-    actorHandle: localHandleSchema,
+    actorHandle: federatedHandleSchema,
     actorNodeDomain: nodeDomainSchema,
     interactionId: z.string().uuid(),
     timestamp: z.string().datetime(),

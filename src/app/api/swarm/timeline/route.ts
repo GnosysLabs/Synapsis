@@ -14,7 +14,7 @@ import {
   swarmPostChanges,
   users,
 } from '@/db';
-import { eq, asc, desc, and, gt, isNull, lt, inArray, notLike, or } from 'drizzle-orm';
+import { eq, asc, desc, and, gt, isNull, lt, inArray, or } from 'drizzle-orm';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 import type { User } from '@/lib/types';
@@ -25,7 +25,11 @@ import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/sw
 import { parseBoundedInteger } from '@/lib/http/query';
 import { searchIndexedPostIds } from '@/lib/search/post-index';
 import { createSignedChangeBundle } from '@/lib/swarm/change-bundle';
-import { getPublicSwarmDomain } from '@/lib/swarm/node-domain';
+import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import {
+  accountUsername,
+  requireCanonicalAccountHomeDomain,
+} from '@/lib/identity/account-address';
 
 export interface SwarmPost {
   id: string;
@@ -108,7 +112,7 @@ interface LocalRepostRow {
   author: {
     id: string;
     handle: string;
-    nodeId: string | null;
+    isLocalAccount: boolean;
     displayName: string | null;
     avatarUrl: string | null;
     isNsfw: boolean;
@@ -127,7 +131,7 @@ function attachLocalRepostSummaries(
     if (!hasStrictLocalUserOrigin(row.author)) continue;
     const actors = actorsByPostId.get(row.repostOfId) || [];
     const actor: User = {
-      id: `swarm:${nodeDomain}:${row.author.handle}`,
+      id: `swarm:${nodeDomain}:${accountUsername(row.author.handle) || row.author.handle}`,
       handle: row.author.handle,
       displayName: row.author.displayName || row.author.handle,
       avatarUrl: row.author.avatarUrl,
@@ -237,7 +241,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
 
-    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
+    const nodeDomain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
 
     const nodeIsNsfw = await requireLocalNodeNsfwClassification();
     const trustedRead = true;
@@ -326,9 +332,8 @@ export async function GET(request: NextRequest) {
         isNull(posts.replyToId),
         isNull(posts.swarmReplyToId),
         eq(posts.isRemoved, false),
-        isNull(users.nodeId),
+        eq(users.isLocalAccount, true),
         eq(users.isSuspended, false),
-        notLike(users.handle, '%@%'),
         searchCondition,
         ...(changesSince !== null
           ? [inArray(feedStories.storyId, changedUpsertIds)]
@@ -385,8 +390,7 @@ export async function GET(request: NextRequest) {
           .where(and(
             inArray(posts.id, repostIds),
             eq(posts.isRemoved, false),
-            isNull(users.nodeId),
-            notLike(users.handle, '%@%'),
+            eq(users.isLocalAccount, true),
           ))
       : [];
 

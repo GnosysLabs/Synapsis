@@ -7,6 +7,10 @@ import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { isPostSensitive } from '@/lib/nsfw/content-visibility';
 import { parseBoundedInteger } from '@/lib/http/query';
+import {
+    canonicalAccountHomeDomain,
+    requireCanonicalAccountHomeDomain,
+} from '@/lib/identity/account-address';
 
 const markSchema = z.object({
     ids: z.array(z.string().uuid()).optional(),
@@ -51,18 +55,26 @@ export async function GET(request: Request) {
             },
         });
 
-        const localActorIds = Array.from(new Set(
+        const actorIds = Array.from(new Set(
             rows
-                .filter((row) => !row.actorNodeDomain && row.actorId)
+                .filter((row) => row.actorId)
                 .map((row) => row.actorId as string),
         ));
-        const localActors = localActorIds.length > 0
-            ? await db.query.users.findMany({ where: { id: { in: localActorIds } } })
+        const actorUsers = actorIds.length > 0
+            ? await db.query.users.findMany({ where: { id: { in: actorIds } } })
             : [];
-        const localActorMap = new Map(localActors.map((actor) => [actor.id, actor]));
+        const actorMap = new Map(actorUsers.map((actor) => [actor.id, actor]));
+        const localDomain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
 
         const payload = rows.map((row) => {
-            const localActor = row.actorId ? localActorMap.get(row.actorId) : null;
+            const actorUser = row.actorId ? actorMap.get(row.actorId) : null;
+            const actorDomain = actorUser?.homeDomain
+                || canonicalAccountHomeDomain(row.actorNodeDomain);
+            const actorIsRemote = actorUser
+                ? !actorUser.isLocalAccount
+                : Boolean(actorDomain && actorDomain !== localDomain);
             const remotePostReference = row.remotePostId && row.remotePostDomain
                 ? `swarm:${row.remotePostDomain}:${row.remotePostId}`
                 : null;
@@ -87,15 +99,15 @@ export async function GET(request: Request) {
             );
             const postRestricted = !canViewSensitive
                 && (remotePostIsSensitive || localPostIsSensitive || localPostMetadataMissing);
-            const actorIsSensitive = row.actorNodeDomain
+            const actorIsSensitive = actorIsRemote
                 ? isPostSensitive({
                     postIsNsfw: false,
                     authorIsNsfw: undefined,
                     nodeIsNsfw: undefined,
                     isRemote: true,
                 })
-                : localActor
-                    ? localActor.isNsfw || localNodeIsNsfw
+                : actorUser
+                    ? actorUser.isNsfw || localNodeIsNsfw
                     : true;
             const actorMediaRestricted = !canViewSensitive && actorIsSensitive;
 
@@ -105,32 +117,28 @@ export async function GET(request: Request) {
                 createdAt: row.createdAt,
                 readAt: row.readAt,
                 actor: {
-                    handle: row.actorNodeDomain
-                        ? `${row.actorHandle}@${row.actorNodeDomain}`
-                        : row.actorHandle,
+                    handle: row.actorHandle,
                     // Rendering a notification must never call the actor node.
                     // Remote identity proofs bind the handle, not mutable
                     // profile presentation, so use DiceBear via the client.
-                    displayName: row.actorNodeDomain
+                    displayName: actorIsRemote
                         ? row.actorHandle
-                        : localActor?.displayName || row.actorDisplayName,
-                    avatarUrl: row.actorNodeDomain || actorMediaRestricted
+                        : actorUser?.displayName || row.actorDisplayName,
+                    avatarUrl: actorIsRemote || actorMediaRestricted
                         ? null
-                        : localActor?.avatarUrl || row.actorAvatarUrl,
-                    nodeDomain: row.actorNodeDomain,
-                    isNsfw: row.actorNodeDomain
+                        : actorUser?.avatarUrl || row.actorAvatarUrl,
+                    nodeDomain: actorDomain,
+                    isNsfw: actorIsRemote
                         ? undefined
-                        : localActor?.isNsfw ?? true,
-                    nodeIsNsfw: row.actorNodeDomain
+                        : actorUser?.isNsfw ?? true,
+                    nodeIsNsfw: actorIsRemote
                         ? undefined
                         : localNodeIsNsfw,
                 },
                 post: row.postId || remotePostReference ? {
                     id: row.postId || remotePostReference!,
                     content: postRestricted ? null : row.post?.content || row.postContent,
-                    authorHandle: row.post?.author?.handle || (row.actorNodeDomain
-                        ? `${row.actorHandle}@${row.actorNodeDomain}`
-                        : row.actorHandle),
+                    authorHandle: row.post?.author?.handle || row.actorHandle,
                     media: postRestricted ? [] : row.post?.media.map((item) => ({
                         url: item.url,
                         mimeType: item.mimeType,

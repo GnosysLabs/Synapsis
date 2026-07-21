@@ -46,6 +46,7 @@ import {
   verifySignedChangeBundle,
   type VerifiedChangeBundle,
 } from './change-bundle';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 const DEFAULT_SYNC_BATCH_SIZE = 8;
 const MAX_SYNC_BATCH_SIZE = 64;
@@ -240,14 +241,18 @@ async function cacheValidatedPosts(
     const post = applyAuthoritativeNodeClassification(rawPost, knownNodeIsNsfw);
     const apId = `swarm:${domain}:${post.id}`;
     const feedActivityAt = new Date(post.feedActivityAt || post.createdAt);
-    const authorHandle = `${post.author.handle}@${domain}`.toLowerCase();
+    const authorAddress = resolveAccountAddress(post.author.handle, domain);
+    if (!authorAddress || authorAddress.homeDomain !== domain) {
+      throw new Error('Remote post author does not belong to the source node');
+    }
+    const authorHandle = authorAddress.canonical;
     const values = {
       apId,
       nodeDomain: domain,
       originalPostId: post.id,
       postJson: JSON.stringify(post),
       authorHandle,
-      authorActorUrl: `swarm://${domain}/${post.author.handle}`,
+      authorActorUrl: `swarm://${domain}/${authorAddress.username}`,
       authorDisplayName: post.author.displayName,
       authorAvatarUrl: post.author.avatarUrl || null,
       content: post.content,
@@ -405,8 +410,13 @@ export async function applyRemoteAccountDeletions(
   let applied = 0;
 
   for (const change of changes) {
-    const bareHandle = change.handle.toLowerCase();
-    const qualifiedHandle = `${bareHandle}@${domain}`;
+    const address = resolveAccountAddress(change.handle, domain);
+    if (!address || address.homeDomain !== domain) {
+      console.warn(`[Swarm] Rejected cross-node account tombstone from ${domain}`);
+      continue;
+    }
+    const bareHandle = address.username;
+    const qualifiedHandle = address.canonical;
     const actorUrl = `swarm://${domain}/${bareHandle}`;
     const deletedAt = new Date(change.deletedAt);
 

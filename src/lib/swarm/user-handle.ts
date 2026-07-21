@@ -1,4 +1,9 @@
-import { getPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
+import {
+  getCanonicalSwarmSeedDomain,
+  getPublicSwarmDomain,
+  normalizeNodeDomain,
+} from './node-domain';
 
 export interface RemoteUserHandle {
   handle: string;
@@ -18,60 +23,44 @@ function canonicalizeDomain(value: string | null | undefined): string | null {
   if (!value) return null;
 
   const publicDomain = getPublicSwarmDomain(value);
-  if (publicDomain) return publicDomain;
+  if (publicDomain) return getCanonicalSwarmSeedDomain(publicDomain) ?? publicDomain;
 
   const normalized = normalizeNodeDomain(value).replace(/\.$/, '');
   return normalized || null;
 }
 
 /**
- * Resolve a profile handle relative to the current node.
- *
- * Fully-qualified handles remain remote unless their domain identifies this
- * node. A same-node handle such as `alice@social.example` is canonicalized to
- * the local database handle `alice` so every profile sub-route behaves the
- * same way.
+ * Resolve a profile address relative to the current node. The returned
+ * canonical handle is always qualified, including for accounts on this node.
+ * Bare usernames are boundary aliases only.
  */
 export function resolveUserHandle(
   value: string,
   currentDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
 ): ResolvedUserHandle {
-  const clean = value.trim().toLowerCase().replace(/^@/, '');
-  const parts = clean.split('@');
-
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    return {
-      canonicalHandle: clean,
-      handle: clean,
-      domain: null,
-      isQualified: false,
-      isLocal: true,
-      remote: null,
-    };
-  }
-
-  const handle = parts[0];
-  const domain = canonicalizeDomain(parts[1]);
-  if (!domain) {
-    return {
-      canonicalHandle: clean,
-      handle: clean,
-      domain: null,
-      isQualified: false,
-      isLocal: true,
-      remote: null,
-    };
-  }
-
   const localDomain = canonicalizeDomain(currentDomain);
-  const isLocal = localDomain !== null && domain === localDomain;
+  const address = resolveAccountAddress(value, localDomain);
+  if (!address || !localDomain) {
+    const clean = value.trim().toLowerCase().replace(/^@/, '');
+    return {
+      canonicalHandle: clean,
+      handle: clean,
+      domain: null,
+      isQualified: false,
+      isLocal: false,
+      remote: null,
+    };
+  }
+  const clean = value.trim().replace(/^@/, '');
+  const isQualified = clean.includes('@');
+  const isLocal = address.homeDomain === localDomain;
 
   return {
-    canonicalHandle: isLocal ? handle : `${handle}@${domain}`,
-    handle,
-    domain,
-    isQualified: true,
+    canonicalHandle: address.canonical,
+    handle: address.username,
+    domain: address.homeDomain,
+    isQualified,
     isLocal,
-    remote: isLocal ? null : { handle, domain },
+    remote: isLocal ? null : { handle: address.username, domain: address.homeDomain },
   };
 }

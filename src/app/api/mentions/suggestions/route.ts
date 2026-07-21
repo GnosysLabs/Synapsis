@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, like, notLike, or } from 'drizzle-orm';
+import { and, eq, like, or } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db, blocks, mutedNodes, mutes, remoteFollows, users } from '@/db';
 import { requireAuth } from '@/lib/auth';
-import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { fetchSwarmUserDirectory } from '@/lib/swarm/user-directory';
 import { searchKnownSwarmUsers } from '@/lib/swarm/user-directory-search';
@@ -16,6 +15,11 @@ import {
   mergeMentionSuggestions,
   type MentionSuggestion,
 } from '@/lib/mentions/suggestions';
+import {
+  canonicalAccountHomeDomain,
+  parseAccountAddress,
+  requireCanonicalAccountHomeDomain,
+} from '@/lib/identity/account-address';
 
 const querySchema = z.object({
   q: z.string().max(280),
@@ -57,15 +61,15 @@ async function localSuggestions(
   })
     .from(users)
     .where(and(
-      or(like(users.handle, pattern), like(users.displayName, pattern)),
-      notLike(users.handle, '%@%'),
+      or(like(users.username, pattern), like(users.displayName, pattern)),
+      eq(users.isLocalAccount, true),
       eq(users.isSuspended, false),
       eq(users.isSilenced, false),
     ))
     .limit(Math.min(30, limit + excludedIds.size + 4));
 
   return rows
-    .filter((row) => !row.handle.includes('@') && !excludedIds.has(row.id))
+    .filter((row) => !excludedIds.has(row.id))
     .sort((left, right) => {
       const leftExact = left.handle.toLowerCase() === query.toLowerCase() ? 0 : 1;
       const rightExact = right.handle.toLowerCase() === query.toLowerCase() ? 0 : 1;
@@ -87,7 +91,10 @@ async function mutedNodeDomains(viewerId: string): Promise<Set<string>> {
   const rows = await db.select({ nodeDomain: mutedNodes.nodeDomain })
     .from(mutedNodes)
     .where(eq(mutedNodes.userId, viewerId));
-  return new Set(rows.map((row) => normalizeNodeDomain(row.nodeDomain)));
+  return new Set(rows.flatMap((row) => {
+    const domain = canonicalAccountHomeDomain(row.nodeDomain);
+    return domain ? [domain] : [];
+  }));
 }
 
 async function excludeBlockedRemoteSuggestions(
@@ -151,7 +158,8 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      const domain = normalizeNodeDomain(requestedDomain);
+      const domain = canonicalAccountHomeDomain(requestedDomain);
+      if (!domain) return NextResponse.json({ suggestions: [] });
       const mutedDomains = await mutedNodeDomains(viewer.id);
       if (mutedDomains.has(domain)) {
         return NextResponse.json({ suggestions: [] });
@@ -186,20 +194,22 @@ export async function GET(request: NextRequest) {
 
     const seen = new Set(local.map((item) => item.handle.toLowerCase()));
     const followedRemote = knownRemote.flatMap<MentionSuggestion>((row) => {
-      const parts = row.handle.toLowerCase().split('@');
-      if (parts.length !== 2 || !parts[0] || !parts[1] || mutedDomains.has(normalizeNodeDomain(parts[1]))) return [];
-      if (seen.has(row.handle.toLowerCase())) return [];
-      seen.add(row.handle.toLowerCase());
+      const address = parseAccountAddress(row.handle);
+      if (!address || mutedDomains.has(address.homeDomain)) return [];
+      if (seen.has(address.canonical)) return [];
+      seen.add(address.canonical);
       return [{
-        handle: row.handle.toLowerCase(),
+        handle: address.canonical,
         displayName: row.displayName,
         avatarUrl: row.avatarUrl,
         isRemote: true,
-        nodeDomain: parts[1],
+        nodeDomain: address.homeDomain,
       }];
     });
 
-    const localDomain = normalizeNodeDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN || '');
+    const localDomain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
     const discoveredRemote = await searchKnownSwarmUsers(query, {
       limit: parsed.data.limit,
       localDomain,

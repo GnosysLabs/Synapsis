@@ -32,6 +32,10 @@ import { encryptionKeyIdFromPublicKey } from '@/lib/e2ee/bundle-proof';
 import { getPublicSwarmDomain, normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
+import {
+    requireCanonicalAccountHomeDomain,
+    resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 const isoTimestampSchema = z.iso.datetime({ offset: true });
 const didSchema = z.string().min(8).max(2_048).regex(/^did:/);
@@ -270,10 +274,14 @@ async function validateE2EEContinuityAnchor(
     const anchor = e2eeContinuityAnchorSchema.parse(rawAnchor);
     const proof = anchor.proofAction;
     const bundle = e2eeKeyBundleSchema.parse(proof.data);
+    const proofAddress = resolveAccountAddress(proof.handle, manifest.sourceNode);
+    const manifestAddress = resolveAccountAddress(manifest.handle, manifest.sourceNode);
 
     if (proof.action !== E2EE_KEY_BUNDLE_ACTION
         || proof.did !== manifest.did
-        || proof.handle.toLowerCase() !== manifest.handle.toLowerCase()
+        || !proofAddress
+        || !manifestAddress
+        || proofAddress.canonical !== manifestAddress.canonical
         || anchor.did !== manifest.did
         || anchor.did !== proof.did
         || anchor.keyId !== bundle.keyId
@@ -747,9 +755,14 @@ export async function POST(req: NextRequest) {
             }, { status: 400 });
         }
 
+        const nodeDomain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
+        const canonicalHandle = `${handleClean}@${nodeDomain}`;
+
         // Check if handle is available
         const existingHandle = await db.query.users.findFirst({
-            where: { handle: handleClean },
+            where: { AND: [{ username: handleClean }, { homeDomain: nodeDomain }] },
         });
 
         if (existingHandle) {
@@ -759,7 +772,7 @@ export async function POST(req: NextRequest) {
             }, { status: 409 });
         }
         const deletedHandle = await db.query.swarmAccountTombstones.findFirst({
-            where: { handle: handleClean },
+            where: { handle: canonicalHandle },
         });
         if (deletedHandle) {
             return NextResponse.json({
@@ -767,7 +780,6 @@ export async function POST(req: NextRequest) {
             }, { status: 409 });
         }
 
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
         const oldActorUrl = `${sourceNodeProtocol(sourceNode)}://${sourceNode}/users/${manifest.handle}`;
         const newActorUrl = `https://${nodeDomain}/users/${handleClean}`;
 
@@ -776,7 +788,10 @@ export async function POST(req: NextRequest) {
         const newUser = await db.transaction(async (tx) => {
             const [createdUser] = await tx.insert(users).values({
                 did: manifest.did,
-                handle: handleClean,
+                handle: canonicalHandle,
+                username: handleClean,
+                homeDomain: nodeDomain,
+                isLocalAccount: true,
                 email: destinationEmailClean,
                 displayName: profile.displayName,
                 bio: profile.bio,
@@ -841,7 +856,7 @@ export async function POST(req: NextRequest) {
 
         // Update handle registry
         await upsertHandleEntries([{
-            handle: handleClean,
+            handle: canonicalHandle,
             did: manifest.did,
             nodeDomain,
             updatedAt: new Date().toISOString(),
@@ -855,33 +870,46 @@ export async function POST(req: NextRequest) {
         let importedFollowing = 0;
         for (const follow of following) {
             try {
-                if (follow.isRemote) {
-                    // Remote follow - add to remoteFollows table
+                let legacyFollowDomain: string | undefined;
+                if (follow.isRemote && follow.actorUrl) {
+                    try {
+                        legacyFollowDomain = validatedSourceNode(new URL(follow.actorUrl).host) || undefined;
+                    } catch {
+                        legacyFollowDomain = undefined;
+                    }
+                }
+                const followAddress = resolveAccountAddress(
+                    follow.handle,
+                    follow.isRemote ? legacyFollowDomain : sourceNode,
+                );
+                if (!followAddress) {
+                    console.log(`[Import] Invalid followed account ${follow.handle}, skipping follow`);
+                    continue;
+                }
+                const targetUser = followAddress.homeDomain === nodeDomain
+                    ? await db.query.users.findFirst({
+                        where: { AND: [
+                            { handle: followAddress.canonical },
+                            { isLocalAccount: true },
+                        ] },
+                    })
+                    : null;
+                if (!targetUser) {
                     await db.insert(remoteFollows).values({
                         followerId: newUser.id,
-                        targetHandle: follow.handle,
-                        targetActorUrl: follow.actorUrl || `https://${follow.handle.split('@')[1]}/users/${follow.handle.split('@')[0]}`,
-                        inboxUrl: follow.inboxUrl || `https://${follow.handle.split('@')[1]}/inbox`,
+                        targetHandle: followAddress.canonical,
+                        targetActorUrl: follow.actorUrl || `${sourceNodeProtocol(followAddress.homeDomain)}://${followAddress.homeDomain}/users/${followAddress.username}`,
+                        inboxUrl: follow.inboxUrl || `${sourceNodeProtocol(followAddress.homeDomain)}://${followAddress.homeDomain}/inbox`,
                         activityId: follow.activityId || `migrate-${uuid()}`,
                     });
                 } else {
-                    // Local follow - look up user and add to follows table
-                    const targetUser = await db.query.users.findFirst({
-                        where: { handle: follow.handle.toLowerCase() },
+                    await db.insert(follows).values({
+                        followerId: newUser.id,
+                        followingId: targetUser.id,
                     });
-                    if (targetUser) {
-                        await db.insert(follows).values({
-                            followerId: newUser.id,
-                            followingId: targetUser.id,
-                        });
-                        // Increment following count on target user
-                        await db.update(users)
-                            .set({ followersCount: sql`${users.followersCount} + 1` })
-                            .where(eq(users.id, targetUser.id));
-                    } else {
-                        // Local user not found, convert to remote follow
-                        console.log(`[Import] Local user @${follow.handle} not found, skipping follow`);
-                    }
+                    await db.update(users)
+                        .set({ followersCount: sql`${users.followersCount} + 1` })
+                        .where(eq(users.id, targetUser.id));
                 }
                 importedFollowing++;
             } catch (error) {
@@ -899,10 +927,15 @@ export async function POST(req: NextRequest) {
         let importedDMs = 0;
         for (const conv of importDMs) {
             try {
+                const participantAddress = resolveAccountAddress(
+                    conv.participant2Handle,
+                    sourceNode,
+                );
+                if (!participantAddress) throw new Error('Conversation participant address is invalid');
                 await db.transaction(async (tx) => {
                     const [newConv] = await tx.insert(chatConversations).values({
                         participant1Id: newUser.id,
-                        participant2Handle: conv.participant2Handle,
+                        participant2Handle: participantAddress.canonical,
                         type: conv.type,
                         lastMessageAt: conv.lastMessageAt ? new Date(conv.lastMessageAt) : null,
                         lastMessagePreview: conv.encryptionMode === 'e2ee'
@@ -913,12 +946,17 @@ export async function POST(req: NextRequest) {
                     }).returning();
 
                     for (const msg of conv.messages) {
+                        const senderAddress = resolveAccountAddress(
+                            msg.senderHandle,
+                            msg.senderNodeDomain || sourceNode,
+                        );
+                        if (!senderAddress) throw new Error('Message sender address is invalid');
                         await tx.insert(chatMessages).values({
                             conversationId: newConv.id,
-                            senderHandle: msg.senderHandle,
+                            senderHandle: senderAddress.canonical,
                             senderDisplayName: msg.senderDisplayName,
                             senderAvatarUrl: msg.senderAvatarUrl,
-                            senderNodeDomain: msg.senderNodeDomain,
+                            senderNodeDomain: senderAddress.homeDomain,
                             senderDid: msg.senderDid,
                             content: msg.protocolVersion === 0 ? msg.content : null,
                             protocolVersion: msg.protocolVersion,

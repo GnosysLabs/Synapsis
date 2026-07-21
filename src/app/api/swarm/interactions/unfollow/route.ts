@@ -6,6 +6,7 @@ import { db, remoteFollowers, swarmInboundActions, users } from '@/db';
 import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import {
   FederatedIdentityContinuityError,
+  FEDERATED_ACTION_PROTOCOL,
   federatedActionFailureInit,
   federationActionContextSchema,
   federationActionDomain,
@@ -16,16 +17,17 @@ import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { applyOrderedFederatedRelationshipState } from '@/lib/swarm/relationship-ordering';
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
 import { isFreshFederationTimestamp } from '@/lib/swarm/signature';
-import { localHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import { federatedHandleSchema, nodeDomainSchema } from '@/lib/utils/federation';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 const PATH = '/api/swarm/interactions/unfollow' as const;
 
 const swarmUnfollowSchema = z.strictObject({
   federation: federationActionContextSchema,
   userAction: signedUserActionSchema,
-  targetHandle: localHandleSchema,
+  targetHandle: federatedHandleSchema,
   unfollow: z.strictObject({
-    followerHandle: localHandleSchema,
+    followerHandle: federatedHandleSchema,
     followerNodeDomain: nodeDomainSchema,
     interactionId: z.string().uuid(),
     timestamp: z.string().datetime(),
@@ -62,14 +64,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: verified.error }, federatedActionFailureInit(verified));
     }
 
-    const targetHandle = data.targetHandle.toLowerCase();
+    const targetAddress = resolveAccountAddress(data.targetHandle, verified.destinationDomain);
     const actionData = unfollowActionDataSchema.safeParse(verified.userAction.data);
+    const actionTargetAddress = actionData.success
+      ? resolveAccountAddress(actionData.data.targetHandle, verified.destinationDomain)
+      : null;
     if (!actionData.success
-      || actionData.data.targetHandle.toLowerCase()
-        !== `${targetHandle}@${verified.destinationDomain}`) {
+      || !targetAddress
+      || !actionTargetAddress
+      || targetAddress.homeDomain !== verified.destinationDomain
+      || actionTargetAddress.canonical !== targetAddress.canonical
+      || (data.federation.protocol === FEDERATED_ACTION_PROTOCOL
+        && (data.targetHandle !== targetAddress.canonical
+          || actionData.data.targetHandle !== actionTargetAddress.canonical))) {
       return NextResponse.json({ error: 'Unfollow target is not user-authorized' }, { status: 403 });
     }
-    const targetUser = await db.query.users.findFirst({ where: { handle: targetHandle } });
+    const targetUser = await db.query.users.findFirst({
+      where: { AND: [{ handle: targetAddress.canonical }, { isLocalAccount: true }] },
+    });
     if (!targetUser || !hasStrictLocalUserOrigin(targetUser)) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
@@ -79,7 +91,7 @@ export async function POST(request: NextRequest) {
       did: verified.userAction.did,
     });
 
-    const actorUrl = `swarm://${actorDomain}/${verified.actorHandle}`;
+    const actorUrl = `swarm://${actorDomain}/${verified.actorUsername}`;
     const outcome = await db.transaction(async (tx) => {
       const [claim] = await tx.insert(swarmInboundActions).values({
         sourceDomain: actorDomain,

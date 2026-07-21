@@ -5,6 +5,7 @@ const localHandlePattern = /^[a-zA-Z0-9_]{3,30}$/;
 const hostnameLabel = '[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?';
 const nodeDomainPattern = `(?:localhost|127\\.0\\.0\\.1|${hostnameLabel}(?:\\.${hostnameLabel})+)(?::\\d{1,5})?`;
 const federatedHandlePattern = new RegExp(`^[a-zA-Z0-9_]{3,30}(?:@${nodeDomainPattern})?$`);
+const accountAddressPattern = new RegExp(`^[a-zA-Z0-9_]{3,30}@${nodeDomainPattern}$`);
 const nodeDomainRegex = new RegExp(`^${nodeDomainPattern}$`);
 
 export const localHandleSchema = z
@@ -16,11 +17,18 @@ export const localHandleSchema = z
 export const federatedHandleSchema = z
   .string()
   .min(3)
-  .max(255)
+  .max(286)
   .regex(
     federatedHandlePattern,
     'Handle must be a local handle or a federated handle like user@example.com'
   );
+
+/** The only active account identity form used on federation and API DTOs. */
+export const accountAddressSchema = z
+  .string()
+  .min(5)
+  .max(286)
+  .regex(accountAddressPattern, 'Account address must look like user@example.com');
 
 export const nodeDomainSchema = z
   .string()

@@ -10,14 +10,16 @@ import AutoTextarea from '@/components/AutoTextarea';
 import { UserStorageImageUpload } from '@/components/UserStorageImageUpload';
 import { CollectionGrid } from '@/components/CollectionGrid';
 import { Rocket, MoreHorizontal, Mail, ShieldAlert } from 'lucide-react';
-import { useFormattedHandle } from '@/lib/utils/handle';
+import { getPostPath, getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { AvatarImage } from '@/components/AvatarImage';
 import { ProfileBanner } from '@/components/ProfileBanner';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
-import { decodeDynamicRouteSegment } from '@/lib/navigation/route-params';
+import { decodeAccountRouteSegment } from '@/lib/navigation/route-params';
+import { useDomain } from '@/lib/contexts/ConfigContext';
+import { displayAccountAddress, sameAccountAddress } from '@/lib/identity/account-address';
 
 interface UserSummary {
     id: string;
@@ -41,7 +43,7 @@ const stripHtml = (html: string | null | undefined): string | null => {
 function UserRow({ user }: { user: UserSummary }) {
     const fullHandle = useFormattedHandle(user.handle);
     return (
-        <Link href={`/u/${user.handle}`} className="user-row">
+        <Link href={getProfilePath(user.handle, user.nodeDomain)} className="user-row">
             <div className="avatar">
                 <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} nodeDomain={user.nodeDomain} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
             </div>
@@ -60,7 +62,9 @@ export default function ProfilePage() {
     const params = useParams();
     const router = useRouter();
     const searchParams = useSearchParams();
-    const handle = decodeDynamicRouteSegment(params.handle as string | undefined).replace(/^@/, '');
+    const domain = useDomain();
+    const handle = decodeAccountRouteSegment(params.handle as string | undefined, domain) || '';
+    const userApiPath = `/api/users/${encodeURIComponent(handle)}`;
     const {
         user: authenticatedViewer,
         loading: authLoading,
@@ -129,7 +133,7 @@ export default function ProfilePage() {
         setFollowPending(false);
 
         // Get profile
-        fetch(`/api/users/${handle}`)
+        fetch(userApiPath)
             .then(res => res.json())
             .then(data => {
                 setUser(data.user);
@@ -140,7 +144,7 @@ export default function ProfilePage() {
         setPostsLoading(true);
         setPostsCursor(null);
         setRepliesCursor(null);
-        fetch(`/api/users/${handle}/posts`)
+        fetch(`${userApiPath}/posts`)
             .then(res => res.json())
             .then(data => {
                 setPosts(data.posts || []);
@@ -148,7 +152,7 @@ export default function ProfilePage() {
             })
             .catch(() => { })
             .finally(() => setPostsLoading(false));
-    }, [handle]);
+    }, [handle, userApiPath]);
 
     // Infinite scroll ref
     const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -158,7 +162,7 @@ export default function ProfilePage() {
         if (!postsCursor || postsLoadingMore) return;
         setPostsLoadingMore(true);
         try {
-            const res = await fetch(`/api/users/${handle}/posts?cursor=${postsCursor}`);
+            const res = await fetch(`${userApiPath}/posts?cursor=${encodeURIComponent(postsCursor)}`);
             const data = await res.json();
             setPosts(prev => [...prev, ...(data.posts || [])]);
             setPostsCursor(data.nextCursor || null);
@@ -167,14 +171,14 @@ export default function ProfilePage() {
         } finally {
             setPostsLoadingMore(false);
         }
-    }, [handle, postsCursor, postsLoadingMore]);
+    }, [postsCursor, postsLoadingMore, userApiPath]);
 
     // Load more replies
     const loadMoreReplies = useCallback(async () => {
         if (!repliesCursor || repliesLoadingMore || !user) return;
         setRepliesLoadingMore(true);
         try {
-            const res = await fetch(`/api/users/${handle}/replies?cursor=${repliesCursor}`);
+            const res = await fetch(`${userApiPath}/replies?cursor=${encodeURIComponent(repliesCursor)}`);
             const data = await res.json();
             setRepliesPosts(prev => [...prev, ...(data.posts || [])]);
             setRepliesCursor(data.nextCursor || null);
@@ -183,7 +187,7 @@ export default function ProfilePage() {
         } finally {
             setRepliesLoadingMore(false);
         }
-    }, [handle, user, repliesCursor, repliesLoadingMore]);
+    }, [user, repliesCursor, repliesLoadingMore, userApiPath]);
 
     // Infinite scroll observer
     useEffect(() => {
@@ -239,7 +243,7 @@ export default function ProfilePage() {
     const handleComment = (post: Post) => {
         // Navigation is handled by the PostCard overlay, 
         // but we can also use router.push if they explicitly click the comment button.
-        router.push(`/u/${post.author.handle}/posts/${post.id}`);
+        router.push(getPostPath(post.author.handle, post.id, post.author.nodeDomain || post.nodeDomain));
     };
 
     const handleDelete = (postId: string) => {
@@ -253,7 +257,7 @@ export default function ProfilePage() {
     };
 
     useEffect(() => {
-        if (user && authenticatedViewer?.handle === user.handle && !isEditing) {
+        if (user && authenticatedViewer && sameAccountAddress(authenticatedViewer.handle, user.handle) && !isEditing) {
             setProfileForm({
                 displayName: user.displayName || '',
                 bio: user.bio || '',
@@ -262,12 +266,12 @@ export default function ProfilePage() {
                 website: user.website || '',
             });
         }
-    }, [user, authenticatedViewer?.handle, isEditing]);
+    }, [user, authenticatedViewer, isEditing]);
 
     useEffect(() => {
         let cancelled = false;
 
-        if (!authenticatedViewer || !user || authenticatedViewer.handle === user.handle) {
+        if (!authenticatedViewer || !user || sameAccountAddress(authenticatedViewer.handle, user.handle)) {
             setIsFollowing(false);
             setFollowStatusLoading(false);
             setIsBlocked(false);
@@ -275,7 +279,7 @@ export default function ProfilePage() {
         }
 
         setFollowStatusLoading(true);
-        fetch(`/api/users/${handle}/follow`)
+        fetch(`${userApiPath}/follow`)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to load follow status');
                 return res.json();
@@ -290,7 +294,7 @@ export default function ProfilePage() {
                 if (!cancelled) setFollowStatusLoading(false);
             });
 
-        fetch(`/api/users/${handle}/block`)
+        fetch(`${userApiPath}/block`)
             .then(res => res.json())
             .then(data => {
                 if (!cancelled) setIsBlocked(!!data.blocked);
@@ -302,12 +306,12 @@ export default function ProfilePage() {
         return () => {
             cancelled = true;
         };
-    }, [authenticatedViewer, user, handle]);
+    }, [authenticatedViewer, user, userApiPath]);
 
     useEffect(() => {
         if (activeTab === 'followers') {
             setFollowersLoading(true);
-            fetch(`/api/users/${handle}/followers`)
+            fetch(`${userApiPath}/followers`)
                 .then(res => res.json())
                 .then(data => setFollowers(data.followers || []))
                 .catch(() => setFollowers([]))
@@ -316,7 +320,7 @@ export default function ProfilePage() {
 
         if (activeTab === 'following') {
             setFollowingLoading(true);
-            fetch(`/api/users/${handle}/following`)
+            fetch(`${userApiPath}/following`)
                 .then(res => res.json())
                 .then(data => setFollowing(data.following || []))
                 .catch(() => setFollowing([]))
@@ -325,7 +329,7 @@ export default function ProfilePage() {
 
         if (activeTab === 'likes') {
             setLikesLoading(true);
-            fetch(`/api/users/${handle}/likes`)
+            fetch(`${userApiPath}/likes`)
                 .then(res => res.json())
                 .then(data => setLikedPosts(data.posts || []))
                 .catch(() => setLikedPosts([]))
@@ -335,7 +339,7 @@ export default function ProfilePage() {
         if (activeTab === 'replies' && user) {
             setRepliesLoading(true);
             setRepliesCursor(null);
-            fetch(`/api/users/${handle}/replies`)
+            fetch(`${userApiPath}/replies`)
                 .then(res => res.json())
                 .then(data => {
                     setRepliesPosts(data.posts || []);
@@ -344,7 +348,7 @@ export default function ProfilePage() {
                 .catch(() => setRepliesPosts([]))
                 .finally(() => setRepliesLoading(false));
         }
-            }, [activeTab, handle, user]);
+    }, [activeTab, user, userApiPath]);
 
     const handleFollow = async () => {
         if (!authenticatedViewer || authLoading || isRestoring || followStatusLoading || followPending) return;
@@ -420,7 +424,7 @@ export default function ProfilePage() {
         }
 
         const method = isBlocked ? 'DELETE' : 'POST';
-        const res = await fetch(`/api/users/${handle}/block`, { method });
+        const res = await fetch(`${userApiPath}/block`, { method });
 
         if (res.ok) {
             setIsBlocked(!isBlocked);
@@ -547,7 +551,7 @@ export default function ProfilePage() {
                     padding: '16px',
                     borderBottom: '1px solid var(--border)',
                 }}>
-                    <h1 style={{ fontSize: '18px', fontWeight: 600 }}>@{user.handle}</h1>
+                    <h1 style={{ fontSize: '18px', fontWeight: 600 }}>{displayAccountAddress(user.handle)}</h1>
                 </header>
                 <div style={{ padding: '48px 24px' }}>
                     <div className="card" style={{ padding: '28px', textAlign: 'center' }}>
@@ -567,7 +571,8 @@ export default function ProfilePage() {
         );
     }
 
-    const isOwnProfile = authenticatedViewer?.handle === user.handle;
+    const isOwnProfile = Boolean(authenticatedViewer
+        && sameAccountAddress(authenticatedViewer.handle, user.handle));
     const followUnavailable = authLoading || isRestoring || followStatusLoading || followPending;
     const visibleTabs = ['posts', 'collections', 'replies', 'likes', 'followers', 'following'] as const;
 

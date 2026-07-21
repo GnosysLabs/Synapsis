@@ -190,6 +190,47 @@ describe('POST /api/posts', () => {
     }));
   });
 
+  it('rejects a new post containing a bare mention', async () => {
+    const mockUser = {
+      id: 'test-user-id',
+      did: 'did:synapsis:test123',
+      handle: 'testuser@synapsis.social',
+      username: 'testuser',
+      homeDomain: 'synapsis.social',
+      isLocalAccount: true,
+      publicKey: 'test-public-key',
+      isSuspended: false,
+      isSilenced: false,
+      isNsfw: false,
+      postsCount: 0,
+    };
+    vi.mocked(requireSignedAction).mockResolvedValue(
+      mockUser as Awaited<ReturnType<typeof requireSignedAction>>,
+    );
+    const signedAction = {
+      action: 'post',
+      data: signedPostData('Hello @alice'),
+      did: 'did:synapsis:test123',
+      handle: 'testuser@synapsis.social',
+      ts: Date.now(),
+      nonce: 'nonce-bare-mention',
+      sig: 'test-signature',
+    };
+
+    const response = await POST(new Request('http://localhost:43821/api/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedAction),
+    }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Mentions must use canonical @handle@node addresses',
+    });
+    expect(mocks.insertValues).not.toHaveBeenCalled();
+    expect(registerPostMentions).not.toHaveBeenCalled();
+  });
+
   it('creates collection memberships with the post in one transaction', async () => {
     const collectionIds = [
       '22222222-2222-4222-8222-222222222222',

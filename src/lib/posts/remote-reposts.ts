@@ -1,4 +1,5 @@
 import type { User } from '@/lib/types';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 export interface RemoteRepostSnapshot {
     postId: string;
@@ -11,13 +12,14 @@ export interface RemoteRepostSnapshot {
 }
 
 export function mapRemoteReposter(repost: RemoteRepostSnapshot): User {
-    const qualifiedHandle = repost.actorHandle.includes('@')
-        ? repost.actorHandle
-        : `${repost.actorHandle}@${repost.actorNodeDomain}`;
+    const address = resolveAccountAddress(repost.actorHandle, repost.actorNodeDomain);
+    if (!address || address.homeDomain !== repost.actorNodeDomain) {
+        throw new Error('Remote repost actor address does not match its node');
+    }
 
     return {
-        id: `swarm:${repost.actorNodeDomain}:${repost.actorHandle}`,
-        handle: qualifiedHandle,
+        id: `swarm:${repost.actorNodeDomain}:${address.username}`,
+        handle: address.canonical,
         displayName: repost.actorDisplayName || repost.actorHandle,
         avatarUrl: repost.actorAvatarUrl,
         isRemote: true,

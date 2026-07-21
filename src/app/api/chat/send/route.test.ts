@@ -82,7 +82,7 @@ function signedMessage() {
     messageId: '6ba7b810-9dad-41d1-80b4-00c04fd430c8',
     conversationId: 'dm1_conversation_01',
     senderDid,
-    senderHandle: 'alice',
+    senderHandle: 'alice@local.social',
     recipientDid,
     recipientHandle: 'bob@remote.social',
     createdAt: now,
@@ -112,7 +112,7 @@ function signedMessage() {
     action: 'chat_e2ee',
     data: envelope,
     did: senderDid,
-    handle: 'alice',
+    handle: 'alice@local.social',
     ts: now,
     nonce: 'sender_action_nonce',
     sig: 'sender_action_signature',
@@ -134,7 +134,10 @@ describe('outbound federated E2EE recipient identity', () => {
     mocks.requireSignedAction.mockResolvedValue({
       id: 'sender-id',
       did: senderDid,
-      handle: 'alice',
+      handle: 'alice@local.social',
+      username: 'alice',
+      homeDomain: 'local.social',
+      isLocalAccount: true,
       displayName: 'Alice',
       avatarUrl: null,
     });
@@ -160,7 +163,7 @@ describe('outbound federated E2EE recipient identity', () => {
     mocks.followFindFirst.mockResolvedValue(null);
     mocks.isNodeBlocked.mockResolvedValue(false);
     mocks.createFederationActionContext.mockReturnValue({
-      protocol: 'synapsis-federation-action-v2',
+      protocol: 'synapsis-federation-action-v3',
       sourceDomain: 'local.social',
       destinationDomain: 'remote.social',
       method: 'POST',

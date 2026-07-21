@@ -1,4 +1,8 @@
-import { resolveUserHandle } from '@/lib/swarm/user-handle';
+import {
+  displayAccountAddress,
+  isAccountOnNode,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 import { isValidNodeDomain } from '@/lib/utils/federation';
 
 const HANDLE_PATTERN = /^[a-zA-Z0-9_]{3,30}$/;
@@ -63,7 +67,7 @@ function normalizeMatchedDomain(value: string): string | null {
  */
 export function parseMentions(
   content: string,
-  currentDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+  contentOriginDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
 ): ParsedMention[] {
   const mentions: ParsedMention[] = [];
   MENTION_PATTERN.lastIndex = 0;
@@ -96,7 +100,8 @@ export function parseMentions(
     if (!domain && next === '.' && /[a-zA-Z0-9]/.test(content[end + 1] || '')) continue;
 
     const qualified = domain ? `${handle}@${domain}` : handle;
-    const resolution = resolveUserHandle(qualified, currentDomain);
+    const address = resolveAccountAddress(qualified, contentOriginDomain);
+    if (!address) continue;
 
     mentions.push({
       raw: content.slice(start, end),
@@ -104,9 +109,9 @@ export function parseMentions(
       end,
       handle,
       domain,
-      canonicalHandle: resolution.canonicalHandle,
+      canonicalHandle: address.canonical,
       isQualified: Boolean(domain),
-      isLocal: resolution.isLocal,
+      isLocal: isAccountOnNode(address.canonical, contentOriginDomain),
     });
   }
 
@@ -150,13 +155,26 @@ export function replaceMentionQuery(
   active: ActiveMentionQuery,
   replacement: string,
 ): { content: string; caret: number } {
-  const normalizedReplacement = replacement.startsWith('@') ? replacement : `@${replacement}`;
+  const address = resolveAccountAddress(replacement);
+  if (!address) return { content, caret: active.end };
+  const normalizedReplacement = displayAccountAddress(address.canonical);
   const needsSpace = active.end >= content.length || !/^\s/.test(content[active.end]);
   const inserted = `${normalizedReplacement}${needsSpace ? ' ' : ''}`;
   return {
     content: `${content.slice(0, active.start)}${inserted}${content.slice(active.end)}`,
     caret: active.start + inserted.length,
   };
+}
+
+/** Qualify legacy/manual bare mentions before new content is published. */
+export function canonicalizeMentionsInContent(content: string, contentOriginDomain: string): string {
+  const mentions = parseMentions(content, contentOriginDomain);
+  let canonical = content;
+  for (const mention of [...mentions].reverse()) {
+    const replacement = displayAccountAddress(mention.canonicalHandle);
+    canonical = `${canonical.slice(0, mention.start)}${replacement}${canonical.slice(mention.end)}`;
+  }
+  return canonical;
 }
 
 function trimUrlEnd(value: string): string {
@@ -174,7 +192,7 @@ function trimUrlEnd(value: string): string {
 /** Tokenize post text while giving URLs precedence over mentions inside URLs. */
 export function tokenizePostContent(
   content: string,
-  currentDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+  contentOriginDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
 ): RichTextToken[] {
   const ranges: Array<RichTextToken> = [];
   URL_PATTERN.lastIndex = 0;
@@ -191,7 +209,7 @@ export function tokenizePostContent(
   }
 
   const urlRanges = ranges.filter((token) => token.type === 'url');
-  for (const mention of parseMentions(content, currentDomain)) {
+  for (const mention of parseMentions(content, contentOriginDomain)) {
     const overlapsUrl = urlRanges.some((url) => mention.start < url.end && mention.end > url.start);
     if (!overlapsUrl) {
       ranges.push({ type: 'mention', value: mention.raw, ...mention });

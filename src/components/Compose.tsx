@@ -8,6 +8,7 @@ import { AlertTriangle, FolderPlus, Music2, Paperclip } from 'lucide-react';
 import { VideoEmbed } from '@/components/VideoEmbed';
 import { useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
+import { useDomain } from '@/lib/contexts/ConfigContext';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
 import { getMediaKind } from '@/lib/media/upload-policy';
@@ -16,10 +17,13 @@ import { AvatarImage } from '@/components/AvatarImage';
 import type { LinkPreviewData } from '@/lib/media/linkPreview';
 import {
     getActiveMentionQuery,
+    canonicalizeMentionsInContent,
     parseMentions,
     replaceMentionQuery,
     type ActiveMentionQuery,
 } from '@/lib/mentions/parser';
+import { type MentionSuggestion } from '@/lib/mentions/suggestions';
+import { displayAccountAddress, parseAccountAddress } from '@/lib/identity/account-address';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
 import { PostCollectionPicker } from '@/components/PostCollectionPicker';
 
@@ -36,16 +40,6 @@ interface MediaAttachment extends Attachment {
 interface PendingMediaUpload {
     id: string;
     file: File;
-}
-
-interface MentionSuggestion {
-    handle: string;
-    displayName: string | null;
-    avatarUrl: string | null;
-    isRemote: boolean;
-    nodeDomain: string | null;
-    isNsfw?: boolean;
-    nodeIsNsfw?: boolean;
 }
 
 interface ComposeProps {
@@ -68,8 +62,12 @@ interface ComposeProps {
 
 export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placeholder = "What's happening?", isReply, autoFocus = false }: ComposeProps) {
     const { isIdentityUnlocked, handle: currentHandle } = useAuth();
+    const domain = useDomain();
     const { showAlert } = useAppDialog();
-    const replyToHandle = useFormattedHandle(replyingTo?.author.handle || '');
+    const replyToHandle = useFormattedHandle(
+        replyingTo?.author.handle || '',
+        replyingTo?.author.nodeDomain || replyingTo?.nodeDomain,
+    );
     const [content, setContent] = useState('');
     const [isPosting, setIsPosting] = useState(false);
     const [attachments, setAttachments] = useState<MediaAttachment[]>([]);
@@ -205,6 +203,7 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
 
     const chooseMention = (suggestion: MentionSuggestion) => {
         if (!activeMention) return;
+        if (!parseAccountAddress(suggestion.handle)) return;
         const replacement = replaceMentionQuery(content, activeMention, suggestion.handle);
         setContent(replacement.content);
         setActiveMention(null);
@@ -262,10 +261,21 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
             return;
         }
 
+        const canonicalContent = canonicalizeMentionsInContent(content, domain);
+        if (canonicalContent.length > maxLength) {
+            setContent(canonicalContent);
+            await showAlert({
+                title: 'Post is too long',
+                message: 'Full account addresses made this post longer than the limit. Shorten it and try again.',
+                dismissLabel: 'Got it',
+            });
+            return;
+        }
+
         setIsPosting(true);
         try {
             const posted = await onPost(
-                content,
+                canonicalContent,
                 attachments.map((item) => item.id).filter(Boolean),
                 linkPreview || undefined,
                 replyingTo?.id,
@@ -531,9 +541,9 @@ export function Compose({ onPost, onPosted, replyingTo, onCancelReply, placehold
                                 </span>
                                 <span className="compose-mention-identity">
                                     <span className="compose-mention-name">
-                                        {suggestion.displayName || suggestion.handle.split('@')[0]}
+                                        {suggestion.displayName || parseAccountAddress(suggestion.handle)?.username || suggestion.handle}
                                     </span>
-                                    <span className="compose-mention-handle">@{suggestion.handle}</span>
+                                    <span className="compose-mention-handle">{displayAccountAddress(suggestion.handle)}</span>
                                 </span>
                             </button>
                         ))}

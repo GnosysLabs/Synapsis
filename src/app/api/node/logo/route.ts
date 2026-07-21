@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/db';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,7 +10,9 @@ export async function GET() {
       return NextResponse.json({ error: 'Database not available' }, { status: 500 });
     }
 
-    const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+    const domain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
 
     // 1. Try exact match
     let node = await db.query.nodes.findFirst({

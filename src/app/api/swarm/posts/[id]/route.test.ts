@@ -50,8 +50,10 @@ const secretPost = {
   linkPreviewMediaJson: null,
   author: {
     id: 'author-1',
-    handle: 'author',
-    nodeId: null,
+    handle: 'author@local.example',
+    username: 'author',
+    homeDomain: 'local.example',
+    isLocalAccount: true,
     displayName: 'Author',
     avatarUrl: 'https://adult.example/private-avatar.jpg',
     isNsfw: true,
@@ -139,13 +141,15 @@ describe('GET /api/swarm/posts/[id] read authorization', () => {
     expect(JSON.stringify(body)).not.toContain('PRIVATE REPLY BODY');
   });
 
-  it('rejects a cached remote main author even when its handle is unqualified', async () => {
+  it('rejects a cached remote main author based on explicit ownership metadata', async () => {
     mocks.findPost.mockResolvedValue({
       ...secretPost,
       author: {
         ...secretPost.author,
-        handle: 'remote-placeholder',
-        nodeId: 'remote-node-id',
+        handle: 'remote-placeholder@remote.example',
+        username: 'remote-placeholder',
+        homeDomain: 'remote.example',
+        isLocalAccount: false,
       },
     });
 
@@ -158,7 +162,7 @@ describe('GET /api/swarm/posts/[id] read authorization', () => {
     expect(JSON.stringify(await response.json())).not.toContain('PRIVATE DIRECT FEDERATION BODY');
   });
 
-  it('filters cached remote replies identified by nodeId even with an unqualified handle', async () => {
+  it('filters cached remote replies identified by explicit ownership metadata', async () => {
     mocks.findPost.mockResolvedValue({
       ...secretPost,
       content: 'Public body',
@@ -172,8 +176,10 @@ describe('GET /api/swarm/posts/[id] read authorization', () => {
       isNsfw: false,
       author: {
         ...secretPost.author,
-        handle: 'remote-placeholder',
-        nodeId: 'remote-node-id',
+        handle: 'remote-placeholder@remote.example',
+        username: 'remote-placeholder',
+        homeDomain: 'remote.example',
+        isLocalAccount: false,
         isNsfw: false,
       },
     }]);

@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/contexts/AuthContext';
 import { signedAPI } from '@/lib/api/signed-fetch';
 import { ArrowLeft, Send, Loader2, LockKeyhole, MessageCircle, Music2, Paperclip, Reply as ReplyIcon, Search, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
-import { getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
+import { getProfilePath, isHandleOnNode, sameAccountHandle, useFormattedHandle } from '@/lib/utils/handle';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AvatarImage } from '@/components/AvatarImage';
 import { E2EEChatGate } from '@/components/E2EEChatGate';
@@ -40,6 +40,11 @@ import {
     buildChatShareContinuationHref,
     buildChatShareHref,
 } from '@/lib/chat/recipients';
+import {
+    canonicalAccountAddress,
+    displayAccountAddress,
+    resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 interface Conversation {
     id: string;
@@ -132,6 +137,22 @@ function encryptionConversationKey(conversation: Conversation): string {
     return `${conversation.id}:${conversation.participant2.did || conversation.participant2.handle}`;
 }
 
+function normalizeConversation(conversation: Conversation, localDomain: string): Conversation | null {
+    const address = resolveAccountAddress(
+        conversation.participant2.handle,
+        conversation.participant2.nodeDomain || localDomain,
+    );
+    if (!address) return null;
+    return {
+        ...conversation,
+        participant2: {
+            ...conversation.participant2,
+            handle: address.canonical,
+            nodeDomain: address.homeDomain,
+        },
+    };
+}
+
 function accountConversationKey(accountDid: string | null, conversationKey: string): string {
     return JSON.stringify([accountDid, conversationKey]);
 }
@@ -163,7 +184,7 @@ export default function ChatPage() {
     const router = useRouter();
     const domain = useDomain();
     const searchParams = useSearchParams();
-    const composeHandle = searchParams.get('compose');
+    const composeHandle = canonicalAccountAddress(searchParams.get('compose') || '', domain);
     const sharedPostUrl = searchParams.get('share');
     const e2eeIdentity = useE2EEIdentity(user?.did, user?.handle);
     const activeE2EEKeyId = e2eeIdentity.state.status === 'ready'
@@ -173,7 +194,10 @@ export default function ChatPage() {
     // Chat Data State
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
-    const selectedHandle = useFormattedHandle(selectedConversation?.participant2.handle || '');
+    const selectedHandle = useFormattedHandle(
+        selectedConversation?.participant2.handle || '',
+        selectedConversation?.participant2.nodeDomain,
+    );
     const [messages, setMessages] = useState<Message[]>([]);
     const [drafts, setDrafts] = useState<Record<string, string>>({});
     const [replyDrafts, setReplyDrafts] = useState<Record<string, ChatReplyReference>>({});
@@ -559,7 +583,9 @@ export default function ChatPage() {
             const res = await fetch('/api/swarm/chat/conversations', { signal: controller.signal });
             if (!res.ok) throw new Error('Conversations could not be loaded');
             const data = await res.json();
-            let nextConversations = (Array.isArray(data.conversations) ? data.conversations : []) as Conversation[];
+            let nextConversations = ((Array.isArray(data.conversations) ? data.conversations : []) as Conversation[])
+                .map((conversation) => normalizeConversation(conversation, domain))
+                .filter((conversation): conversation is Conversation => conversation !== null);
 
             // Render the server's generic encrypted previews as soon as the list
             // arrives; local preview decryption can finish without holding the
@@ -654,9 +680,16 @@ export default function ChatPage() {
 
             const storedMessages = (Array.isArray(data.messages) ? data.messages : []) as ChatMessagePayload[];
             const decryptedMessages = await Promise.all(storedMessages.map(async (msg): Promise<Message> => {
+                const senderAddress = resolveAccountAddress(
+                    msg.senderHandle,
+                    msg.senderNodeDomain || domain,
+                );
+                const normalizedMessage = senderAddress
+                    ? { ...msg, senderHandle: senderAddress.canonical, senderNodeDomain: senderAddress.homeDomain }
+                    : msg;
                 if (msg.protocolVersion !== 0 && msg.protocolVersion !== 1) {
                     return {
-                        ...msg,
+                        ...normalizedMessage,
                         content: 'Encrypted message unavailable',
                         attachments: [],
                         replyTo: null,
@@ -667,18 +700,26 @@ export default function ChatPage() {
 
                 try {
                     const decrypted = await decryptStoredChatMessage(msg, user.did!, material);
+                    const replyAddress = decrypted.replyTo
+                        ? resolveAccountAddress(decrypted.replyTo.senderHandle, domain)
+                        : null;
                     return {
-                        ...msg,
+                        ...normalizedMessage,
                         content: decrypted.content,
                         attachments: decrypted.attachments,
-                        replyTo: decrypted.replyTo,
+                        replyTo: decrypted.replyTo
+                            ? {
+                                ...decrypted.replyTo,
+                                senderHandle: replyAddress?.canonical || decrypted.replyTo.senderHandle,
+                            }
+                            : null,
                         legacy: decrypted.legacy,
                         decryptionError: false,
                     };
                 } catch (error) {
                     console.error(`[E2EE Chat] Message ${msg.id} could not be decrypted:`, error);
                     return {
-                        ...msg,
+                        ...normalizedMessage,
                         content: 'Encrypted message unavailable',
                         attachments: [],
                         replyTo: null,
@@ -925,14 +966,16 @@ export default function ChatPage() {
                     const res = await fetch('/api/swarm/chat/conversations');
                     if (!res.ok) throw new Error('Conversation list could not be refreshed');
                     const data = await res.json();
-                    const updatedConversations = (data.conversations || []) as Conversation[];
+                    const updatedConversations = ((data.conversations || []) as Conversation[])
+                        .map((item) => normalizeConversation(item, domain))
+                        .filter((item): item is Conversation => item !== null);
                     if (requestId !== sendRequestRef.current
                         || renderedAccountDidRef.current !== accountDid
                         || selectedConversationKeyRef.current !== conversationKey) return;
                     setConversations(updatedConversations);
 
                     const realConv = updatedConversations.find((c: Conversation) =>
-                        c.participant2.handle === conversation.participant2.handle
+                        sameAccountHandle(c.participant2.handle, conversation.participant2.handle)
                     );
 
                     if (realConv) selectConversation(realConv);
@@ -1095,7 +1138,7 @@ export default function ChatPage() {
 
         // Check if we already have a conversation with this user.
         const existing = conversations.find(c =>
-            c.participant2.handle.toLowerCase() === composeHandle.toLowerCase()
+            sameAccountHandle(c.participant2.handle, composeHandle)
         );
         if (existing) {
             setComposeIntentError(null);
@@ -1108,7 +1151,7 @@ export default function ChatPage() {
         // Keep a failed intent stable until the user retries. Conversation
         // polling replaces the array every few seconds and must not turn the
         // visible error back into a spinner on each successful poll.
-        if (composeIntentError?.handle === composeHandle) return;
+        if (composeIntentError && sameAccountHandle(composeIntentError.handle, composeHandle)) return;
 
         const requestId = ++composeRequestRef.current;
         const requestAccountDid = renderedAccountDidRef.current;
@@ -1129,6 +1172,11 @@ export default function ChatPage() {
                 if (requestId !== composeRequestRef.current
                     || renderedAccountDidRef.current !== requestAccountDid) return;
                 if (data.user) {
+                    const userAddress = resolveAccountAddress(
+                        data.user.handle,
+                        data.user.nodeDomain || domain,
+                    );
+                    if (!userAddress) throw new Error('Account lookup returned an invalid address');
                     if (data.user.canReceiveDms === false) {
                         setComposeIntentError({
                             handle: composeHandle,
@@ -1139,11 +1187,11 @@ export default function ChatPage() {
                     const draftConv: Conversation = {
                         id: 'new',
                         participant2: {
-                            handle: data.user.handle,
+                            handle: userAddress.canonical,
                             displayName: data.user.displayName || data.user.handle,
                             avatarUrl: data.user.avatarUrl,
                             did: data.user.did,
-                            nodeDomain: data.user.nodeDomain,
+                            nodeDomain: userAddress.homeDomain,
                             isNsfw: data.user.isNsfw,
                             nodeIsNsfw: data.user.nodeIsNsfw,
                         },
@@ -1180,7 +1228,7 @@ export default function ChatPage() {
             controller.abort();
             window.clearTimeout(timeout);
         };
-    }, [composeHandle, selectedConversation, conversations, loading, router, selectConversation, composeIntentError, dismissedComposeHandle, composeRetryVersion, sharedPostUrl]);
+    }, [composeHandle, selectedConversation, conversations, loading, router, selectConversation, composeIntentError, dismissedComposeHandle, composeRetryVersion, sharedPostUrl, domain]);
 
     // Redirect if not logged in
     useEffect(() => {
@@ -1353,7 +1401,7 @@ export default function ChatPage() {
     // Prevent a flash of the list view while processing a compose intent, but
     // never hide a failed request behind an endless spinner.
     if (composeHandle && !selectedConversation && dismissedComposeHandle !== composeHandle) {
-        const currentComposeError = composeIntentError?.handle === composeHandle
+        const currentComposeError = composeIntentError && sameAccountHandle(composeIntentError.handle, composeHandle)
             ? composeIntentError.message
             : null;
         if (currentComposeError) {
@@ -1435,7 +1483,10 @@ export default function ChatPage() {
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                             <Link
-                                href={getProfilePath(selectedConversation.participant2.handle)}
+                                href={getProfilePath(
+                                    selectedConversation.participant2.handle,
+                                    selectedConversation.participant2.nodeDomain,
+                                )}
                                 style={{
                                     display: 'block',
                                     color: 'var(--foreground)',
@@ -1888,7 +1939,7 @@ export default function ChatPage() {
                                 >
                                     Delete for me
                                 </button>
-                                {!selectedConversation.participant2.handle.includes('@') && (
+                                {isHandleOnNode(selectedConversation.participant2.handle, domain) && (
                                     <button
                                         disabled={isDeleting}
                                         onClick={() => handleDeleteConversation('both')}
@@ -1898,7 +1949,7 @@ export default function ChatPage() {
                                         Delete for everyone
                                     </button>
                                 )}
-                                {selectedConversation.participant2.handle.includes('@') && (
+                                {!isHandleOnNode(selectedConversation.participant2.handle, domain) && (
                                     <p style={{ color: 'var(--foreground-tertiary)', fontSize: 12, margin: '2px 0 0', textAlign: 'center' }}>
                                         Across nodes, deleting removes only your copy.
                                     </p>
@@ -2000,6 +2051,9 @@ export default function ChatPage() {
                                 </div>
                                 <div style={{ fontSize: '13px', color: 'var(--foreground-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px' }}>
                                     {conv.lastMessagePreview}
+                                </div>
+                                <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '2px' }}>
+                                    {displayAccountAddress(conv.participant2.handle)}
                                 </div>
                             </div>
                         </button>

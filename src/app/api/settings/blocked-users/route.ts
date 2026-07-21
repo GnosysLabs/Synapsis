@@ -27,11 +27,8 @@ export async function GET() {
 
         return NextResponse.json({
             blockedUsers: blocked.map((b) => {
-                const separator = b.blockedUser.handle.lastIndexOf('@');
-                const nodeDomain = separator > 0
-                    ? b.blockedUser.handle.slice(separator + 1)
-                    : null;
-                const isRemote = Boolean(nodeDomain);
+                const nodeDomain = b.blockedUser.homeDomain;
+                const isRemote = !b.blockedUser.isLocalAccount;
                 return redactSensitiveUserSummary({
                     id: b.blockedUser.id,
                     handle: b.blockedUser.handle,

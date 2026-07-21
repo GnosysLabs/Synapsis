@@ -81,6 +81,8 @@ describe('verified federated actor continuity', () => {
   }
 
   it('migrates local ownership as verified while preserving remote rows as hints', async () => {
+    // This historical migration predates canonical account-address storage;
+    // the atomic cutover migration qualifies this preserved legacy row later.
     await client.run(
       'INSERT INTO handle_registry (handle, did, node_domain) VALUES (?, ?, ?)',
       'alice',
@@ -122,7 +124,8 @@ describe('verified federated actor continuity', () => {
       did: 'did:key:valid-signer',
     }, database)).resolves.toEqual({
       sourceDomain: 'remote.social',
-      actorHandle: 'alice',
+      actorHandle: 'alice@remote.social',
+      actorUsername: 'alice',
       qualifiedHandle: 'alice@remote.social',
       did: 'did:key:valid-signer',
     });
@@ -243,7 +246,7 @@ describe('verified federated actor continuity', () => {
        FROM handle_registry ORDER BY handle`,
     )).toEqual([
       { handle: 'alice@remote.social', identityVerified: 0 },
-      { handle: 'owner', identityVerified: 1 },
+      { handle: 'owner@local.social', identityVerified: 1 },
     ]);
   });
 

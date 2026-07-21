@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { db, handleRegistry } from '@/db';
 import { desc } from 'drizzle-orm';
-import { normalizeHandle } from '@/lib/federation/handles';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
+import {
+    getCanonicalSwarmSeedDomain,
+    normalizeNodeDomain,
+} from '@/lib/swarm/node-domain';
 
 export async function GET(request: Request) {
     try {
@@ -13,23 +17,34 @@ export async function GET(request: Request) {
         const handleParam = searchParams.get('handle');
         const sinceParam = searchParams.get('since');
         const limit = Math.min(parseInt(searchParams.get('limit') || '100'), 500);
-        const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const configuredDomain = normalizeNodeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
+        const localDomain = getCanonicalSwarmSeedDomain(configuredDomain) ?? configuredDomain;
 
         if (handleParam) {
-            const cleanHandle = normalizeHandle(handleParam);
+            const address = resolveAccountAddress(handleParam, localDomain);
+            if (!address || address.homeDomain !== localDomain) {
+                return NextResponse.json({ handles: [] });
+            }
             const entry = await db.query.handleRegistry.findFirst({
-                where: { AND: [{ handle: cleanHandle }, { nodeDomain: localDomain }] },
+                where: { AND: [{ handle: address.canonical }, { nodeDomain: localDomain }] },
             });
 
             if (!entry) {
                 return NextResponse.json({ handles: [] });
             }
 
+            const entryAddress = resolveAccountAddress(entry.handle, entry.nodeDomain);
+            if (!entryAddress || entryAddress.homeDomain !== localDomain) {
+                return NextResponse.json({ handles: [] });
+            }
+
             return NextResponse.json({
                 handles: [{
-                    handle: entry.handle,
+                    handle: entryAddress.canonical,
                     did: entry.did,
-                    nodeDomain: entry.nodeDomain,
+                    nodeDomain: entryAddress.homeDomain,
                     updatedAt: entry.updatedAt,
                 }],
             });
@@ -48,12 +63,17 @@ export async function GET(request: Request) {
         });
 
         return NextResponse.json({
-            handles: entries.map((entry) => ({
-                handle: entry.handle,
-                did: entry.did,
-                nodeDomain: entry.nodeDomain,
-                updatedAt: entry.updatedAt,
-            })),
+            handles: entries.flatMap((entry) => {
+                const address = resolveAccountAddress(entry.handle, entry.nodeDomain);
+                return address && address.homeDomain === localDomain
+                    ? [{
+                        handle: address.canonical,
+                        did: entry.did,
+                        nodeDomain: address.homeDomain,
+                        updatedAt: entry.updatedAt,
+                    }]
+                    : [];
+            }),
         });
     } catch (error) {
         console.error('Handle export error:', error);

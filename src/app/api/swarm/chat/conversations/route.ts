@@ -13,6 +13,10 @@ import { E2EE_CHAT_ACTION, E2EE_PROTOCOL_VERSION, e2eeMessageEnvelopeSchema } fr
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
+import {
+  requireCanonicalAccountHomeDomain,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 const conversationsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -63,14 +67,15 @@ export async function GET(request: NextRequest) {
     const conversationIds = conversations.map((conversation) => conversation.id);
     const participantLookupHandles = new Set<string>();
     const latestSenderDids = new Set<string>();
-    const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN;
+    const localNodeDomain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
     for (const conversation of conversations) {
-      const participantHandle = conversation.participant2Handle;
-      participantLookupHandles.add(participantHandle);
-      const separator = participantHandle.lastIndexOf('@');
-      if (separator > 0 && participantHandle.slice(separator + 1) === localNodeDomain) {
-        participantLookupHandles.add(participantHandle.slice(0, separator));
-      }
+      const participantAddress = resolveAccountAddress(
+        conversation.participant2Handle,
+        localNodeDomain,
+      );
+      if (participantAddress) participantLookupHandles.add(participantAddress.canonical);
     }
 
     // The inbox must be local-data-only. The previous implementation issued an
@@ -126,6 +131,8 @@ export async function GET(request: NextRequest) {
           did: users.did,
           publicKey: users.publicKey,
           isNsfw: users.isNsfw,
+          isLocalAccount: users.isLocalAccount,
+          homeDomain: users.homeDomain,
         })
         .from(users)
         .where(latestSenderDids.size > 0
@@ -143,16 +150,13 @@ export async function GET(request: NextRequest) {
     const usersByDid = new Map(cachedUsers.map((user) => [user.did, user]));
 
     const conversationsWithUnread = conversations.map((conv) => {
-        const participant2Handle = conv.participant2Handle;
-        const separator = participant2Handle.lastIndexOf('@');
-        const localHandle = separator > 0
-          && participant2Handle.slice(separator + 1) === localNodeDomain
-          ? participant2Handle.slice(0, separator)
-          : null;
-        const cachedUser = usersByHandle.get(participant2Handle)
-          || (localHandle ? usersByHandle.get(localHandle) : undefined);
-        const participantDomain = separator > 0 ? participant2Handle.slice(separator + 1) : null;
-        const participantIsRemote = Boolean(participantDomain && participantDomain !== localNodeDomain);
+        const participantAddress = resolveAccountAddress(conv.participant2Handle, localNodeDomain);
+        const participant2Handle = participantAddress?.canonical || conv.participant2Handle;
+        const cachedUser = usersByHandle.get(participant2Handle);
+        const participantDomain = cachedUser?.homeDomain || participantAddress?.homeDomain || null;
+        const participantIsRemote = cachedUser
+          ? !cachedUser.isLocalAccount
+          : Boolean(participantDomain && participantDomain !== localNodeDomain);
         const participant2Info = redactSensitiveUserSummary(cachedUser
           ? {
               handle: cachedUser.handle,

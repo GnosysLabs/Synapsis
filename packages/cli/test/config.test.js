@@ -3,7 +3,23 @@ import { mkdtemp, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { loadConfig, requireProfile, storeProfile } from '../src/config.js';
+import {
+  canonicalCliAccountHandle,
+  loadConfig,
+  requireProfile,
+  storeProfile,
+} from '../src/config.js';
+
+test('canonicalizes legacy bare profile accounts exactly once', () => {
+  assert.equal(
+    canonicalCliAccountHandle('alice', 'https://social.example'),
+    'alice@social.example',
+  );
+  assert.equal(
+    canonicalCliAccountHandle('alice@social.example', 'https://social.example'),
+    'alice@social.example',
+  );
+});
 
 test('stores profiles in an owner-only credential file', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'synapsis-cli-config-'));

@@ -48,7 +48,10 @@ import { GET } from './route';
 
 const localUser = {
   id: 'user-1',
-  handle: 'wpb8erboy',
+  handle: 'wpb8erboy@rprh.link',
+  username: 'wpb8erboy',
+  homeDomain: 'rprh.link',
+  isLocalAccount: true,
   displayName: 'Wpb8erboy',
   bio: null,
   avatarUrl: null,
@@ -98,10 +101,17 @@ describe('user profile route', () => {
     await expect(response.json()).resolves.toMatchObject({
       user: {
         id: 'user-1',
-        handle: 'wpb8erboy',
+        handle: 'wpb8erboy@rprh.link',
       },
     });
-    expect(mocks.findUser).toHaveBeenCalledWith({ where: { handle: 'wpb8erboy' } });
+    expect(mocks.findUser).toHaveBeenCalledWith({
+      where: {
+        AND: [
+          { handle: 'wpb8erboy@rprh.link' },
+          { isLocalAccount: true },
+        ],
+      },
+    });
     expect(mocks.isSwarmNode).not.toHaveBeenCalled();
     expect(mocks.fetchNodeInfo).not.toHaveBeenCalled();
     expect(mocks.fetchSwarmUserProfile).not.toHaveBeenCalled();

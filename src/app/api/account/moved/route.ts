@@ -12,12 +12,18 @@ import * as crypto from 'crypto';
 import { z } from 'zod';
 
 import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request-body';
-import { federationWebUrlSchema, localHandleSchema } from '@/lib/utils/federation';
+import { federationWebUrlSchema } from '@/lib/utils/federation';
+import {
+    requireCanonicalAccountHomeDomain,
+    resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 const MAX_MOVE_NOTIFICATION_BYTES = 32 * 1024;
 const MOVE_NOTIFICATION_MAX_AGE_MS = 10 * 60 * 1_000;
 const moveNotificationSchema = z.strictObject({
-    oldHandle: localHandleSchema,
+    // Bare values are accepted only for legacy, already-signed move notices;
+    // the receiving node supplies the authoritative local domain.
+    oldHandle: z.string().min(1).max(320),
     newActorUrl: federationWebUrlSchema,
     did: z.string().min(16).max(2_048),
     movedAt: z.string().datetime(),
@@ -31,7 +37,13 @@ export async function POST(req: NextRequest) {
             MAX_MOVE_NOTIFICATION_BYTES,
         ));
         const { newActorUrl, did, movedAt, signature } = body;
-        const oldHandle = body.oldHandle.toLowerCase();
+        const localDomain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
+        const oldAddress = resolveAccountAddress(body.oldHandle, localDomain);
+        if (!oldAddress || oldAddress.homeDomain !== localDomain) {
+            return NextResponse.json({ error: 'Move notification targets another node' }, { status: 400 });
+        }
         const movedAtMs = Date.parse(movedAt);
         if (!Number.isFinite(movedAtMs)
             || Math.abs(Date.now() - movedAtMs) > MOVE_NOTIFICATION_MAX_AGE_MS) {
@@ -40,7 +52,13 @@ export async function POST(req: NextRequest) {
 
         // Find the user on this node
         const user = await db.query.users.findFirst({
-            where: { handle: oldHandle.toLowerCase() },
+            where: {
+                AND: [
+                    { username: oldAddress.username },
+                    { homeDomain: localDomain },
+                    { isLocalAccount: true },
+                ],
+            },
         });
 
         if (!user) {
@@ -84,7 +102,7 @@ export async function POST(req: NextRequest) {
             },
         });
 
-        console.log(`Account ${oldHandle} marked as moved to ${newActorUrl}. ${userFollowers.length} followers.`);
+        console.log(`Account ${oldAddress.canonical} marked as moved to ${newActorUrl}. ${userFollowers.length} followers.`);
 
         return NextResponse.json({
             success: true,

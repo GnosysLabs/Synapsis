@@ -6,12 +6,15 @@ import { getNodePublicKey } from '@/lib/swarm/node-keys';
 import { getVersionedNodeAssetUrl } from '@/lib/node/assets';
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 export async function GET() {
     try {
         if (!db) return NextResponse.json({});
 
-        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const domain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
         const { localNodeIsNsfw, canViewSensitive } = await getSensitiveContentViewerAccess();
 
         // 1. Try exact match

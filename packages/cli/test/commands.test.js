@@ -135,7 +135,7 @@ test('connects through browser pairing and stores only the delegated private key
         scopes: ['posts:write', 'media:write'],
         expiresAt: '2099-01-01T00:00:00.000Z',
       },
-      account: { did: 'did:key:alice', handle: 'alice', displayName: 'Alice' },
+      account: { did: 'did:key:alice', handle: 'alice@social.example', displayName: 'Alice' },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
 
@@ -157,9 +157,9 @@ test('lists multiple account and node choices without exposing credentials', asy
   const directory = await mkdtemp(join(tmpdir(), 'synapsis-cli-profiles-'));
   const environment = { SYNAPSIS_CONFIG_DIR: directory };
   const profiles = [
-    ['alice@one.example', 'https://one.example', 'alice'],
-    ['bob@one.example', 'https://one.example', 'bob'],
-    ['alice@two.example', 'https://two.example', 'alice'],
+    ['alice@one.example', 'https://one.example', 'alice@one.example'],
+    ['bob@one.example', 'https://one.example', 'bob@one.example'],
+    ['alice@two.example', 'https://two.example', 'alice@two.example'],
   ];
   for (const [name, nodeUrl, handle] of profiles) {
     await storeProfile(name, {
@@ -198,7 +198,7 @@ test('publishes a signed text post and emits the canonical post URL', async () =
     credentialId: 'credential-1',
     scopes: ['posts:write', 'media:write'],
     expiresAt: '2099-01-01T00:00:00.000Z',
-    account: { handle: 'alice' },
+    account: { handle: 'alice@social.example' },
     publicKey: keys.publicKey,
     privateKey: keys.privateKey,
   }, environment);
@@ -220,6 +220,6 @@ test('publishes a signed text post and emits the canonical post URL', async () =
     stderr: stderr.stream,
   }, { environment, fetch: fetchImpl });
   const result = JSON.parse(stdout.value());
-  assert.equal(result.post.url, 'https://social.example/u/alice/posts/post-1');
+  assert.equal(result.post.url, 'https://social.example/u/alice%40social.example/posts/post-1');
   assert.equal(stderr.value(), '');
 });

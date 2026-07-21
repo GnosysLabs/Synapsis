@@ -17,6 +17,10 @@ import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { parseBoundedInteger } from '@/lib/http/query';
 import { ORIGIN_UNAVAILABLE_CONTENT } from '@/lib/swarm/remote-access-protocol';
+import {
+    requireCanonicalAccountHomeDomain,
+    resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 const embeddedPostRelations = {
     author: true,
@@ -74,10 +78,11 @@ function mapUserSwarmRepostToFeedPost(
     row: typeof userSwarmReposts.$inferSelect,
     author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl' | 'isNsfw'>
 ): FeedPostWithChildren {
-    const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
-    const remoteAuthorHandle = row.authorHandle.includes('@')
-        ? row.authorHandle
-        : `${row.authorHandle}@${row.nodeDomain}`;
+    const localNodeDomain = requireCanonicalAccountHomeDomain(
+        process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
+    const remoteAuthorAddress = resolveAccountAddress(row.authorHandle, row.nodeDomain);
+    const remoteAuthorHandle = remoteAuthorAddress?.canonical || row.authorHandle;
     const remoteOriginalId = `swarm:${row.nodeDomain}:${row.originalPostId}`;
     const originUnavailable = Boolean(row.originUnavailableAt);
 
@@ -111,7 +116,7 @@ function mapUserSwarmRepostToFeedPost(
             isNsfw: originUnavailable ? false : undefined,
             nodeIsNsfw: originUnavailable ? false : undefined,
             author: {
-                id: `swarm:${row.nodeDomain}:${row.authorHandle}`,
+                id: `swarm:${row.nodeDomain}:${remoteAuthorAddress?.username || row.authorHandle}`,
                 handle: remoteAuthorHandle,
                 displayName: row.authorDisplayName || row.authorHandle,
                 avatarUrl: row.authorAvatarUrl,
@@ -199,7 +204,9 @@ async function populateViewerLikeState(
         const { getSession } = await import('@/lib/auth');
         const session = await getSession();
         const viewer = session?.user;
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const nodeDomain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
 
         if (!viewer) {
             return remotePosts;
@@ -309,7 +316,7 @@ export async function GET(request: Request, context: RouteContext) {
 
         // Find the user
         const user = await db.query.users.findFirst({
-            where: { handle: cleanHandle },
+            where: { AND: [{ handle: cleanHandle }, { isLocalAccount: true }] },
         });
         const isRemotePlaceholder = Boolean(user && remote);
 
@@ -428,7 +435,9 @@ export async function GET(request: Request, context: RouteContext) {
                 }
 
                 if (swarmTargets.length > 0) {
-                    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+                    const nodeDomain = requireCanonicalAccountHomeDomain(
+                        process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+                    );
                     const likedIds = await getViewerSwarmLikedPostIds(
                         swarmTargets.map((post) => ({
                             id: post.id,

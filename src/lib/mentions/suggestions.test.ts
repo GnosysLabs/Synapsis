@@ -14,16 +14,17 @@ function suggestion(handle: string, isRemote = handle.includes('@')): MentionSug
 
 describe('mergeMentionSuggestions', () => {
     it('surfaces remote matches even when local matches fill the result limit', () => {
-        const local = ['alex', 'alice', 'alina', 'ally'].map((handle) => suggestion(handle));
+        const local = ['alex', 'alice', 'alina', 'ally']
+            .map((handle) => suggestion(`${handle}@local.example`, false));
         const remote = [
             suggestion('alex@remote.example'),
             suggestion('alice@another.example'),
         ];
 
         expect(mergeMentionSuggestions(local, remote, 4).map((item) => item.handle)).toEqual([
-            'alex',
+            'alex@local.example',
             'alex@remote.example',
-            'alice',
+            'alice@local.example',
             'alice@another.example',
         ]);
     });
@@ -40,8 +41,12 @@ describe('mergeMentionSuggestions', () => {
     });
 
     it('fills unused remote slots with local matches', () => {
-        const local = ['a', 'b', 'c'].map((handle) => suggestion(handle));
+        const local = ['amy', 'bob', 'cam']
+            .map((handle) => suggestion(`${handle}@local.example`, false));
 
-        expect(mergeMentionSuggestions(local, [], 2).map((item) => item.handle)).toEqual(['a', 'b']);
+        expect(mergeMentionSuggestions(local, [], 2).map((item) => item.handle)).toEqual([
+            'amy@local.example',
+            'bob@local.example',
+        ]);
     });
 });

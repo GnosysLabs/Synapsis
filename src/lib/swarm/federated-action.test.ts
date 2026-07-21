@@ -50,7 +50,7 @@ function userAction(
     action: 'like',
     data: { postId: POST_ID },
     did: 'did:key:zAliceSigningKey',
-    handle: 'Alice',
+    handle: 'alice@remote.social',
     ts: NOW,
     nonce: 'nonce_value_123',
     sig: 'signature_value_123',
@@ -97,7 +97,7 @@ function verificationInput(
     expectedMethod: 'POST',
     expectedPath: ACTION_PATH,
     expectedAction: 'like',
-    actorHandle: '@ALICE',
+    actorHandle: 'alice@remote.social',
     replayBinding: { postId: POST_ID },
     now: NOW,
     ...overrides,
@@ -339,5 +339,23 @@ describe('federated user action verification', () => {
       throw new Error('Expected both signed representations to verify');
     }
     expect(remalleated.replayId).toBe(original.replayId);
+  });
+
+  it('resolves a historical v2 bare signed handle without rewriting its proof', async () => {
+    const requestPayload = payload(
+      { protocol: 'synapsis-federation-action-v2' },
+      { handle: 'Alice' },
+    );
+    const result = await verifyFederatedUserAction(verificationInput(
+      requestPayload,
+      { actorHandle: '@ALICE' },
+    ));
+
+    expect(result).toMatchObject({
+      ok: true,
+      actorHandle: 'alice@remote.social',
+      actorUsername: 'alice',
+    });
+    expect(requestPayload.userAction.handle).toBe('Alice');
   });
 });

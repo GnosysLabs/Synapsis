@@ -9,6 +9,7 @@ import { normalizeSameNodePostId, parseSwarmPostId } from '@/lib/swarm/post-id';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { fetchRemotePostSnapshot } from '@/lib/swarm/remote-post-snapshot';
 import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -79,7 +80,9 @@ export async function POST(request: Request, context: RouteContext) {
             return NextResponse.json({ error: 'Post ID mismatch' }, { status: 400 });
         }
         let postId = postIdSchema.parse(decodedId);
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const nodeDomain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
         postId = normalizeSameNodePostId(postId, nodeDomain);
 
         if (user.isSuspended || user.isSilenced) {
@@ -221,7 +224,7 @@ export async function POST(request: Request, context: RouteContext) {
                 actorHandle: user.handle,
                 actorDisplayName: user.displayName,
                 actorAvatarUrl: user.avatarUrl,
-                actorNodeDomain: null, // Local user
+                actorNodeDomain: user.homeDomain,
                 postId,
                 postContent: originalPost.content?.slice(0, 200) || null,
                 type: 'repost',
@@ -298,7 +301,9 @@ export async function DELETE(request: Request, context: RouteContext) {
             return NextResponse.json({ error: 'Post ID mismatch' }, { status: 400 });
         }
         let postId = postIdSchema.parse(decodedId);
-        const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const nodeDomain = requireCanonicalAccountHomeDomain(
+            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+        );
         postId = normalizeSameNodePostId(postId, nodeDomain);
 
         if (user.isSuspended || user.isSilenced) {

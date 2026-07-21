@@ -8,6 +8,7 @@ import {
     canCurrentViewerAccessSensitiveRemoteProfile,
     getCurrentViewerSensitiveProfileAccess,
 } from '@/lib/nsfw/remote-profile-access';
+import { resolveAccountAddress } from '@/lib/identity/account-address';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -37,7 +38,9 @@ export async function GET(request: Request, context: RouteContext) {
         }
 
         const user = await db.query.users.findFirst({
-            where: { handle: cleanHandle },
+            where: resolvedHandle.isLocal
+                ? { AND: [{ handle: cleanHandle }, { isLocalAccount: true }] }
+                : { handle: cleanHandle },
         });
 
         // If user exists but is a remote placeholder (handle contains @), fetch fresh data from remote
@@ -61,10 +64,14 @@ export async function GET(request: Request, context: RouteContext) {
                             accountIsNsfw: profile.isNsfw,
                             nodeIsNsfw: profile.nodeIsNsfw,
                         });
+                        const profileAddress = resolveAccountAddress(profile.handle, remote.domain);
+                        if (!profileAddress || profileAddress.homeDomain !== remote.domain) {
+                            return NextResponse.json({ error: 'Remote profile identity mismatch' }, { status: 502 });
+                        }
                         return NextResponse.json({
                             user: {
-                                id: `swarm:${remote.domain}:${profile.handle}`,
-                                handle: `${profile.handle}@${remote.domain}`,
+                                id: `swarm:${remote.domain}:${profileAddress.username}`,
+                                handle: profileAddress.canonical,
                                 displayName: canAccessProfile ? profile.displayName : profile.handle,
                                 bio: canAccessProfile ? profile.bio || null : null,
                                 avatarUrl: canAccessProfile ? profile.avatarUrl || null : null,

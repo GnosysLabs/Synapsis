@@ -14,6 +14,7 @@ import { upsertHandleEntries } from '@/lib/federation/handles';
 import { registrationDisplayName } from '@/lib/auth/display-name';
 import { configuredAdminEmails } from '@/lib/auth/admin-config';
 import { resolveSessionTokens } from '@/lib/auth/session-cookie';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 
 const ACTIVE_SESSION_COOKIE_NAME = 'synapsis_session';
 const SESSION_COOKIE_NAME = 'synapsis_sessions';
@@ -26,6 +27,9 @@ type SessionRecord = typeof sessions.$inferSelect & {
 export interface AuthAccount {
     id: string;
     handle: string;
+    username: string;
+    homeDomain: string;
+    isLocalAccount: boolean;
     displayName: string | null;
     avatarUrl: string | null;
     did: string;
@@ -119,6 +123,9 @@ function toAuthAccount(session: SessionRecord, activeToken: string | null): Auth
     return {
         id: session.user.id,
         handle: session.user.handle,
+        username: session.user.username,
+        homeDomain: session.user.homeDomain,
+        isLocalAccount: session.user.isLocalAccount,
         displayName: session.user.displayName,
         avatarUrl: session.user.avatarUrl,
         did: session.user.did,
@@ -293,16 +300,22 @@ export async function registerUser(
         throw new Error('Handle must be 3-20 characters, alphanumeric and underscores only');
     }
 
-    // Check if handle is taken
+    const username = handle.toLowerCase();
+    const nodeDomain = requireCanonicalAccountHomeDomain(
+        process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
+    const canonicalHandle = `${username}@${nodeDomain}`;
+
+    // Check if this node-local username is taken
     const existingHandle = await db.query.users.findFirst({
-        where: { handle: handle.toLowerCase() },
+        where: { AND: [{ username }, { homeDomain: nodeDomain }] },
     });
 
     if (existingHandle) {
         throw new Error('Handle is already taken');
     }
     const deletedHandle = await db.query.swarmAccountTombstones.findFirst({
-        where: { handle: handle.toLowerCase() },
+        where: { handle: canonicalHandle },
     });
     if (deletedHandle) {
         throw new Error('Handle is permanently reserved after account deletion');
@@ -327,8 +340,6 @@ export async function registerUser(
     const did = generateDID(publicKey);
     const passwordHash = await hashPassword(password);
 
-    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
-
     const adminEmails = configuredAdminEmails();
     const adminUsers = adminEmails.length > 0
         ? (await db.query.users.findMany({
@@ -339,7 +350,10 @@ export async function registerUser(
     const user = await db.transaction(async (tx) => {
         const [createdUser] = await tx.insert(users).values({
             did,
-            handle: handle.toLowerCase(),
+            handle: canonicalHandle,
+            username,
+            homeDomain: nodeDomain,
+            isLocalAccount: true,
             email: email.toLowerCase(),
             passwordHash,
             displayName: registrationDisplayName(handle, email, displayName),

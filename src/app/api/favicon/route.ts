@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
+
+function getLocalNodeDomain(): string {
+    return requireCanonicalAccountHomeDomain(
+        process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
+}
 
 function getRequestBaseUrl(req: NextRequest, fallbackDomain: string): string {
     const forwardedHost = req.headers.get('x-forwarded-host');
@@ -20,12 +27,12 @@ export async function GET(req: NextRequest) {
     try {
         if (!db) {
             // Redirect to default favicon
-            const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+            const domain = getLocalNodeDomain();
             const baseUrl = getRequestBaseUrl(req, domain);
             return NextResponse.redirect(new URL('/favicon.png', baseUrl));
         }
 
-        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const domain = getLocalNodeDomain();
         const node = await db.query.nodes.findFirst({
             where: { domain: domain },
             columns: { faviconUrl: true },
@@ -45,7 +52,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.redirect(new URL('/favicon.png', baseUrl));
     } catch (error) {
         console.error('Favicon error:', error);
-        const domain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+        const domain = getLocalNodeDomain();
         const baseUrl = getRequestBaseUrl(req, domain);
         return NextResponse.redirect(new URL('/favicon.png', baseUrl));
     }

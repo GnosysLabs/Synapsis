@@ -7,7 +7,7 @@ import {
     requireCliSignedAction,
     signedActionErrorStatus,
 } from '@/lib/auth/cli-credentials';
-import { eq, and, desc, inArray, isNull, lt, ne, notLike, or, sql } from 'drizzle-orm';
+import { eq, and, desc, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { serializeLinkPreviewMedia, parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
@@ -49,10 +49,23 @@ import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { getCachedSwarmTimeline } from '@/lib/swarm/content-cache';
 import { getViewerSwarmLikedPostIds } from '@/lib/swarm/likes';
 import { indexLocalPostContent } from '@/lib/search/post-index';
+import {
+    canonicalAccountHomeDomain,
+    parseAccountAddress,
+    requireCanonicalAccountHomeDomain,
+    resolveAccountAddress,
+} from '@/lib/identity/account-address';
+import { canonicalizeMentionsInContent } from '@/lib/mentions/parser';
 
 const POST_MAX_LENGTH = 600;
 const CURATION_SEED_MULTIPLIER = 5;
 const CURATION_SEED_CAP = 200;
+
+function getLocalAccountHomeDomain(): string {
+    return requireCanonicalAccountHomeDomain(
+        process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
+}
 
 type FeedPostWithChildren = {
     id: string;
@@ -81,10 +94,9 @@ function mapUserSwarmRepostToFeedPost(
     row: typeof userSwarmReposts.$inferSelect,
     author: Pick<typeof users.$inferSelect, 'id' | 'handle' | 'displayName' | 'avatarUrl' | 'isNsfw'>
 ): FeedPostWithChildren {
-    const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
-    const remoteAuthorHandle = row.authorHandle.includes('@')
-        ? row.authorHandle
-        : `${row.authorHandle}@${row.nodeDomain}`;
+    const localNodeDomain = getLocalAccountHomeDomain();
+    const remoteAuthorAddress = resolveAccountAddress(row.authorHandle, row.nodeDomain);
+    const remoteAuthorHandle = remoteAuthorAddress?.canonical || row.authorHandle;
     const remoteOriginalId = `swarm:${row.nodeDomain}:${row.originalPostId}`;
     const originUnavailable = Boolean(row.originUnavailableAt);
 
@@ -120,7 +132,7 @@ function mapUserSwarmRepostToFeedPost(
             isNsfw: originUnavailable ? false : undefined,
             nodeIsNsfw: originUnavailable ? false : undefined,
             author: {
-                id: `swarm:${row.nodeDomain}:${row.authorHandle}`,
+                id: `swarm:${row.nodeDomain}:${remoteAuthorAddress?.username || row.authorHandle}`,
                 handle: remoteAuthorHandle,
                 displayName: row.authorDisplayName || row.authorHandle,
                 avatarUrl: row.authorAvatarUrl,
@@ -231,7 +243,7 @@ const feedPostRelations = {
 } as const;
 
 async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<FeedPostWithChildren[]> {
-    const localNodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+    const localNodeDomain = getLocalAccountHomeDomain();
     const cursorPosition = decodeFeedCursorPosition(cursor);
     const cursorCondition = cursorPosition
         ? or(
@@ -252,8 +264,7 @@ async function getLocalNodeFeed(cursor: string | null, limit: number): Promise<F
             eq(posts.isRemoved, false),
             isNull(posts.replyToId),
             isNull(posts.swarmReplyToId),
-            isNull(users.nodeId),
-            notLike(users.handle, '%@%'),
+            eq(users.isLocalAccount, true),
             cursorCondition,
         ))
         .orderBy(desc(feedStories.latestActivityAt), desc(feedStories.storyId))
@@ -310,7 +321,7 @@ async function getLocallyRepostedRemoteStories(
     limit: number,
 ): Promise<FeedPostWithChildren[]> {
     const cursorPosition = decodeFeedCursorPosition(cursor);
-    const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+    const localDomain = getLocalAccountHomeDomain();
     const remoteStoryFeedId = sql<string>`'swarm:' || ${remoteFeedStories.nodeDomain} || ':' || ${remoteFeedStories.originalPostId}`;
     const cursorCondition = cursorPosition
         ? or(
@@ -442,6 +453,14 @@ export async function POST(request: Request) {
                 ? requestBody.data
                 : requestBody
         );
+        const nodeDomain = getLocalAccountHomeDomain();
+
+        if (canonicalizeMentionsInContent(data.content, nodeDomain) !== data.content) {
+            return NextResponse.json(
+                { error: 'Mentions must use canonical @handle@node addresses' },
+                { status: 400 },
+            );
+        }
 
         if (user.isSuspended || user.isSilenced) {
             return NextResponse.json({ error: 'Account restricted' }, { status: 403 });
@@ -453,9 +472,6 @@ export async function POST(request: Request) {
             );
         }
 
-        const nodeDomain = normalizeNodeDomain(
-            process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
-        );
         if (
             data.swarmReplyTo
             && await (await import('@/lib/swarm/remote-access'))
@@ -473,15 +489,50 @@ export async function POST(request: Request) {
             );
         }
 
+        const swarmReplyOriginDomain = data.swarmReplyTo
+            ? canonicalAccountHomeDomain(data.swarmReplyTo.nodeDomain)
+            : null;
+        if (
+            data.swarmReplyTo
+            && (
+                !swarmReplyOriginDomain
+                || swarmReplyOriginDomain !== data.swarmReplyTo.nodeDomain
+            )
+        ) {
+            return NextResponse.json(
+                { error: 'Federated reply node domain must be canonical' },
+                { status: 400 },
+            );
+        }
+
+        if (data.swarmReplyTo?.author) {
+            const authorAddress = parseAccountAddress(data.swarmReplyTo.author.handle);
+            const rawAuthorDomain = data.swarmReplyTo.author.nodeDomain ?? swarmReplyOriginDomain;
+            const authorDomain = canonicalAccountHomeDomain(rawAuthorDomain);
+            if (
+                !authorAddress
+                || authorAddress.canonical !== data.swarmReplyTo.author.handle
+                || !rawAuthorDomain
+                || authorDomain !== rawAuthorDomain
+                || authorDomain !== authorAddress.homeDomain
+                || authorDomain !== swarmReplyOriginDomain
+            ) {
+                return NextResponse.json(
+                    { error: 'Federated reply author must use a matching canonical handle and node domain' },
+                    { status: 400 },
+                );
+            }
+        }
+
         // Build swarm reply fields if replying to a swarm post
         const swarmReplyFields = data.swarmReplyTo ? {
-            swarmReplyToId: `swarm:${data.swarmReplyTo.nodeDomain}:${data.swarmReplyTo.postId}`,
+            swarmReplyToId: `swarm:${swarmReplyOriginDomain}:${data.swarmReplyTo.postId}`,
             swarmReplyToContent: data.swarmReplyTo.content?.slice(0, 300) || null,
             swarmReplyToAuthor: data.swarmReplyTo.author ? JSON.stringify({
                 handle: data.swarmReplyTo.author.handle,
                 displayName: data.swarmReplyTo.author.displayName,
                 avatarUrl: data.swarmReplyTo.author.avatarUrl,
-                nodeDomain: data.swarmReplyTo.nodeDomain,
+                nodeDomain: swarmReplyOriginDomain,
             }) : null,
         } : {};
 
@@ -696,7 +747,7 @@ export async function POST(request: Request) {
                         actorHandle: user.handle,
                         actorDisplayName: user.displayName,
                         actorAvatarUrl: user.avatarUrl,
-                        actorNodeDomain: null,
+                        actorNodeDomain: user.homeDomain,
                         postId: parentPost.id,
                         postContent: post.content?.slice(0, 200) || null,
                         type: 'reply',
@@ -852,7 +903,7 @@ export async function GET(request: Request) {
             feedPosts = collapseSharedFeedPosts([
                 ...localStories,
                 ...remoteStories,
-            ] as unknown as Post[], process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821')
+            ] as unknown as Post[], getLocalAccountHomeDomain())
                 .slice(0, limit) as FeedPostWithChildren[];
         } else if (type === 'public') {
             // Public timeline - all local posts + all cached remote posts
@@ -870,7 +921,7 @@ export async function GET(request: Request) {
             });
             const transformedRemote = remoteTimeline.posts.map((post) =>
                 mapSwarmPostToPost(post, {
-                    localDomain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+                    localDomain: getLocalAccountHomeDomain(),
                 }));
 
             // Merge and sort by date
@@ -947,7 +998,7 @@ export async function GET(request: Request) {
                 includeNsfw,
             });
 
-            const localDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+            const localDomain = getLocalAccountHomeDomain();
             const swarmPosts = swarmResult.posts.map((post) => mapSwarmPostToPost(post, { localDomain }));
             const locallyRepostedRemoteStories = await getLocallyRepostedRemoteStories(cursor, limit);
 
@@ -1068,7 +1119,7 @@ export async function GET(request: Request) {
                 });
                 const cachedRemotePosts = cachedRemoteTimeline.posts.map((post) =>
                     mapSwarmPostToPost(post, {
-                        localDomain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+                        localDomain: getLocalAccountHomeDomain(),
                     }));
 
                 // Merge and sort by date
@@ -1076,7 +1127,7 @@ export async function GET(request: Request) {
                     ...localPosts,
                     ...localRepostEvents,
                     ...cachedRemotePosts,
-                ] as unknown as Post[], process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821')
+                ] as unknown as Post[], getLocalAccountHomeDomain())
                     .slice(0, limit);
 
                 feedPosts = allPosts;
@@ -1098,7 +1149,7 @@ export async function GET(request: Request) {
 
             if (session?.user && feedPosts && feedPosts.length > 0) {
                 const viewer = session.user;
-                const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821';
+                const nodeDomain = getLocalAccountHomeDomain();
                 const allFeedPosts = collectNestedPosts(feedPosts as FeedPostWithChildren[]);
 
                 // Separate local and swarm posts
@@ -1199,7 +1250,7 @@ export async function GET(request: Request) {
         const serializedFeedPosts = (feedPosts || []).map((post) => (
             redactSensitivePostForViewer(post as unknown as Record<string, unknown>, {
                 canViewSensitive,
-                localNodeDomain: process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+                localNodeDomain: getLocalAccountHomeDomain(),
                 localNodeIsNsfw,
             })
         ));

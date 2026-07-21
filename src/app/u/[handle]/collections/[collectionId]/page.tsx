@@ -12,13 +12,17 @@ import { signedAPI } from '@/lib/api/signed-fetch';
 import type { CollectionDetail, CollectionSummary } from '@/lib/collections/types';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
-import { decodeDynamicRouteSegment } from '@/lib/navigation/route-params';
+import { decodeAccountRouteSegment } from '@/lib/navigation/route-params';
 import type { Post } from '@/lib/types';
+import { useDomain } from '@/lib/contexts/ConfigContext';
+import { displayAccountAddress, sameAccountAddress } from '@/lib/identity/account-address';
+import { getPostPath, getProfilePath } from '@/lib/utils/handle';
 
 export default function CollectionPage() {
   const params = useParams<{ handle: string; collectionId: string }>();
   const router = useRouter();
-  const handle = decodeDynamicRouteSegment(params.handle).replace(/^@/, '');
+  const domain = useDomain();
+  const handle = decodeAccountRouteSegment(params.handle, domain) || '';
   const collectionId = params.collectionId || '';
   const { user, did, handle: currentHandle, isIdentityUnlocked } = useAuth();
   const { showConfirm } = useAppDialog();
@@ -30,7 +34,7 @@ export default function CollectionPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
-  const isOwner = Boolean(user && !handle.includes('@') && user.handle === handle);
+  const isOwner = Boolean(user && sameAccountAddress(user.handle, handle));
 
   useEffect(() => {
     const controller = new AbortController();
@@ -102,7 +106,7 @@ export default function CollectionPage() {
   };
 
   const handleComment = (post: Post) => {
-    router.push(`/u/${post.author.handle}/posts/${post.id}`);
+    router.push(getPostPath(post.author.handle, post.id, post.author.nodeDomain || post.nodeDomain));
   };
 
   const deleteCollection = async () => {
@@ -124,7 +128,7 @@ export default function CollectionPage() {
       const response = await signedAPI.deleteCollection(handle, collection.id, did, currentHandle);
       const data = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(data.error || 'Could not delete collection');
-      router.push(`/u/${encodeURIComponent(handle)}?tab=collections`);
+      router.push(`${getProfilePath(handle)}?tab=collections`);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Could not delete collection');
       setDeleting(false);
@@ -136,7 +140,7 @@ export default function CollectionPage() {
     return (
       <div className="collection-detail-state">
         <strong>{error || 'Collection not found'}</strong>
-        <Link href={`/u/${encodeURIComponent(handle)}?tab=collections`} className="btn btn-ghost">Back to profile</Link>
+        <Link href={`${getProfilePath(handle)}?tab=collections`} className="btn btn-ghost">Back to profile</Link>
       </div>
     );
   }
@@ -144,12 +148,12 @@ export default function CollectionPage() {
   return (
     <main className="collection-detail-page">
       <header className="collection-detail-nav">
-        <Link href={`/u/${encodeURIComponent(handle)}?tab=collections`} aria-label="Back to collections">
+        <Link href={`${getProfilePath(handle)}?tab=collections`} aria-label="Back to collections">
           <ArrowLeft size={20} />
         </Link>
         <div>
           <strong>{collection.title}</strong>
-          <span>@{handle}</span>
+          <span>{displayAccountAddress(handle)}</span>
         </div>
       </header>
 

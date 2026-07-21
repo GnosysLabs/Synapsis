@@ -6,12 +6,16 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, follows, users } from '@/db';
-import { and, eq, isNull, notLike } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
 import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 import { parseBoundedInteger } from '@/lib/http/query';
+import {
+  requireCanonicalAccountHomeDomain,
+  resolveAccountAddress,
+} from '@/lib/identity/account-address';
 
 export interface SwarmFollowingUser {
   handle: string;
@@ -52,7 +56,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
 
-    const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
+    const nodeDomain = requireCanonicalAccountHomeDomain(
+      process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
+    );
+    const localAddress = resolveAccountAddress(cleanHandle, nodeDomain);
+    if (!localAddress || localAddress.homeDomain !== nodeDomain) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
     const nodeIsNsfw = await requireLocalNodeNsfwClassification();
     const trustedRead = true;
 
@@ -60,8 +70,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const user = await db.query.users.findFirst({
       where: {
         AND: [
-          { handle: cleanHandle },
-          { nodeId: { isNull: true } },
+          { username: localAddress.username },
+          { homeDomain: nodeDomain },
+          { isLocalAccount: true },
         ],
       },
     });
@@ -84,15 +95,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
       .innerJoin(users, eq(follows.followingId, users.id))
       .where(and(
         eq(follows.followerId, user.id),
-        isNull(users.nodeId),
-        notLike(users.handle, '%@%'),
+        eq(users.isLocalAccount, true),
       ))
       .limit(limit);
 
     const localFollowing: SwarmFollowingUser[] = userFollowing
       .filter((entry) => hasStrictLocalUserOrigin(entry.following))
       .map(f => ({
-        handle: f.following.handle, // Local handle without domain
+        handle: f.following.handle,
         displayName: f.following.displayName || f.following.handle,
         avatarUrl: f.following.avatarUrl || undefined,
         bio: f.following.bio || undefined,
@@ -108,14 +118,18 @@ export async function GET(request: NextRequest, context: RouteContext) {
       limit,
     });
 
-    const remoteFollowing: SwarmFollowingUser[] = userRemoteFollowing.map(f => ({
-      handle: f.targetHandle, // Already includes @domain
-      displayName: f.displayName || f.targetHandle.split('@')[0],
-      avatarUrl: f.avatarUrl || undefined,
-      bio: f.bio || undefined,
-      isRemote: true,
-      nodeDomain: f.targetHandle.split('@').pop(),
-    }));
+    const remoteFollowing: SwarmFollowingUser[] = userRemoteFollowing.flatMap((f) => {
+      const address = resolveAccountAddress(f.targetHandle);
+      if (!address) return [];
+      return [{
+        handle: address.canonical,
+        displayName: f.displayName || address.username,
+        avatarUrl: f.avatarUrl || undefined,
+        bio: f.bio || undefined,
+        isRemote: true,
+        nodeDomain: address.homeDomain,
+      }];
+    });
 
     // Federation ingress must remain local-data-only. Hydrating these entries here
     // would let an unauthenticated caller fan one request out to many remote nodes.

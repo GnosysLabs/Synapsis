@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, inArray, isNull, notLike } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db, posts, users } from '@/db';
@@ -31,9 +31,8 @@ export async function GET(request: NextRequest) {
       eq(posts.isRemoved, false),
       isNull(posts.replyToId),
       isNull(posts.swarmReplyToId),
-      isNull(users.nodeId),
+      eq(users.isLocalAccount, true),
       eq(users.isSuspended, false),
-      notLike(users.handle, '%@%'),
     ));
 
   return NextResponse.json({

@@ -71,6 +71,7 @@ const actorDid = 'did:key:zRemoteSigner';
 const authorizedContent = 'Hello @localuser@local.social';
 
 function payload(content = authorizedContent) {
+  // Historical v2 delivery keeps the exact bare signed actor/target fields.
   const now = Date.now();
   return {
     federation: {
@@ -125,7 +126,8 @@ describe('swarm mention receiver', () => {
     vi.clearAllMocks();
     mocks.verifyFederatedUserAction.mockImplementation(async ({ payload: verifiedPayload }) => ({
       ok: true,
-      actorHandle: 'remoteuser',
+      actorHandle: 'remoteuser@remote.social',
+      actorUsername: 'remoteuser',
       sourceDomain: 'remote.social',
       destinationDomain: 'local.social',
       userAction: verifiedPayload.userAction,
@@ -134,8 +136,10 @@ describe('swarm mention receiver', () => {
     mocks.usersFindFirst
       .mockResolvedValueOnce({
         id: 'recipient-id',
-        handle: 'localuser',
-        nodeId: null,
+        handle: 'localuser@local.social',
+        username: 'localuser',
+        homeDomain: 'local.social',
+        isLocalAccount: true,
         isSuspended: false,
       })
       .mockResolvedValueOnce(null);
@@ -158,7 +162,7 @@ describe('swarm mention receiver', () => {
     }));
     expect(mocks.pinVerifiedFederatedActorIdentity).toHaveBeenCalledWith({
       sourceDomain: 'remote.social',
-      actorHandle: 'remoteuser',
+      actorHandle: 'remoteuser@remote.social',
       did: actorDid,
     }, expect.anything());
     expect(mocks.inboundActionValues).toHaveBeenCalledWith({
@@ -172,6 +176,7 @@ describe('swarm mention receiver', () => {
       remotePostId: postId,
       remotePostDomain: 'remote.social',
       actorNodeDomain: 'remote.social',
+      actorHandle: 'remoteuser@remote.social',
       type: 'mention',
     }));
     expect(mocks.transaction).toHaveBeenCalledOnce();

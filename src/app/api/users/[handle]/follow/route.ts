@@ -8,7 +8,7 @@ import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import { isSwarmNode, deliverSwarmFollow, deliverSwarmUnfollow, cacheSwarmUserPosts } from '@/lib/swarm/interactions';
 import { discoverNode } from '@/lib/swarm/discovery';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
-import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
+import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 import { z } from 'zod';
 import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
 
@@ -52,7 +52,7 @@ export async function GET(request: Request, context: RouteContext) {
             if (!db) {
                 return NextResponse.json({ error: 'Database not available' }, { status: 503 });
             }
-            const targetHandle = `${remote.handle}@${remote.domain}`;
+            const targetHandle = cleanHandle;
             const existingRemoteFollow = await db.query.remoteFollows.findFirst({
                 where: { AND: [{ followerId: currentUser.id }, { targetHandle: targetHandle }] },
             });
@@ -64,7 +64,7 @@ export async function GET(request: Request, context: RouteContext) {
         }
 
         const targetUser = await db.query.users.findFirst({
-            where: { handle: cleanHandle },
+            where: { AND: [{ handle: cleanHandle }, { isLocalAccount: true }] },
         });
 
         if (!targetUser) {
@@ -108,13 +108,11 @@ export async function POST(request: Request, context: RouteContext) {
         const resolvedHandle = resolveUserHandle(handle);
         const cleanHandle = resolvedHandle.canonicalHandle;
         const remote = resolvedHandle.remote;
-        const nodeDomain = normalizeNodeDomain(
+        const nodeDomain = requireCanonicalAccountHomeDomain(
             process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
         );
         const authorizedTarget = followActionDataSchema.parse(signedAction.data).targetHandle.toLowerCase();
-        const expectedTarget = remote
-            ? `${remote.handle}@${remote.domain}`
-            : cleanHandle;
+        const expectedTarget = cleanHandle;
         if (authorizedTarget !== expectedTarget.toLowerCase()) {
             return NextResponse.json({ error: 'Follow target mismatch' }, { status: 403 });
         }
@@ -124,7 +122,7 @@ export async function POST(request: Request, context: RouteContext) {
         }
 
         if (remote) {
-            const targetHandle = `${remote.handle}@${remote.domain}`;
+            const targetHandle = cleanHandle;
 
             // Check if already following
             const existingRemoteFollow = await db.query.remoteFollows.findFirst({
@@ -156,7 +154,7 @@ export async function POST(request: Request, context: RouteContext) {
 
             const result = await deliverSwarmFollow(remote.domain, {
                 userAction: signedAction,
-                targetHandle: remote.handle,
+                targetHandle,
                 follow: {
                     followerHandle: currentUser.handle,
                     followerDisplayName: currentUser.displayName || currentUser.handle,
@@ -218,7 +216,7 @@ export async function POST(request: Request, context: RouteContext) {
 
         // Find target user
         const targetUser = await db.query.users.findFirst({
-            where: { handle: cleanHandle },
+            where: { AND: [{ handle: cleanHandle }, { isLocalAccount: true }] },
         });
 
         if (!targetUser) {
@@ -249,7 +247,7 @@ export async function POST(request: Request, context: RouteContext) {
                 actorHandle: currentUser.handle,
                 actorDisplayName: currentUser.displayName,
                 actorAvatarUrl: currentUser.avatarUrl,
-                actorNodeDomain: null,
+                actorNodeDomain: nodeDomain,
                 type: 'follow',
             });
             await tx.update(users)
@@ -283,13 +281,11 @@ export async function DELETE(request: Request, context: RouteContext) {
         const resolvedHandle = resolveUserHandle(handle);
         const cleanHandle = resolvedHandle.canonicalHandle;
         const remote = resolvedHandle.remote;
-        const nodeDomain = normalizeNodeDomain(
+        const nodeDomain = requireCanonicalAccountHomeDomain(
             process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
         );
         const authorizedTarget = followActionDataSchema.parse(signedAction.data).targetHandle.toLowerCase();
-        const expectedTarget = remote
-            ? `${remote.handle}@${remote.domain}`
-            : cleanHandle;
+        const expectedTarget = cleanHandle;
         if (authorizedTarget !== expectedTarget.toLowerCase()) {
             return NextResponse.json({ error: 'Unfollow target mismatch' }, { status: 403 });
         }
@@ -298,11 +294,11 @@ export async function DELETE(request: Request, context: RouteContext) {
             if (!db) {
                 return NextResponse.json({ error: 'Database not available' }, { status: 503 });
             }
-            const targetHandle = `${remote.handle}@${remote.domain}`;
+            const targetHandle = cleanHandle;
             // Use swarm protocol for unfollow
             const result = await deliverSwarmUnfollow(remote.domain, {
                 userAction: signedAction,
-                targetHandle: remote.handle,
+                targetHandle,
                 unfollow: {
                     followerHandle: currentUser.handle,
                     followerNodeDomain: nodeDomain,
@@ -347,7 +343,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         // Find target user
         const targetUser = await db.query.users.findFirst({
-            where: { handle: cleanHandle },
+            where: { AND: [{ handle: cleanHandle }, { isLocalAccount: true }] },
         });
 
         if (!targetUser) {

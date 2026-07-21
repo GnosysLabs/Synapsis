@@ -10,9 +10,9 @@ import {
 describe('chat recipient picker helpers', () => {
     it('deduplicates recipients case-insensitively and excludes the viewer', () => {
         expect(uniqueChatRecipients([
-            { handle: 'viewer', displayName: 'Me', avatarUrl: null },
-            { handle: 'Alice', displayName: 'Alice', avatarUrl: '/alice.png' },
-            { handle: 'alice', displayName: 'Duplicate', avatarUrl: null },
+            { handle: 'viewer@local.example', displayName: 'Me', avatarUrl: null },
+            { handle: 'Alice@Local.Example', displayName: 'Alice', avatarUrl: '/alice.png' },
+            { handle: 'alice@local.example', displayName: 'Duplicate', avatarUrl: null },
             {
                 handle: 'bob@remote.example',
                 displayName: null,
@@ -23,8 +23,8 @@ describe('chat recipient picker helpers', () => {
                 nodeIsNsfw: true,
             },
             { nope: true },
-        ], '@viewer')).toEqual([
-            { handle: 'Alice', displayName: 'Alice', avatarUrl: '/alice.png', isRemote: false },
+        ], '@viewer@local.example')).toEqual([
+            { handle: 'alice@local.example', displayName: 'Alice', avatarUrl: '/alice.png', isRemote: false },
             {
                 handle: 'bob@remote.example',
                 displayName: null,
@@ -39,11 +39,11 @@ describe('chat recipient picker helpers', () => {
 
     it('keeps conversation order when producing recent recipients', () => {
         expect(recentChatRecipients([
-            { participant2: { handle: 'recent', displayName: 'Recent', avatarUrl: null } },
-            { participant2: { handle: 'older', displayName: 'Older', avatarUrl: '/older.png' } },
+            { participant2: { handle: 'recent@local.example', displayName: 'Recent', avatarUrl: null } },
+            { participant2: { handle: 'older@local.example', displayName: 'Older', avatarUrl: '/older.png' } },
         ])).toEqual([
-            { handle: 'recent', displayName: 'Recent', avatarUrl: null, isRemote: false },
-            { handle: 'older', displayName: 'Older', avatarUrl: '/older.png', isRemote: false },
+            { handle: 'recent@local.example', displayName: 'Recent', avatarUrl: null, isRemote: false },
+            { handle: 'older@local.example', displayName: 'Older', avatarUrl: '/older.png', isRemote: false },
         ]);
     });
 
