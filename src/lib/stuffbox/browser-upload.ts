@@ -2,13 +2,24 @@
 
 import { stripPhotoVideoMetadata } from '@/lib/media/browser-strip-metadata';
 import { MediaMetadataError } from '@/lib/media/strip-metadata';
-import { getMediaKind } from '@/lib/media/upload-policy';
+import { ALLOWED_MEDIA_TYPES, getMediaKind } from '@/lib/media/upload-policy';
+import { encryptE2EEMediaFile } from '@/lib/e2ee/media-crypto';
+import type { E2EEMediaEncryption } from '@/lib/e2ee/media-format';
 
 export interface UploadedMedia {
   id: string;
   url: string;
   altText?: string | null;
   mimeType?: string | null;
+}
+
+export interface UploadedEncryptedMedia {
+  id: string;
+  url: string;
+  filename: string;
+  mimeType: (typeof ALLOWED_MEDIA_TYPES)[number];
+  size: number;
+  encryption: E2EEMediaEncryption;
 }
 
 export class MediaUploadError extends Error {
@@ -141,4 +152,42 @@ export async function uploadMediaFile(
     }
   }
   throw new MediaUploadError('Connect Stuffbox before uploading.', 'STORAGE_NOT_CONFIGURED', 409);
+}
+
+export async function uploadEncryptedMediaFile(
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<UploadedEncryptedMedia> {
+  const provider = await getStorageProvider();
+  if (provider !== 'stuffbox') {
+    throw new MediaUploadError('Connect Stuffbox before uploading.', 'STORAGE_NOT_CONFIGURED', 409);
+  }
+
+  try {
+    const privateFile = await stripPhotoVideoMetadata(file);
+    if (getMediaKind(privateFile.type) === 'unsupported') {
+      throw new MediaUploadError('This file type is not supported.', 'UNSUPPORTED_MEDIA_TYPE', 400);
+    }
+    const encrypted = await encryptE2EEMediaFile(
+      privateFile,
+      (progress) => onProgress?.(progress * 0.2),
+    );
+    const uploaded = await uploadToStuffbox(
+      encrypted.ciphertext,
+      (progress) => onProgress?.(0.2 + progress * 0.8),
+    );
+    return {
+      id: uploaded.id,
+      url: uploaded.url,
+      filename: privateFile.name,
+      mimeType: privateFile.type as (typeof ALLOWED_MEDIA_TYPES)[number],
+      size: privateFile.size,
+      encryption: encrypted.encryption,
+    };
+  } catch (error) {
+    if (error instanceof MediaMetadataError) {
+      throw new MediaUploadError(error.message, error.code);
+    }
+    throw error;
+  }
 }

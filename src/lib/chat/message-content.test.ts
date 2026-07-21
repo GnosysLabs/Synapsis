@@ -7,6 +7,7 @@ import {
   getChatMessagePreview,
   type ChatAttachment,
 } from './message-content';
+import type { E2EEMediaEncryption } from '@/lib/e2ee/media-format';
 
 function attachment(index: number): ChatAttachment {
   return {
@@ -17,12 +18,35 @@ function attachment(index: number): ChatAttachment {
   };
 }
 
+function encryptedAttachment(
+  index: number,
+): ChatAttachment & { encryption: E2EEMediaEncryption } {
+  return {
+    ...attachment(index),
+    encryption: {
+      version: 1,
+      algorithm: 'xchacha20-poly1305-ietf-chunked',
+      key: 'A'.repeat(43),
+      noncePrefix: 'B'.repeat(22),
+      mediaId: 'C'.repeat(22),
+      chunkSize: 1024 * 1024,
+      ciphertextSize: 1_040,
+    },
+  };
+}
+
 describe('encrypted chat message content', () => {
   it('round-trips text and four attachments', () => {
     const content = {
       text: 'Look at these',
       attachments: Array.from({ length: CHAT_ATTACHMENT_LIMIT }, (_, index) => attachment(index)),
     };
+
+    expect(decodeChatMessageContent(encodeChatMessageContent(content))).toEqual(content);
+  });
+
+  it('round-trips the file key and authenticated chunk descriptor inside the encrypted message', () => {
+    const content = { text: '', attachments: [encryptedAttachment(1)] };
 
     expect(decodeChatMessageContent(encodeChatMessageContent(content))).toEqual(content);
   });
@@ -80,6 +104,19 @@ describe('encrypted chat message content', () => {
         senderDisplayName: 'Friend',
         preview: 'Original',
       },
+    })).toThrow(/invalid/i);
+  });
+
+  it('rejects inconsistent encrypted attachment sizes', () => {
+    expect(() => encodeChatMessageContent({
+      text: '',
+      attachments: [{
+        ...encryptedAttachment(1),
+        encryption: {
+          ...encryptedAttachment(1).encryption,
+          ciphertextSize: 1_039,
+        },
+      }],
     })).toThrow(/invalid/i);
   });
 

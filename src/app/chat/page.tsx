@@ -23,7 +23,7 @@ import { ChatRecipientPicker } from '@/components/ChatRecipientPicker';
 import { ChatMessageAttachments } from '@/components/ChatMessageAttachments';
 import { ChatPostCard } from '@/components/ChatPostCard';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
-import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
+import { getStorageProvider, MediaUploadError, uploadEncryptedMediaFile } from '@/lib/stuffbox/browser-upload';
 import { getMediaKind } from '@/lib/media/upload-policy';
 import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 import {
@@ -92,13 +92,13 @@ type Message = Omit<ChatMessagePayload, 'content'> & {
     decryptionError: boolean;
 };
 
-interface ChatComposerAttachment extends ChatAttachment {
+type ChatComposerAttachment = ChatAttachment & {
     id: string;
     previewUrl: string;
     file?: File;
     uploadState: 'uploading' | 'ready' | 'failed';
     uploadProgress: number;
-}
+};
 
 interface PendingChatUpload {
     conversationKey: string;
@@ -368,12 +368,15 @@ export default function ChatPage() {
                 uploadProgress: 0,
             });
             try {
-                const media = await uploadMediaFile(pending.file, (progress) => {
+                const media = await uploadEncryptedMediaFile(pending.file, (progress) => {
                     updatePendingAttachment(pending.conversationKey, pending.id, { uploadProgress: progress });
                 });
                 updatePendingAttachment(pending.conversationKey, pending.id, {
                     url: media.url,
-                    mimeType: pending.file.type as ChatAttachment['mimeType'],
+                    filename: media.filename,
+                    mimeType: media.mimeType,
+                    size: media.size,
+                    encryption: media.encryption,
                     file: undefined,
                     uploadState: 'ready',
                     uploadProgress: 1,
@@ -884,6 +887,7 @@ export default function ChatPage() {
             filename: attachment.filename,
             mimeType: attachment.mimeType,
             size: attachment.size,
+            ...('encryption' in attachment ? { encryption: attachment.encryption } : {}),
         }));
         let plaintext: string;
         try {

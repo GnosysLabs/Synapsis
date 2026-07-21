@@ -2,17 +2,56 @@ import { z } from 'zod';
 
 import { ALLOWED_MEDIA_TYPES } from '@/lib/media/upload-policy';
 import { E2EE_MAX_MESSAGE_PLAINTEXT_BYTES } from '@/lib/e2ee/protocol';
+import {
+  E2EE_MEDIA_ALGORITHM,
+  E2EE_MEDIA_AUTH_TAG_BYTES,
+  E2EE_MEDIA_CHUNK_SIZE,
+  type E2EEMediaEncryption,
+} from '@/lib/e2ee/media-format';
 import { accountAddressSchema, federationMediaUrlSchema } from '@/lib/utils/federation';
 
 export const CHAT_ATTACHMENT_LIMIT = 4;
 export const CHAT_MESSAGE_TEXT_MAX_BYTES = 8_000;
 
-const chatAttachmentSchema = z.strictObject({
+const chatAttachmentFields = {
   url: federationMediaUrlSchema,
   filename: z.string().trim().min(1).max(255),
   mimeType: z.enum(ALLOWED_MEDIA_TYPES),
   size: z.number().int().positive().safe(),
+} as const;
+
+const base64UrlSchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
+const encryptedMediaSchema = z.strictObject({
+  version: z.literal(1),
+  algorithm: z.literal(E2EE_MEDIA_ALGORITHM),
+  key: base64UrlSchema.length(43),
+  noncePrefix: base64UrlSchema.length(22),
+  mediaId: base64UrlSchema.length(22),
+  chunkSize: z.literal(E2EE_MEDIA_CHUNK_SIZE),
+  ciphertextSize: z.number().int().positive().safe(),
 });
+
+const legacyChatAttachmentSchema = z.strictObject(chatAttachmentFields);
+const encryptedChatAttachmentSchema = z.strictObject({
+  ...chatAttachmentFields,
+  encryption: encryptedMediaSchema,
+}).superRefine((attachment, context) => {
+  const chunkCount = Math.ceil(attachment.size / attachment.encryption.chunkSize);
+  const expectedSize = attachment.size + chunkCount * E2EE_MEDIA_AUTH_TAG_BYTES;
+  if (!Number.isSafeInteger(expectedSize)
+    || attachment.encryption.ciphertextSize !== expectedSize) {
+    context.addIssue({
+      code: 'custom',
+      path: ['encryption', 'ciphertextSize'],
+      message: 'Encrypted attachment size is inconsistent',
+    });
+  }
+});
+
+const chatAttachmentSchema = z.union([
+  encryptedChatAttachmentSchema,
+  legacyChatAttachmentSchema,
+]);
 
 const chatReplyReferenceSchema = z.strictObject({
   messageId: z.string().uuid(),
@@ -33,6 +72,12 @@ const encryptedChatContentSchema = z.strictObject({
 
 export type ChatAttachment = z.infer<typeof chatAttachmentSchema>;
 export type ChatReplyReference = z.infer<typeof chatReplyReferenceSchema>;
+
+export function isEncryptedChatAttachment(
+  attachment: ChatAttachment,
+): attachment is ChatAttachment & { encryption: E2EEMediaEncryption } {
+  return 'encryption' in attachment;
+}
 
 export interface ChatMessageContent {
   text: string;

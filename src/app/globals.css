@@ -1664,12 +1664,103 @@ a.btn-primary:visited {
 }
 
 .chat-message-attachment {
+  position: relative;
   min-width: 0;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 10px;
   background: var(--background);
   color: var(--foreground);
+}
+
+.chat-message-attachment.encrypted {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 10px;
+  min-height: 72px;
+  padding: 11px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--background));
+}
+
+.chat-message-encrypted-icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.chat-message-encrypted-copy {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.chat-message-encrypted-copy strong,
+.chat-message-encrypted-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-message-encrypted-copy strong {
+  font-size: 12px;
+}
+
+.chat-message-encrypted-copy span {
+  color: var(--foreground-secondary);
+  font-size: 11px;
+}
+
+.chat-message-attachment.encrypted button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--background-secondary);
+  color: var(--foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.chat-message-attachment-lock {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, transparent);
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.72);
+  color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.chat-message-attachment-legacy {
+  position: absolute;
+  top: 7px;
+  right: 36px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--warning) 48%, transparent);
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.72);
+  color: var(--warning);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .chat-message-attachment.visual {

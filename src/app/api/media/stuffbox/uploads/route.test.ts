@@ -100,4 +100,20 @@ describe('POST /api/media/stuffbox/uploads', () => {
     expect(response.status).toBe(201);
     expect(createUpload).toHaveBeenCalledWith('https://stuffbox.example', 'stuffbox-token', upload);
   });
+
+  it('forwards opaque client-encrypted chat media without treating it as a public post type', async () => {
+    const upload = {
+      filename: 'encrypted-chat-media.e2ee',
+      mimeType: 'application/vnd.stuffbox.client-encrypted',
+      size: 1_040,
+    };
+    const response = await POST(new Request('https://social.example/api/media/stuffbox/uploads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(upload),
+    }));
+
+    expect(response.status).toBe(201);
+    expect(createUpload).toHaveBeenCalledWith('https://stuffbox.example', 'stuffbox-token', upload);
+  });
 });

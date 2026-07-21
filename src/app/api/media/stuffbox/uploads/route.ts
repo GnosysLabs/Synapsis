@@ -10,10 +10,11 @@ import { SignedActionError } from '@/lib/auth/verify-signature';
 import { createUpload, StuffboxApiError } from '@/lib/stuffbox/client';
 import { getStuffboxAccess } from '@/lib/stuffbox/tokens';
 import { ALLOWED_MEDIA_TYPES } from '@/lib/media/upload-policy';
+import { E2EE_MEDIA_MIME_TYPE } from '@/lib/e2ee/media-format';
 
 const uploadSchema = z.object({
   filename: z.string().min(1).max(255),
-  mimeType: z.enum(ALLOWED_MEDIA_TYPES),
+  mimeType: z.union([z.enum(ALLOWED_MEDIA_TYPES), z.literal(E2EE_MEDIA_MIME_TYPE)]),
   size: z.number().int().positive().safe(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 });
