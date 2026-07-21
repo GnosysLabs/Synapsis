@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { getProfilePath, isHandleOnNode, sameAccountHandle, useFormattedHandle } from '@/lib/utils/handle';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AvatarImage } from '@/components/AvatarImage';
+import { StuffboxBadge } from '@/components/StuffboxBadge';
 import { E2EEChatGate } from '@/components/E2EEChatGate';
 import {
     decryptStoredChatMessage,
@@ -45,6 +46,7 @@ import {
     displayAccountAddress,
     resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import type { StuffboxBadge as StuffboxBadgeValue } from '@/lib/types';
 
 interface Conversation {
     id: string;
@@ -57,6 +59,7 @@ interface Conversation {
         nodeDomain?: string | null;
         isNsfw?: boolean;
         nodeIsNsfw?: boolean;
+        stuffboxBadge?: StuffboxBadgeValue | null;
     };
     lastMessageAt: string;
     lastMessagePreview: string;
@@ -1220,6 +1223,7 @@ export default function ChatPage() {
                             nodeDomain: userAddress.homeDomain,
                             isNsfw: data.user.isNsfw,
                             nodeIsNsfw: data.user.nodeIsNsfw,
+                            stuffboxBadge: data.user.stuffboxBadge,
                         },
                         lastMessageAt: new Date().toISOString(),
                         lastMessagePreview: 'New Conversation',
@@ -1539,7 +1543,10 @@ export default function ChatPage() {
                                         minWidth: 0,
                                     }}
                                 >
-                                    <div style={{ fontWeight: 600, fontSize: '15px' }}>{selectedParticipantLabel}</div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '15px' }}>
+                                        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedParticipantLabel}</span>
+                                        <StuffboxBadge badge={selectedConversation.participant2.stuffboxBadge} />
+                                    </div>
                                     <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                         {selectedHandle}
                                     </div>
@@ -2154,10 +2161,13 @@ export default function ChatPage() {
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                                    <span style={{ fontWeight: 600, fontSize: '15px' }}>
-                                        {conv.nodeBlocked
-                                            ? displayAccountAddress(conv.participant2.handle)
-                                            : conv.participant2.displayName || conv.participant2.handle}
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, fontWeight: 600, fontSize: '15px' }}>
+                                        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {conv.nodeBlocked
+                                                ? displayAccountAddress(conv.participant2.handle)
+                                                : conv.participant2.displayName || conv.participant2.handle}
+                                        </span>
+                                        {!conv.nodeBlocked && <StuffboxBadge badge={conv.participant2.stuffboxBadge} />}
                                     </span>
                                     {conv.unreadCount > 0 && <span className="badge" style={{ background: 'var(--accent)', color: '#000', borderRadius: '10px', padding: '2px 8px', fontSize: '11px', fontWeight: 600 }}>{conv.unreadCount}</span>}
                                 </div>
