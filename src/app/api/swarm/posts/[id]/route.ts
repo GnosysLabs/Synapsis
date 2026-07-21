@@ -195,8 +195,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
           nodeIsNsfw: remoteMainAuthor ? true : nodeIsNsfw,
         },
         media: post.media?.map(m => ({
+          id: m.id,
           url: m.url,
           altText: m.altText,
+          mimeType: m.mimeType,
         })) || [],
         linkPreviewUrl: post.linkPreviewUrl,
         linkPreviewTitle: post.linkPreviewTitle,
@@ -229,8 +231,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
             nodeIsNsfw: remoteReply ? true : nodeIsNsfw,
           },
           media: r.media?.map(m => ({
+            id: m.id,
             url: m.url,
             altText: m.altText,
+            mimeType: m.mimeType,
           })) || [],
           linkPreviewUrl: r.linkPreviewUrl,
           linkPreviewTitle: r.linkPreviewTitle,

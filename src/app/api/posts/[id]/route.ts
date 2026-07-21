@@ -120,7 +120,12 @@ type SwarmDetailPostInput = {
     } | null;
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
-    media?: Array<{ id?: string; url: string; altText?: string | null }>;
+    media?: Array<{
+        id?: string;
+        url: string;
+        altText?: string | null;
+        mimeType?: string | null;
+    }>;
     linkPreviewUrl?: string | null;
     linkPreviewTitle?: string | null;
     linkPreviewDescription?: string | null;
@@ -181,6 +186,7 @@ function mapSwarmDetailPost(post: SwarmDetailPostInput, fallbackDomain: string):
             id: m.id || `swarm:${effectiveDomain}:${rawId}:media:${idx}`,
             url: m.url,
             altText: m.altText || null,
+            mimeType: m.mimeType || null,
         })) || [],
         linkPreviewUrl: post.linkPreviewUrl,
         linkPreviewTitle: post.linkPreviewTitle,
