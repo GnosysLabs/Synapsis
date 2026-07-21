@@ -294,7 +294,7 @@ export const signedAPI = {
   /**
    * Submit a report
    */
-  async report(targetType: string, targetId: string, reason: string, userDid: string, userHandle: string) {
+  async report(targetType: 'post' | 'user', targetId: string, reason: string, userDid: string, userHandle: string) {
     return signedFetch(
       '/api/reports',
       'report',

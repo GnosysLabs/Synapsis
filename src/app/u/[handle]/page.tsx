@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { CalendarIcon } from '@/components/Icons';
+import { CalendarIcon, FlagIcon } from '@/components/Icons';
 import { PostCard } from '@/components/PostCard';
 import { User, Post } from '@/lib/types';
 import AutoTextarea from '@/components/AutoTextarea';
@@ -81,7 +81,7 @@ export default function ProfilePage() {
         signUserAction,
         updateUserProfile,
     } = useAuth();
-    const { showAlert } = useAppDialog();
+    const { showAlert, showPrompt } = useAppDialog();
 
     const [user, setUser] = useState<User | null>(null);
     const userFullHandle = useFormattedHandle(user?.handle || '');
@@ -128,6 +128,7 @@ export default function ProfilePage() {
     const isSavingProfileMedia = Object.values(mediaSaveStatus).includes('saving');
     const [isBlocked, setIsBlocked] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
+    const [reporting, setReporting] = useState(false);
     useEffect(() => {
         setIsEditing(false);
         setSaveError(null);
@@ -137,6 +138,8 @@ export default function ProfilePage() {
         setRepliesPosts([]);
         setFollowStatusLoading(true);
         setFollowPending(false);
+        setShowMenu(false);
+        setReporting(false);
 
         // Get profile
         fetch(userApiPath)
@@ -454,6 +457,83 @@ export default function ProfilePage() {
                 setIsFollowing(false);
             }
             setShowMenu(false);
+        }
+    };
+
+    const handleReport = async () => {
+        if (!authenticatedViewer || !user || reporting) return;
+
+        if (!isIdentityUnlocked || !did || !currentHandle) {
+            setShowMenu(false);
+            await showAlert({
+                title: 'Session expired',
+                message: 'Please log in again before reporting this user.',
+            });
+            return;
+        }
+
+        const reason = await showPrompt({
+            title: 'Report user',
+            message: `Tell the moderation team what is wrong with ${displayAccountAddress(user.handle)}.`,
+            inputLabel: 'Reason for reporting',
+            placeholder: 'Describe the issue',
+            confirmLabel: 'Submit report',
+            required: true,
+        });
+        const trimmedReason = reason?.trim() || '';
+
+        if (!trimmedReason) {
+            setShowMenu(false);
+            return;
+        }
+        if (trimmedReason.length < 3 || trimmedReason.length > 500) {
+            setShowMenu(false);
+            await showAlert({
+                title: 'Report not submitted',
+                message: 'The report reason must be between 3 and 500 characters.',
+            });
+            return;
+        }
+
+        setReporting(true);
+        try {
+            // Remote profile IDs are view-local synthetic values. Their canonical
+            // account address is the durable target understood by this node.
+            const targetId = user.isRemote || user.isSwarm ? user.handle : user.id;
+            const res = await signedAPI.report(
+                'user',
+                targetId,
+                trimmedReason,
+                did,
+                currentHandle,
+            );
+            const data = await res.json().catch(() => null) as { error?: string } | null;
+            setShowMenu(false);
+
+            if (!res.ok) {
+                await showAlert({
+                    title: 'Report failed',
+                    message: data?.error || 'The report could not be submitted. Please try again.',
+                    tone: 'danger',
+                });
+                return;
+            }
+
+            await showAlert({
+                title: 'Report submitted',
+                message: 'Thank you. The moderation team can now review this user.',
+            });
+        } catch (error) {
+            setShowMenu(false);
+            await showAlert({
+                title: 'Report failed',
+                message: error instanceof Error
+                    ? error.message
+                    : 'The report could not be submitted. Please try again.',
+                tone: 'danger',
+            });
+        } finally {
+            setReporting(false);
         }
     };
 
@@ -819,9 +899,13 @@ export default function ProfilePage() {
                                     )}
                                     <div style={{ position: 'relative' }}>
                                         <button
+                                            type="button"
                                             className="btn btn-ghost"
                                             onClick={() => setShowMenu(!showMenu)}
                                             style={{ padding: '8px' }}
+                                            aria-label="Profile options"
+                                            aria-haspopup="menu"
+                                            aria-expanded={showMenu}
                                         >
                                             <MoreHorizontal size={20} />
                                         </button>
@@ -835,7 +919,7 @@ export default function ProfilePage() {
                                                     }}
                                                     onClick={() => setShowMenu(false)}
                                                 />
-                                                <div style={{
+                                                <div role="menu" aria-label="Profile options" style={{
                                                     position: 'absolute',
                                                     right: 0,
                                                     top: '100%',
@@ -848,6 +932,8 @@ export default function ProfilePage() {
                                                     overflow: 'hidden',
                                                 }}>
                                                     <button
+                                                        type="button"
+                                                        role="menuitem"
                                                         onClick={handleBlock}
                                                         style={{
                                                             width: '100%',
@@ -861,6 +947,31 @@ export default function ProfilePage() {
                                                         }}
                                                     >
                                                         {isBlocked ? 'Unblock user' : 'Block user'}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        role="menuitem"
+                                                        onClick={handleReport}
+                                                        disabled={reporting}
+                                                        aria-busy={reporting}
+                                                        style={{
+                                                            width: '100%',
+                                                            padding: '12px 16px',
+                                                            background: 'none',
+                                                            border: 'none',
+                                                            borderTop: '1px solid var(--border)',
+                                                            textAlign: 'left',
+                                                            cursor: reporting ? 'default' : 'pointer',
+                                                            color: 'var(--error)',
+                                                            fontSize: '14px',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '10px',
+                                                            opacity: reporting ? 0.65 : 1,
+                                                        }}
+                                                    >
+                                                        <FlagIcon />
+                                                        {reporting ? 'Reporting…' : 'Report user'}
                                                     </button>
                                                 </div>
                                             </>

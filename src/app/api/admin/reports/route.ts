@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/db';
 import { requireAdmin } from '@/lib/auth/admin';
+import { parseAccountAddress } from '@/lib/identity/account-address';
 
 export async function GET(request: Request) {
     try {
@@ -27,9 +28,13 @@ export async function GET(request: Request) {
         const postIds = reportRows
             .filter((report) => report.targetType === 'post')
             .map((report) => report.targetId);
-        const userIds = reportRows
+        const userTargetIds = reportRows
             .filter((report) => report.targetType === 'user')
             .map((report) => report.targetId);
+        const userIds = userTargetIds.filter((targetId) => !parseAccountAddress(targetId));
+        const userHandles = userTargetIds
+            .map((targetId) => parseAccountAddress(targetId)?.canonical ?? null)
+            .filter((handle): handle is string => Boolean(handle));
 
         const postTargetsRaw = postIds.length
             ? await db.query.posts.findMany({
@@ -37,11 +42,15 @@ export async function GET(request: Request) {
                 with: { author: true },
             })
             : [];
-        const userTargetsRaw = userIds.length
-            ? await db.query.users.findMany({
-                where: { id: { in: userIds } },
-            })
-            : [];
+        const [userTargetsById, userTargetsByHandle] = await Promise.all([
+            userIds.length
+                ? db.query.users.findMany({ where: { id: { in: userIds } } })
+                : [],
+            userHandles.length
+                ? db.query.users.findMany({ where: { handle: { in: userHandles } } })
+                : [],
+        ]);
+        const userTargetsRaw = [...userTargetsById, ...userTargetsByHandle];
 
         const postTargets = postTargetsRaw.map((post) => {
             const author = post.author as { id: string; handle: string; displayName: string | null };
@@ -64,10 +73,15 @@ export async function GET(request: Request) {
             displayName: user.displayName,
             isSuspended: user.isSuspended,
             isSilenced: user.isSilenced,
+            isRemote: !user.isLocalAccount,
         }));
 
         const postMap = new Map(postTargets.map((post) => [post.id, post]));
-        const userMap = new Map(userTargets.map((user) => [user.id, user]));
+        const userMap = new Map<string, (typeof userTargets)[number]>();
+        for (const user of userTargets) {
+            userMap.set(user.id, user);
+            userMap.set(user.handle, user);
+        }
 
         type UserInfo = { id: string; handle: string };
         
@@ -90,7 +104,18 @@ export async function GET(request: Request) {
                 target:
                     report.targetType === 'post'
                         ? postMap.get(report.targetId) || null
-                        : userMap.get(report.targetId) || null,
+                        : userMap.get(report.targetId)
+                            || (() => {
+                                const address = parseAccountAddress(report.targetId);
+                                return address ? {
+                                    id: address.canonical,
+                                    handle: address.canonical,
+                                    displayName: null,
+                                    isSuspended: false,
+                                    isSilenced: false,
+                                    isRemote: true,
+                                } : null;
+                            })(),
             };
         });
 

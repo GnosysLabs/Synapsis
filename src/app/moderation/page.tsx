@@ -12,6 +12,7 @@ type AdminUser = {
     email?: string | null;
     isSuspended: boolean;
     isSilenced: boolean;
+    isRemote?: boolean;
     suspensionReason?: string | null;
     silenceReason?: string | null;
     createdAt: string;
@@ -403,7 +404,10 @@ export default function ModerationPage() {
                                                         borderRadius: '8px',
                                                         fontSize: '14px',
                                                     }}>
-                                                        User: @{report.target.handle}
+                                                        User:{' '}
+                                                        <Link href={getProfilePath(report.target.handle)} style={{ fontWeight: 600 }}>
+                                                            @{report.target.handle}
+                                                        </Link>
                                                     </div>
                                                 )}
                                             </div>
