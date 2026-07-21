@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/synapsis}"
-DATA_DIR="${DATA_DIR:-/var/lib/synapsis}"
-ENV_FILE="${ENV_FILE:-/etc/synapsis.env}"
-RELEASES_DIR="${RELEASES_DIR:-${APP_DIR}-releases}"
-CURRENT_LINK="${CURRENT_LINK:-${APP_DIR}-current}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PURGE_DATA=0
+
+while (($#)); do
+  case "$1" in
+    --instance)
+      [[ $# -ge 2 ]] || { echo "--instance requires a name." >&2; exit 2; }
+      INSTANCE="$2"
+      shift 2
+      ;;
+    --purge-data)
+      PURGE_DATA=1
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+source "$SCRIPT_DIR/instance-config.sh"
 
 if [[ ${EUID} -ne 0 ]]; then
   echo "Run this uninstaller as root." >&2
@@ -13,8 +30,7 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 for removal_path in "$APP_DIR" "$RELEASES_DIR" "$DATA_DIR"; do
-  if [[ "$removal_path" != /* \
-    || "$removal_path" == "/" \
+  if [[ "$removal_path" == "/" \
     || "$removal_path" == "/opt" \
     || "$removal_path" == "/var" \
     || "$removal_path" == "/var/lib" ]]; then
@@ -23,28 +39,33 @@ for removal_path in "$APP_DIR" "$RELEASES_DIR" "$DATA_DIR"; do
   fi
 done
 
-systemctl disable --now synapsis-update.timer 2>/dev/null || true
-systemctl disable --now synapsis-update.path 2>/dev/null || true
-systemctl stop synapsis-update.service 2>/dev/null || true
-systemctl stop synapsis-maintenance.service 2>/dev/null || true
-systemctl disable --now synapsis 2>/dev/null || true
-rm -f /etc/systemd/system/synapsis.service \
-  /etc/systemd/system/synapsis-maintenance.service \
-  /etc/systemd/system/synapsis-update.service \
-  /etc/systemd/system/synapsis-update.timer \
-  /etc/systemd/system/synapsis-update.path
+systemctl disable --now "${UPDATE_TIMER_NAME}.timer" 2>/dev/null || true
+systemctl disable --now "${UPDATE_PATH_NAME}.path" 2>/dev/null || true
+systemctl stop "${UPDATE_SERVICE_NAME}.service" 2>/dev/null || true
+systemctl disable --now "${SERVICE_NAME}.service" 2>/dev/null || true
+systemctl stop "${MAINTENANCE_SERVICE_NAME}.service" 2>/dev/null || true
+if [[ -n "$INSTANCE" ]]; then
+  systemctl disable --now "synapsis-update@${INSTANCE}.path" 2>/dev/null || true
+fi
+
+rm -f -- \
+  "/etc/systemd/system/${SERVICE_NAME}.service" \
+  "/etc/systemd/system/${MAINTENANCE_SERVICE_NAME}.service" \
+  "/etc/systemd/system/${UPDATE_SERVICE_NAME}.service" \
+  "/etc/systemd/system/${UPDATE_TIMER_NAME}.timer" \
+  "/etc/systemd/system/${UPDATE_PATH_NAME}.path"
 systemctl daemon-reload
-rm -f "$DATA_DIR/update-requested"
+rm -f -- "$DATA_DIR/update-requested"
 if [[ -L "$CURRENT_LINK" ]]; then
   rm -f -- "$CURRENT_LINK"
 fi
 rm -rf -- "$APP_DIR" "$RELEASES_DIR"
 
-if [[ "${1:-}" == "--purge-data" ]]; then
-  rm -rf "$DATA_DIR"
-  rm -f "$ENV_FILE"
-  userdel synapsis 2>/dev/null || true
-  echo "Synapsis and its database were removed."
+if [[ "$PURGE_DATA" == "1" ]]; then
+  rm -rf -- "$DATA_DIR"
+  rm -f -- "$ENV_FILE"
+  userdel "$SERVICE_USER" 2>/dev/null || true
+  echo "Removed Synapsis ${INSTANCE:-primary instance}, including its database and environment file."
 else
-  echo "Synapsis was removed; $DATA_DIR and $ENV_FILE were preserved."
+  echo "Removed Synapsis ${INSTANCE:-primary instance}. Preserved $DATA_DIR and $ENV_FILE."
 fi

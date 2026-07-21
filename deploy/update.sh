@@ -1,53 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/synapsis}"
-DATA_DIR="${DATA_DIR:-/var/lib/synapsis}"
-ENV_FILE="${ENV_FILE:-/etc/synapsis.env}"
-BRANCH="${BRANCH:-main}"
-SERVICE_USER="${SERVICE_USER:-synapsis}"
-SERVICE_GROUP="${SERVICE_GROUP:-$SERVICE_USER}"
-SERVICE_NAME="${SERVICE_NAME:-synapsis}"
-MAINTENANCE_SERVICE_NAME="${MAINTENANCE_SERVICE_NAME:-synapsis-maintenance}"
-RELEASES_DIR="${RELEASES_DIR:-${APP_DIR}-releases}"
-CURRENT_LINK="${CURRENT_LINK:-${APP_DIR}-current}"
-PREVIOUS_LINK="${PREVIOUS_LINK:-$DATA_DIR/previous-release}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/instance-config.sh"
+
 DEPLOYED_COMMIT_FILE="$DATA_DIR/deployed-commit"
 UPDATE_REQUEST_FILE="$DATA_DIR/update-requested"
 HEALTHCHECK_TIMEOUT_SECONDS="${HEALTHCHECK_TIMEOUT_SECONDS:-60}"
 CAPTURE_MAINTENANCE_BRANDING="${CAPTURE_MAINTENANCE_BRANDING:-1}"
-
-if [[ -z "${INSTALL_UPDATE_UNITS+x}" ]]; then
-  if [[ "$APP_DIR" == "/opt/synapsis" && "$SERVICE_NAME" == "synapsis" ]]; then
-    INSTALL_UPDATE_UNITS=1
-  else
-    INSTALL_UPDATE_UNITS=0
-  fi
-fi
+INSTALL_UPDATE_UNITS="${INSTALL_UPDATE_UNITS:-1}"
 
 if [[ ${EUID} -ne 0 && "${SYNAPSIS_ALLOW_NON_ROOT_FOR_TESTS:-0}" != "1" ]]; then
   echo "Run this updater as root." >&2
-  exit 1
-fi
-
-for path_name in APP_DIR DATA_DIR ENV_FILE RELEASES_DIR CURRENT_LINK PREVIOUS_LINK; do
-  path_value="${!path_name}"
-  if [[ "$path_value" != /* || "$path_value" == "/" ]]; then
-    echo "$path_name must be a specific absolute path." >&2
-    exit 1
-  fi
-done
-
-if [[ ! "$SERVICE_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
-  echo "Invalid SERVICE_USER." >&2
-  exit 1
-fi
-if [[ ! "$SERVICE_GROUP" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
-  echo "Invalid SERVICE_GROUP." >&2
-  exit 1
-fi
-if [[ ! "$SERVICE_NAME" =~ ^[a-zA-Z0-9_.@-]+$ || ! "$MAINTENANCE_SERVICE_NAME" =~ ^[a-zA-Z0-9_.@-]+$ ]]; then
-  echo "Invalid systemd service name." >&2
   exit 1
 fi
 
@@ -113,20 +77,27 @@ atomic_symlink() {
 install_update_units() {
   [[ "$INSTALL_UPDATE_UNITS" == "1" ]] || return 0
 
-  local units_changed=0
-  local unit
-  for unit in synapsis.service synapsis-maintenance.service synapsis-update.service synapsis-update.timer synapsis-update.path; do
-    if ! cmp -s "$APP_DIR/deploy/$unit" "/etc/systemd/system/$unit"; then
-      install -m 0644 "$APP_DIR/deploy/$unit" "/etc/systemd/system/$unit"
-      units_changed=1
-    fi
-  done
+  env \
+    INSTANCE="$INSTANCE" \
+    APP_DIR="$APP_DIR" \
+    DATA_DIR="$DATA_DIR" \
+    ENV_FILE="$ENV_FILE" \
+    RELEASES_DIR="$RELEASES_DIR" \
+    CURRENT_LINK="$CURRENT_LINK" \
+    PREVIOUS_LINK="$PREVIOUS_LINK" \
+    REPO_URL="$REPO_URL" \
+    BRANCH="$BRANCH" \
+    SERVICE_USER="$SERVICE_USER" \
+    SERVICE_GROUP="$SERVICE_GROUP" \
+    SERVICE_NAME="$SERVICE_NAME" \
+    MAINTENANCE_SERVICE_NAME="$MAINTENANCE_SERVICE_NAME" \
+    UPDATE_SERVICE_NAME="$UPDATE_SERVICE_NAME" \
+    UPDATE_TIMER_NAME="$UPDATE_TIMER_NAME" \
+    UPDATE_PATH_NAME="$UPDATE_PATH_NAME" \
+    bash "$APP_DIR/deploy/install-units.sh"
 
-  if [[ "$units_changed" == "1" ]]; then
-    systemctl daemon-reload
-  fi
   local trigger
-  for trigger in synapsis-update.timer synapsis-update.path; do
+  for trigger in "${UPDATE_TIMER_NAME}.timer" "${UPDATE_PATH_NAME}.path"; do
     if ! systemctl is-enabled --quiet "$trigger"; then
       systemctl enable "$trigger"
     fi
@@ -250,6 +221,7 @@ if [[ "${SYNAPSIS_UPDATER_TARGET:-}" != "$target_commit" ]]; then
     exit 1
   fi
   exec env \
+    INSTANCE="$INSTANCE" \
     APP_DIR="$APP_DIR" \
     DATA_DIR="$DATA_DIR" \
     ENV_FILE="$ENV_FILE" \
@@ -259,6 +231,9 @@ if [[ "${SYNAPSIS_UPDATER_TARGET:-}" != "$target_commit" ]]; then
     SERVICE_GROUP="$SERVICE_GROUP" \
     SERVICE_NAME="$SERVICE_NAME" \
     MAINTENANCE_SERVICE_NAME="$MAINTENANCE_SERVICE_NAME" \
+    UPDATE_SERVICE_NAME="$UPDATE_SERVICE_NAME" \
+    UPDATE_TIMER_NAME="$UPDATE_TIMER_NAME" \
+    UPDATE_PATH_NAME="$UPDATE_PATH_NAME" \
     RELEASES_DIR="$RELEASES_DIR" \
     CURRENT_LINK="$CURRENT_LINK" \
     PREVIOUS_LINK="$PREVIOUS_LINK" \

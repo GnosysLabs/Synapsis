@@ -31,7 +31,7 @@ Prerequisites:
 Install from a checkout:
 
 ```bash
-sudo bash deploy/install.sh
+sudo bash deploy/install.sh --domain social.example.com --admin-email you@example.com
 sudo nano /etc/synapsis.env
 sudo bash /opt/synapsis/deploy/update.sh
 ```
@@ -49,11 +49,33 @@ The installer creates:
 - Mandatory update timer: `synapsis-update.timer`
 - Admin update trigger: `synapsis-update.path`
 
+To install a second or later node on the same server, give it an instance name,
+unique port, and domain:
+
+```bash
+sudo bash deploy/install.sh \
+  --instance onlynerds \
+  --port 43822 \
+  --domain onlynerds.xyz \
+  --admin-email you@example.com
+```
+
+The installer derives an isolated user, checkout, data directory, environment,
+active-release link, app service, maintenance service, updater, timer, and admin
+update trigger from the instance name. For the example above these are rooted at
+`/opt/synapsis-onlynerds`, `/var/lib/synapsis-onlynerds`, and
+`/etc/synapsis-onlynerds.env`, with systemd units named
+`synapsis-onlynerds*`. Every generated updater invokes the repository's shared
+atomic updater and refreshes its own generated units on later releases; sibling
+instances do not require copied scripts or hand-authored systemd files.
+
 Every node pins `origin` to [`GnosysLabs/Synapsis`](https://github.com/GnosysLabs/Synapsis) on GitHub. The first automatic check becomes eligible five minutes after boot and receives up to 30 minutes of random delay. After a check finishes, the next becomes eligible 15 minutes later and receives the same random delay. When a new commit is available, Synapsis fast-forwards the source checkout and builds a versioned candidate—including dependency installation and an isolated build-database migration—while the current release remains online. Only then does it enter maintenance mode, replace the single `backups/latest` database snapshot, migrate the real database, atomically switch the active-release symlink, and restart. An admin can skip the wait with **Update now** in Admin Settings. The repository commit count is shown in the Network Info card; `/api/version` exposes both that number and the full deployed commit hash.
 
 The maintenance page is now limited to the database migration and release switch rather than the full install/build. If the new release fails its local `/api/health` check, the updater switches back to the previous release automatically; if that release also cannot start, it leaves the branded maintenance page active instead of exposing a gateway error. A failed candidate is not activated repeatedly on every timer tick. The active and immediately previous releases are retained, and older release directories are removed after a successful update.
 
-Custom instances can use the same updater instead of maintaining a fork. Set `APP_DIR`, `DATA_DIR`, `ENV_FILE`, `SERVICE_USER`, `SERVICE_GROUP`, `SERVICE_NAME`, `MAINTENANCE_SERVICE_NAME`, `CURRENT_LINK`, and `RELEASES_DIR`, then invoke `$APP_DIR/deploy/update.sh`. Set `INSTALL_UPDATE_UNITS=0` when the instance owns custom systemd units; its application service must run from `$CURRENT_LINK` with `npm run start:server`.
+Operators with nonstandard filesystem conventions may still override `APP_DIR`,
+`DATA_DIR`, `ENV_FILE`, `SERVICE_USER`, `SERVICE_GROUP`, and the service-name
+variables. The same generated-unit and atomic-update path remains the default.
 
 For a node installed before the GitHub updater migration (or before automatic updates existed), bootstrap it once with:
 
@@ -63,17 +85,18 @@ sudo -u synapsis git -C /opt/synapsis pull --ff-only
 sudo /opt/synapsis/deploy/update.sh
 ```
 
-Additional instances use an instance-specific request path and path unit. For
-example, an `rprh` installation whose updater is
-`synapsis-rprh-update.service` and whose data is in
-`/var/lib/synapsis-rprh` should install and enable:
+Legacy sibling instances that predate generated units can be adopted once
+without recloning, rebuilding, or replacing their data:
 
 ```bash
-sudo install -m 0644 /opt/synapsis-rprh/deploy/synapsis-update@.path /etc/systemd/system/synapsis-update@.path
-sudo install -m 0644 /opt/synapsis-rprh/deploy/synapsis-update-request@.service /etc/systemd/system/synapsis-update-request@.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now synapsis-update@rprh.path
+sudo bash /opt/synapsis-onlynerds/deploy/install.sh \
+  --instance onlynerds \
+  --adopt-existing
 ```
+
+Adoption preserves the running process and existing environment, installs the
+same managed units a fresh sibling receives, and lets its next update build
+beside the live release.
 
 Useful commands:
 
@@ -85,6 +108,7 @@ sudo journalctl -u synapsis -f
 sudo journalctl -u synapsis-update -f
 sudo /opt/synapsis/deploy/update.sh
 sudo /opt/synapsis/deploy/uninstall.sh
+sudo /opt/synapsis-onlynerds/deploy/uninstall.sh --instance onlynerds
 ```
 
 Uninstalling preserves the database and environment by default. Pass `--purge-data` only when you intentionally want to remove both.

@@ -45,6 +45,7 @@ prepare_fixture() {
   git -C "$SOURCE_DIR" config user.name 'Synapsis updater test'
   git -C "$SOURCE_DIR" config user.email 'updater-test@synapsis.invalid'
   cp "$UPDATE_SCRIPT" "$SOURCE_DIR/deploy/update.sh"
+  cp "$SCRIPT_DIR/instance-config.sh" "$SOURCE_DIR/deploy/instance-config.sh"
   printf '{"name":"fixture","scripts":{"db:migrate":"true","build":"true","start:server":"true"}}\n' > "$SOURCE_DIR/package.json"
   printf 'old\n' > "$SOURCE_DIR/VERSION"
   git -C "$SOURCE_DIR" add .
