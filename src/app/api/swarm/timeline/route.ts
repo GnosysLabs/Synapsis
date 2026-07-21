@@ -49,6 +49,8 @@ export interface SwarmPost {
     displayName: string;
     avatarUrl?: string;
     isNsfw: boolean;
+    nodeIsNsfw?: boolean;
+    nodeDomain?: string;
     stuffboxBadge?: User['stuffboxBadge'];
   };
   nodeDomain: string;
@@ -197,6 +199,8 @@ function buildSwarmPost(
       displayName: post.authorDisplayName || post.authorHandle,
       avatarUrl: post.authorAvatarUrl || undefined,
       isNsfw: post.authorIsNsfw,
+      nodeIsNsfw,
+      nodeDomain,
       stuffboxBadge: stuffboxBadgeFromStoredUser(post),
     },
     nodeDomain,

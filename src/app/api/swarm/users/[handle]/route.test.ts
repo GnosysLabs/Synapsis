@@ -126,8 +126,25 @@ describe('GET /api/swarm/users/[handle] read authorization', () => {
     const body = await response.json();
 
     expect(body.profile.avatarUrl).toContain('private-avatar.jpg');
+    expect(body.profile.nodeIsNsfw).toBe(true);
     expect(body.posts[0].content).toBe('PRIVATE FEDERATION BODY');
+    expect(body.posts[0].nodeIsNsfw).toBe(true);
+    expect(body.posts[0].author.nodeIsNsfw).toBe(true);
     expect(body.posts[0].media[0].url).toContain('private-video.mp4');
+  });
+
+  it('includes an explicit safe node classification on every local post', async () => {
+    mocks.localNodeIsNsfw.mockResolvedValue(false);
+
+    const response = await GET(
+      new Request('https://adult.example/api/swarm/users/adult') as never,
+      { params: Promise.resolve({ handle: 'adult' }) },
+    );
+    const body = await response.json();
+
+    expect(body.profile.nodeIsNsfw).toBe(false);
+    expect(body.posts[0].nodeIsNsfw).toBe(false);
+    expect(body.posts[0].author.nodeIsNsfw).toBe(false);
   });
 
   it('rejects qualified cached-remote handles instead of laundering them as local', async () => {

@@ -149,6 +149,11 @@ function applyAuthoritativeNodeClassification(
   return {
     ...post,
     nodeIsNsfw: effectiveNodeIsNsfw as boolean,
+    author: {
+      ...post.author,
+      nodeIsNsfw: effectiveNodeIsNsfw,
+      nodeDomain: post.nodeDomain,
+    },
     repostOf: post.repostOf
       ? applyAuthoritativeNodeClassification(post.repostOf, effectiveNodeIsNsfw)
       : post.repostOf,

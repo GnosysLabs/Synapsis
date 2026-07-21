@@ -26,6 +26,7 @@ import {
   LEGACY_FEDERATED_ACTION_PROTOCOL,
 } from './federated-action';
 import {
+  applyAuthenticatedProfileNodeClassification,
   parseRemotePostDetailResponse,
   parseRemoteProfileResponse,
   type RemoteSwarmPost,
@@ -580,6 +581,8 @@ export async function cacheSwarmUserPosts(
         displayName: post.author.displayName || post.author.handle,
         avatarUrl: post.author.avatarUrl || undefined,
         isNsfw: post.author.isNsfw ?? profile.isNsfw,
+        nodeIsNsfw: post.author.nodeIsNsfw ?? profile.nodeIsNsfw,
+        nodeDomain: normalizeNodeDomain(domain),
         stuffboxBadge: post.author.stuffboxBadge as StuffboxBadge | null | undefined,
       },
       nodeDomain: normalizeNodeDomain(domain),
@@ -603,7 +606,8 @@ export async function cacheSwarmUserPosts(
       linkPreviewMedia: post.linkPreviewMedia || undefined,
     });
 
-    for (const post of profileData.posts) {
+    for (const rawPost of profileData.posts) {
+      const post = applyAuthenticatedProfileNodeClassification(rawPost, profile.nodeIsNsfw);
       const apId = `swarm:${canonicalDomain}:${post.id}`;
       const snapshot = toTimelinePost(post);
       const values = {

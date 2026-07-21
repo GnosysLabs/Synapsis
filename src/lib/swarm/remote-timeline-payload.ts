@@ -41,6 +41,8 @@ const authorSchema = z.object({
   displayName: z.string().min(1).max(50),
   avatarUrl: federationMediaUrlSchema.optional(),
   isNsfw: z.boolean().optional(),
+  nodeIsNsfw: z.boolean().optional(),
+  nodeDomain: z.string().min(1).max(253).nullish(),
   stuffboxBadge: stuffboxBadgeSchema.nullish(),
 });
 
@@ -130,6 +132,10 @@ function validatePostOriginAndTime(
   if (!authorAddress || authorAddress.homeDomain !== sourceDomain) {
     throw new Error('Remote timeline attempted a cross-node author claim');
   }
+  if (post.author.nodeDomain
+    && canonicalAccountHomeDomain(post.author.nodeDomain) !== sourceDomain) {
+    throw new Error('Remote timeline attempted a cross-node author origin claim');
+  }
   const maximumTimestamp = Date.now() + 5 * 60 * 1_000;
   if (new Date(post.createdAt).getTime() > maximumTimestamp
     || (post.feedActivityAt && new Date(post.feedActivityAt).getTime() > maximumTimestamp)) {
@@ -216,6 +222,7 @@ export function parseRemoteTimelineResponse(
     author: {
       ...post.author,
       handle: resolveAccountAddress(post.author.handle, sourceDomain)!.canonical,
+      nodeDomain: sourceDomain,
     },
     repostedBy: normalizeReposters(post.repostedBy, sourceDomain),
     repostOf: post.repostOf
@@ -225,6 +232,7 @@ export function parseRemoteTimelineResponse(
         author: {
           ...post.repostOf.author,
           handle: resolveAccountAddress(post.repostOf.author.handle, sourceDomain)!.canonical,
+          nodeDomain: sourceDomain,
         },
         repostedBy: normalizeReposters(post.repostOf.repostedBy, sourceDomain),
       }
@@ -240,6 +248,7 @@ export function parseRemoteTimelineResponse(
         author: {
           ...change.post.author,
           handle: resolveAccountAddress(change.post.author.handle, sourceDomain)!.canonical,
+          nodeDomain: sourceDomain,
         },
         repostedBy: normalizeReposters(change.post.repostedBy, sourceDomain),
         repostOf: change.post.repostOf
@@ -252,6 +261,7 @@ export function parseRemoteTimelineResponse(
                   change.post.repostOf.author.handle,
                   sourceDomain,
                 )!.canonical,
+                nodeDomain: sourceDomain,
               },
               repostedBy: normalizeReposters(change.post.repostOf.repostedBy, sourceDomain),
             }

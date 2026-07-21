@@ -50,6 +50,7 @@ export interface SwarmUserPost {
   repostsCount: number;
   repliesCount: number;
   nodeDomain?: string;
+  nodeIsNsfw?: boolean;
   author?: {
     handle: string;
     displayName?: string;
@@ -123,6 +124,7 @@ function mapLocalPostToSwarmPost(post: LocalPostWithRelations, nodeDomain: strin
     repostsCount: post.repostsCount,
     repliesCount: post.repliesCount,
     nodeDomain,
+    nodeIsNsfw,
     author: post.author ? {
       handle: post.author.handle,
       displayName: post.author.displayName || post.author.handle,
@@ -168,6 +170,7 @@ function mapUserSwarmRepostToSwarmPost(
     repostsCount: 0,
     repliesCount: 0,
     nodeDomain,
+    nodeIsNsfw,
     author: {
       handle: author.handle,
       displayName: author.displayName || author.handle,

@@ -6,7 +6,13 @@ function post(overrides: Record<string, unknown> = {}) {
     id: 'post-1',
     content: 'Hello',
     createdAt: new Date().toISOString(),
-    author: { handle: 'alice', displayName: 'Alice', isNsfw: false },
+    author: {
+      handle: 'alice',
+      displayName: 'Alice',
+      isNsfw: false,
+      nodeIsNsfw: false,
+      nodeDomain: 'source.social',
+    },
     nodeDomain: 'source.social',
     nodeIsNsfw: false,
     isNsfw: false,
@@ -26,12 +32,23 @@ describe('remote timeline payload validation', () => {
     }, 'source.social');
     expect(result.posts).toHaveLength(1);
     expect(result.posts[0].author.handle).toBe('alice@source.social');
+    expect(result.posts[0].author.nodeIsNsfw).toBe(false);
+    expect(result.posts[0].author.nodeDomain).toBe('source.social');
   });
 
   it('rejects cross-domain identity claims and future ranking timestamps', () => {
     expect(() => parseRemoteTimelineResponse({
       posts: [post({ nodeDomain: 'victim.social' })],
     }, 'source.social')).toThrow(/different node origin/);
+    expect(() => parseRemoteTimelineResponse({
+      posts: [post({
+        author: {
+          handle: 'alice',
+          displayName: 'Alice',
+          nodeDomain: 'victim.social',
+        },
+      })],
+    }, 'source.social')).toThrow(/author origin/);
     expect(() => parseRemoteTimelineResponse({
       posts: [post({ createdAt: new Date(Date.now() + 10 * 60 * 1_000).toISOString() })],
     }, 'source.social')).toThrow(/future-dated/);

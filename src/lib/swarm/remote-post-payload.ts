@@ -152,6 +152,36 @@ export interface RemoteSwarmProfileResponse {
   timestamp: string;
 }
 
+/**
+ * A signed profile response is an exact-origin statement about both the user
+ * and the posts returned with it. Apply its explicit node classification to
+ * every source-owned actor in that response. Generic post parsing remains
+ * fail-closed when no authenticated profile classification is available.
+ */
+export function applyAuthenticatedProfileNodeClassification(
+  post: RemoteSwarmPost,
+  nodeIsNsfw: boolean,
+): RemoteSwarmPost {
+  return {
+    ...post,
+    nodeIsNsfw,
+    author: {
+      ...post.author,
+      nodeIsNsfw,
+    },
+    repostOf: post.repostOf
+      ? applyAuthenticatedProfileNodeClassification(post.repostOf, nodeIsNsfw)
+      : post.repostOf,
+    replyTo: post.replyTo
+      ? applyAuthenticatedProfileNodeClassification(post.replyTo, nodeIsNsfw)
+      : post.replyTo,
+    repostedBy: post.repostedBy?.map((reposter) => ({
+      ...reposter,
+      nodeIsNsfw,
+    })),
+  };
+}
+
 function assertNotFuture(value: string, label: string): void {
   if (new Date(value).getTime() > Date.now() + MAX_FUTURE_SKEW_MS) {
     throw new Error(`${label} is future-dated`);

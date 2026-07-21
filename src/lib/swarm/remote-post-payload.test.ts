@@ -4,6 +4,7 @@ import { generateDID } from '@/lib/crypto/did-key';
 import { canonicalize } from '@/lib/crypto/user-signing';
 import { createRelayedReplyProvenance } from './reply-provenance';
 import {
+  applyAuthenticatedProfileNodeClassification,
   parseRemotePostDetailResponse,
   parseRemotePostListResponse,
   parseRemoteProfileResponse,
@@ -127,6 +128,31 @@ describe('remote profile and post validation', () => {
     const result = parseRemoteProfileResponse(profileResponse(), 'source.social', 'alice', 25);
     expect(result.posts).toHaveLength(1);
     expect(result.profile.publicKey).toBe(signingKey);
+  });
+
+  it('uses an authenticated safe profile classification for its post and author', () => {
+    const parsed = parseRemoteProfileResponse(profileResponse([
+      post({
+        nodeIsNsfw: undefined,
+        author: {
+          handle: 'alice',
+          displayName: 'Alice',
+          isNsfw: false,
+          nodeIsNsfw: undefined,
+          nodeDomain: 'source.social',
+        },
+      }),
+    ]), 'source.social', 'alice');
+
+    expect(parsed.posts[0].nodeIsNsfw).toBe(true);
+    expect(parsed.posts[0].author.nodeIsNsfw).toBe(true);
+
+    const classified = applyAuthenticatedProfileNodeClassification(
+      parsed.posts[0],
+      parsed.profile.nodeIsNsfw,
+    );
+    expect(classified.nodeIsNsfw).toBe(false);
+    expect(classified.author.nodeIsNsfw).toBe(false);
   });
 
   it('drops cross-node post attribution and deeper recursive payloads', () => {
