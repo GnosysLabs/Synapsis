@@ -1,7 +1,10 @@
-import { and, eq, lte, or } from 'drizzle-orm';
+import { and, eq, isNull, lte, ne, or, sql } from 'drizzle-orm';
 
 import {
+  chatConversations,
+  chatMessages,
   db,
+  notifications,
   pushDeliveries,
   pushMessageDeliveries,
   pushSubscriptions,
@@ -181,6 +184,38 @@ function preferenceAllows(
   }
 }
 
+async function unreadPushBadge(userId: string): Promise<number> {
+  const recipient = await db.query.users.findFirst({
+    where: { id: userId },
+    columns: { handle: true },
+  });
+  if (!recipient) return 0;
+
+  const [notificationRows, messageRows] = await Promise.all([
+    db.select({ count: sql<number>`count(*)` })
+      .from(notifications)
+      .where(and(
+        eq(notifications.userId, userId),
+        isNull(notifications.readAt),
+      )),
+    db.select({ count: sql<number>`count(*)` })
+      .from(chatMessages)
+      .innerJoin(
+        chatConversations,
+        eq(chatMessages.conversationId, chatConversations.id),
+      )
+      .where(and(
+        eq(chatConversations.participant1Id, userId),
+        isNull(chatMessages.readAt),
+        ne(chatMessages.senderHandle, recipient.handle),
+      )),
+  ]);
+
+  const unreadNotifications = Number(notificationRows[0]?.count || 0);
+  const unreadMessages = Number(messageRows[0]?.count || 0);
+  return Math.max(0, Math.min(999_999, unreadNotifications + unreadMessages));
+}
+
 async function sendRelayEvent(
   subscription: typeof pushSubscriptions.$inferSelect,
   event: Record<string, unknown>,
@@ -253,14 +288,17 @@ async function deliverOne(
     return updateFailure(delivery, 'Notification belongs to a blocked node', false);
   }
 
-  const actorAvatarUrl = await resolvedPushActorAvatarUrl({
-    recipientUserId: subscription.userId,
-    actorId: notification.actorId,
-    actorHandle: notification.actorHandle,
-    actorNodeDomain: notification.actorNodeDomain,
-    actorAvatarUrl: notification.actorAvatarUrl,
-    localNodeIsNsfw,
-  });
+  const [actorAvatarUrl, badge] = await Promise.all([
+    resolvedPushActorAvatarUrl({
+      recipientUserId: subscription.userId,
+      actorId: notification.actorId,
+      actorHandle: notification.actorHandle,
+      actorNodeDomain: notification.actorNodeDomain,
+      actorAvatarUrl: notification.actorAvatarUrl,
+      localNodeIsNsfw,
+    }),
+    unreadPushBadge(subscription.userId),
+  ]);
 
   const response = await sendRelayEvent(subscription, {
     eventId: delivery.id,
@@ -268,6 +306,7 @@ async function deliverOne(
     type: notification.type,
     actorName: pushNotificationActorName(notification),
     actorAvatarUrl,
+    badge,
     postId: notification.postId || notification.remotePostId || undefined,
   });
 
@@ -329,13 +368,16 @@ async function deliverMessage(
     return updateMessageFailure(delivery, 'Message belongs to a blocked node', false);
   }
 
-  const actorAvatarUrl = await resolvedPushActorAvatarUrl({
-    recipientUserId: subscription.userId,
-    actorHandle: message.senderHandle,
-    actorNodeDomain: message.senderNodeDomain,
-    actorAvatarUrl: message.senderAvatarUrl,
-    localNodeIsNsfw,
-  });
+  const [actorAvatarUrl, badge] = await Promise.all([
+    resolvedPushActorAvatarUrl({
+      recipientUserId: subscription.userId,
+      actorHandle: message.senderHandle,
+      actorNodeDomain: message.senderNodeDomain,
+      actorAvatarUrl: message.senderAvatarUrl,
+      localNodeIsNsfw,
+    }),
+    unreadPushBadge(subscription.userId),
+  ]);
 
   const response = await sendRelayEvent(subscription, {
     eventId: delivery.id,
@@ -343,6 +385,7 @@ async function deliverMessage(
     type: 'message',
     actorName: message.senderDisplayName || message.senderHandle,
     actorAvatarUrl,
+    badge,
   });
   if (response.ok) {
     const now = new Date();

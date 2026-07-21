@@ -30,15 +30,7 @@ function RenderedAttachment({
   encrypted: boolean;
 }) {
   const kind = getMediaKind(attachment.mimeType);
-  const lockBadge = encrypted ? (
-    <span
-      className="chat-message-attachment-lock"
-      title="End-to-end encrypted media"
-      aria-label="End-to-end encrypted media"
-    >
-      <LockKeyhole size={12} aria-hidden="true" />
-    </span>
-  ) : (
+  const legacyBadge = encrypted ? null : (
     <span
       className="chat-message-attachment-legacy"
       title="Legacy attachment — not end-to-end encrypted"
@@ -66,7 +58,7 @@ function RenderedAttachment({
           loading="lazy"
           referrerPolicy="no-referrer"
         />
-        {lockBadge}
+        {legacyBadge}
       </a>
     );
   }
@@ -82,7 +74,7 @@ function RenderedAttachment({
           onLoadedMetadata={(event) => primeVideoPreviewFrame(event.currentTarget)}
           aria-label={attachment.filename}
         />
-        {lockBadge}
+        {legacyBadge}
       </div>
     );
   }
@@ -91,7 +83,7 @@ function RenderedAttachment({
     return (
       <div className="chat-message-attachment audio">
         <AudioPlayer src={src} title={attachment.filename} />
-        {lockBadge}
+        {legacyBadge}
       </div>
     );
   }
@@ -107,7 +99,7 @@ function RenderedAttachment({
       <File size={18} aria-hidden="true" />
       <span title={attachment.filename}>{attachment.filename}</span>
       <Download size={16} aria-hidden="true" />
-      {lockBadge}
+      {legacyBadge}
     </a>
   );
 }

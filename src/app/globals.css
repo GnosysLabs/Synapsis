@@ -1733,25 +1733,10 @@ a.btn-primary:visited {
   font-weight: 650;
 }
 
-.chat-message-attachment-lock {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 48%, transparent);
-  border-radius: var(--radius-full);
-  background: rgba(0, 0, 0, 0.72);
-  color: var(--accent);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
 .chat-message-attachment-legacy {
   position: absolute;
   top: 7px;
-  right: 36px;
+  right: 7px;
   width: 24px;
   height: 24px;
   display: grid;
