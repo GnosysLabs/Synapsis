@@ -420,7 +420,9 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         e.preventDefault();
         e.stopPropagation();
 
-        if (post.originUnavailable) {
+        // Losing federation access must prevent a new repost, but it must
+        // never trap the viewer's existing repost on their own profile.
+        if (post.originUnavailable && !reposted) {
             showToast('This post is unavailable because its origin disconnected federation access.', 'error');
             return;
         }
@@ -1293,7 +1295,12 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                             <MessageIcon />
                             <span>{post.repliesCount || ''}</span>
                         </button>
-                        <button className={`post-action ${reposted ? 'reposted' : ''}`} onClick={handleRepost} disabled={post.originUnavailable || repostPending} title={post.originUnavailable ? 'Unavailable from origin' : 'Repost'}>
+                        <button
+                            className={`post-action ${reposted ? 'reposted' : ''}`}
+                            onClick={handleRepost}
+                            disabled={repostPending || Boolean(post.originUnavailable && !reposted)}
+                            title={reposted ? 'Undo repost' : post.originUnavailable ? 'Unavailable from origin' : 'Repost'}
+                        >
                             <RepeatIcon />
                             <span>{repostsCount || ''}</span>
                         </button>

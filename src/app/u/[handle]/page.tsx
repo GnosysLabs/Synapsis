@@ -238,6 +238,20 @@ export default function ProfilePage() {
             const data = await res.json().catch(() => ({}));
             throw new Error(data.error || 'Failed to update repost');
         }
+
+        if (currentReposted && authenticatedViewer) {
+            const ownRepostEvent = posts.find((post) => (
+                (post.repostOf?.id === postId || post.repostOfId === postId)
+                && post.author.id === authenticatedViewer.id
+            ));
+            if (ownRepostEvent) {
+                setPosts((currentPosts) => currentPosts.filter((post) => post.id !== ownRepostEvent.id));
+                setUser((currentUser) => currentUser ? {
+                    ...currentUser,
+                    postsCount: Math.max(0, (currentUser.postsCount || 0) - 1),
+                } : currentUser);
+            }
+        }
     };
 
     const handleComment = (post: Post) => {

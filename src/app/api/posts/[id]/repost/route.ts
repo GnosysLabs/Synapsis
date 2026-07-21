@@ -38,6 +38,25 @@ async function readOptionalJson(request: Request) {
     return JSON.parse(rawBody);
 }
 
+async function removeLocalSwarmRepost(
+    userId: string,
+    nodeDomain: string,
+    originalPostId: string,
+): Promise<boolean> {
+    return db.transaction(async (tx) => {
+        const storedRepost = await tx.query.userSwarmReposts.findFirst({
+            where: { AND: [{ userId }, { nodeDomain }, { originalPostId }] },
+        });
+        if (!storedRepost) return false;
+
+        await tx.delete(userSwarmReposts).where(eq(userSwarmReposts.id, storedRepost.id));
+        await tx.update(users)
+            .set({ postsCount: sql`max(0, ${users.postsCount} - 1)` })
+            .where(eq(users.id, userId));
+        return true;
+    });
+}
+
 /**
  * Extract domain from a swarm post ID (swarm:domain:postId)
  */
@@ -324,10 +343,6 @@ export async function DELETE(request: Request, context: RouteContext) {
             }
             const { domain: targetDomain, originalPostId } = parsedSwarmId;
 
-            const existingRepost = await db.query.userSwarmReposts.findFirst({
-                where: { AND: [{ userId: user.id }, { nodeDomain: targetDomain }, { originalPostId: originalPostId }] },
-            });
-
             // Deliver unrepost directly to the origin node
             const { deliverSwarmUnrepost } = await import('@/lib/swarm/interactions');
 
@@ -342,30 +357,20 @@ export async function DELETE(request: Request, context: RouteContext) {
                 },
             });
 
-            if (!result.success) {
+            const originBlockedThisNode = !result.success && result.code === NODE_BLOCKED_CODE;
+            if (!result.success && !originBlockedThisNode) {
                 console.error(`[Swarm] Unrepost delivery failed: ${result.error}`);
-                if (result.code === NODE_BLOCKED_CODE) {
-                    return NextResponse.json({
-                        error: 'This origin has blocked federation access from this node.',
-                        code: NODE_BLOCKED_CODE,
-                    }, { status: 403 });
-                }
                 return NextResponse.json({ error: 'Failed to deliver unrepost to remote node' }, { status: 502 });
             }
 
-            await db.delete(userSwarmReposts).where(and(
-                eq(userSwarmReposts.userId, user.id),
-                eq(userSwarmReposts.nodeDomain, targetDomain),
-                eq(userSwarmReposts.originalPostId, originalPostId),
-            ));
+            await removeLocalSwarmRepost(user.id, targetDomain, originalPostId);
 
-            if (existingRepost) {
-                await db.update(users)
-                    .set({ postsCount: sql`max(0, ${users.postsCount} - 1)` })
-                    .where(eq(users.id, user.id));
+            if (originBlockedThisNode) {
+                console.log(`[Swarm] Removed local repost after ${targetDomain} denied federation access`);
+            } else {
+                console.log(`[Swarm] Unrepost delivered to ${targetDomain} for post ${originalPostId}`);
             }
 
-            console.log(`[Swarm] Unrepost delivered to ${targetDomain} for post ${originalPostId}`);
             return NextResponse.json({ success: true, reposted: false });
         }
 

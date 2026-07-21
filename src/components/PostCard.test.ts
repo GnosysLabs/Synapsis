@@ -90,6 +90,43 @@ describe('PostCard', () => {
         expect(PostCard({ post: malformedPost })).toBeNull();
     });
 
+    it('keeps undo repost available when the origin disconnected federation access', () => {
+        mocks.user = {
+            id: 'viewer-1',
+            handle: 'viewer',
+            displayName: 'Viewer',
+            nsfwEnabled: false,
+        };
+        const unavailablePost: Post = {
+            id: 'swarm:blocked.example:11111111-1111-4111-8111-111111111111',
+            content: 'This post is unavailable because its origin disconnected federation access.',
+            createdAt: '2026-07-17T00:00:00.000Z',
+            likesCount: 0,
+            repostsCount: 1,
+            repliesCount: 0,
+            isReposted: true,
+            originUnavailable: true,
+            nodeDomain: 'blocked.example',
+            isSwarm: true,
+            isNsfw: false,
+            nodeIsNsfw: false,
+            author: {
+                id: 'remote-author',
+                handle: 'author@blocked.example',
+                displayName: 'Remote author',
+                nodeDomain: 'blocked.example',
+                isRemote: true,
+                isNsfw: false,
+                nodeIsNsfw: false,
+            },
+        };
+
+        const html = renderToStaticMarkup(createElement(PostCard, { post: unavailablePost }));
+
+        expect(html).toMatch(/<button class="post-action reposted" title="Undo repost">/);
+        expect(html).not.toMatch(/<button class="post-action reposted"[^>]*disabled/);
+    });
+
     it('renders only a warning shell for a signed-out sensitive post', () => {
         const html = renderToStaticMarkup(createElement(PostCard, { post: sensitivePost }));
 
