@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ALLOWED_MEDIA_TYPES, getMaxMediaSize } from '@/lib/media/upload-policy';
+import { ALLOWED_MEDIA_TYPES } from '@/lib/media/upload-policy';
 import { E2EE_MAX_MESSAGE_PLAINTEXT_BYTES } from '@/lib/e2ee/protocol';
 import { accountAddressSchema, federationMediaUrlSchema } from '@/lib/utils/federation';
 
@@ -11,19 +11,7 @@ const chatAttachmentSchema = z.strictObject({
   url: federationMediaUrlSchema,
   filename: z.string().trim().min(1).max(255),
   mimeType: z.enum(ALLOWED_MEDIA_TYPES),
-  size: z.number().int().positive().max(100 * 1024 * 1024),
-}).superRefine((attachment, context) => {
-  const maximum = getMaxMediaSize(attachment.mimeType);
-  if (maximum !== null && attachment.size > maximum) {
-    context.addIssue({
-      code: 'too_big',
-      maximum,
-      origin: 'number',
-      inclusive: true,
-      path: ['size'],
-      message: 'Attachment exceeds the allowed size',
-    });
-  }
+  size: z.number().int().positive().safe(),
 });
 
 const chatReplyReferenceSchema = z.strictObject({

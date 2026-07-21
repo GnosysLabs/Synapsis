@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  getMaxMediaSize,
-  getMediaKind,
-  MAX_AUDIO_SIZE,
-  MAX_GIF_SIZE,
-  MAX_IMAGE_SIZE,
-} from './upload-policy';
+import { getMediaKind } from './upload-policy';
 
 describe('media upload policy', () => {
   it('recognizes common audio formats used for music uploads', () => {
@@ -15,14 +9,13 @@ describe('media upload policy', () => {
     expect(getMediaKind('audio/mp4')).toBe('audio');
   });
 
-  it('keeps images on the smaller limit and allows larger audio tracks', () => {
-    expect(getMaxMediaSize('image/png')).toBe(MAX_IMAGE_SIZE);
-    expect(getMaxMediaSize('image/gif')).toBe(MAX_GIF_SIZE);
-    expect(getMaxMediaSize('audio/mpeg')).toBe(MAX_AUDIO_SIZE);
+  it('recognizes supported images and animated media without a size policy', () => {
+    expect(getMediaKind('image/png')).toBe('image');
+    expect(getMediaKind('image/gif')).toBe('image');
+    expect(getMediaKind('video/mp4')).toBe('video');
   });
 
   it('rejects unrelated file types', () => {
     expect(getMediaKind('application/pdf')).toBe('unsupported');
-    expect(getMaxMediaSize('application/pdf')).toBeNull();
   });
 });

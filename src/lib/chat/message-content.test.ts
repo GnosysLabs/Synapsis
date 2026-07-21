@@ -27,6 +27,15 @@ describe('encrypted chat message content', () => {
     expect(decodeChatMessageContent(encodeChatMessageContent(content))).toEqual(content);
   });
 
+  it('accepts large attachment metadata so Stuffbox quota remains the limit', () => {
+    const content = {
+      text: '',
+      attachments: [{ ...attachment(1), size: 8 * 1024 * 1024 * 1024 }],
+    };
+
+    expect(decodeChatMessageContent(encodeChatMessageContent(content))).toEqual(content);
+  });
+
   it('round-trips an encrypted reply reference', () => {
     const content = {
       text: 'Exactly',

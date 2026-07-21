@@ -24,9 +24,6 @@ const MIME_TYPES = new Map([
   ['.flac', 'audio/flac'],
 ]);
 
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
-const MAX_OTHER_SIZE = 100 * 1024 * 1024;
-
 export function mimeTypeForPath(path) {
   const mimeType = MIME_TYPES.get(extname(path).toLowerCase());
   if (!mimeType) throw new Error(`Unsupported media type: ${path}`);
@@ -37,11 +34,7 @@ export async function inspectMedia(path) {
   const metadata = await stat(path);
   if (!metadata.isFile()) throw new Error(`Media path is not a file: ${path}`);
   const mimeType = mimeTypeForPath(path);
-  const maximum = mimeType.startsWith('image/') ? MAX_IMAGE_SIZE : MAX_OTHER_SIZE;
   if (metadata.size <= 0) throw new Error(`Media file is empty: ${path}`);
-  if (metadata.size > maximum) {
-    throw new Error(`${basename(path)} is larger than ${Math.round(maximum / 1024 / 1024)}MB`);
-  }
   return { filename: basename(path), mimeType, size: metadata.size };
 }
 

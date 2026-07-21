@@ -24,7 +24,7 @@ import { ChatMessageAttachments } from '@/components/ChatMessageAttachments';
 import { ChatPostCard } from '@/components/ChatPostCard';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
-import { getMaxMediaSize, getMediaKind } from '@/lib/media/upload-policy';
+import { getMediaKind } from '@/lib/media/upload-policy';
 import { primeVideoPreviewFrame } from '@/lib/media/video-preview';
 import {
     CHAT_ATTACHMENT_LIMIT,
@@ -403,7 +403,7 @@ export default function ChatPage() {
 
                 setConversationAttachmentError(
                     pending.conversationKey,
-                    error instanceof MediaUploadError && error.code === 'METADATA_STRIP_FAILED'
+                    error instanceof MediaUploadError
                         ? error.message
                         : 'An attachment could not be uploaded. Remove it or try again.',
                 );
@@ -436,14 +436,12 @@ export default function ChatPage() {
                 break;
             }
             const kind = getMediaKind(file.type);
-            const maximum = getMaxMediaSize(file.type);
-            if (kind === 'unsupported' || maximum === null) {
+            if (kind === 'unsupported') {
                 validationError = `${file.name} is not a supported image, video, or audio file.`;
                 continue;
             }
-            if (file.size <= 0 || file.size > maximum) {
-                const limit = Math.round(maximum / (1024 * 1024));
-                validationError = `${file.name} must be larger than 0 bytes and no more than ${limit} MB.`;
+            if (file.size <= 0) {
+                validationError = `${file.name} must be larger than 0 bytes.`;
                 continue;
             }
             validFiles.push(file);

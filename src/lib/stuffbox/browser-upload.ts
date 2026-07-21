@@ -2,7 +2,7 @@
 
 import { stripPhotoVideoMetadata } from '@/lib/media/browser-strip-metadata';
 import { MediaMetadataError } from '@/lib/media/strip-metadata';
-import { getMaxMediaSize } from '@/lib/media/upload-policy';
+import { getMediaKind } from '@/lib/media/upload-policy';
 
 export interface UploadedMedia {
   id: string;
@@ -129,19 +129,8 @@ export async function uploadMediaFile(
   if (provider === 'stuffbox') {
     try {
       const privateFile = await stripPhotoVideoMetadata(file);
-      const maximum = getMaxMediaSize(privateFile.type);
-      if (maximum === null) {
+      if (getMediaKind(privateFile.type) === 'unsupported') {
         throw new MediaUploadError('This file type is not supported.', 'UNSUPPORTED_MEDIA_TYPE', 400);
-      }
-      if (privateFile.size > maximum) {
-        const mediaLabel = privateFile.type === 'image/gif'
-          ? 'GIFs'
-          : privateFile.type.startsWith('image/') ? 'Images' : 'Media files';
-        throw new MediaUploadError(
-          `${mediaLabel} must be ${maximum / (1024 * 1024)}MB or smaller.`,
-          'FILE_TOO_LARGE',
-          400,
-        );
       }
       return uploadToStuffbox(privateFile, onProgress);
     } catch (error) {

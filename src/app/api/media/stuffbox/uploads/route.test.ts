@@ -85,11 +85,11 @@ describe('POST /api/media/stuffbox/uploads', () => {
     expect(createUpload).toHaveBeenCalledWith('https://stuffbox.example', 'stuffbox-token', upload);
   });
 
-  it('accepts GIF uploads above the still-image limit', async () => {
+  it('forwards large uploads to Stuffbox so the account quota decides', async () => {
     const upload = {
-      filename: 'animation.gif',
-      mimeType: 'image/gif' as const,
-      size: 25 * 1024 * 1024,
+      filename: 'feature-film.mp4',
+      mimeType: 'video/mp4' as const,
+      size: 8 * 1024 * 1024 * 1024,
     };
     const response = await POST(new Request('https://social.example/api/media/stuffbox/uploads', {
       method: 'POST',
@@ -99,24 +99,5 @@ describe('POST /api/media/stuffbox/uploads', () => {
 
     expect(response.status).toBe(201);
     expect(createUpload).toHaveBeenCalledWith('https://stuffbox.example', 'stuffbox-token', upload);
-  });
-
-  it('returns the real size rejection for an oversized still image', async () => {
-    const response = await POST(new Request('https://social.example/api/media/stuffbox/uploads', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        filename: 'photo.png',
-        mimeType: 'image/png',
-        size: 11 * 1024 * 1024,
-      }),
-    }));
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: 'Images must be 10MB or smaller',
-      code: 'INVALID_UPLOAD',
-    });
-    expect(createUpload).not.toHaveBeenCalled();
   });
 });

@@ -9,34 +9,13 @@ import {
 import { SignedActionError } from '@/lib/auth/verify-signature';
 import { createUpload, StuffboxApiError } from '@/lib/stuffbox/client';
 import { getStuffboxAccess } from '@/lib/stuffbox/tokens';
-import {
-  ALLOWED_MEDIA_TYPES,
-  MAX_AUDIO_SIZE,
-  MAX_GIF_SIZE,
-  MAX_VIDEO_SIZE,
-  getMaxMediaSize,
-} from '@/lib/media/upload-policy';
+import { ALLOWED_MEDIA_TYPES } from '@/lib/media/upload-policy';
 
 const uploadSchema = z.object({
   filename: z.string().min(1).max(255),
   mimeType: z.enum(ALLOWED_MEDIA_TYPES),
-  size: z.number().int().positive().max(Math.max(MAX_GIF_SIZE, MAX_VIDEO_SIZE, MAX_AUDIO_SIZE)),
+  size: z.number().int().positive().safe(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-}).superRefine((upload, context) => {
-  const maximum = getMaxMediaSize(upload.mimeType);
-  if (maximum !== null && upload.size > maximum) {
-    const mediaLabel = upload.mimeType === 'image/gif'
-      ? 'GIFs'
-      : upload.mimeType.startsWith('image/') ? 'Images' : 'Media files';
-    context.addIssue({
-      code: 'too_big',
-      maximum,
-      origin: 'number',
-      inclusive: true,
-      path: ['size'],
-      message: `${mediaLabel} must be ${maximum / (1024 * 1024)}MB or smaller`,
-    });
-  }
 });
 
 export async function POST(request: Request) {
