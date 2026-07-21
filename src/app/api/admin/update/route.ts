@@ -1,11 +1,25 @@
 import { writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join } from 'node:path';
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth/admin';
 
 const DEFAULT_UPDATE_REQUEST_PATH = '/var/lib/synapsis/update-requested';
 
 function updateRequestPath(): string {
-    return process.env.SYNAPSIS_UPDATE_REQUEST_PATH || DEFAULT_UPDATE_REQUEST_PATH;
+    if (process.env.SYNAPSIS_UPDATE_REQUEST_PATH) {
+        return process.env.SYNAPSIS_UPDATE_REQUEST_PATH;
+    }
+
+    // Multi-instance installs keep each database in its own data directory.
+    // Signal the updater for that installation rather than the canonical
+    // /var/lib/synapsis instance, which systemd intentionally makes
+    // inaccessible to sibling services.
+    const databasePath = process.env.DATABASE_PATH;
+    if (databasePath && isAbsolute(databasePath)) {
+        return join(dirname(databasePath), 'update-requested');
+    }
+
+    return DEFAULT_UPDATE_REQUEST_PATH;
 }
 
 function errorCode(error: unknown): string | undefined {

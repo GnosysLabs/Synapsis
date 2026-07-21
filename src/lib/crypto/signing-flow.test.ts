@@ -134,7 +134,6 @@ describe('Cryptographic User Signing', () => {
             handle: testHandle,
             publicKey: userPublicKeyBase64,
         } as never);
-
         const result = await verifyUserAction(signed);
 
         expect(result.valid).toBe(false);
@@ -188,6 +187,30 @@ describe('Cryptographic User Signing', () => {
         expect(db.select).toHaveBeenCalledOnce();
         expect(mockIsRateLimited).toHaveBeenCalledOnce();
         expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('allows normal bursts of follow actions without using the five-action default', async () => {
+        const signed = await createSignedAction(
+            'follow',
+            { targetHandle: 'bob' },
+            testDid,
+            testHandle,
+        );
+
+        vi.mocked(db.query.users.findFirst).mockResolvedValue({
+            id: 'uuid-123',
+            did: testDid,
+            handle: testHandle,
+            publicKey: userPublicKeyBase64,
+        } as never);
+        vi.mocked(db.insert).mockReturnValue({
+            values: vi.fn().mockResolvedValue(true),
+        } as never);
+
+        const result = await verifyUserAction(signed);
+
+        expect(result.valid).toBe(true);
+        expect(mockIsRateLimited).toHaveBeenCalledWith('uuid-123:follow', 30, 60 * 1000);
     });
 
     it('should reject an existing replay without charging quota or inserting again', async () => {

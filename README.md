@@ -59,6 +59,18 @@ sudo -u synapsis git -C /opt/synapsis pull --ff-only
 sudo /opt/synapsis/deploy/update.sh
 ```
 
+Additional instances use an instance-specific request path and path unit. For
+example, an `rprh` installation whose updater is
+`synapsis-rprh-update.service` and whose data is in
+`/var/lib/synapsis-rprh` should install and enable:
+
+```bash
+sudo install -m 0644 /opt/synapsis-rprh/deploy/synapsis-update@.path /etc/systemd/system/synapsis-update@.path
+sudo install -m 0644 /opt/synapsis-rprh/deploy/synapsis-update-request@.service /etc/systemd/system/synapsis-update-request@.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now synapsis-update@rprh.path
+```
+
 Useful commands:
 
 ```bash
