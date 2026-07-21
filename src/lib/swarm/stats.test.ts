@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { aggregateSwarmStats } from './registry';
 
 describe('aggregateSwarmStats', () => {
-  it('includes the local node and totals active peer statistics', () => {
+  it('counts the local node and active peers without historical inactive rows', () => {
     const result = aggregateSwarmStats([
       { isActive: true, userCount: 3, postCount: 24, mediaCount: 7 },
       { isActive: true, userCount: 2, postCount: 8, mediaCount: null },
@@ -14,7 +14,7 @@ describe('aggregateSwarmStats', () => {
     }, true);
 
     expect(result).toEqual({
-      totalNodes: 4,
+      totalNodes: 3,
       activeNodes: 2,
       totalUsers: 9,
       totalPosts: 44,

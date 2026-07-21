@@ -39,7 +39,9 @@ export function aggregateSwarmStats(
   const localNodeOffset = includeLocalNode ? 1 : 0;
 
   return {
-    totalNodes: publicNodes.length + localNodeOffset,
+    // User-facing network size means nodes participating now, not every
+    // historical discovery row retained for retry/audit purposes.
+    totalNodes: activeNodes.length + localNodeOffset,
     // Keep this as the active peer count; the scheduler uses zero to trigger seed recovery.
     activeNodes: activeNodes.length,
     totalUsers: activeNodes.reduce((sum, node) => sum + (node.userCount || 0), 0)
@@ -728,13 +730,20 @@ export async function getSwarmStats() {
     };
   }
 
+  const localNodeDomain = getPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
+  const hasPublicLocalNode = Boolean(localNodeDomain);
+  const eligibleRemoteNode = sql`${swarmNodes.isActive} = 1
+    and ${swarmNodes.isBlocked} = 0
+    and ${swarmNodes.remoteAccessDeniedAt} is null
+    and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore}
+    and ${swarmNodes.domain} <> ${localNodeDomain ?? ''}`;
+
   const [networkRows, localUsers, localPosts, localMedia] = await Promise.all([
     db.select({
-      totalNodes: sql<number>`count(*)`,
-      activeNodes: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.remoteAccessDeniedAt} is null and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then 1 else 0 end), 0)`,
-      totalUsers: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.remoteAccessDeniedAt} is null and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.userCount}, 0) else 0 end), 0)`,
-      totalPosts: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.remoteAccessDeniedAt} is null and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.postCount}, 0) else 0 end), 0)`,
-      totalMedia: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.remoteAccessDeniedAt} is null and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.mediaCount}, 0) else 0 end), 0)`,
+      activeNodes: sql<number>`coalesce(sum(case when ${eligibleRemoteNode} then 1 else 0 end), 0)`,
+      totalUsers: sql<number>`coalesce(sum(case when ${eligibleRemoteNode} then coalesce(${swarmNodes.userCount}, 0) else 0 end), 0)`,
+      totalPosts: sql<number>`coalesce(sum(case when ${eligibleRemoteNode} then coalesce(${swarmNodes.postCount}, 0) else 0 end), 0)`,
+      totalMedia: sql<number>`coalesce(sum(case when ${eligibleRemoteNode} then coalesce(${swarmNodes.mediaCount}, 0) else 0 end), 0)`,
     }).from(swarmNodes),
     db.select({ count: sql<number>`count(*)` }).from(users)
       .where(eq(users.isLocalAccount, true)),
@@ -742,11 +751,12 @@ export async function getSwarmStats() {
     db.select({ count: sql<number>`count(*)` }).from(media).where(isNotNull(media.postId)),
   ]);
 
-  const hasPublicLocalNode = isPublicSwarmDomain(process.env.NEXT_PUBLIC_NODE_DOMAIN);
   const network = networkRows[0];
+  const activePeerCount = Number(network?.activeNodes ?? 0);
   return {
-    totalNodes: Number(network?.totalNodes ?? 0) + (hasPublicLocalNode ? 1 : 0),
-    activeNodes: Number(network?.activeNodes ?? 0),
+    totalNodes: activePeerCount + (hasPublicLocalNode ? 1 : 0),
+    // Keep peer-only semantics here: the scheduler uses zero to recover seeds.
+    activeNodes: activePeerCount,
     totalUsers: Number(network?.totalUsers ?? 0) + (hasPublicLocalNode ? Number(localUsers[0]?.count ?? 0) : 0),
     totalPosts: Number(network?.totalPosts ?? 0) + (hasPublicLocalNode ? Number(localPosts[0]?.count ?? 0) : 0),
     totalMedia: Number(network?.totalMedia ?? 0) + (hasPublicLocalNode ? Number(localMedia[0]?.count ?? 0) : 0),
