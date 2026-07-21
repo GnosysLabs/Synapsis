@@ -36,7 +36,10 @@ import { FederationRequestBodyError, readLimitedJson } from '@/lib/swarm/request
 import { federatedHandleSchema } from '@/lib/utils/federation';
 import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
 import { buildVideoLinkPreview, findVideoEmbedUrlInText } from '@/lib/media/video-embed';
-import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
+import {
+  stuffboxBadgeFromStoredUser,
+  verifyStuffboxBadgeAttestation,
+} from '@/lib/stuffbox/badge';
 
 // The same exact schema is persisted with the source node signature so other
 // peers can independently verify a relayed reply instead of trusting us.
@@ -190,6 +193,10 @@ export async function POST(request: NextRequest) {
     if (!signingPublicKey) {
       return NextResponse.json({ error: 'Reply author DID is not self-certifying' }, { status: 403 });
     }
+    const candidateBadge = data.reply.author.stuffboxBadge;
+    const verifiedStuffboxBadge = candidateBadge?.attestation
+      ? await verifyStuffboxBadgeAttestation(candidateBadge.attestation, verified.actorHandle)
+      : null;
 
     const createdAt = new Date(verified.userAction.ts);
     const replyVideoUrl = findVideoEmbedUrlInText(data.reply.content);
@@ -223,11 +230,12 @@ export async function POST(request: NextRequest) {
       }, tx);
       await upsertRemoteUser({
         handle: remoteHandle,
-        displayName: verified.actorUsername,
-        avatarUrl: null,
+        displayName: data.reply.author.displayName || verified.actorUsername,
+        avatarUrl: data.reply.author.avatarUrl ?? null,
         did: verified.userAction.did,
         publicKey: signingPublicKey,
         isNsfw: actionData.data.isNsfw ?? true,
+        stuffboxBadge: verifiedStuffboxBadge,
       }, { identityVerified: true }, tx);
       const remoteUser = await tx.query.users.findFirst({
         where: { did: verified.userAction.did },

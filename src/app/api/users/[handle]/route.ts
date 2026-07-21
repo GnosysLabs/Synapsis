@@ -11,6 +11,8 @@ import {
 import { resolveAccountAddress } from '@/lib/identity/account-address';
 import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
 import { getOrRefreshStuffboxBadge } from '@/lib/stuffbox/badge-status';
+import { refreshPinnedRemoteUserPresentation } from '@/lib/swarm/user-cache';
+import type { StuffboxBadge } from '@/lib/types';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -70,6 +72,21 @@ export async function GET(request: Request, context: RouteContext) {
                         if (!profileAddress || profileAddress.homeDomain !== remote.domain) {
                             return NextResponse.json({ error: 'Remote profile identity mismatch' }, { status: 502 });
                         }
+                        // Notifications render from the verified local cache so
+                        // they remain fast and do not contact actor nodes. A
+                        // fresh profile view must therefore refresh that cache.
+                        await refreshPinnedRemoteUserPresentation({
+                            handle: profileAddress.canonical,
+                            displayName: profile.displayName,
+                            avatarUrl: profile.avatarUrl ?? null,
+                            did: profile.did,
+                            publicKey: profile.publicKey,
+                            isNsfw: profile.isNsfw,
+                            // fetchSwarmUserProfile has already replaced the
+                            // transport proof with its independently verified
+                            // full badge result.
+                            stuffboxBadge: profile.stuffboxBadge as StuffboxBadge | null | undefined,
+                        });
                         return NextResponse.json({
                             user: {
                                 id: `swarm:${remote.domain}:${profileAddress.username}`,

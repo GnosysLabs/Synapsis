@@ -243,7 +243,9 @@ export async function GET(request: Request) {
             };
         });
 
-        return NextResponse.json({ notifications: payload });
+        return NextResponse.json({ notifications: payload }, {
+            headers: { 'Cache-Control': 'private, no-store' },
+        });
     } catch (error) {
         if (error instanceof Error && error.message === 'Authentication required') {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });

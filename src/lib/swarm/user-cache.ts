@@ -86,7 +86,11 @@ async function upsertVerifiedRemoteUser(
                 // DID/key cache. Once pinned, later conflicting proofs fail.
                 did: profile.did,
                 displayName: profile.displayName || existing.displayName,
-                avatarUrl: profile.avatarUrl || existing.avatarUrl,
+                // An explicit null means the actor removed their avatar. Only
+                // an omitted presentation field should preserve the cache.
+                avatarUrl: profile.avatarUrl === undefined
+                    ? existing.avatarUrl
+                    : profile.avatarUrl,
                 publicKey: profile.publicKey,
                 isNsfw: profile.isNsfw ?? existing.isNsfw,
                 ...(profile.stuffboxBadge !== undefined
@@ -115,6 +119,31 @@ async function upsertVerifiedRemoteUser(
             ...stuffboxBadgeColumns(profile.stuffboxBadge ?? null),
         });
     }
+}
+
+/**
+ * Refresh presentation data only after a signed interaction has pinned this
+ * exact handle to its self-certifying DID. Profile reads may discover an
+ * account, but they cannot create or replace identity bindings by themselves.
+ */
+export async function refreshPinnedRemoteUserPresentation(
+    profile: VerifiedRemoteProfile,
+    database?: RemoteUserCacheDatabase,
+): Promise<boolean> {
+    const address = parseAccountAddress(profile.handle);
+    if (!address) throw new Error('Remote user cache requires a fully qualified handle');
+    const cache = database ?? db;
+    const pinned = await cache.query.handleRegistry.findFirst({
+        where: { handle: address.canonical },
+    });
+    if (!pinned || !pinned.identityVerified || pinned.deletedAt) return false;
+    if (pinned.did !== profile.did) {
+        throw new Error('Remote user identity conflicts with the verified handle binding');
+    }
+    await upsertRemoteUser({ ...profile, handle: address.canonical }, {
+        identityVerified: true,
+    }, database);
+    return true;
 }
 
 /**

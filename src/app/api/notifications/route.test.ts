@@ -122,6 +122,7 @@ describe('GET /api/notifications sensitive data enforcement', () => {
       displayName: 'Adult',
       avatarUrl: 'https://stuffbox.xyz/adult-avatar.jpg',
     });
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
   });
 
   it('fails closed when the remote profile cannot be classified', async () => {

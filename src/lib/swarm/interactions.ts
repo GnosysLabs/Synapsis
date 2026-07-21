@@ -46,6 +46,7 @@ import {
   parseAccountAddress,
   resolveAccountAddress,
 } from '@/lib/identity/account-address';
+import { refreshPinnedRemoteUserPresentation } from './user-cache';
 
 // ============================================
 // TYPES
@@ -535,6 +536,21 @@ export async function cacheSwarmUserPosts(
 
     const actorUrl = `swarm://${domain}/${address.username}`;
     const profile = profileData.profile;
+
+    // The fair background profile scheduler also powers notification actor
+    // presentation. Keep the verified user cache current even when this
+    // account has no new posts to materialize.
+    await refreshPinnedRemoteUserPresentation({
+      handle: address.canonical,
+      displayName: profile.displayName,
+      avatarUrl: profile.avatarUrl ?? null,
+      did: profile.did,
+      publicKey: profile.publicKey,
+      isNsfw: profile.isNsfw,
+      // fetchSwarmUserProfile verifies and expands the transport proof before
+      // it reaches this cache boundary.
+      stuffboxBadge: profile.stuffboxBadge as StuffboxBadge | null | undefined,
+    });
 
     const toTimelinePost = (post: RemoteSwarmPost): SwarmPost => ({
       id: post.id,

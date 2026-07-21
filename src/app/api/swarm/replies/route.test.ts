@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   signingPublicKeyFromDid: vi.fn(),
   authorizeFederationRead: vi.fn(),
   requireClassification: vi.fn(),
+  verifyStuffboxBadgeAttestation: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
@@ -113,6 +114,13 @@ vi.mock('@/lib/crypto/did-key', async (importOriginal) => {
     signingPublicKeyFromDid: mocks.signingPublicKeyFromDid,
   };
 });
+vi.mock('@/lib/stuffbox/badge', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/stuffbox/badge')>();
+  return {
+    ...actual,
+    verifyStuffboxBadgeAttestation: mocks.verifyStuffboxBadgeAttestation,
+  };
+});
 
 import { DELETE, GET, POST } from './route';
 
@@ -182,7 +190,7 @@ function replyUserAction() {
   };
 }
 
-function replyPayload() {
+function replyPayload(badge?: Record<string, unknown>) {
   return {
     federation: {
       protocol: 'synapsis-federation-action-v2' as const,
@@ -204,6 +212,7 @@ function replyPayload() {
         displayName: 'Alice',
         did: authorDid,
         isNsfw: false,
+        ...(badge ? { stuffboxBadge: badge } : {}),
       },
       nodeDomain: 'source.social',
       nodeIsNsfw: false,
@@ -213,7 +222,7 @@ function replyPayload() {
   };
 }
 
-function replyRequest() {
+function replyRequest(badge?: Record<string, unknown>) {
   return new Request('https://target.social/api/swarm/replies', {
     method: 'POST',
     headers: {
@@ -221,7 +230,7 @@ function replyRequest() {
       'X-Swarm-Source-Domain': 'source.social',
       'X-Swarm-Signature': 'signed',
     },
-    body: JSON.stringify(replyPayload()),
+    body: JSON.stringify(replyPayload(badge)),
   });
 }
 
@@ -246,6 +255,7 @@ describe('swarm reply authorization and sensitivity', () => {
     mocks.signingPublicKeyFromDid.mockReturnValue('verified-signing-public-key');
     mocks.upsertRemoteUser.mockResolvedValue(undefined);
     mocks.shouldSuppressRemoteInteraction.mockResolvedValue(false);
+    mocks.verifyStuffboxBadgeAttestation.mockResolvedValue(null);
     mocks.findFirst.mockResolvedValue(null);
     mocks.limit.mockResolvedValue([]);
     mocks.orderBy.mockReturnValue({ limit: mocks.limit });
@@ -262,7 +272,10 @@ describe('swarm reply authorization and sensitivity', () => {
     mocks.update.mockReturnValue({ set: mocks.updateSet });
     mocks.txInsertReturning.mockResolvedValue([{ id: 'inbound-claim' }]);
     mocks.txInsertOnConflict.mockReturnValue({ returning: mocks.txInsertReturning });
-    mocks.txInsertValues.mockReturnValue({ onConflictDoNothing: mocks.txInsertOnConflict });
+    mocks.txInsertValues.mockReturnValue({
+      onConflictDoNothing: mocks.txInsertOnConflict,
+      returning: mocks.txInsertReturning,
+    });
     mocks.txInsert.mockReturnValue({ values: mocks.txInsertValues });
     mocks.txDeleteWhere.mockResolvedValue(undefined);
     mocks.txDelete.mockReturnValue({ where: mocks.txDeleteWhere });
@@ -357,6 +370,53 @@ describe('swarm reply authorization and sensitivity', () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.pinVerifiedFederatedActorIdentity).not.toHaveBeenCalled();
     expect(mocks.upsertRemoteUser).not.toHaveBeenCalled();
+  });
+
+  it('accepts the optional badge contract and stores only its independently verified result', async () => {
+    const badge = {
+      level: 'supporter',
+      plan: 'mini',
+      issuer: 'https://stuffbox.xyz',
+      attestation: 'x'.repeat(100),
+      expiresAt: '2026-07-22T00:00:00.000Z',
+    };
+    mocks.verifyFederatedUserAction.mockResolvedValue({
+      ok: true,
+      actorHandle: 'alice@source.social',
+      actorUsername: 'alice',
+      sourceDomain: 'source.social',
+      destinationDomain: 'target.social',
+      userAction: replyUserAction(),
+      replayId: 'reply-replay-id',
+    });
+    mocks.findFirst
+      .mockResolvedValueOnce({
+        id: parentId,
+        userId: 'parent-user-id',
+        isRemoved: false,
+        author: {
+          handle: 'owner@target.social',
+          username: 'owner',
+          homeDomain: 'target.social',
+          isLocalAccount: true,
+        },
+      })
+      .mockResolvedValueOnce(null);
+    mocks.txPostFindFirst.mockResolvedValue(null);
+    mocks.txUserFindFirst.mockResolvedValue({ id: 'remote-user-id', did: authorDid });
+    mocks.verifyStuffboxBadgeAttestation.mockResolvedValue(badge);
+
+    const response = await POST(replyRequest(badge) as never);
+
+    expect(response.status).toBe(200);
+    expect(mocks.verifyStuffboxBadgeAttestation).toHaveBeenCalledWith(
+      badge.attestation,
+      'alice@source.social',
+    );
+    expect(mocks.upsertRemoteUser).toHaveBeenCalledWith(expect.objectContaining({
+      handle: 'alice@source.social',
+      stuffboxBadge: badge,
+    }), { identityVerified: true }, expect.anything());
   });
 
   it('rejects unsigned deletion before reading or mutating a reply', async () => {

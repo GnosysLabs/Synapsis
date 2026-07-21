@@ -1,4 +1,4 @@
-/** Durable, fair refresh scheduling for accounts followed by local users. */
+/** Durable, fair refresh scheduling for followed accounts and notification actors. */
 import crypto from 'node:crypto';
 import { db, remoteFollowSyncStates, swarmNodes } from '@/db';
 import { and, asc, eq, isNull, lte, or, sql } from 'drizzle-orm';
@@ -64,6 +64,26 @@ export async function seedFollowSyncStates(
       ${sql.identifier('node_domain')} = excluded.node_domain
   `);
   await database.run(sql`
+    insert into ${remoteFollowSyncStates} (
+      ${sql.identifier('target_handle')},
+      ${sql.identifier('node_domain')}
+    )
+    select
+      lower(notifications.actor_handle),
+      lower(notifications.actor_node_domain)
+    from notifications
+    inner join swarm_nodes
+      on swarm_nodes.domain = lower(notifications.actor_node_domain)
+    where notifications.actor_id is null
+      and instr(notifications.actor_handle, '@') > 1
+      and instr(notifications.actor_handle, '@') < length(notifications.actor_handle)
+      and swarm_nodes.is_active = 1
+      and swarm_nodes.is_blocked = 0
+    group by lower(notifications.actor_handle)
+    on conflict (${sql.identifier('target_handle')}) do update set
+      ${sql.identifier('node_domain')} = excluded.node_domain
+  `);
+  await database.run(sql`
     delete from ${remoteFollowSyncStates}
     where not exists (
       select 1 from remote_follows
@@ -75,6 +95,15 @@ export async function seedFollowSyncStates(
             and ${swarmNodes.isBlocked} = 1
         )
     )
+      and not exists (
+        select 1 from notifications
+        inner join swarm_nodes
+          on swarm_nodes.domain = lower(notifications.actor_node_domain)
+        where lower(notifications.actor_handle) = ${remoteFollowSyncStates.targetHandle}
+          and notifications.actor_id is null
+          and swarm_nodes.is_active = 1
+          and swarm_nodes.is_blocked = 0
+      )
   `);
 }
 

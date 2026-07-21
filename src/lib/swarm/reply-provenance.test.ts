@@ -89,6 +89,14 @@ function payload() {
   };
 }
 
+const badge = {
+  level: 'supporter' as const,
+  plan: 'mini' as const,
+  issuer: 'https://stuffbox.xyz',
+  attestation: 'x'.repeat(100),
+  expiresAt: '2026-07-02T12:00:00.000Z',
+};
+
 function presentation(overrides: Record<string, unknown> = {}) {
   return {
     id: replyId,
@@ -213,5 +221,23 @@ describe('portable federated reply provenance', () => {
       verifyNodeProof,
     })).resolves.toBeNull();
     expect(verifyNodeProof).not.toHaveBeenCalled();
+  });
+
+  it('accepts the optional badge proof and independently binds it to the reply author', async () => {
+    const originalPayload = payload();
+    Object.assign(originalPayload.reply.author, { stuffboxBadge: badge });
+    const verifyBadgeProof = vi.fn().mockResolvedValue(badge);
+
+    const verified = await verifyRelayedReplyProvenance({
+      provenance: createRelayedReplyProvenance(originalPayload, 'bm9kZV9zaWduYXR1cmU='),
+      relayDomain: 'relay.social',
+      expectedParentPostId: parentPostId,
+      presentation: presentation(),
+      verifyNodeProof: vi.fn().mockResolvedValue(true),
+      verifyBadgeProof,
+    });
+
+    expect(verifyBadgeProof).toHaveBeenCalledWith(badge.attestation, 'alice@author.social');
+    expect(verified?.stuffboxBadge).toEqual(badge);
   });
 });

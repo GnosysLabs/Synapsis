@@ -16,9 +16,18 @@ import {
 } from './federated-action';
 import { verifySwarmRequest } from './signature';
 import { resolveAccountAddress } from '@/lib/identity/account-address';
+import { verifyStuffboxBadgeAttestation } from '@/lib/stuffbox/badge';
+import type { StuffboxBadge } from '@/lib/types';
 
 export const RELAYED_REPLY_PROVENANCE_PROTOCOL = 'synapsis-relayed-reply-v1' as const;
 const signedPresentationUrl = z.string().url().max(2_048);
+const stuffboxBadgeTransportSchema = z.strictObject({
+  level: z.enum(['connected', 'supporter']),
+  plan: z.enum(['free', 'mini', 'personal', 'plus', 'power', 'max', 'ultra']),
+  issuer: z.string().url().max(2_048),
+  attestation: z.string().min(100).max(8 * 1_024),
+  expiresAt: z.string().datetime(),
+});
 
 const replyMediaManifestItemSchema = z.strictObject({
   id: z.string().uuid(),
@@ -83,6 +92,7 @@ export const federatedReplyEnvelopeSchema = z.strictObject({
       did: z.string().min(1).max(2_048),
       publicKey: z.string().min(1).max(2_048).optional(),
       isNsfw: z.boolean().optional(),
+      stuffboxBadge: stuffboxBadgeTransportSchema.optional().nullable(),
     }),
     nodeDomain: nodeDomainSchema,
     nodeIsNsfw: z.boolean().optional(),
@@ -131,6 +141,7 @@ export interface VerifiedRelayedReply {
   }>;
   isNsfw: boolean;
   nodeIsNsfw: boolean;
+  stuffboxBadge: StuffboxBadge | null;
 }
 
 export type NodeProofVerifier = (
@@ -138,6 +149,11 @@ export type NodeProofVerifier = (
   signature: string,
   senderDomain: string,
 ) => Promise<boolean>;
+
+export type BadgeProofVerifier = (
+  attestation: string,
+  expectedHandle: string,
+) => Promise<StuffboxBadge | null>;
 
 export function createRelayedReplyProvenance(
   payload: FederatedReplyEnvelope,
@@ -171,6 +187,7 @@ export async function verifyRelayedReplyProvenance(input: {
   expectedParentPostId: string;
   presentation: RelayedReplyPresentation;
   verifyNodeProof?: NodeProofVerifier;
+  verifyBadgeProof?: BadgeProofVerifier;
 }): Promise<VerifiedRelayedReply | null> {
   const proof = relayedReplyProvenanceSchema.safeParse(input.provenance);
   if (!proof.success) return null;
@@ -245,6 +262,11 @@ export async function verifyRelayedReplyProvenance(input: {
   // outbound node-key requests.
   const verifyNodeProof = input.verifyNodeProof ?? verifySwarmRequest;
   if (!await verifyNodeProof(payload, nodeSignature, sourceDomain)) return null;
+  const candidateBadge = payload.reply.author.stuffboxBadge;
+  const verifyBadgeProof = input.verifyBadgeProof ?? verifyStuffboxBadgeAttestation;
+  const stuffboxBadge = candidateBadge?.attestation
+    ? await verifyBadgeProof(candidateBadge.attestation, actorAddress.canonical)
+    : null;
 
   return {
     id: payload.reply.id,
@@ -267,5 +289,6 @@ export async function verifyRelayedReplyProvenance(input: {
       || payload.reply.nodeIsNsfw === true,
     nodeIsNsfw: input.presentation.nodeIsNsfw === true
       || payload.reply.nodeIsNsfw !== false,
+    stuffboxBadge,
   };
 }

@@ -34,6 +34,7 @@ vi.mock('@/db', () => {
       query: { remoteFollowSyncStates: { findFirst: mocks.findState } },
     },
     remoteFollowSyncStates: columns,
+    swarmNodes: columns,
   };
 });
 
@@ -49,7 +50,7 @@ vi.mock('@/lib/swarm/interactions', () => ({
   cacheSwarmUserPosts: mocks.cacheSwarmUserPosts,
 }));
 
-import { clearSyncCache, syncRemoteFollowsPosts } from './remote-sync';
+import { clearSyncCache, seedFollowSyncStates, syncRemoteFollowsPosts } from './remote-sync';
 
 function targets(count: number) {
   return Array.from({ length: count }, (_, index) => ({
@@ -106,5 +107,12 @@ describe('durable remote follow synchronization', () => {
     const result = await syncRemoteFollowsPosts('https://local.social');
     expect(result).toMatchObject({ synced: 0, errors: 1 });
     expect(mocks.set).toHaveBeenCalledWith(expect.objectContaining({ failures: 1 }));
+  });
+
+  it('durably schedules remote actors referenced by notifications', async () => {
+    await seedFollowSyncStates();
+
+    expect(mocks.run).toHaveBeenCalledTimes(3);
+    expect(JSON.stringify(mocks.run.mock.calls[1]?.[0])).toContain('notifications');
   });
 });

@@ -428,6 +428,7 @@ export async function parseRemoteRepliesResponse(
           nodeDomain: verified.nodeDomain,
           isNsfw: verified.isNsfw,
           nodeIsNsfw: verified.nodeIsNsfw,
+          stuffboxBadge: verified.stuffboxBadge,
         },
         media: verified.media,
       }, verified.nodeDomain);

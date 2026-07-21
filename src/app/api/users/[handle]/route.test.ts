@@ -32,7 +32,7 @@ vi.mock('@/lib/node/local-node', () => ({
 }));
 
 vi.mock('@/lib/swarm/user-cache', () => ({
-  upsertRemoteUser: mocks.upsertRemoteUser,
+  refreshPinnedRemoteUserPresentation: mocks.upsertRemoteUser,
 }));
 
 vi.mock('@/lib/swarm/interactions', () => ({
@@ -159,5 +159,42 @@ describe('user profile route', () => {
         nsfwRestricted: true,
       },
     });
+  });
+
+  it('refreshes the pinned presentation cache after a verified remote profile read', async () => {
+    mocks.findUser.mockResolvedValue(null);
+    mocks.isSwarmNode.mockResolvedValue(true);
+    mocks.fetchSwarmUserProfile.mockResolvedValue({
+      profile: {
+        handle: 'alice@remote.social',
+        displayName: 'Alice Updated',
+        avatarUrl: 'https://remote.social/new-avatar.jpg',
+        followersCount: 1,
+        followingCount: 2,
+        postsCount: 3,
+        createdAt: '2026-07-17T00:00:00.000Z',
+        isNsfw: false,
+        nodeIsNsfw: false,
+        nodeDomain: 'remote.social',
+        did: 'did:key:alice',
+        publicKey: 'verified-key',
+        stuffboxBadge: null,
+      },
+      posts: [],
+      nodeDomain: 'remote.social',
+      timestamp: '2026-07-17T00:00:00.000Z',
+    });
+
+    const response = await GET(
+      new Request('https://rprh.link/api/users/alice%40remote.social'),
+      { params: Promise.resolve({ handle: 'alice@remote.social' }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.upsertRemoteUser).toHaveBeenCalledWith(expect.objectContaining({
+      handle: 'alice@remote.social',
+      avatarUrl: 'https://remote.social/new-avatar.jpg',
+      did: 'did:key:alice',
+    }));
   });
 });

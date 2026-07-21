@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSession, getSessionAccounts } from '@/lib/auth';
-import { db, users } from '@/db';
-import { eq } from 'drizzle-orm';
+import { db, notifications, users } from '@/db';
+import { and, eq, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { requireSignedAction, type SignedAction } from '@/lib/auth/verify-signature';
 import { isLocalNodeNsfw } from '@/lib/node/local-node';
@@ -140,10 +140,31 @@ export async function PATCH(request: Request) {
 
         updateData.updatedAt = new Date();
 
-        const [updatedUser] = await db.update(users)
-            .set(updateData)
-            .where(eq(users.id, currentUser.id))
-            .returning();
+        const updatedUser = await db.transaction(async (tx) => {
+            const [freshUser] = await tx.update(users)
+                .set(updateData)
+                .where(eq(users.id, currentUser.id))
+                .returning();
+
+            // Historical notifications identify the actor canonically, but
+            // their presentation fields are snapshots. Keep local snapshots
+            // aligned as part of the same profile update so legacy/null actor
+            // IDs cannot leave an old avatar behind.
+            await tx.update(notifications)
+                .set({
+                    actorDisplayName: freshUser.displayName,
+                    actorAvatarUrl: freshUser.avatarUrl,
+                })
+                .where(or(
+                    eq(notifications.actorId, currentUser.id),
+                    and(
+                        eq(notifications.actorHandle, currentUser.handle),
+                        eq(notifications.actorNodeDomain, currentUser.homeDomain),
+                    ),
+                ));
+
+            return freshUser;
+        });
 
         return NextResponse.json({
             user: {

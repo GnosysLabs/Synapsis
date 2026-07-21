@@ -1192,7 +1192,7 @@ export const swarmChangeBundles = sqliteTable('swarm_change_bundles', {
   index('swarm_change_bundles_expiry_idx').on(table.expiresAt),
 ]);
 
-/** Persistent fair scheduling for followed-account profile refreshes. */
+/** Persistent fair scheduling for followed accounts and notification actors. */
 export const remoteFollowSyncStates = sqliteTable('remote_follow_sync_states', {
   targetHandle: text('target_handle').primaryKey(),
   nodeDomain: text('node_domain').notNull(),

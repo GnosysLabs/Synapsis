@@ -29,11 +29,17 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('@/db', () => ({
-  db: { transaction: mocks.transaction },
+  db: {
+    transaction: mocks.transaction,
+    query: { handleRegistry: { findFirst: mocks.handleFindFirst } },
+  },
 }));
 
 import { generateDID, normalizeSigningPublicKey } from '@/lib/crypto/did-key';
-import { upsertRemoteUser } from './user-cache';
+import {
+  refreshPinnedRemoteUserPresentation,
+  upsertRemoteUser,
+} from './user-cache';
 
 const keys = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
 const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
@@ -111,6 +117,44 @@ describe('verified remote user cache upgrades', () => {
     await expect(upsertRemoteUser({ handle, did, publicKey, displayName: 'alice' }, {
       identityVerified: true,
     })).rejects.toThrow(/conflicts/);
+    expect(mocks.updateSet).not.toHaveBeenCalled();
+  });
+
+  it('propagates an explicit avatar removal instead of reviving the stale cache', async () => {
+    mocks.handleFindFirst.mockResolvedValue({ handle, did, identityVerified: true });
+    mocks.userFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'remote-user',
+        handle,
+        did,
+        publicKey,
+        displayName: 'Alice',
+        avatarUrl: 'https://remote.social/old-avatar.jpg',
+        isNsfw: false,
+      });
+
+    await upsertRemoteUser({
+      handle,
+      did,
+      publicKey,
+      displayName: 'Alice',
+      avatarUrl: null,
+    }, { identityVerified: true });
+
+    expect(mocks.updateSet).toHaveBeenCalledWith(expect.objectContaining({ avatarUrl: null }));
+  });
+
+  it('skips presentation refreshes until a signed action has pinned the identity', async () => {
+    mocks.handleFindFirst.mockResolvedValue(null);
+
+    await expect(refreshPinnedRemoteUserPresentation({
+      handle,
+      did,
+      publicKey,
+      displayName: 'Alice',
+      avatarUrl: 'https://remote.social/new-avatar.jpg',
+    })).resolves.toBe(false);
     expect(mocks.updateSet).not.toHaveBeenCalled();
   });
 });

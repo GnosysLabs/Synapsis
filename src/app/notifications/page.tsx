@@ -59,7 +59,7 @@ export default function NotificationsPage() {
 
     const fetchNotifications = async () => {
         try {
-            const res = await fetch('/api/notifications');
+            const res = await fetch('/api/notifications', { cache: 'no-store' });
             if (!res.ok) {
                 if (res.status === 401) {
                     setError('Please log in to view notifications');
