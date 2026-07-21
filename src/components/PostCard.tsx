@@ -156,6 +156,7 @@ interface PostCardProps {
     onNotInterested?: (post: Post) => Promise<void> | void;
     isDetail?: boolean;
     showThread?: boolean; // Show parent post inline as a thread
+    showParentContext?: boolean; // Show the direct parent above a reply in feed/profile views
     isThreadParent?: boolean; // This post is being shown as a parent in a thread
     isEmbedded?: boolean;
     parentPostAuthorId?: string; // ID of the parent post's author (for allowing deletion of replies)
@@ -173,7 +174,7 @@ export function PostCard(props: PostCardProps) {
     return <AuthoredPostCard {...props} />;
 }
 
-function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDelete, onHide, onImpression, onNotInterested, isDetail, showThread = true, isThreadParent, isEmbedded = false, parentPostAuthorId, onCollectionsChanged }: PostCardProps) {
+function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDelete, onHide, onImpression, onNotInterested, isDetail, showThread = true, showParentContext = false, isThreadParent, isEmbedded = false, parentPostAuthorId, onCollectionsChanged }: PostCardProps) {
     const {
         user: currentUser,
         did,
@@ -1018,6 +1019,31 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         );
     };
 
+    const renderPostMedia = () => visiblePostMedia && visiblePostMedia.length > 0 ? (
+        <div className="post-media-grid">
+            {visiblePostMedia.map((item) => {
+                const mediaKind = getMediaKind(item.mimeType);
+                return (
+                    <div className={`post-media-item ${mediaKind === 'audio' ? 'audio' : ''}`} key={item.id}>
+                        {mediaKind === 'video' ? (
+                            <BlurredVideo src={item.url} />
+                        ) : mediaKind === 'audio' ? (
+                            <AudioPlayer
+                                src={item.url}
+                                title={`Audio by ${post.author.displayName || post.author.handle}`}
+                            />
+                        ) : (
+                            <BlurredImage
+                                src={item.url}
+                                alt={item.altText || 'Post media'}
+                            />
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    ) : null;
+
     const revealSensitiveContent = async () => {
         if (!currentUser || revealingSensitiveContent) return;
         if (!initialPost.sensitiveContentRestricted || initialPost.id.startsWith('swarm-repost:')) {
@@ -1104,6 +1130,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     if (isThreadParent) {
         return (
             <article className={`post thread-parent ${isEmbedded ? 'embedded' : ''}`}>
+                <Link href={postUrl} className="post-link-overlay" aria-label="View parent post" />
                 <div className="post-header">
                     <Link href={getProfilePath(authorCanonicalHandle)} className="avatar-link" onClick={(e) => e.stopPropagation()}>
                         <div className="avatar">
@@ -1114,11 +1141,18 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                         <Link href={getProfilePath(authorCanonicalHandle)} className="post-handle" onClick={(e) => e.stopPropagation()}>
                             {post.author.displayName || post.author.handle}
                         </Link>
-                        <span className="post-time">{authorHandle}</span>
+                        <span className="post-time">{authorHandle} · {formatTime(post.createdAt)}</span>
                     </div>
                 </div>
-                {hideSensitiveContent ? sensitiveContentWarning : post.content.trim() && (
-                    <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
+                {hideSensitiveContent ? sensitiveContentWarning : (
+                    <>
+                        {post.content.trim() && (
+                            <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
+                        )}
+                        {renderPostMedia()}
+                        {post.linkPreviewUrl && <VideoEmbed url={post.linkPreviewUrl} />}
+                        {renderLinkPreviewCard(true)}
+                    </>
                 )}
             </article>
         );
@@ -1166,9 +1200,10 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
 
     return (
         <>
-            {/* Show parent post as part of thread - only on detail page */}
-            {showThread && effectiveReplyTo && isDetail && (
-                <div className="thread-container">
+            {/* Show the parent on post detail and in timelines that explicitly request reply context. */}
+            {showThread && effectiveReplyTo && (isDetail || showParentContext) && (
+                <div className={`thread-container ${showParentContext ? 'profile-reply-context' : ''}`}>
+                    <div className="thread-line" aria-hidden="true" />
                     <PostCard
                         post={effectiveReplyTo}
                         onLike={onLike}
@@ -1181,7 +1216,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     />
                 </div>
             )}
-            <article ref={articleRef} className={`post ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''} ${showMenu ? 'menu-open' : ''}`}>
+            <article ref={articleRef} className={`post ${isDetail ? 'detail' : ''} ${isEmbedded ? 'embedded' : ''} ${showParentContext && effectiveReplyTo ? 'thread-reply' : ''} ${showMenu ? 'menu-open' : ''}`}>
                 {!isDetail && <Link href={postUrl} className="post-link-overlay" aria-label="View post" />}
 
                 {visibleReposters.length > 0 && (
@@ -1303,30 +1338,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     <>
                 <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
 
-                {visiblePostMedia && visiblePostMedia.length > 0 && (
-                    <div className="post-media-grid">
-                        {visiblePostMedia.map((item) => {
-                            const mediaKind = getMediaKind(item.mimeType);
-                            return (
-                                <div className={`post-media-item ${mediaKind === 'audio' ? 'audio' : ''}`} key={item.id}>
-                                    {mediaKind === 'video' ? (
-                                        <BlurredVideo src={item.url} />
-                                    ) : mediaKind === 'audio' ? (
-                                        <AudioPlayer
-                                            src={item.url}
-                                            title={`Audio by ${post.author.displayName || post.author.handle}`}
-                                        />
-                                    ) : (
-                                        <BlurredImage
-                                            src={item.url}
-                                            alt={item.altText || 'Post media'}
-                                        />
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
+                {renderPostMedia()}
 
                 {post.linkPreviewUrl && (
                     <VideoEmbed url={post.linkPreviewUrl} />

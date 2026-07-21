@@ -88,6 +88,7 @@ const postSchema = shallowPostSchema.extend({
   // The nested schema deliberately has no recursive relation fields. Zod
   // strips any deeper attacker-provided nesting before the value is returned.
   repostOf: shallowPostSchema.nullish(),
+  replyTo: shallowPostSchema.nullish(),
 });
 
 const relayedReplyCandidateSchema = shallowPostSchema.extend({
@@ -212,6 +213,32 @@ function normalizePost(
     repostOf = post.repostOf;
   }
 
+  let replyTo: RemoteSwarmPost | null | undefined;
+  if (post.replyTo) {
+    assertSourceDomain(post.replyTo.nodeDomain, sourceDomain);
+    assertSourceDomain(post.replyTo.author.nodeDomain, sourceDomain);
+    assertNotFuture(post.replyTo.createdAt, 'Nested reply parent');
+    const nestedAuthor = sourceOwnedHandle(post.replyTo.author.handle, sourceDomain);
+    replyTo = {
+      ...post.replyTo,
+      nodeDomain: sourceDomain,
+      isNsfw: post.replyTo.isNsfw ?? true,
+      nodeIsNsfw: post.replyTo.nodeIsNsfw ?? true,
+      likesCount: post.replyTo.likesCount ?? post.replyTo.likeCount ?? 0,
+      repostsCount: post.replyTo.repostsCount ?? post.replyTo.repostCount ?? 0,
+      repliesCount: post.replyTo.repliesCount ?? post.replyTo.replyCount ?? 0,
+      author: {
+        ...post.replyTo.author,
+        handle: nestedAuthor,
+        nodeDomain: sourceDomain,
+        isNsfw: post.replyTo.author.isNsfw ?? true,
+        nodeIsNsfw: post.replyTo.author.nodeIsNsfw ?? post.replyTo.nodeIsNsfw ?? true,
+      },
+    };
+  } else {
+    replyTo = post.replyTo;
+  }
+
   const repostedBy = post.repostedBy?.flatMap((reposter) => {
     try {
       assertSourceDomain(reposter.nodeDomain, sourceDomain);
@@ -245,6 +272,7 @@ function normalizePost(
       nodeIsNsfw: post.author.nodeIsNsfw ?? post.nodeIsNsfw ?? true,
     },
     repostOf,
+    replyTo,
     repostedBy,
   };
 }

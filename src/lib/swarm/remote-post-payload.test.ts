@@ -139,6 +139,45 @@ describe('remote profile and post validation', () => {
     expect((result.posts[0].repostOf as unknown as { repostOf?: unknown }).repostOf).toBeUndefined();
   });
 
+  it('preserves a validated direct reply parent without trusting deeper or cross-node context', () => {
+    const replyParent = post({
+      id: '33333333-3333-4333-8333-333333333333',
+      content: 'Parent post',
+      author: {
+        handle: 'bob',
+        displayName: 'Bob',
+        isNsfw: false,
+        nodeIsNsfw: false,
+        nodeDomain: 'source.social',
+      },
+      replyTo: post(),
+    });
+    const reply = post({
+      id: '22222222-2222-4222-8222-222222222222',
+      content: 'Reply',
+      isReply: true,
+      replyToId: replyParent.id,
+      replyTo: replyParent,
+    });
+
+    const result = parseRemoteProfileResponse(profileResponse([reply]), 'source.social', 'alice', 25);
+    expect(result.posts[0].replyTo).toMatchObject({
+      id: replyParent.id,
+      content: 'Parent post',
+      nodeDomain: 'source.social',
+      author: { handle: 'bob@source.social', nodeDomain: 'source.social' },
+    });
+    expect((result.posts[0].replyTo as unknown as { replyTo?: unknown }).replyTo).toBeUndefined();
+
+    const forgedParent = post({
+      nodeDomain: 'victim.social',
+      author: { handle: 'bob@victim.social', nodeDomain: 'victim.social' },
+    });
+    const forgedReply = post({ replyTo: forgedParent });
+    const filtered = parseRemoteProfileResponse(profileResponse([forgedReply]), 'source.social', 'alice', 25);
+    expect(filtered.posts).toEqual([]);
+  });
+
   it('rejects copied or mismatched DID/key identities', () => {
     const payload = profileResponse();
     payload.profile.did = 'did:key:not-the-signing-key';

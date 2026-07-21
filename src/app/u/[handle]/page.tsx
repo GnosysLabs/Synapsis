@@ -262,6 +262,7 @@ export default function ProfilePage() {
 
     const handleDelete = (postId: string) => {
         setPosts(prev => prev.filter(p => p.id !== postId));
+        setRepliesPosts(prev => prev.filter(p => p.id !== postId));
         if (user && isOwnProfile) {
             setUser({
                 ...user,
@@ -980,6 +981,7 @@ export default function ProfilePage() {
                                 onRepost={handleRepost}
                                 onComment={handleComment}
                                 onDelete={handleDelete}
+                                showParentContext
                             />
                         ))}
                         <div ref={loadMoreRef} style={{ padding: '24px', textAlign: 'center' }}>

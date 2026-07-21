@@ -697,6 +697,10 @@ a.btn-primary:visited {
   padding-top: 8px;
 }
 
+.profile-reply-context+.thread-reply {
+  padding-top: 8px;
+}
+
 .post.embedded {
   margin-top: 0;
   padding: 12px;
@@ -4263,13 +4267,6 @@ a.btn-primary:visited {
 .post.detail .post-time {
   font-size: 14px;
 }
-
-/* Thread view styles */
-.thread-line {
-  margin-left: 20px;
-  border-left: 1px solid var(--border);
-}
-
 
 /* Big Emojis! */
 .post-content img.emoji,
