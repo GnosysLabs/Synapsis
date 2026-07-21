@@ -102,6 +102,7 @@ function payload(content = authorizedContent) {
     mention: {
       actorHandle: 'remoteuser',
       actorDisplayName: 'Remote User',
+      actorAvatarUrl: 'https://cdn.stuffbox.xyz/remote-user.jpg',
       actorNodeDomain: 'remote.social',
       actorDid,
       postId,
@@ -177,6 +178,8 @@ describe('swarm mention receiver', () => {
       remotePostDomain: 'remote.social',
       actorNodeDomain: 'remote.social',
       actorHandle: 'remoteuser@remote.social',
+      actorDisplayName: 'Remote User',
+      actorAvatarUrl: 'https://cdn.stuffbox.xyz/remote-user.jpg',
       type: 'mention',
     }));
     expect(mocks.transaction).toHaveBeenCalledOnce();

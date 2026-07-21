@@ -19,6 +19,18 @@ export interface PushOutboxResult {
   dead: number;
 }
 
+export function pushNotificationActorName(notification: {
+  actorId: string | null;
+  actorDisplayName: string | null;
+  actorHandle: string;
+}): string {
+  // Remote presentation text is safe in-app because the verified handle is
+  // displayed beside it. A lock-screen push has no such identity context.
+  return notification.actorId
+    ? notification.actorDisplayName || notification.actorHandle
+    : notification.actorHandle;
+}
+
 function retryDelayMs(attempt: number): number {
   return Math.min(60 * 60 * 1000, 15 * 1000 * (2 ** Math.max(0, attempt - 1)));
 }
@@ -115,7 +127,7 @@ async function deliverOne(
     eventId: delivery.id,
     notificationId: notification.id,
     type: notification.type,
-    actorName: notification.actorDisplayName || notification.actorHandle,
+    actorName: pushNotificationActorName(notification),
     postId: notification.postId || notification.remotePostId || undefined,
   });
 

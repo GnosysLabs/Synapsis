@@ -143,8 +143,8 @@ export async function POST(request: NextRequest) {
         await tx.insert(notifications).values({
           userId: targetUser.id,
           actorHandle: verified.actorHandle,
-          actorDisplayName: verified.actorUsername,
-          actorAvatarUrl: null,
+          actorDisplayName: data.follow.followerDisplayName,
+          actorAvatarUrl: data.follow.followerAvatarUrl || null,
           actorNodeDomain: actorDomain,
           interactionId: `follow:remote:${actorDomain}:${verified.replayId}`,
           type: 'follow',

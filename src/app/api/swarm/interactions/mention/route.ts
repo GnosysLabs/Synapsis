@@ -169,8 +169,8 @@ export async function POST(request: NextRequest) {
       await tx.insert(notifications).values({
         userId: mentionedUser.id,
         actorHandle: verified.actorHandle,
-        actorDisplayName: verified.actorUsername,
-        actorAvatarUrl: null,
+        actorDisplayName: data.mention.actorDisplayName,
+        actorAvatarUrl: data.mention.actorAvatarUrl || null,
         actorNodeDomain: actorDomain,
         remotePostId: data.mention.postId,
         remotePostDomain: actorDomain,

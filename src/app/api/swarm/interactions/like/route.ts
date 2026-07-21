@@ -134,9 +134,10 @@ export async function POST(request: NextRequest) {
         await tx.insert(notifications).values({
           userId: post.userId,
           actorHandle: verified.actorHandle,
-          // Display metadata asserted only by a hostile node is not identity proof.
-          actorDisplayName: verified.actorUsername,
-          actorAvatarUrl: null,
+          // Presentation only: the separately verified canonical handle remains
+          // authoritative and is rendered alongside this bounded display name.
+          actorDisplayName: data.like.actorDisplayName,
+          actorAvatarUrl: data.like.actorAvatarUrl || null,
           actorNodeDomain: actorDomain,
           postId: data.postId,
           postContent: post.content?.slice(0, 200) || null,

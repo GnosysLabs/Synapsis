@@ -10,6 +10,7 @@ import { parseBoundedInteger } from '@/lib/http/query';
 import {
     canonicalAccountHomeDomain,
     requireCanonicalAccountHomeDomain,
+    resolveAccountAddress,
 } from '@/lib/identity/account-address';
 
 const markSchema = z.object({
@@ -72,6 +73,9 @@ export async function GET(request: Request) {
             const actorUser = row.actorId ? actorMap.get(row.actorId) : null;
             const actorDomain = actorUser?.homeDomain
                 || canonicalAccountHomeDomain(row.actorNodeDomain);
+            const actorAddress = resolveAccountAddress(row.actorHandle, actorDomain);
+            const actorHandle = actorAddress?.canonical || row.actorHandle;
+            const actorUsername = actorAddress?.username || row.actorHandle;
             const actorIsRemote = actorUser
                 ? !actorUser.isLocalAccount
                 : Boolean(actorDomain && actorDomain !== localDomain);
@@ -117,28 +121,30 @@ export async function GET(request: Request) {
                 createdAt: row.createdAt,
                 readAt: row.readAt,
                 actor: {
-                    handle: row.actorHandle,
+                    handle: actorHandle,
                     // Rendering a notification must never call the actor node.
-                    // Remote identity proofs bind the handle, not mutable
-                    // profile presentation, so use DiceBear via the client.
+                    // The canonical handle remains the verified identity and is
+                    // rendered beside this bounded, stored presentation name.
                     displayName: actorIsRemote
-                        ? row.actorHandle
+                        ? row.actorDisplayName?.trim() || actorUsername
                         : actorUser?.displayName || row.actorDisplayName,
-                    avatarUrl: actorIsRemote || actorMediaRestricted
-                        ? null
-                        : actorUser?.avatarUrl || row.actorAvatarUrl,
+                    avatarUrl: actorIsRemote
+                        ? canViewSensitive ? row.actorAvatarUrl : null
+                        : actorMediaRestricted
+                            ? null
+                            : actorUser?.avatarUrl || row.actorAvatarUrl,
                     nodeDomain: actorDomain,
                     isNsfw: actorIsRemote
-                        ? undefined
+                        ? true
                         : actorUser?.isNsfw ?? true,
                     nodeIsNsfw: actorIsRemote
-                        ? undefined
+                        ? true
                         : localNodeIsNsfw,
                 },
                 post: row.postId || remotePostReference ? {
                     id: row.postId || remotePostReference!,
                     content: postRestricted ? null : row.post?.content || row.postContent,
-                    authorHandle: row.post?.author?.handle || row.actorHandle,
+                    authorHandle: row.post?.author?.handle || actorHandle,
                     media: postRestricted ? [] : row.post?.media.map((item) => ({
                         url: item.url,
                         mimeType: item.mimeType,

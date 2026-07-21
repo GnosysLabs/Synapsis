@@ -27,7 +27,7 @@ const remoteNotification = {
   createdAt: new Date('2026-07-17T00:00:00.000Z'),
   readAt: null,
   actorId: null,
-  actorHandle: 'adult',
+  actorHandle: 'adult@adult.example',
   actorDisplayName: 'Adult',
   actorAvatarUrl: 'https://adult.example/stale-private-avatar.jpg',
   actorNodeDomain: 'adult.example',
@@ -54,13 +54,33 @@ describe('GET /api/notifications sensitive data enforcement', () => {
     const body = await response.json();
 
     expect(body.notifications[0]).toMatchObject({
-      actor: { avatarUrl: null, handle: 'adult@adult.example', displayName: 'adult' },
+      actor: { avatarUrl: null, handle: 'adult@adult.example', displayName: 'Adult' },
       post: { content: null, media: [], sensitiveRestricted: true },
     });
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain('PRIVATE NOTIFICATION BODY');
     expect(serialized).not.toContain('fresh-private-avatar.jpg');
     expect(serialized).not.toContain('stale-private-avatar.jpg');
+  });
+
+  it('shows the stored remote display name to an age-confirmed NSFW viewer', async () => {
+    mocks.requireAuth.mockResolvedValue({
+      id: 'viewer-1',
+      handle: 'viewer',
+      nsfwEnabled: true,
+      ageVerifiedAt: new Date('2026-07-01T00:00:00.000Z'),
+    });
+
+    const response = await GET(new Request('https://local.example/api/notifications'));
+    const body = await response.json();
+
+    expect(body.notifications[0].actor).toMatchObject({
+      avatarUrl: 'https://adult.example/stale-private-avatar.jpg',
+      handle: 'adult@adult.example',
+      displayName: 'Adult',
+      isNsfw: true,
+      nodeIsNsfw: true,
+    });
   });
 
   it('fails closed when the remote profile cannot be classified', async () => {
