@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { KeyRound, Loader2, Terminal, Trash2 } from 'lucide-react';
+import { Bot, Check, Copy, KeyRound, Loader2, ShieldCheck, Terminal, Trash2 } from 'lucide-react';
 import { ArrowLeftIcon } from '@/components/Icons';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useAppDialog } from '@/lib/contexts/DialogContext';
@@ -42,6 +42,42 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
+function CommandBlock({ command }: { command: string }) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
+
+  const copy = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(command);
+      setCopyState('copied');
+      window.setTimeout(() => setCopyState('idle'), 2_000);
+    } catch {
+      setCopyState('error');
+    }
+  };
+
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      marginTop: '10px',
+      padding: '10px 10px 10px 12px',
+      border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-md)',
+      background: 'var(--background)',
+    }}>
+      <code style={{ flex: 1, minWidth: 0, overflowX: 'auto', whiteSpace: 'nowrap', fontSize: '13px' }}>
+        {command}
+      </code>
+      <button className="btn btn-ghost btn-sm" type="button" onClick={copy} aria-label={`Copy command: ${command}`}>
+        {copyState === 'copied' ? <Check size={15} /> : <Copy size={15} />}
+        <span>{copyState === 'copied' ? 'Copied' : copyState === 'error' ? 'Copy failed' : 'Copy'}</span>
+      </button>
+    </div>
+  );
+}
+
 export default function CliSettingsPage() {
   const { signUserAction } = useAuth();
   const { showConfirm } = useAppDialog();
@@ -53,6 +89,7 @@ export default function CliSettingsPage() {
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [nodeUrl, setNodeUrl] = useState('https://your-node.example');
 
   const loadCredentials = useCallback(async () => {
     const response = await fetch('/api/cli/credentials', { cache: 'no-store' });
@@ -69,6 +106,7 @@ export default function CliSettingsPage() {
   }, []);
 
   useEffect(() => {
+    setNodeUrl(window.location.origin);
     const id = new URLSearchParams(window.location.search).get('request');
     setRequestId(id);
     Promise.all([loadCredentials(), ...(id ? [loadAuthorization(id)] : [])])
@@ -178,8 +216,90 @@ export default function CliSettingsPage() {
         </section>
       )}
 
+      <section className="card" style={{ padding: '22px', marginBottom: '28px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', marginBottom: '20px' }}>
+          <Bot size={24} style={{ flexShrink: 0 }} />
+          <div>
+            <h2 style={{ fontSize: '19px', fontWeight: 650, marginBottom: '6px' }}>Post from a terminal or agent</h2>
+            <p style={{ color: 'var(--foreground-secondary)', fontSize: '14px', lineHeight: 1.55 }}>
+              The Synapsis CLI lets you publish without giving a terminal or AI agent your password or account identity key.
+              Each connection is scoped, expires automatically, and can be revoked below at any time.
+            </p>
+          </div>
+        </div>
+
+        <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <li style={{ display: 'grid', gridTemplateColumns: '28px minmax(0, 1fr)', gap: '12px' }}>
+            <div aria-hidden="true" style={{ width: '28px', height: '28px', borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'var(--background-tertiary)', fontSize: '13px', fontWeight: 700 }}>1</div>
+            <div>
+              <h3 style={{ fontSize: '15px', fontWeight: 650, marginBottom: '4px' }}>Install the CLI</h3>
+              <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.5 }}>
+                Run this once on the computer where you use your terminal or agent. Node.js 20 or newer is required.
+              </p>
+              <CommandBlock command="npm install --global @gnosyslabs/synapsis-cli" />
+            </div>
+          </li>
+
+          <li style={{ display: 'grid', gridTemplateColumns: '28px minmax(0, 1fr)', gap: '12px' }}>
+            <div aria-hidden="true" style={{ width: '28px', height: '28px', borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'var(--background-tertiary)', fontSize: '13px', fontWeight: 700 }}>2</div>
+            <div>
+              <h3 style={{ fontSize: '15px', fontWeight: 650, marginBottom: '4px' }}>Connect this account</h3>
+              <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.5 }}>
+                This opens Synapsis in your browser. Sign in, review the requested permissions, and approve the device here.
+              </p>
+              <CommandBlock command={`synapsis auth connect ${nodeUrl}`} />
+              <p style={{ color: 'var(--foreground-tertiary)', fontSize: '12px', lineHeight: 1.45, marginTop: '8px' }}>
+                Repeat this command for any other account or node you want available. Use <code>synapsis auth status</code> to see connected accounts.
+              </p>
+            </div>
+          </li>
+
+          <li style={{ display: 'grid', gridTemplateColumns: '28px minmax(0, 1fr)', gap: '12px' }}>
+            <div aria-hidden="true" style={{ width: '28px', height: '28px', borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'var(--background-tertiary)', fontSize: '13px', fontWeight: 700 }}>3</div>
+            <div>
+              <h3 style={{ fontSize: '15px', fontWeight: 650, marginBottom: '4px' }}>Publish your first post</h3>
+              <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.5 }}>
+                Text posts work immediately after approval.
+              </p>
+              <CommandBlock command={'synapsis post create --text "Hello from the CLI"'} />
+              <details style={{ marginTop: '10px', color: 'var(--foreground-secondary)', fontSize: '13px' }}>
+                <summary style={{ cursor: 'pointer', color: 'var(--foreground)' }}>Post a photo or other media</summary>
+                <p style={{ lineHeight: 1.5, marginTop: '8px' }}>
+                  Connect <Link href="/settings/storage" style={{ color: 'var(--accent)' }}>Media Storage</Link> first, then include a file and useful alt text. Up to four media files are supported.
+                </p>
+                <CommandBlock command={'synapsis post create --text "A new photo" --media ./photo.jpg --alt "Describe the photo"'} />
+              </details>
+            </div>
+          </li>
+
+          <li style={{ display: 'grid', gridTemplateColumns: '28px minmax(0, 1fr)', gap: '12px' }}>
+            <div aria-hidden="true" style={{ width: '28px', height: '28px', borderRadius: '50%', display: 'grid', placeItems: 'center', background: 'var(--background-tertiary)', fontSize: '13px', fontWeight: 700 }}>4</div>
+            <div>
+              <h3 style={{ fontSize: '15px', fontWeight: 650, marginBottom: '4px' }}>Teach your agent how to post</h3>
+              <p style={{ color: 'var(--foreground-secondary)', fontSize: '13px', lineHeight: 1.5 }}>
+                Install the bundled posting skill for Codex, Claude Code, and Agent Skills-compatible clients. Then ask your agent to post to Synapsis in ordinary language.
+              </p>
+              <CommandBlock command="synapsis skill install" />
+            </div>
+          </li>
+        </ol>
+
+        <div style={{ display: 'flex', gap: '10px', marginTop: '22px', padding: '14px', borderRadius: 'var(--radius-md)', background: 'var(--background-secondary)' }}>
+          <ShieldCheck size={20} style={{ color: 'var(--success)', flexShrink: 0 }} />
+          <div>
+            <div style={{ fontSize: '14px', fontWeight: 650, marginBottom: '3px' }}>Limited, revocable access</div>
+            <p style={{ color: 'var(--foreground-secondary)', fontSize: '12px', lineHeight: 1.5 }}>
+              Authorized devices can only publish posts and upload media. They cannot read your password, primary signing key, private messages, or account settings. Credentials expire after 90 days by default.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section>
-        <h2 style={{ fontSize: '18px', fontWeight: 650, marginBottom: '12px' }}>Authorized devices</h2>
+        <h2 style={{ fontSize: '18px', fontWeight: 650, marginBottom: '4px' }}>Authorized devices</h2>
+        <p style={{ color: 'var(--foreground-tertiary)', fontSize: '13px', lineHeight: 1.5, marginBottom: '12px' }}>
+          Review active connections or revoke access immediately.
+        </p>
         {credentials.length === 0 ? (
           <div className="card" style={{ padding: '20px', color: 'var(--foreground-secondary)' }}>
             No CLI devices have been authorized.

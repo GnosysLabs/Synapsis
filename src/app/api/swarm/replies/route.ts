@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, posts, users, media, notifications, swarmInboundActions } from '@/db';
-import { eq, desc, and, sql } from 'drizzle-orm';
+import { eq, desc, and, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { signingPublicKeyFromDid } from '@/lib/crypto/did-key';
 import { signedUserActionSchema } from '@/lib/e2ee/protocol';
@@ -478,6 +478,33 @@ export async function GET(request: NextRequest) {
       .orderBy(desc(posts.createdAt))
       .limit(50);
 
+    // Local replies have no federation provenance envelope because this node
+    // is their source of truth. Preserve their stored media in the portable
+    // thread response; remote replies must continue to use only the media
+    // authorized by their verified provenance envelope below.
+    const localReplyIds = replies
+      .filter((reply) => reply.authorIsLocalAccount)
+      .map((reply) => reply.id);
+    const localReplyMedia = localReplyIds.length > 0
+      ? await db
+          .select({
+            id: media.id,
+            postId: media.postId,
+            url: media.url,
+            altText: media.altText,
+            mimeType: media.mimeType,
+          })
+          .from(media)
+          .where(inArray(media.postId, localReplyIds))
+      : [];
+    const localMediaByReplyId = new Map<string, typeof localReplyMedia>();
+    for (const item of localReplyMedia) {
+      if (!item.postId) continue;
+      const existing = localMediaByReplyId.get(item.postId) || [];
+      existing.push(item);
+      localMediaByReplyId.set(item.postId, existing);
+    }
+
     // Format replies for swarm consumption
     const formattedReplies = replies.map((reply) => {
       const authorIsRemote = !reply.authorIsLocalAccount;
@@ -530,7 +557,16 @@ export async function GET(request: NextRequest) {
           nodeIsNsfw: authorIsRemote ? undefined : localNodeIsNsfw,
         },
         nodeDomain: remoteDomain || (authorIsRemote ? null : nodeDomain),
-        media: hasPortableProvenance ? provenanceMedia : [],
+        media: hasPortableProvenance
+          ? provenanceMedia
+          : authorIsRemote
+            ? []
+            : (localMediaByReplyId.get(reply.id) || []).map((item) => ({
+                id: item.id,
+                url: item.url,
+                altText: item.altText,
+                mimeType: item.mimeType,
+              })),
         likeCount: reply.likesCount,
         repostCount: reply.repostsCount,
         replyCount: reply.repliesCount,

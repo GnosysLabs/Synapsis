@@ -60,7 +60,7 @@ export default function SettingsPage() {
                             CLI & Agents
                         </div>
                         <div style={{ color: 'var(--foreground-secondary)', fontSize: '14px' }}>
-                            Approve and revoke command-line posting access
+                            Set up and manage command-line or agent posting
                         </div>
                     </Link>
 

@@ -61,7 +61,13 @@ vi.mock('@/db', () => ({
     homeDomain: 'users.homeDomain',
     isLocalAccount: 'users.isLocalAccount',
   },
-  media: {},
+  media: {
+    id: 'media.id',
+    postId: 'media.postId',
+    url: 'media.url',
+    altText: 'media.altText',
+    mimeType: 'media.mimeType',
+  },
   notifications: {},
   swarmInboundActions: {
     id: 'swarmInboundActions.id',
@@ -76,6 +82,7 @@ vi.mock('drizzle-orm', () => ({
   eq: vi.fn((field, value) => ({ op: 'eq', field, value })),
   desc: vi.fn(() => ({})),
   and: vi.fn(() => ({})),
+  inArray: vi.fn((field, values) => ({ op: 'inArray', field, values })),
   sql: vi.fn(() => ({})),
 }));
 
@@ -591,5 +598,56 @@ describe('swarm reply authorization and sensitivity', () => {
         isNsfw: true,
       },
     });
+  });
+
+  it('includes stored media for replies authored on this node', async () => {
+    mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
+    mocks.findFirst.mockResolvedValue({
+      id: parentId,
+      isNsfw: false,
+      author: {
+        handle: 'local-author@target.social',
+        username: 'local-author',
+        homeDomain: 'target.social',
+        isLocalAccount: true,
+        isNsfw: false,
+      },
+    });
+    mocks.limit.mockResolvedValue([{
+      id: replyId,
+      apId: null,
+      content: '',
+      createdAt: new Date('2026-07-20T00:00:00.000Z'),
+      likesCount: 0,
+      repostsCount: 0,
+      repliesCount: 0,
+      authorHandle: 'local-author@target.social',
+      authorDisplayName: 'Local Author',
+      authorAvatarUrl: null,
+      authorIsNsfw: false,
+      authorHomeDomain: 'target.social',
+      authorIsLocalAccount: true,
+      postIsNsfw: false,
+    }]);
+    mocks.selectWhere.mockResolvedValueOnce([{
+      id: 'gif-media-id',
+      postId: replyId,
+      url: 'https://stuffbox.xyz/f/example-gif',
+      altText: 'Reaction GIF',
+      mimeType: 'image/gif',
+    }]);
+
+    const response = await GET(new Request(
+      `https://target.social/api/swarm/replies?postId=${parentId}`,
+    ) as never);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.replies[0].media).toEqual([{
+      id: 'gif-media-id',
+      url: 'https://stuffbox.xyz/f/example-gif',
+      altText: 'Reaction GIF',
+      mimeType: 'image/gif',
+    }]);
   });
 });
