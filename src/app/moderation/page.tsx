@@ -53,6 +53,8 @@ type AdminNode = {
     isBlocked: boolean;
     blockReason?: string | null;
     blockedAt?: string | null;
+    remoteAccessDeniedAt?: string | null;
+    remoteAccessDeniedReason?: string | null;
     lastSeenAt?: string | null;
     trustScore?: number | null;
     isNsfw?: boolean;
@@ -596,6 +598,11 @@ export default function ModerationPage() {
                                                             inactive
                                                         </span>
                                                     )}
+                                                    {node.remoteAccessDeniedAt && (
+                                                        <span style={{ fontSize: '11px', color: 'rgb(239, 68, 68)', textTransform: 'uppercase' }}>
+                                                            blocked us
+                                                        </span>
+                                                    )}
                                                     {node.isNsfw && (
                                                         <span style={{ fontSize: '11px', color: 'rgb(245, 158, 11)' }}>
                                                             NSFW
@@ -620,6 +627,12 @@ export default function ModerationPage() {
                                                 {node.blockReason && (
                                                     <div style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginTop: '6px' }}>
                                                         Reason: {node.blockReason}
+                                                    </div>
+                                                )}
+                                                {node.remoteAccessDeniedAt && (
+                                                    <div style={{ fontSize: '13px', color: 'var(--foreground-secondary)', marginTop: '6px' }}>
+                                                        Remote denial {formatDate(node.remoteAccessDeniedAt)}
+                                                        {node.remoteAccessDeniedReason ? `: ${node.remoteAccessDeniedReason}` : ''}
                                                     </div>
                                                 )}
                                             </div>

@@ -21,7 +21,7 @@ import type { User } from '@/lib/types';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
-import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 import { parseBoundedInteger } from '@/lib/http/query';
 import { searchIndexedPostIds } from '@/lib/search/post-index';
 import { createSignedChangeBundle } from '@/lib/swarm/change-bundle';
@@ -48,6 +48,7 @@ export interface SwarmPost {
   nodeDomain: string;
   nodeIsNsfw: boolean;
   isNsfw: boolean;
+  originUnavailable?: boolean;
   likeCount: number;
   repostCount: number;
   replyCount: number;
@@ -205,6 +206,8 @@ function buildSwarmPost(
  */
 export async function GET(request: NextRequest) {
   try {
+    const readAuthorization = await authorizeFederationRead(request);
+    if (!readAuthorization.ok) return federationReadFailureResponse(readAuthorization);
     const { searchParams } = new URL(request.url);
     const limit = parseBoundedInteger(searchParams.get('limit'), {
       defaultValue: 20,
@@ -237,10 +240,7 @@ export async function GET(request: NextRequest) {
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
 
     const nodeIsNsfw = await requireLocalNodeNsfwClassification();
-    const trustedRead = await isTrustedFederationRead(request);
-    if ((changesSince !== null || accountsSince !== null) && !trustedRead) {
-      return NextResponse.json({ error: 'Authenticated federation read required' }, { status: 401 });
-    }
+    const trustedRead = true;
     // Capture the snapshot boundary before reading the snapshot. A concurrent
     // later mutation will then be replayed (safe) rather than skipped.
     const contentClockBoundary = trustedRead

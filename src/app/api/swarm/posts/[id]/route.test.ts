@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  trustedRead: vi.fn(),
+  authorizeFederationRead: vi.fn(),
   localNodeIsNsfw: vi.fn(),
   findPost: vi.fn(),
   findReplies: vi.fn(),
 }));
 
 vi.mock('@/lib/swarm/signed-read', () => ({
-  isTrustedFederationRead: mocks.trustedRead,
+  authorizeFederationRead: mocks.authorizeFederationRead,
+  federationReadFailureResponse: (authorization: { status: number; code: string; error: string }) =>
+    Response.json({ error: authorization.error, code: authorization.code }, { status: authorization.status }),
 }));
 
 vi.mock('@/lib/node/local-node', () => ({
@@ -65,19 +67,22 @@ describe('GET /api/swarm/posts/[id] read authorization', () => {
     vi.clearAllMocks();
     vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'local.example');
     mocks.localNodeIsNsfw.mockResolvedValue(false);
-    mocks.trustedRead.mockResolvedValue(false);
+    mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
     mocks.findPost.mockResolvedValue(secretPost);
     mocks.findReplies.mockResolvedValue([]);
   });
 
   it('denies an unsigned direct sensitive-post request without returning raw data', async () => {
+    mocks.authorizeFederationRead.mockResolvedValue({
+      ok: false, status: 401, code: 'FEDERATION_AUTH_REQUIRED', error: 'Authenticated federation read required',
+    });
     const response = await GET(
       new Request(`https://local.example/api/swarm/posts/${postId}`) as never,
       { params: Promise.resolve({ id: postId }) },
     );
     const body = await response.json();
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
     const serialized = JSON.stringify(body);
     for (const secret of [
       'PRIVATE',
@@ -91,7 +96,6 @@ describe('GET /api/swarm/posts/[id] read authorization', () => {
   });
 
   it('returns the full post only to a trusted signed peer', async () => {
-    mocks.trustedRead.mockResolvedValue(true);
     const response = await GET(
       new Request(`https://local.example/api/swarm/posts/${postId}`) as never,
       { params: Promise.resolve({ id: postId }) },
@@ -103,7 +107,10 @@ describe('GET /api/swarm/posts/[id] read authorization', () => {
     expect(body.post.media[0].url).toContain('private-video.mp4');
   });
 
-  it('filters a sensitive reply from an unsigned safe post response', async () => {
+  it('does not expose a safe post or its sensitive replies to an unsigned caller', async () => {
+    mocks.authorizeFederationRead.mockResolvedValue({
+      ok: false, status: 401, code: 'FEDERATION_AUTH_REQUIRED', error: 'Authenticated federation read required',
+    });
     mocks.findPost.mockResolvedValue({
       ...secretPost,
       content: 'Public body',
@@ -127,14 +134,12 @@ describe('GET /api/swarm/posts/[id] read authorization', () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body.post.content).toBe('Public body');
-    expect(body.replies).toEqual([]);
+    expect(response.status).toBe(401);
+    expect(body.post).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain('PRIVATE REPLY BODY');
   });
 
   it('rejects a cached remote main author even when its handle is unqualified', async () => {
-    mocks.trustedRead.mockResolvedValue(true);
     mocks.findPost.mockResolvedValue({
       ...secretPost,
       author: {
@@ -154,7 +159,6 @@ describe('GET /api/swarm/posts/[id] read authorization', () => {
   });
 
   it('filters cached remote replies identified by nodeId even with an unqualified handle', async () => {
-    mocks.trustedRead.mockResolvedValue(true);
     mocks.findPost.mockResolvedValue({
       ...secretPost,
       content: 'Public body',

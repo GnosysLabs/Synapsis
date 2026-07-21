@@ -16,6 +16,7 @@ import {
 import { getSensitiveContentViewerAccess } from '@/lib/nsfw/viewer-access';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { parseBoundedInteger } from '@/lib/http/query';
+import { ORIGIN_UNAVAILABLE_CONTENT } from '@/lib/swarm/remote-access-protocol';
 
 const embeddedPostRelations = {
     author: true,
@@ -78,6 +79,7 @@ function mapUserSwarmRepostToFeedPost(
         ? row.authorHandle
         : `${row.authorHandle}@${row.nodeDomain}`;
     const remoteOriginalId = `swarm:${row.nodeDomain}:${row.originalPostId}`;
+    const originUnavailable = Boolean(row.originUnavailableAt);
 
     return {
         id: `swarm-repost:${row.id}`,
@@ -98,15 +100,16 @@ function mapUserSwarmRepostToFeedPost(
         repostOf: {
             id: remoteOriginalId,
             originalPostId: row.originalPostId,
-            content: row.content,
+            content: originUnavailable ? ORIGIN_UNAVAILABLE_CONTENT : row.content,
             createdAt: row.postCreatedAt.toISOString(),
             likesCount: row.likesCount,
             repostsCount: row.repostsCount,
             repliesCount: row.repliesCount,
             isSwarm: true,
+            originUnavailable,
             nodeDomain: row.nodeDomain,
-            isNsfw: undefined,
-            nodeIsNsfw: undefined,
+            isNsfw: originUnavailable ? false : undefined,
+            nodeIsNsfw: originUnavailable ? false : undefined,
             author: {
                 id: `swarm:${row.nodeDomain}:${row.authorHandle}`,
                 handle: remoteAuthorHandle,
@@ -114,17 +117,17 @@ function mapUserSwarmRepostToFeedPost(
                 avatarUrl: row.authorAvatarUrl,
                 isRemote: true,
                 nodeDomain: row.nodeDomain,
-                isNsfw: undefined,
-                nodeIsNsfw: undefined,
+                isNsfw: originUnavailable ? false : undefined,
+                nodeIsNsfw: originUnavailable ? false : undefined,
             },
-            media: parseMediaJson(row.mediaJson),
-            linkPreviewUrl: row.linkPreviewUrl,
-            linkPreviewTitle: row.linkPreviewTitle,
-            linkPreviewDescription: row.linkPreviewDescription,
-            linkPreviewImage: row.linkPreviewImage,
-            linkPreviewType: row.linkPreviewType,
-            linkPreviewVideoUrl: row.linkPreviewVideoUrl,
-            linkPreviewMedia: parseLinkPreviewMediaJson(row.linkPreviewMediaJson) || null,
+            media: originUnavailable ? [] : parseMediaJson(row.mediaJson),
+            linkPreviewUrl: originUnavailable ? null : row.linkPreviewUrl,
+            linkPreviewTitle: originUnavailable ? null : row.linkPreviewTitle,
+            linkPreviewDescription: originUnavailable ? null : row.linkPreviewDescription,
+            linkPreviewImage: originUnavailable ? null : row.linkPreviewImage,
+            linkPreviewType: originUnavailable ? null : row.linkPreviewType,
+            linkPreviewVideoUrl: originUnavailable ? null : row.linkPreviewVideoUrl,
+            linkPreviewMedia: originUnavailable ? null : parseLinkPreviewMediaJson(row.linkPreviewMediaJson) || null,
         },
     } as unknown as FeedPostWithChildren;
 }

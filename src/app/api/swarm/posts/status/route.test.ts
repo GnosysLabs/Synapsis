@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  trusted: vi.fn(),
+  authorizeFederationRead: vi.fn(),
   select: vi.fn(),
 }));
 
 vi.mock('@/lib/swarm/signed-read', () => ({
-  isTrustedFederationRead: mocks.trusted,
+  authorizeFederationRead: mocks.authorizeFederationRead,
+  federationReadFailureResponse: (authorization: { status: number; code: string; error: string }) =>
+    Response.json({ error: authorization.error, code: authorization.code }, { status: authorization.status }),
 }));
 
 vi.mock('@/db', () => ({
@@ -42,7 +44,7 @@ function selectBuilder(rows: unknown[]) {
 describe('GET /api/swarm/posts/status', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.trusted.mockResolvedValue(true);
+    mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
   });
 
   it('returns only available strict-local posts to an authenticated peer', async () => {
@@ -56,12 +58,14 @@ describe('GET /api/swarm/posts/status', () => {
   });
 
   it('rejects unauthenticated and unbounded reconciliation requests', async () => {
-    mocks.trusted.mockResolvedValue(false);
+    mocks.authorizeFederationRead.mockResolvedValue({
+      ok: false, status: 401, code: 'FEDERATION_AUTH_REQUIRED', error: 'Authenticated federation read required',
+    });
     expect((await GET(new Request(
       'https://local.social/api/swarm/posts/status?ids=11111111-1111-4111-8111-111111111111',
     ) as never)).status).toBe(401);
 
-    mocks.trusted.mockResolvedValue(true);
+    mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
     const ids = Array.from({ length: 51 }, (_, index) => (
       `11111111-1111-4111-8111-${String(index).padStart(12, '0')}`
     )).join(',');

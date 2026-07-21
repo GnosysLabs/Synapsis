@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { isRateLimited } from '@/lib/rate-limit';
 import { getCachedVerifiedChangeBundle } from '@/lib/swarm/change-bundle';
 import { getPublicSwarmDomain, isPublicSwarmDomain } from '@/lib/swarm/node-domain';
-import { getTrustedFederationReadSource } from '@/lib/swarm/signed-read';
+import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 
 const NO_STORE_HEADERS = { 'Cache-Control': 'private, no-store' };
 
@@ -15,13 +15,9 @@ export async function GET(request: Request) {
         { status: 429, headers: NO_STORE_HEADERS },
       );
     }
-    const source = await getTrustedFederationReadSource(request);
-    if (!source) {
-      return NextResponse.json(
-        { error: 'Authenticated federation read required' },
-        { status: 401, headers: NO_STORE_HEADERS },
-      );
-    }
+    const readAuthorization = await authorizeFederationRead(request);
+    if (!readAuthorization.ok) return federationReadFailureResponse(readAuthorization);
+    const source = readAuthorization.sourceDomain;
     if (isRateLimited('change-bundle-read-authenticated-global', 6_000, 60_000)
       || isRateLimited(`change-bundle-read-node:${source}`, 120, 60_000)) {
       return NextResponse.json(

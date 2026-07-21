@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { signingPublicKeyFromDid } from '@/lib/crypto/did-key';
 import { signedUserActionSchema } from '@/lib/e2ee/protocol';
 import { isPostSensitive, redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
-import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 import { upsertRemoteUser } from '@/lib/swarm/user-cache';
 import {
   FederatedIdentityContinuityError,
@@ -405,6 +405,8 @@ export async function DELETE(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
+    const readAuthorization = await authorizeFederationRead(request);
+    if (!readAuthorization.ok) return federationReadFailureResponse(readAuthorization);
     if (!db) {
       return NextResponse.json({ replies: [] });
     }
@@ -419,7 +421,7 @@ export async function GET(request: NextRequest) {
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
     const localNodeIsNsfw = await (await import('@/lib/node/local-node'))
       .requireLocalNodeNsfwClassification();
-    const trustedRead = await isTrustedFederationRead(request);
+    const trustedRead = true;
     const parentPost = await db.query.posts.findFirst({
       where: { AND: [{ id: postId }, { isRemoved: false }] },
       with: { author: true },

@@ -8,6 +8,13 @@ import {
 import { getNodePrivateKey, signPayload, verifySignature } from './signature';
 import { getNodePublicKey as getLocalNodePublicKey } from './node-keys';
 import { getTrustedSwarmReadPeerPublicKey } from './registry';
+import { isNodeBlocked } from './node-blocklist';
+import {
+  clearRemoteNodeAccessDenied,
+  isRemoteNodeBlockResponse,
+  markRemoteNodeAccessDenied,
+  NODE_BLOCKED_CODE,
+} from './remote-access';
 
 const READ_SIGNATURE_MAX_AGE_MS = 2 * 60 * 1000;
 const DEVELOPMENT_LOOPBACK_DOMAIN = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i;
@@ -28,6 +35,15 @@ interface SignedReadPayload {
   timestamp: number;
   nonce: string;
 }
+
+export type FederationReadAuthorization =
+  | { ok: true; sourceDomain: string }
+  | {
+      ok: false;
+      status: 401 | 403;
+      code: 'FEDERATION_AUTH_REQUIRED' | typeof NODE_BLOCKED_CODE;
+      error: string;
+    };
 
 type SignedReadOptions = Omit<SafeFederationRequestOptions, 'method' | 'body'>;
 
@@ -107,16 +123,36 @@ export async function signedFederationRead(
     }
   }
 
-  return safeFederationRequest(url.toString(), {
+  const response = await safeFederationRequest(url.toString(), {
     ...options,
     method: 'GET',
     headers,
   });
+  if (targetDomain) {
+    try {
+      if (isRemoteNodeBlockResponse(response)) {
+        await markRemoteNodeAccessDenied(targetDomain);
+      } else if (response.status >= 200 && response.status < 300) {
+        await clearRemoteNodeAccessDenied(targetDomain);
+      }
+    } catch (error) {
+      console.error(`[Swarm] Failed to persist access state for ${targetDomain}:`, error);
+    }
+  }
+  return response;
 }
 
-/** Return the authenticated source for a fresh GET signed for this exact route. */
-export async function getTrustedFederationReadSource(request: Request): Promise<string | null> {
-  if (request.method !== 'GET') return null;
+/** Authorize a fresh GET signed for this exact route and reject blocked peers distinctly. */
+export async function authorizeFederationRead(
+  request: Request,
+): Promise<FederationReadAuthorization> {
+  const unauthorized: FederationReadAuthorization = {
+    ok: false,
+    status: 401,
+    code: 'FEDERATION_AUTH_REQUIRED',
+    error: 'Authenticated federation read required',
+  };
+  if (request.method !== 'GET') return unauthorized;
   const sourceDomain = federationIdentity(request.headers.get(SOURCE_HEADER));
   const targetDomain = federationIdentity(request.headers.get(TARGET_HEADER));
   const signature = request.headers.get(SIGNATURE_HEADER);
@@ -126,12 +162,20 @@ export async function getTrustedFederationReadSource(request: Request): Promise<
   if (!sourceDomain || !targetDomain || !expectedTarget || targetDomain !== expectedTarget
     || !signature || !timestampValue || !nonce
     || !/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) {
-    return null;
+    return unauthorized;
+  }
+  if (sourceDomain !== targetDomain && await isNodeBlocked(sourceDomain)) {
+    return {
+      ok: false,
+      status: 403,
+      code: NODE_BLOCKED_CODE,
+      error: 'This node has blocked federation access from your origin',
+    };
   }
 
   const timestamp = Number(timestampValue);
   if (!Number.isSafeInteger(timestamp) || Math.abs(Date.now() - timestamp) > READ_SIGNATURE_MAX_AGE_MS) {
-    return null;
+    return unauthorized;
   }
   const url = new URL(request.url);
   const payload = signedReadPayload(url, sourceDomain, targetDomain, timestamp, nonce);
@@ -147,8 +191,26 @@ export async function getTrustedFederationReadSource(request: Request): Promise<
     );
   }
   return validSignature && consumeReadNonce(sourceDomain, nonce, Date.now())
-    ? sourceDomain
-    : null;
+    ? { ok: true, sourceDomain }
+    : unauthorized;
+}
+
+export function federationReadFailureResponse(
+  authorization: Exclude<FederationReadAuthorization, { ok: true }>,
+): Response {
+  return Response.json({
+    error: authorization.error,
+    code: authorization.code,
+  }, {
+    status: authorization.status,
+    headers: { 'Cache-Control': 'private, no-store' },
+  });
+}
+
+/** Return the authenticated source for a fresh GET signed for this exact route. */
+export async function getTrustedFederationReadSource(request: Request): Promise<string | null> {
+  const authorization = await authorizeFederationRead(request);
+  return authorization.ok ? authorization.sourceDomain : null;
 }
 
 /** True only for a fresh GET signed by another node for this exact route. */

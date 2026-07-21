@@ -11,8 +11,9 @@ import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
-import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 import { parseBoundedInteger } from '@/lib/http/query';
+import { ORIGIN_UNAVAILABLE_CONTENT } from '@/lib/swarm/remote-access-protocol';
 
 export interface SwarmUserProfile {
   handle: string;
@@ -147,6 +148,7 @@ function mapUserSwarmRepostToSwarmPost(
   nodeDomain: string,
   nodeIsNsfw: boolean
 ): SwarmUserPost {
+  const originUnavailable = Boolean(row.originUnavailableAt);
   return {
     id: row.id,
     originalPostId: row.id,
@@ -169,7 +171,8 @@ function mapUserSwarmRepostToSwarmPost(
     repostOf: {
       id: row.originalPostId,
       originalPostId: row.originalPostId,
-      content: row.content,
+      content: originUnavailable ? ORIGIN_UNAVAILABLE_CONTENT : row.content,
+      originUnavailable,
       createdAt: row.postCreatedAt.toISOString(),
       // These legacy snapshots predate classifier persistence. Treat the
       // unknown remote original as sensitive instead of inventing `false`.
@@ -186,15 +189,15 @@ function mapUserSwarmRepostToSwarmPost(
         nodeIsNsfw: true,
         nodeDomain: row.nodeDomain,
       },
-      media: parseMediaJson(row.mediaJson),
-      linkPreviewUrl: row.linkPreviewUrl || undefined,
-      linkPreviewTitle: row.linkPreviewTitle || undefined,
-      linkPreviewDescription: row.linkPreviewDescription || undefined,
-      linkPreviewImage: row.linkPreviewImage || undefined,
-      linkPreviewType: (row.linkPreviewType as SwarmUserPost['linkPreviewType']) || undefined,
-      linkPreviewVideoUrl: row.linkPreviewVideoUrl || undefined,
-      linkPreviewMedia: parseLinkPreviewMediaJson(row.linkPreviewMediaJson),
-    },
+      media: originUnavailable ? [] : parseMediaJson(row.mediaJson),
+      linkPreviewUrl: originUnavailable ? undefined : row.linkPreviewUrl || undefined,
+      linkPreviewTitle: originUnavailable ? undefined : row.linkPreviewTitle || undefined,
+      linkPreviewDescription: originUnavailable ? undefined : row.linkPreviewDescription || undefined,
+      linkPreviewImage: originUnavailable ? undefined : row.linkPreviewImage || undefined,
+      linkPreviewType: originUnavailable ? undefined : (row.linkPreviewType as SwarmUserPost['linkPreviewType']) || undefined,
+      linkPreviewVideoUrl: originUnavailable ? undefined : row.linkPreviewVideoUrl || undefined,
+      linkPreviewMedia: originUnavailable ? [] : parseLinkPreviewMediaJson(row.linkPreviewMediaJson),
+    } as SwarmUserPost & { originUnavailable?: boolean },
   };
 }
 
@@ -206,6 +209,8 @@ function mapUserSwarmRepostToSwarmPost(
  */
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
+    const readAuthorization = await authorizeFederationRead(request);
+    if (!readAuthorization.ok) return federationReadFailureResponse(readAuthorization);
     const { handle } = await context.params;
     const cleanHandle = handle.toLowerCase().replace(/^@/, '');
     if (!/^[a-z0-9_]{1,64}$/.test(cleanHandle)) {
@@ -229,7 +234,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
     const nodeIsNsfw = await requireLocalNodeNsfwClassification();
-    const trustedRead = await isTrustedFederationRead(request);
+    const trustedRead = true;
 
     // Find the user
     const user = await db.query.users.findFirst({

@@ -31,6 +31,13 @@ import {
 } from './remote-post-payload';
 import type { SwarmPost } from '@/app/api/swarm/timeline/route';
 import { indexRemotePostContent } from '@/lib/search/post-index';
+import {
+  clearRemoteNodeAccessDenied,
+  isRemoteNodeAccessDenied,
+  isRemoteNodeBlockResponse,
+  markRemoteNodeAccessDenied,
+  NODE_BLOCKED_CODE,
+} from './remote-access';
 
 // ============================================
 // TYPES
@@ -68,6 +75,7 @@ export interface SwarmInteractionResponse {
   error?: string;
   statusCode?: number;
   retryable?: boolean;
+  code?: string;
 }
 
 export interface SwarmLikePayload {
@@ -301,6 +309,15 @@ async function deliverSwarmInteraction(
         error: `Blocked node: ${normalizedTargetDomain}`,
       };
     }
+    if (await isRemoteNodeAccessDenied(normalizedTargetDomain)) {
+      return {
+        success: false,
+        statusCode: 403,
+        retryable: false,
+        code: NODE_BLOCKED_CODE,
+        error: `The origin ${normalizedTargetDomain} has blocked federation access from this node`,
+      };
+    }
 
     const baseUrl = targetDomain.startsWith('http')
       ? targetDomain
@@ -341,14 +358,20 @@ async function deliverSwarmInteraction(
 
     if (response.status < 200 || response.status >= 300) {
       const errorText = response.text();
+      const remotelyBlocked = isRemoteNodeBlockResponse(response);
+      if (remotelyBlocked) {
+        await markRemoteNodeAccessDenied(normalizedTargetDomain);
+      }
       return {
         success: false,
         statusCode: response.status,
         retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+        ...(remotelyBlocked ? { code: NODE_BLOCKED_CODE } : {}),
         error: `HTTP ${response.status}: ${errorText}`,
       };
     }
 
+    await clearRemoteNodeAccessDenied(normalizedTargetDomain);
     const data = response.json() as { message?: string };
     return {
       success: true,
@@ -398,7 +421,8 @@ export async function fetchSwarmUserProfile(
     if (
       !targetDomain ||
       !/^[a-z0-9_]{1,64}$/.test(cleanHandle) ||
-      (await isNodeBlocked(targetDomain))
+      (await isNodeBlocked(targetDomain)) ||
+      (await isRemoteNodeAccessDenied(targetDomain))
     ) {
       return null;
     }
@@ -512,6 +536,7 @@ export async function cacheSwarmUserPosts(
       nodeDomain: normalizeNodeDomain(domain),
       nodeIsNsfw: post.nodeIsNsfw ?? profile.nodeIsNsfw,
       isNsfw: post.isNsfw ?? true,
+      originUnavailable: post.originUnavailable,
       likeCount: post.likesCount ?? post.likeCount ?? 0,
       repostCount: post.repostsCount ?? post.repostCount ?? 0,
       replyCount: post.repliesCount ?? post.replyCount ?? 0,
@@ -587,7 +612,10 @@ export async function fetchSwarmPost(
 ): Promise<SwarmUserPost | null> {
   try {
     const normalizedDomain = normalizeNodeDomain(domain);
-    if (await isNodeBlocked(normalizedDomain)) {
+    if (
+      await isNodeBlocked(normalizedDomain)
+      || await isRemoteNodeAccessDenied(normalizedDomain)
+    ) {
       return null;
     }
 

@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  trustedRead: vi.fn(),
+  authorizeFederationRead: vi.fn(),
   localNodeIsNsfw: vi.fn(),
   findUser: vi.fn(),
   findPosts: vi.fn(),
 }));
 
 vi.mock('@/lib/swarm/signed-read', () => ({
-  isTrustedFederationRead: mocks.trustedRead,
+  authorizeFederationRead: mocks.authorizeFederationRead,
+  federationReadFailureResponse: (authorization: { status: number; code: string; error: string }) =>
+    Response.json({ error: authorization.error, code: authorization.code }, { status: authorization.status }),
 }));
 
 vi.mock('@/lib/node/local-node', () => ({
@@ -84,27 +86,23 @@ describe('GET /api/swarm/users/[handle] read authorization', () => {
     vi.clearAllMocks();
     vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'adult.example');
     mocks.localNodeIsNsfw.mockResolvedValue(true);
-    mocks.trustedRead.mockResolvedValue(false);
+    mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
     mocks.findUser.mockResolvedValue(adultUser);
     mocks.findPosts.mockResolvedValue([adultPost]);
   });
 
-  it('returns only a profile stub and no posts to an unsigned caller', async () => {
+  it('rejects an unsigned caller before reading profile data', async () => {
+    mocks.authorizeFederationRead.mockResolvedValue({
+      ok: false, status: 401, code: 'FEDERATION_AUTH_REQUIRED', error: 'Authenticated federation read required',
+    });
     const response = await GET(
       new Request('https://adult.example/api/swarm/users/adult') as never,
       { params: Promise.resolve({ handle: 'adult' }) },
     );
     const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body).toMatchObject({
-      profile: {
-        handle: 'adult',
-        displayName: 'adult',
-        nsfwRestricted: true,
-      },
-      posts: [],
-    });
+    expect(response.status).toBe(401);
+    expect(mocks.findUser).not.toHaveBeenCalled();
     const serialized = JSON.stringify(body);
     for (const secret of [
       'PRIVATE',
@@ -119,7 +117,6 @@ describe('GET /api/swarm/users/[handle] read authorization', () => {
   });
 
   it('returns full data only to a trusted signed peer', async () => {
-    mocks.trustedRead.mockResolvedValue(true);
     const response = await GET(
       new Request('https://adult.example/api/swarm/users/adult') as never,
       { params: Promise.resolve({ handle: 'adult' }) },

@@ -59,6 +59,7 @@ const shallowPostSchema = z.object({
   swarmReplyToId: z.string().max(512).nullish(),
   isNsfw: z.boolean().optional(),
   nodeIsNsfw: z.boolean().optional(),
+  originUnavailable: z.boolean().optional(),
   likesCount: boundedCount.optional(),
   repostsCount: boundedCount.optional(),
   repliesCount: boundedCount.optional(),

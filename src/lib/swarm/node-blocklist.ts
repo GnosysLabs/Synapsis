@@ -1,6 +1,7 @@
 import { db, swarmNodes } from '@/db';
 import { eq } from 'drizzle-orm';
 import { getPublicSwarmDomain, normalizeNodeDomain } from './node-domain';
+import { quarantineOriginContent } from './remote-access';
 
 export { normalizeNodeDomain } from './node-domain';
 
@@ -76,6 +77,7 @@ export async function upsertBlockedNode(domain: string, reason?: string | null) 
   });
 
   if (existing) {
+    await quarantineOriginContent(normalized);
     const [updated] = await db.update(swarmNodes)
       .set({
         isBlocked: true,
@@ -90,6 +92,7 @@ export async function upsertBlockedNode(domain: string, reason?: string | null) 
     return updated;
   }
 
+  await quarantineOriginContent(normalized);
   const [created] = await db.insert(swarmNodes)
     .values({
       domain: normalized,

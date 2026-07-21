@@ -260,6 +260,7 @@ export async function getActiveSwarmNodes(limit?: number): Promise<SwarmNodeInfo
     where: { AND: [
       { isActive: true },
       { isBlocked: false },
+      { remoteAccessDeniedAt: { isNull: true } },
       { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
     ] },
     orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.lastSeenAt)],
@@ -280,6 +281,7 @@ export async function getActiveSwarmNode(domain: string): Promise<SwarmNodeInfo 
       { domain: normalizedDomain },
       { isActive: true },
       { isBlocked: false },
+      { remoteAccessDeniedAt: { isNull: true } },
       { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
     ] },
   });
@@ -404,6 +406,7 @@ export async function getNodesForGossip(count: number): Promise<SwarmNodeInfo[]>
     where: { AND: [
       { isActive: true },
       { isBlocked: false },
+      { remoteAccessDeniedAt: { isNull: true } },
       { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
     ] },
     orderBy: () => sql`RANDOM()`,
@@ -428,6 +431,7 @@ export async function getNodesForChangeNotice(
     where: { AND: [
       { isActive: true },
       { isBlocked: false },
+      { remoteAccessDeniedAt: { isNull: true } },
       { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
       { nsfwClassificationKnown: true },
       { publicKey: { isNotNull: true } },
@@ -458,6 +462,7 @@ export async function getNodesForPeerExchange(count: number): Promise<SwarmNodeI
   const nodes = await db.query.swarmNodes.findMany({
     where: { AND: [
       { isBlocked: false },
+      { remoteAccessDeniedAt: { isNull: true } },
       { OR: [
         { discoveredVia: 'direct' },
         { discoveredVia: 'announcement' },
@@ -483,6 +488,7 @@ export async function getNodesSince(since: Date, limit = 100): Promise<SwarmNode
       { updatedAt: { gt: since } },
       { isActive: true },
       { isBlocked: false },
+      { remoteAccessDeniedAt: { isNull: true } },
       { trustScore: { gt: SWARM_CONFIG.quarantineTrustScore } },
     ] },
     orderBy: (swarmNodes, { desc }) => [desc(swarmNodes.updatedAt)],
@@ -721,10 +727,10 @@ export async function getSwarmStats() {
   const [networkRows, localUsers, localPosts, localMedia] = await Promise.all([
     db.select({
       totalNodes: sql<number>`count(*)`,
-      activeNodes: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then 1 else 0 end), 0)`,
-      totalUsers: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.userCount}, 0) else 0 end), 0)`,
-      totalPosts: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.postCount}, 0) else 0 end), 0)`,
-      totalMedia: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.mediaCount}, 0) else 0 end), 0)`,
+      activeNodes: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.remoteAccessDeniedAt} is null and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then 1 else 0 end), 0)`,
+      totalUsers: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.remoteAccessDeniedAt} is null and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.userCount}, 0) else 0 end), 0)`,
+      totalPosts: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.remoteAccessDeniedAt} is null and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.postCount}, 0) else 0 end), 0)`,
+      totalMedia: sql<number>`coalesce(sum(case when ${swarmNodes.isActive} = 1 and ${swarmNodes.isBlocked} = 0 and ${swarmNodes.remoteAccessDeniedAt} is null and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore} then coalesce(${swarmNodes.mediaCount}, 0) else 0 end), 0)`,
     }).from(swarmNodes),
     db.select({ count: sql<number>`count(*)` }).from(users)
       .where(sql`${users.handle} NOT LIKE '%@%'`),

@@ -3,15 +3,14 @@ import { and, eq, inArray, isNull, notLike } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db, posts, users } from '@/db';
-import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 
 const postIdSchema = z.string().uuid();
 
 /** Bounded, content-free upgrade reconciliation for pre-tombstone snapshots. */
 export async function GET(request: NextRequest) {
-  if (!await isTrustedFederationRead(request)) {
-    return NextResponse.json({ error: 'Authenticated federation read required' }, { status: 401 });
-  }
+  const readAuthorization = await authorizeFederationRead(request);
+  if (!readAuthorization.ok) return federationReadFailureResponse(readAuthorization);
 
   const candidates = Array.from(new Set(
     (new URL(request.url).searchParams.get('ids') || '').split(',').filter(Boolean),

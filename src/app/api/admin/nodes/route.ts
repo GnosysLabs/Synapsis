@@ -28,6 +28,8 @@ export async function GET() {
         isBlocked: node.isBlocked,
         blockReason: node.blockReason,
         blockedAt: node.blockedAt,
+        remoteAccessDeniedAt: node.remoteAccessDeniedAt,
+        remoteAccessDeniedReason: node.remoteAccessDeniedReason,
         lastSeenAt: node.lastSeenAt,
         trustScore: node.trustScore,
         isNsfw: node.isNsfw,

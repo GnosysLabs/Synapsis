@@ -480,6 +480,9 @@ export const userSwarmReposts = sqliteTable('user_swarm_reposts', {
   linkPreviewVideoUrl: text('link_preview_video_url'),
   linkPreviewMediaJson: text('link_preview_media_json'),
   mediaJson: text('media_json'),
+  // The origin denied this node federation access. Retain the local user's
+  // repost event, but scrub and replace the remote snapshot with a tombstone.
+  originUnavailableAt: integer('origin_unavailable_at', { mode: 'timestamp' }),
   repostedAt: integer('reposted_at', { mode: 'timestamp' }).default(currentTimestamp).notNull(),
 }, (table) => [
   index('user_swarm_reposts_user_idx').on(table.userId, table.repostedAt),
@@ -833,6 +836,11 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
   isBlocked: integer('is_blocked', { mode: 'boolean' }).default(false).notNull(),
   blockReason: text('block_reason'),
   blockedAt: integer('blocked_at', { mode: 'timestamp' }),
+  // This peer told us that our node is blocked at its origin. This is distinct
+  // from the local administrator's block and can clear after a later signed
+  // content read succeeds.
+  remoteAccessDeniedAt: integer('remote_access_denied_at', { mode: 'timestamp' }),
+  remoteAccessDeniedReason: text('remote_access_denied_reason'),
 
   // Capabilities
   capabilities: text('capabilities'), // JSON array: ["handles", "gossip", "relay"]
@@ -847,6 +855,7 @@ export const swarmNodes = sqliteTable('swarm_nodes', {
   index('swarm_nodes_trust_idx').on(table.trustScore),
   index('swarm_nodes_nsfw_idx').on(table.isNsfw),
   index('swarm_nodes_blocked_idx').on(table.isBlocked),
+  index('swarm_nodes_remote_denied_idx').on(table.remoteAccessDeniedAt),
   index('swarm_nodes_eligible_seen_idx').on(table.isActive, table.isBlocked, table.trustScore, table.lastSeenAt),
 ]);
 

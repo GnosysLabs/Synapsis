@@ -62,6 +62,7 @@ export interface Post {
     isNsfw?: boolean;
     nodeIsNsfw?: boolean;
     sensitiveContentRestricted?: boolean;
+    originUnavailable?: boolean;
     author: User;
     media?: MediaItem[];
     linkPreviewUrl?: string | null;

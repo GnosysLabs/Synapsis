@@ -10,6 +10,7 @@ import { discoverNode } from '@/lib/swarm/discovery';
 import { resolveUserHandle } from '@/lib/swarm/user-handle';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { z } from 'zod';
+import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
@@ -149,6 +150,12 @@ export async function POST(request: Request, context: RouteContext) {
             });
 
             if (!result.success) {
+                if (result.code === NODE_BLOCKED_CODE) {
+                    return NextResponse.json({
+                        error: 'This origin has blocked federation access from this node.',
+                        code: NODE_BLOCKED_CODE,
+                    }, { status: 403 });
+                }
                 return NextResponse.json({ error: result.error || 'Failed to follow user' }, { status: 502 });
             }
 
@@ -285,6 +292,12 @@ export async function DELETE(request: Request, context: RouteContext) {
 
             if (!result.success) {
                 console.warn(`[Swarm] Unfollow delivery failed: ${result.error}`);
+                if (result.code === NODE_BLOCKED_CODE) {
+                    return NextResponse.json({
+                        error: 'This origin has blocked federation access from this node.',
+                        code: NODE_BLOCKED_CODE,
+                    }, { status: 403 });
+                }
                 return NextResponse.json({
                     error: 'The remote node could not confirm the unfollow. Nothing was changed locally.',
                 }, { status: 502 });

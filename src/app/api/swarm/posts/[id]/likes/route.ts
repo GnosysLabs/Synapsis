@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { z } from 'zod';
-import { getTrustedFederationReadSource } from '@/lib/swarm/signed-read';
+import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { isPostSensitive } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
@@ -33,6 +33,8 @@ const likesQuerySchema = z.object({
  */
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
+    const readAuthorization = await authorizeFederationRead(request);
+    if (!readAuthorization.ok) return federationReadFailureResponse(readAuthorization);
     if (!db) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
@@ -69,12 +71,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (!post || post.isRemoved) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
     }
+    if (!post.author || !hasStrictLocalUserOrigin(post.author)) {
+      return NextResponse.json({ error: 'Post not found' }, { status: 404 });
+    }
 
-    const trustedReadSource = await getTrustedFederationReadSource(request);
-    const trustedRead = trustedReadSource !== null;
+    const trustedReadSource = readAuthorization.sourceDomain;
+    const trustedRead = true;
     const localNodeIsNsfw = await requireLocalNodeNsfwClassification();
-    const authorIsLocal = Boolean(post.author && hasStrictLocalUserOrigin(post.author));
-    const sensitive = !post.author || isPostSensitive({
+    const authorIsLocal = true;
+    const sensitive = isPostSensitive({
       postIsNsfw: post.isNsfw,
       authorIsNsfw: post.author.isNsfw,
       nodeIsNsfw: authorIsLocal ? localNodeIsNsfw : undefined,

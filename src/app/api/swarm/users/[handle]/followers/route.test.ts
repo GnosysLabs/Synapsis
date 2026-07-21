@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   findUser: vi.fn(),
   select: vi.fn(),
   localNodeIsNsfw: vi.fn(),
-  trustedRead: vi.fn(),
+  authorizeFederationRead: vi.fn(),
 }));
 
 vi.mock('@/db', () => ({
@@ -24,7 +24,9 @@ vi.mock('@/lib/node/local-node', () => ({
 }));
 
 vi.mock('@/lib/swarm/signed-read', () => ({
-  isTrustedFederationRead: mocks.trustedRead,
+  authorizeFederationRead: mocks.authorizeFederationRead,
+  federationReadFailureResponse: (authorization: { status: number; code: string; error: string }) =>
+    Response.json({ error: authorization.error, code: authorization.code }, { status: authorization.status }),
 }));
 
 import { GET } from './route';
@@ -33,7 +35,7 @@ describe('GET /api/swarm/users/[handle]/followers local origin boundary', () => 
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.localNodeIsNsfw.mockResolvedValue(false);
-    mocks.trustedRead.mockResolvedValue(true);
+    mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
   });
 
   it('rejects a qualified remote target before querying the user cache', async () => {

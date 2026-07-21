@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  getTrustedFederationReadSource: vi.fn(),
+  authorizeFederationRead: vi.fn(),
   getCachedVerifiedChangeBundle: vi.fn(),
   isRateLimited: vi.fn(() => false),
 }));
 
 vi.mock('@/lib/swarm/signed-read', () => ({
-  getTrustedFederationReadSource: mocks.getTrustedFederationReadSource,
+  authorizeFederationRead: mocks.authorizeFederationRead,
+  federationReadFailureResponse: (authorization: { status: number; code: string; error: string }) =>
+    Response.json({ error: authorization.error, code: authorization.code }, { status: authorization.status }),
 }));
 
 vi.mock('@/lib/swarm/change-bundle', () => ({
@@ -27,7 +29,12 @@ describe('GET /api/swarm/change-bundles', () => {
   });
 
   it('does not expose cached bundles to unauthenticated callers', async () => {
-    mocks.getTrustedFederationReadSource.mockResolvedValue(null);
+    mocks.authorizeFederationRead.mockResolvedValue({
+      ok: false,
+      status: 401,
+      code: 'FEDERATION_AUTH_REQUIRED',
+      error: 'Authenticated federation read required',
+    });
     const response = await GET(new Request(
       'https://relay.social/api/swarm/change-bundles?origin=origin.social&after=10',
     ));
@@ -36,7 +43,7 @@ describe('GET /api/swarm/change-bundles', () => {
   });
 
   it('serves the unchanged origin-signed object to an authenticated peer', async () => {
-    mocks.getTrustedFederationReadSource.mockResolvedValue('receiver.social');
+    mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'receiver.social' });
     const signed = {
       bundle: { type: 'ChangeBundle', version: 1, origin: 'origin.social' },
       signature: 'origin-signature',

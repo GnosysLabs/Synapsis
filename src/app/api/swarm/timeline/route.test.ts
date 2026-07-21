@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   gt: vi.fn((column: unknown, value: unknown) => ({ operator: 'gt', column, value })),
   searchIndexedPostIds: vi.fn(),
   requireLocalNodeNsfwClassification: vi.fn(),
-  isTrustedFederationRead: vi.fn(),
+  authorizeFederationRead: vi.fn(),
 }));
 
 vi.mock('@/db', () => {
@@ -59,7 +59,9 @@ vi.mock('@/lib/node/local-node', () => ({
 }));
 
 vi.mock('@/lib/swarm/signed-read', () => ({
-  isTrustedFederationRead: mocks.isTrustedFederationRead,
+  authorizeFederationRead: mocks.authorizeFederationRead,
+  federationReadFailureResponse: (authorization: { status: number; code: string; error: string }) =>
+    Response.json({ error: authorization.error, code: authorization.code }, { status: authorization.status }),
 }));
 
 vi.mock('@/lib/media/linkPreview', () => ({
@@ -101,7 +103,7 @@ describe('GET /api/swarm/timeline local-author boundary', () => {
     vi.clearAllMocks();
     vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'local.example');
     mocks.requireLocalNodeNsfwClassification.mockResolvedValue(false);
-    mocks.isTrustedFederationRead.mockResolvedValue(true);
+    mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
     mocks.searchIndexedPostIds.mockResolvedValue([]);
   });
 
@@ -189,7 +191,9 @@ describe('GET /api/swarm/timeline local-author boundary', () => {
   });
 
   it('does not expose the change stream to unauthenticated scrapers', async () => {
-    mocks.isTrustedFederationRead.mockResolvedValue(false);
+    mocks.authorizeFederationRead.mockResolvedValue({
+      ok: false, status: 401, code: 'FEDERATION_AUTH_REQUIRED', error: 'Authenticated federation read required',
+    });
     const response = await GET(new Request(
       'https://local.example/api/swarm/timeline?changesSince=0',
     ) as never);
@@ -222,7 +226,9 @@ describe('GET /api/swarm/timeline local-author boundary', () => {
   });
 
   it('does not expose account tombstones to unauthenticated scrapers', async () => {
-    mocks.isTrustedFederationRead.mockResolvedValue(false);
+    mocks.authorizeFederationRead.mockResolvedValue({
+      ok: false, status: 401, code: 'FEDERATION_AUTH_REQUIRED', error: 'Authenticated federation read required',
+    });
     const response = await GET(new Request(
       'https://local.example/api/swarm/timeline?accountsSince=0',
     ) as never);

@@ -4,16 +4,15 @@ import { db } from '@/db';
 import { getLocalCollectionSummaries } from '@/lib/collections/data';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
-import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 import { isTrustedFederationMediaUrl } from '@/lib/utils/federation';
 
 type RouteContext = { params: Promise<{ handle: string }> };
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    if (!await isTrustedFederationRead(request)) {
-      return NextResponse.json({ error: 'Signed federation read required' }, { status: 401 });
-    }
+    const readAuthorization = await authorizeFederationRead(request);
+    if (!readAuthorization.ok) return federationReadFailureResponse(readAuthorization);
     const { handle } = await context.params;
     const cleanHandle = handle.toLowerCase().replace(/^@/, '');
     if (!/^[a-z0-9_]{1,64}$/.test(cleanHandle)) {

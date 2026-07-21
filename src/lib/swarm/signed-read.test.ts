@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   verifySignature: vi.fn(),
   getLocalNodePublicKey: vi.fn(),
   getTrustedPeerKey: vi.fn(),
+  isNodeBlocked: vi.fn(),
+  clearRemoteNodeAccessDenied: vi.fn(),
+  markRemoteNodeAccessDenied: vi.fn(),
 }));
 
 vi.mock('./safe-federation-http', () => ({
@@ -27,7 +30,20 @@ vi.mock('./registry', () => ({
   getTrustedSwarmReadPeerPublicKey: mocks.getTrustedPeerKey,
 }));
 
-import { isTrustedFederationRead, signedFederationRead } from './signed-read';
+vi.mock('./node-blocklist', () => ({
+  isNodeBlocked: mocks.isNodeBlocked,
+}));
+
+vi.mock('./remote-access', () => ({
+  NODE_BLOCKED_CODE: 'NODE_BLOCKED',
+  clearRemoteNodeAccessDenied: mocks.clearRemoteNodeAccessDenied,
+  markRemoteNodeAccessDenied: mocks.markRemoteNodeAccessDenied,
+  isRemoteNodeBlockResponse: (response: { status: number; json(): unknown }) =>
+    response.status === 403
+    && (response.json() as { code?: string }).code === 'NODE_BLOCKED',
+}));
+
+import { authorizeFederationRead, isTrustedFederationRead, signedFederationRead } from './signed-read';
 
 function signedRequest({
   method = 'GET',
@@ -59,7 +75,11 @@ describe('signed federation reads', () => {
     mocks.signPayload.mockReturnValue('local-signature');
     mocks.verifySignature.mockReturnValue(true);
     mocks.getTrustedPeerKey.mockResolvedValue('PINNED PEER PUBLIC KEY');
-    mocks.safeFederationRequest.mockResolvedValue({ status: 200 });
+    mocks.isNodeBlocked.mockResolvedValue(false);
+    mocks.safeFederationRequest.mockResolvedValue({
+      status: 200,
+      json: () => ({}),
+    });
   });
 
   it('signs the exact GET path with a unique nonce', async () => {
@@ -116,6 +136,34 @@ describe('signed federation reads', () => {
 
     await expect(isTrustedFederationRead(request)).resolves.toBe(false);
     expect(mocks.verifySignature).not.toHaveBeenCalled();
+  });
+
+  it('returns a distinct denial for a locally blocked signed peer', async () => {
+    mocks.isNodeBlocked.mockResolvedValue(true);
+
+    await expect(authorizeFederationRead(signedRequest({
+      nonce: 'unique_nonce_value_blocked',
+    }))).resolves.toEqual({
+      ok: false,
+      status: 403,
+      code: 'NODE_BLOCKED',
+      error: 'This node has blocked federation access from your origin',
+    });
+    expect(mocks.getTrustedPeerKey).not.toHaveBeenCalled();
+    expect(mocks.verifySignature).not.toHaveBeenCalled();
+  });
+
+  it('records a remote block response so cached access can be quarantined', async () => {
+    vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'source.com');
+    mocks.safeFederationRequest.mockResolvedValue({
+      status: 403,
+      json: () => ({ code: 'NODE_BLOCKED' }),
+    });
+
+    await signedFederationRead('https://target.com/api/swarm/timeline');
+
+    expect(mocks.markRemoteNodeAccessDenied).toHaveBeenCalledWith('target.com');
+    expect(mocks.clearRemoteNodeAccessDenied).not.toHaveBeenCalled();
   });
 
   it('fails closed for stale signatures and peers without a pinned trusted key', async () => {

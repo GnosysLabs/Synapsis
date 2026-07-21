@@ -38,6 +38,11 @@ import {
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { safeFederationRequest } from '@/lib/swarm/safe-federation-http';
 import { refreshFederatedReplyCounts } from '@/lib/swarm/reply-counts';
+import {
+    isRemoteNodeBlockResponse,
+    NODE_BLOCKED_CODE,
+    ORIGIN_UNAVAILABLE_CONTENT,
+} from '@/lib/swarm/remote-access-protocol';
 import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 import { federationMediaUrlSchema } from '@/lib/utils/federation';
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
@@ -81,6 +86,7 @@ function mapUserSwarmRepostToFeedPost(
         ? row.authorHandle
         : `${row.authorHandle}@${row.nodeDomain}`;
     const remoteOriginalId = `swarm:${row.nodeDomain}:${row.originalPostId}`;
+    const originUnavailable = Boolean(row.originUnavailableAt);
 
     return {
         id: `swarm-repost:${row.id}`,
@@ -101,17 +107,18 @@ function mapUserSwarmRepostToFeedPost(
         repostOf: {
             id: remoteOriginalId,
             originalPostId: row.originalPostId,
-            content: row.content,
+            content: originUnavailable ? ORIGIN_UNAVAILABLE_CONTENT : row.content,
             createdAt: row.postCreatedAt.toISOString(),
             likesCount: row.likesCount,
             repostsCount: row.repostsCount,
             repliesCount: row.repliesCount,
             isSwarm: true,
+            originUnavailable,
             nodeDomain: row.nodeDomain,
             // Legacy cached repost snapshots predate sensitivity columns.
             // Leave classifiers unknown so the shared renderer fails closed.
-            isNsfw: undefined,
-            nodeIsNsfw: undefined,
+            isNsfw: originUnavailable ? false : undefined,
+            nodeIsNsfw: originUnavailable ? false : undefined,
             author: {
                 id: `swarm:${row.nodeDomain}:${row.authorHandle}`,
                 handle: remoteAuthorHandle,
@@ -119,17 +126,17 @@ function mapUserSwarmRepostToFeedPost(
                 avatarUrl: row.authorAvatarUrl,
                 isRemote: true,
                 nodeDomain: row.nodeDomain,
-                isNsfw: undefined,
-                nodeIsNsfw: undefined,
+                isNsfw: originUnavailable ? false : undefined,
+                nodeIsNsfw: originUnavailable ? false : undefined,
             },
-            media: row.mediaJson ? JSON.parse(row.mediaJson) : [],
-            linkPreviewUrl: row.linkPreviewUrl,
-            linkPreviewTitle: row.linkPreviewTitle,
-            linkPreviewDescription: row.linkPreviewDescription,
-            linkPreviewImage: row.linkPreviewImage,
-            linkPreviewType: row.linkPreviewType,
-            linkPreviewVideoUrl: row.linkPreviewVideoUrl,
-            linkPreviewMedia: parseLinkPreviewMediaJson(row.linkPreviewMediaJson) || null,
+            media: originUnavailable ? [] : row.mediaJson ? JSON.parse(row.mediaJson) : [],
+            linkPreviewUrl: originUnavailable ? null : row.linkPreviewUrl,
+            linkPreviewTitle: originUnavailable ? null : row.linkPreviewTitle,
+            linkPreviewDescription: originUnavailable ? null : row.linkPreviewDescription,
+            linkPreviewImage: originUnavailable ? null : row.linkPreviewImage,
+            linkPreviewType: originUnavailable ? null : row.linkPreviewType,
+            linkPreviewVideoUrl: originUnavailable ? null : row.linkPreviewVideoUrl,
+            linkPreviewMedia: originUnavailable ? null : parseLinkPreviewMediaJson(row.linkPreviewMediaJson) || null,
         },
     } as unknown as FeedPostWithChildren;
 }
@@ -449,6 +456,16 @@ export async function POST(request: Request) {
         const nodeDomain = normalizeNodeDomain(
             process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
         );
+        if (
+            data.swarmReplyTo
+            && await (await import('@/lib/swarm/remote-access'))
+                .isRemoteNodeAccessDenied(data.swarmReplyTo.nodeDomain)
+        ) {
+            return NextResponse.json({
+                error: 'This origin has blocked federation access from this node.',
+                code: NODE_BLOCKED_CODE,
+            }, { status: 403 });
+        }
         if (data.swarmReplyTo && !isSignedActionPayload(requestBody)) {
             return NextResponse.json(
                 { error: 'Federated replies require a browser-signed user action' },
@@ -610,9 +627,20 @@ export async function POST(request: Request) {
                 });
 
                 if (response.status < 200 || response.status >= 300) {
+                    if (isRemoteNodeBlockResponse(response)) {
+                        await (await import('@/lib/swarm/remote-access'))
+                            .markRemoteNodeAccessDenied(data.swarmReplyTo.nodeDomain);
+                        await db.delete(posts).where(eq(posts.id, post.id));
+                        return NextResponse.json({
+                            error: 'This origin has blocked federation access from this node.',
+                            code: NODE_BLOCKED_CODE,
+                        }, { status: 403 });
+                    }
                     const body = response.text();
                     throw new Error(body || `Remote node rejected reply (${response.status})`);
                 }
+                await (await import('@/lib/swarm/remote-access'))
+                    .clearRemoteNodeAccessDenied(data.swarmReplyTo.nodeDomain);
             }
 
             if (requestedMediaIds.length > 0) {

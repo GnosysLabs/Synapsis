@@ -8,11 +8,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { z } from 'zod';
 import { parseLinkPreviewMediaJson } from '@/lib/media/linkPreview';
+import { ORIGIN_UNAVAILABLE_CONTENT } from '@/lib/swarm/remote-access-protocol';
 import { attachRemoteRepostSummaries } from '@/lib/posts/remote-reposts';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitivePostForViewer } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
-import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -25,6 +26,8 @@ const uuidSchema = z.string().uuid();
  */
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
+    const readAuthorization = await authorizeFederationRead(request);
+    if (!readAuthorization.ok) return federationReadFailureResponse(readAuthorization);
     if (!db) {
       return NextResponse.json({ error: 'Database not available' }, { status: 503 });
     }
@@ -39,7 +42,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const postId = postIdValidation.data;
     const nodeIsNsfw = await requireLocalNodeNsfwClassification();
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
-    const trustedRead = await isTrustedFederationRead(request);
+    const trustedRead = true;
     const serializePost = (value: Record<string, unknown>) => redactSensitivePostForViewer(
       value,
       {
@@ -97,7 +100,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
           repostOf: {
             id: remoteRepost.originalPostId,
             originalPostId: remoteRepost.originalPostId,
-            content: remoteRepost.content,
+            content: remoteRepost.originUnavailableAt
+              ? ORIGIN_UNAVAILABLE_CONTENT
+              : remoteRepost.content,
+            originUnavailable: Boolean(remoteRepost.originUnavailableAt),
             createdAt: remoteRepost.postCreatedAt.toISOString(),
             likesCount: remoteRepost.likesCount,
             repostsCount: remoteRepost.repostsCount,
@@ -114,14 +120,18 @@ export async function GET(request: NextRequest, context: RouteContext) {
               isNsfw: true,
               nodeIsNsfw: true,
             },
-            media: remoteRepost.mediaJson ? JSON.parse(remoteRepost.mediaJson) : [],
-            linkPreviewUrl: remoteRepost.linkPreviewUrl,
-            linkPreviewTitle: remoteRepost.linkPreviewTitle,
-            linkPreviewDescription: remoteRepost.linkPreviewDescription,
-            linkPreviewImage: remoteRepost.linkPreviewImage,
-            linkPreviewType: remoteRepost.linkPreviewType,
-            linkPreviewVideoUrl: remoteRepost.linkPreviewVideoUrl,
-            linkPreviewMedia: parseLinkPreviewMediaJson(remoteRepost.linkPreviewMediaJson) || [],
+            media: remoteRepost.originUnavailableAt || !remoteRepost.mediaJson
+              ? []
+              : JSON.parse(remoteRepost.mediaJson),
+            linkPreviewUrl: remoteRepost.originUnavailableAt ? null : remoteRepost.linkPreviewUrl,
+            linkPreviewTitle: remoteRepost.originUnavailableAt ? null : remoteRepost.linkPreviewTitle,
+            linkPreviewDescription: remoteRepost.originUnavailableAt ? null : remoteRepost.linkPreviewDescription,
+            linkPreviewImage: remoteRepost.originUnavailableAt ? null : remoteRepost.linkPreviewImage,
+            linkPreviewType: remoteRepost.originUnavailableAt ? null : remoteRepost.linkPreviewType,
+            linkPreviewVideoUrl: remoteRepost.originUnavailableAt ? null : remoteRepost.linkPreviewVideoUrl,
+            linkPreviewMedia: remoteRepost.originUnavailableAt
+              ? []
+              : parseLinkPreviewMediaJson(remoteRepost.linkPreviewMediaJson) || [],
           },
       });
       if (!trustedRead && repostPayload.sensitiveContentRestricted === true) {

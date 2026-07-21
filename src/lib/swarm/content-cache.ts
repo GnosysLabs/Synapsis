@@ -1033,6 +1033,7 @@ export async function getCachedSwarmTimeline(
       where ${swarmNodes.domain} = ${remotePosts.nodeDomain}
         and ${swarmNodes.isActive} = 1
         and ${swarmNodes.isBlocked} = 0
+        and ${swarmNodes.remoteAccessDeniedAt} is null
         and ${swarmNodes.trustScore} > ${SWARM_CONFIG.quarantineTrustScore}
     )`,
     cursorCondition,

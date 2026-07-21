@@ -362,6 +362,11 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         e.preventDefault();
         e.stopPropagation();
 
+        if (post.originUnavailable) {
+            showToast('This post is unavailable because its origin disconnected federation access.', 'error');
+            return;
+        }
+
         if (likePending) {
             return;
         }
@@ -394,6 +399,11 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     const handleRepost = async (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+
+        if (post.originUnavailable) {
+            showToast('This post is unavailable because its origin disconnected federation access.', 'error');
+            return;
+        }
 
         if (repostPending) {
             return;
@@ -442,6 +452,10 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
     const handleComment = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
+        if (post.originUnavailable) {
+            showToast('This post is unavailable because its origin disconnected federation access.', 'error');
+            return;
+        }
         // Navigate to post detail page
         router.push(postUrl);
     };
@@ -1270,15 +1284,15 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
 
                 <div className="post-actions">
                     <div className="post-actions-primary">
-                        <button className="post-action" onClick={handleComment} title="Reply">
+                        <button className="post-action" onClick={handleComment} disabled={post.originUnavailable} title={post.originUnavailable ? 'Unavailable from origin' : 'Reply'}>
                             <MessageIcon />
                             <span>{post.repliesCount || ''}</span>
                         </button>
-                        <button className={`post-action ${reposted ? 'reposted' : ''}`} onClick={handleRepost} disabled={repostPending} title="Repost">
+                        <button className={`post-action ${reposted ? 'reposted' : ''}`} onClick={handleRepost} disabled={post.originUnavailable || repostPending} title={post.originUnavailable ? 'Unavailable from origin' : 'Repost'}>
                             <RepeatIcon />
                             <span>{repostsCount || ''}</span>
                         </button>
-                        <button className={`post-action ${liked ? 'liked' : ''}`} onClick={handleLike} title="Like">
+                        <button className={`post-action ${liked ? 'liked' : ''}`} onClick={handleLike} disabled={post.originUnavailable || likePending} title={post.originUnavailable ? 'Unavailable from origin' : 'Like'}>
                             <HeartIcon filled={liked} />
                             <span>{likesCount || ''}</span>
                         </button>

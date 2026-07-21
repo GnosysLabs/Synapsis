@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import { normalizeSameNodePostId, parseSwarmPostId } from '@/lib/swarm/post-id';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { fetchRemotePostSnapshot } from '@/lib/swarm/remote-post-snapshot';
+import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -124,6 +125,12 @@ export async function POST(request: Request, context: RouteContext) {
 
             if (!result.success) {
                 console.error(`[Swarm] Repost delivery failed: ${result.error}`);
+                if (result.code === NODE_BLOCKED_CODE) {
+                    return NextResponse.json({
+                        error: 'This origin has blocked federation access from this node.',
+                        code: NODE_BLOCKED_CODE,
+                    }, { status: 403 });
+                }
                 return NextResponse.json({ error: 'Failed to deliver repost to remote node' }, { status: 502 });
             }
 
@@ -134,11 +141,13 @@ export async function POST(request: Request, context: RouteContext) {
                     nodeDomain: targetDomain,
                     originalPostId,
                     ...snapshot,
+                    originUnavailableAt: null,
                     repostedAt: new Date(),
                 }).onConflictDoUpdate({
                     target: [userSwarmReposts.userId, userSwarmReposts.nodeDomain, userSwarmReposts.originalPostId],
                     set: {
                         ...snapshot,
+                        originUnavailableAt: null,
                         repostedAt: new Date(),
                     },
                 });
@@ -330,6 +339,12 @@ export async function DELETE(request: Request, context: RouteContext) {
 
             if (!result.success) {
                 console.error(`[Swarm] Unrepost delivery failed: ${result.error}`);
+                if (result.code === NODE_BLOCKED_CODE) {
+                    return NextResponse.json({
+                        error: 'This origin has blocked federation access from this node.',
+                        code: NODE_BLOCKED_CODE,
+                    }, { status: 403 });
+                }
                 return NextResponse.json({ error: 'Failed to deliver unrepost to remote node' }, { status: 502 });
             }
 

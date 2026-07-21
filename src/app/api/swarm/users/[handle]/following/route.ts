@@ -10,7 +10,7 @@ import { and, eq, isNull, notLike } from 'drizzle-orm';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
-import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 import { parseBoundedInteger } from '@/lib/http/query';
 
 export interface SwarmFollowingUser {
@@ -34,6 +34,8 @@ type RouteContext = { params: Promise<{ handle: string }> };
  */
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
+    const readAuthorization = await authorizeFederationRead(request);
+    if (!readAuthorization.ok) return federationReadFailureResponse(readAuthorization);
     const { handle } = await context.params;
     const cleanHandle = handle.toLowerCase().replace(/^@/, '');
     if (!/^[a-z0-9_]{1,64}$/.test(cleanHandle)) {
@@ -52,7 +54,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     const nodeDomain = process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost';
     const nodeIsNsfw = await requireLocalNodeNsfwClassification();
-    const trustedRead = await isTrustedFederationRead(request);
+    const trustedRead = true;
 
     // Find the user
     const user = await db.query.users.findFirst({

@@ -28,6 +28,7 @@ export function mapSwarmPostToPost(
         repliesCount: post.replyCount,
         isNsfw: post.isNsfw,
         nodeIsNsfw: post.nodeIsNsfw,
+        originUnavailable: post.originUnavailable,
         isSwarm: !isLocalPost,
         nodeDomain: post.nodeDomain,
         repostOfId: post.repostOfId

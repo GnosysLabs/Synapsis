@@ -6,7 +6,7 @@ import { db, users } from '@/db';
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { redactSensitiveUserSummary } from '@/lib/nsfw/content-visibility';
 import { hasStrictLocalUserOrigin } from '@/lib/swarm/local-user-origin';
-import { isTrustedFederationRead } from '@/lib/swarm/signed-read';
+import { authorizeFederationRead, federationReadFailureResponse } from '@/lib/swarm/signed-read';
 
 const querySchema = z.object({
   q: z.string().max(30).regex(/^[a-zA-Z0-9_ -]*$/),
@@ -15,6 +15,8 @@ const querySchema = z.object({
 
 /** Public, bounded local user directory used by federated mention typeahead. */
 export async function GET(request: NextRequest) {
+  const readAuthorization = await authorizeFederationRead(request);
+  if (!readAuthorization.ok) return federationReadFailureResponse(readAuthorization);
   const parsed = querySchema.safeParse({
     q: request.nextUrl.searchParams.get('q') || '',
     limit: request.nextUrl.searchParams.get('limit') || undefined,
@@ -25,7 +27,7 @@ export async function GET(request: NextRequest) {
 
   const query = parsed.data.q.toLowerCase();
   const nodeIsNsfw = await requireLocalNodeNsfwClassification();
-  const trustedRead = await isTrustedFederationRead(request);
+  const trustedRead = true;
   const matches = await db.select({
     handle: users.handle,
     displayName: users.displayName,

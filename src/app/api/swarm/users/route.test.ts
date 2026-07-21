@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   isNull: vi.fn((column: unknown) => ({ operator: 'isNull', column })),
   notLike: vi.fn((column: unknown, pattern: string) => ({ operator: 'notLike', column, pattern })),
   localNodeIsNsfw: vi.fn(),
-  trustedRead: vi.fn(),
+  authorizeFederationRead: vi.fn(),
 }));
 
 vi.mock('drizzle-orm', () => ({
@@ -41,7 +41,9 @@ vi.mock('@/lib/node/local-node', () => ({
 }));
 
 vi.mock('@/lib/swarm/signed-read', () => ({
-  isTrustedFederationRead: mocks.trustedRead,
+  authorizeFederationRead: mocks.authorizeFederationRead,
+  federationReadFailureResponse: (authorization: { status: number; code: string; error: string }) =>
+    Response.json({ error: authorization.error, code: authorization.code }, { status: authorization.status }),
 }));
 
 import { GET } from './route';
@@ -54,7 +56,7 @@ describe('GET /api/swarm/users local origin boundary', () => {
     mocks.where.mockReturnValue({ orderBy: mocks.orderBy });
     mocks.orderBy.mockReturnValue({ limit: mocks.limit });
     mocks.localNodeIsNsfw.mockResolvedValue(false);
-    mocks.trustedRead.mockResolvedValue(true);
+    mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
   });
 
   it('exports only unqualified users with a null nodeId', async () => {

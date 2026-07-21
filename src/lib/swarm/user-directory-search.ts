@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, like } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, like } from 'drizzle-orm';
 
 import { db, handleRegistry, swarmNodes } from '@/db';
 import { liveHandleRegistryEntryWhere } from '@/lib/federation/handles';
@@ -49,6 +49,7 @@ export async function searchKnownSwarmUsers(
             inArray(swarmNodes.domain, candidateDomains),
             eq(swarmNodes.isActive, true),
             eq(swarmNodes.isBlocked, false),
+            isNull(swarmNodes.remoteAccessDeniedAt),
         ));
 
     const localDomain = normalizeNodeDomain(options.localDomain || '');

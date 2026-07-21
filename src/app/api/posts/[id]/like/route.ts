@@ -7,6 +7,7 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { fetchRemotePostSnapshot } from '@/lib/swarm/remote-post-snapshot';
 import { normalizeSameNodePostId, parseSwarmPostId } from '@/lib/swarm/post-id';
+import { NODE_BLOCKED_CODE } from '@/lib/swarm/remote-access-protocol';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -119,6 +120,12 @@ export async function POST(request: Request, context: RouteContext) {
 
             if (!result.success) {
                 console.error(`[Swarm] Like delivery failed: ${result.error}`);
+                if (result.code === NODE_BLOCKED_CODE) {
+                    return NextResponse.json({
+                        error: 'This origin has blocked federation access from this node.',
+                        code: NODE_BLOCKED_CODE,
+                    }, { status: 403 });
+                }
                 return NextResponse.json({ error: 'Failed to deliver like to remote node' }, { status: 502 });
             }
 
@@ -315,6 +322,12 @@ export async function DELETE(request: Request, context: RouteContext) {
 
             if (!result.success) {
                 console.error(`[Swarm] Unlike delivery failed: ${result.error}`);
+                if (result.code === NODE_BLOCKED_CODE) {
+                    return NextResponse.json({
+                        error: 'This origin has blocked federation access from this node.',
+                        code: NODE_BLOCKED_CODE,
+                    }, { status: 403 });
+                }
                 return NextResponse.json({ error: 'Failed to deliver unlike to remote node' }, { status: 502 });
             }
 

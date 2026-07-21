@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   shouldSuppressRemoteInteraction: vi.fn(),
   upsertRemoteUser: vi.fn(),
   signingPublicKeyFromDid: vi.fn(),
-  isTrustedFederationRead: vi.fn(),
+  authorizeFederationRead: vi.fn(),
   requireClassification: vi.fn(),
 }));
 
@@ -87,7 +87,9 @@ vi.mock('@/lib/swarm/federated-action', async (importOriginal) => {
   };
 });
 vi.mock('@/lib/swarm/signed-read', () => ({
-  isTrustedFederationRead: mocks.isTrustedFederationRead,
+  authorizeFederationRead: mocks.authorizeFederationRead,
+  federationReadFailureResponse: (authorization: { status: number; code: string; error: string }) =>
+    Response.json({ error: authorization.error, code: authorization.code }, { status: authorization.status }),
 }));
 vi.mock('@/lib/node/local-node', () => ({
   requireLocalNodeNsfwClassification: mocks.requireClassification,
@@ -218,7 +220,9 @@ describe('swarm reply authorization and sensitivity', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.requireClassification.mockResolvedValue(false);
-    mocks.isTrustedFederationRead.mockResolvedValue(false);
+    mocks.authorizeFederationRead.mockResolvedValue({
+      ok: false, status: 401, code: 'FEDERATION_AUTH_REQUIRED', error: 'Authenticated federation read required',
+    });
     mocks.verifyFederatedUserAction.mockResolvedValue({
       ok: false,
       status: 403,
@@ -474,11 +478,11 @@ describe('swarm reply authorization and sensitivity', () => {
       `https://target.social/api/swarm/replies?postId=${parentId}`,
     ) as never);
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
     expect(mocks.select).not.toHaveBeenCalled();
   });
 
-  it('filters a bare-handle remote reply with a node id from an unsigned safe thread', async () => {
+  it('does not expose a safe thread to an unsigned caller', async () => {
     mocks.findFirst.mockResolvedValue({
       id: parentId,
       isNsfw: false,
@@ -503,14 +507,14 @@ describe('swarm reply authorization and sensitivity', () => {
     ) as never);
     const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body.replies).toEqual([]);
+    expect(response.status).toBe(401);
+    expect(body.replies).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain('REMOTE SECRET BODY');
     expect(JSON.stringify(body)).not.toContain('secret-avatar.jpg');
   });
 
   it('returns a delivered reply under its source-node id to trusted peers', async () => {
-    mocks.isTrustedFederationRead.mockResolvedValue(true);
+    mocks.authorizeFederationRead.mockResolvedValue({ ok: true, sourceDomain: 'peer.example' });
     mocks.findFirst.mockResolvedValue({
       id: parentId,
       isNsfw: false,
