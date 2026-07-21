@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import Image from 'next/image';
 import { StorageConfigurationPrompt } from '@/components/StorageConfigurationPrompt';
 import { getStorageProvider, MediaUploadError, uploadMediaFile } from '@/lib/stuffbox/browser-upload';
@@ -14,6 +14,10 @@ interface UserStorageImageUploadProps {
     previewHeight?: number;
     previewBorderRadius?: string;
     onError?: (message: string) => void;
+    renderTrigger?: (controls: {
+        chooseFile: () => void;
+        isUploading: boolean;
+    }) => ReactNode;
 }
 
 export function UserStorageImageUpload({
@@ -25,6 +29,7 @@ export function UserStorageImageUpload({
     previewHeight = 48,
     previewBorderRadius = '8px',
     onError,
+    renderTrigger,
 }: UserStorageImageUploadProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const storageCheckInFlightRef = useRef(false);
@@ -87,68 +92,71 @@ export function UserStorageImageUpload({
 
     return (
         <>
-            <div>
-                <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>
-                    {label}
-                </label>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <button className="btn btn-ghost btn-sm" type="button" onClick={handleChooseFile} disabled={isUploading}>
-                        {isUploading ? 'Uploading...' : 'Choose File'}
-                    </button>
-                    <input
-                        ref={inputRef}
-                        type="file"
-                        accept="image/*"
-                        onChange={handleFileChange}
-                        disabled={isUploading}
-                        style={{ display: 'none' }}
-                    />
-
-                    {value && (
-                        <div
-                            style={{
-                                width: `${previewWidth}px`,
-                                height: `${previewHeight}px`,
-                                borderRadius: previewBorderRadius,
-                                overflow: 'hidden',
-                                border: '1px solid var(--border)',
-                                background: 'var(--background-tertiary)',
-                            }}
-                        >
-                            <Image
-                                unoptimized
-                                src={value}
-                                alt={`${label} preview`}
-                                width={previewWidth}
-                                height={previewHeight}
-                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            />
-                        </div>
-                    )}
-
-                    {value && (
-                        <button
-                            type="button"
-                            onClick={() => onChange('')}
-                            className="btn btn-ghost btn-sm"
-                            style={{ color: 'var(--error)' }}
-                        >
-                            Remove
+            {renderTrigger ? renderTrigger({ chooseFile: handleChooseFile, isUploading }) : (
+                <div>
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, marginBottom: '8px' }}>
+                        {label}
+                    </label>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button className="btn btn-ghost btn-sm" type="button" onClick={handleChooseFile} disabled={isUploading}>
+                            {isUploading ? 'Uploading...' : 'Choose File'}
                         </button>
+
+                        {value && (
+                            <div
+                                style={{
+                                    width: `${previewWidth}px`,
+                                    height: `${previewHeight}px`,
+                                    borderRadius: previewBorderRadius,
+                                    overflow: 'hidden',
+                                    border: '1px solid var(--border)',
+                                    background: 'var(--background-tertiary)',
+                                }}
+                            >
+                                <Image
+                                    unoptimized
+                                    src={value}
+                                    alt={`${label} preview`}
+                                    width={previewWidth}
+                                    height={previewHeight}
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                />
+                            </div>
+                        )}
+
+                        {value && (
+                            <button
+                                type="button"
+                                onClick={() => onChange('')}
+                                className="btn btn-ghost btn-sm"
+                                style={{ color: 'var(--error)' }}
+                            >
+                                Remove
+                            </button>
+                        )}
+                    </div>
+
+                    {helperText && (
+                        <p style={{ fontSize: '13px', color: 'var(--foreground-tertiary)', marginTop: '6px' }}>
+                            {helperText}
+                        </p>
+                    )}
+                    {storageNotice && (
+                        <p style={{ fontSize: '13px', color: 'var(--success)', marginTop: '6px' }}>
+                            {storageNotice}
+                        </p>
                     )}
                 </div>
+            )}
 
-                {helperText && (
-                    <p style={{ fontSize: '13px', color: 'var(--foreground-tertiary)', marginTop: '6px' }}>
-                        {helperText}
-                    </p>
-                )}
-                {storageNotice && (
-                    <p style={{ fontSize: '13px', color: 'var(--success)', marginTop: '6px' }}>
-                        {storageNotice}
-                    </p>
-                )}
-            </div>
+            <input
+                ref={inputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileChange}
+                disabled={isUploading}
+                style={{ display: 'none' }}
+            />
 
             <StorageConfigurationPrompt
                 open={showConfigurationPrompt}

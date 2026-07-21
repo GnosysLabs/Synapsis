@@ -9,7 +9,7 @@ import { User, Post } from '@/lib/types';
 import AutoTextarea from '@/components/AutoTextarea';
 import { UserStorageImageUpload } from '@/components/UserStorageImageUpload';
 import { CollectionGrid } from '@/components/CollectionGrid';
-import { Rocket, MoreHorizontal, Mail, ShieldAlert } from 'lucide-react';
+import { Camera, Rocket, MoreHorizontal, Mail, ShieldAlert } from 'lucide-react';
 import { getPostPath, getProfilePath, useFormattedHandle } from '@/lib/utils/handle';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { hasUnsavedChanges } from '@/lib/forms/dirty-state';
@@ -643,16 +643,75 @@ export default function ProfilePage() {
             {/* Profile Header */}
             <div style={{ borderBottom: '1px solid var(--border)' }}>
                 {/* Banner */}
-                {/* Banner */}
-                <ProfileBanner
-                    url={isEditing ? profileForm.headerUrl : user.headerUrl}
-                    accountHandle={user.handle}
-                    isRemote={user.isRemote}
-                    nodeDomain={user.nodeDomain}
-                    isNsfw={user.isNsfw}
-                    nodeIsNsfw={user.nodeIsNsfw}
-                    aspectRatio="3 / 1"
-                />
+                {isEditing ? (
+                    <UserStorageImageUpload
+                        label="Profile banner"
+                        value={profileForm.headerUrl}
+                        onChange={(headerUrl) => {
+                            void handleProfileMediaChange('headerUrl', headerUrl);
+                        }}
+                        onError={(message) => setSaveError(message || null)}
+                        renderTrigger={({ chooseFile, isUploading }) => {
+                            const isBusy = isUploading || mediaSaveStatus.headerUrl === 'saving';
+                            return (
+                                <div style={{ position: 'relative' }}>
+                                    <ProfileBanner
+                                        url={profileForm.headerUrl}
+                                        accountHandle={user.handle}
+                                        isRemote={user.isRemote}
+                                        nodeDomain={user.nodeDomain}
+                                        isNsfw={user.isNsfw}
+                                        nodeIsNsfw={user.nodeIsNsfw}
+                                        aspectRatio="3 / 1"
+                                    />
+                                    <button
+                                        type="button"
+                                        aria-label="Change profile banner"
+                                        aria-busy={isBusy}
+                                        disabled={isBusy}
+                                        onClick={chooseFile}
+                                        style={{
+                                            position: 'absolute',
+                                            inset: 0,
+                                            width: '100%',
+                                            border: 0,
+                                            background: 'rgba(0, 0, 0, 0.3)',
+                                            color: '#fff',
+                                            cursor: isBusy ? 'wait' : 'pointer',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '8px',
+                                        }}
+                                    >
+                                        <span style={{
+                                            width: '44px',
+                                            height: '44px',
+                                            borderRadius: '50%',
+                                            display: 'grid',
+                                            placeItems: 'center',
+                                            background: 'rgba(0, 0, 0, 0.72)',
+                                        }}>
+                                            <Camera size={22} aria-hidden="true" />
+                                        </span>
+                                        {isBusy && <span style={{ fontSize: '13px', fontWeight: 600 }}>Uploading…</span>}
+                                    </button>
+                                </div>
+                            );
+                        }}
+                    />
+                ) : (
+                    <ProfileBanner
+                        url={user.headerUrl}
+                        accountHandle={user.handle}
+                        isRemote={user.isRemote}
+                        nodeDomain={user.nodeDomain}
+                        isNsfw={user.isNsfw}
+                        nodeIsNsfw={user.nodeIsNsfw}
+                        aspectRatio="3 / 1"
+                    />
+                )}
 
                 {/* Avatar & Actions */}
                 <div style={{ padding: '0 16px' }}>
@@ -661,19 +720,70 @@ export default function ProfilePage() {
                         justifyContent: 'space-between',
                         alignItems: 'flex-start',
                     }}>
-                        <div
-                            className="avatar avatar-lg"
-                            style={{
-                                width: '96px',
-                                height: '96px',
-                                fontSize: '36px',
-                                border: '4px solid var(--background)',
-                                marginTop: '-48px',
-                                position: 'relative',
-                            }}
-                        >
-                            <AvatarImage avatarUrl={isEditing ? profileForm.avatarUrl : user.avatarUrl} seed={user.handle} nodeDomain={user.nodeDomain} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
-                        </div>
+                        {isEditing ? (
+                            <UserStorageImageUpload
+                                label="Profile photo"
+                                value={profileForm.avatarUrl}
+                                onChange={(avatarUrl) => {
+                                    void handleProfileMediaChange('avatarUrl', avatarUrl);
+                                }}
+                                onError={(message) => setSaveError(message || null)}
+                                renderTrigger={({ chooseFile, isUploading }) => {
+                                    const isBusy = isUploading || mediaSaveStatus.avatarUrl === 'saving';
+                                    return (
+                                        <div
+                                            className="avatar avatar-lg"
+                                            style={{
+                                                width: '96px',
+                                                height: '96px',
+                                                fontSize: '36px',
+                                                border: '4px solid var(--background)',
+                                                marginTop: '-48px',
+                                                position: 'relative',
+                                            }}
+                                        >
+                                            <AvatarImage avatarUrl={profileForm.avatarUrl} seed={user.handle} nodeDomain={user.nodeDomain} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
+                                            <button
+                                                type="button"
+                                                aria-label="Change profile photo"
+                                                aria-busy={isBusy}
+                                                disabled={isBusy}
+                                                onClick={chooseFile}
+                                                style={{
+                                                    position: 'absolute',
+                                                    inset: 0,
+                                                    width: '100%',
+                                                    height: '100%',
+                                                    border: 0,
+                                                    borderRadius: '50%',
+                                                    background: 'rgba(0, 0, 0, 0.42)',
+                                                    color: '#fff',
+                                                    cursor: isBusy ? 'wait' : 'pointer',
+                                                    display: 'grid',
+                                                    placeItems: 'center',
+                                                }}
+                                            >
+                                                <Camera size={24} aria-hidden="true" />
+                                            </button>
+                                        </div>
+                                    );
+                                }}
+                            />
+                        ) : (
+                            <div
+                                className="avatar avatar-lg"
+                                style={{
+                                    width: '96px',
+                                    height: '96px',
+                                    fontSize: '36px',
+                                    border: '4px solid var(--background)',
+                                    marginTop: '-48px',
+                                    position: 'relative',
+                                }}
+                            >
+                                <AvatarImage avatarUrl={user.avatarUrl} seed={user.handle} nodeDomain={user.nodeDomain} isNsfw={user.isNsfw} nodeIsNsfw={user.nodeIsNsfw} alt={user.displayName || user.handle} />
+                            </div>
+                        )}
 
                         <div style={{ paddingTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
                             {!isOwnProfile && authenticatedViewer && (
@@ -862,30 +972,32 @@ export default function ProfilePage() {
                                         maxLength={100}
                                     />
                                 </div>
-                                <UserStorageImageUpload
-                                    label="Avatar"
-                                    value={profileForm.avatarUrl}
-                                    onChange={(avatarUrl) => {
-                                        void handleProfileMediaChange('avatarUrl', avatarUrl);
-                                    }}
-                                    previewWidth={48}
-                                    previewHeight={48}
-                                    previewBorderRadius="50%"
-                                    helperText={mediaSaveStatus.avatarUrl === 'saving' ? 'Saving avatar…' : mediaSaveStatus.avatarUrl === 'saved' ? 'Avatar saved' : 'Square image recommended (optional)'}
-                                    onError={(message) => setSaveError(message || null)}
-                                />
-                                <UserStorageImageUpload
-                                    label="Header"
-                                    value={profileForm.headerUrl}
-                                    onChange={(headerUrl) => {
-                                        void handleProfileMediaChange('headerUrl', headerUrl);
-                                    }}
-                                    previewWidth={120}
-                                    previewHeight={40}
-                                    previewBorderRadius="4px"
-                                    helperText={mediaSaveStatus.headerUrl === 'saving' ? 'Saving header…' : mediaSaveStatus.headerUrl === 'saved' ? 'Header saved' : 'Wide image recommended, e.g. 1500x500 (optional)'}
-                                    onError={(message) => setSaveError(message || null)}
-                                />
+                                {(profileForm.avatarUrl || profileForm.headerUrl) && (
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                        {profileForm.avatarUrl && (
+                                            <button
+                                                type="button"
+                                                className="btn btn-ghost btn-sm"
+                                                style={{ color: 'var(--foreground-tertiary)' }}
+                                                disabled={isSavingProfileMedia}
+                                                onClick={() => void handleProfileMediaChange('avatarUrl', '')}
+                                            >
+                                                Remove profile photo
+                                            </button>
+                                        )}
+                                        {profileForm.headerUrl && (
+                                            <button
+                                                type="button"
+                                                className="btn btn-ghost btn-sm"
+                                                style={{ color: 'var(--foreground-tertiary)' }}
+                                                disabled={isSavingProfileMedia}
+                                                onClick={() => void handleProfileMediaChange('headerUrl', '')}
+                                            >
+                                                Remove banner
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
                                 {saveError && (
                                     <div style={{ color: 'var(--error)', fontSize: '13px' }}>{saveError}</div>
                                 )}
