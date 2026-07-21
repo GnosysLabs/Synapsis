@@ -1144,16 +1144,18 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                         <span className="post-time">{authorHandle} · {formatTime(post.createdAt)}</span>
                     </div>
                 </div>
-                {hideSensitiveContent ? sensitiveContentWarning : (
-                    <>
-                        {post.content.trim() && (
-                            <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
-                        )}
-                        {renderPostMedia()}
-                        {post.linkPreviewUrl && <VideoEmbed url={post.linkPreviewUrl} />}
-                        {renderLinkPreviewCard(true)}
-                    </>
-                )}
+                <div className="thread-parent-body">
+                    {hideSensitiveContent ? sensitiveContentWarning : (
+                        <>
+                            {post.content.trim() && (
+                                <div className="post-content">{renderContent(post.content, post.linkPreviewUrl ?? undefined)}</div>
+                            )}
+                            {renderPostMedia()}
+                            {post.linkPreviewUrl && <VideoEmbed url={post.linkPreviewUrl} />}
+                            {renderLinkPreviewCard(true)}
+                        </>
+                    )}
+                </div>
             </article>
         );
     }

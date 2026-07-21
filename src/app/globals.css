@@ -693,6 +693,11 @@ a.btn-primary:visited {
   margin-bottom: 4px;
 }
 
+.post.thread-parent .thread-parent-body {
+  min-width: 0;
+  margin-left: 52px;
+}
+
 .post.thread-parent+.post {
   padding-top: 8px;
 }
