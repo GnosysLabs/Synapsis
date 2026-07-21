@@ -877,7 +877,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
         return decoded.trim();
     };
 
-    const renderContent = (content: string, hidePreviewUrl?: string) => {
+    const renderContent = (content: string) => {
         const decoded = decodeHtmlEntities(content);
         const tokens = tokenizePostContent(decoded, contentOriginDomain);
         return tokens.map((token, index) => {
@@ -897,44 +897,24 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
 
             if (token.type === 'url') {
                 const part = token.value;
-                if (hidePreviewUrl) {
-                    try {
-                        if (new URL(part).toString() === new URL(hidePreviewUrl).toString()) {
-                            return null;
-                        }
-                    } catch {
-                        // Keep rendering malformed legacy values as ordinary text links.
-                    }
-                }
-                // Extract just the domain (TLD)
                 try {
                     const url = new URL(part);
-                    const domain = url.hostname.replace(/^www\./, '');
+                    const hostname = url.hostname.replace(/^www\./, '');
                     return (
                         <a
                             key={`url-${index}`}
                             href={part}
+                            className="post-external-link"
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            title={part}
                         >
-                            {domain}
+                            {hostname}
                         </a>
                     );
                 } catch {
-                    // Fallback if URL parsing fails
-                    return (
-                        <a
-                            key={`url-${index}`}
-                            href={part}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            {part}
-                        </a>
-                    );
+                    // Never turn a malformed URL-like token into a deceptive link.
+                    return <span key={`url-${index}`}>{part}</span>;
                 }
             }
             return <span key={`text-${token.start}-${index}`}>{token.value}</span>;
@@ -1194,7 +1174,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     {hideSensitiveContent ? sensitiveContentWarning : (
                         <>
                             {post.content.trim() && (
-                                <div className="post-content">{renderContent(post.content, embeddedVideoUrl || post.linkPreviewUrl || undefined)}</div>
+                                <div className="post-content">{renderContent(post.content)}</div>
                             )}
                             {renderPostMedia()}
                             {embeddedVideoUrl && <VideoEmbed url={embeddedVideoUrl} />}
@@ -1225,7 +1205,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
                     </div>
 
                     {hideSensitiveContent ? sensitiveContentWarning : hasOwnContent && (
-                        <div className="post-content">{renderContent(post.content, embeddedVideoUrl || post.linkPreviewUrl || undefined)}</div>
+                        <div className="post-content">{renderContent(post.content)}</div>
                     )}
 
                     {!hideSensitiveContent && hasOwnContent && embeddedVideoUrl && (
@@ -1390,7 +1370,7 @@ function AuthoredPostCard({ post: initialPost, onLike, onRepost, onComment, onDe
 
                 {hideSensitiveContent ? sensitiveContentWarning : (
                     <>
-                <div className="post-content">{renderContent(post.content, embeddedVideoUrl || post.linkPreviewUrl || undefined)}</div>
+                <div className="post-content">{renderContent(post.content)}</div>
 
                 {renderPostMedia()}
 

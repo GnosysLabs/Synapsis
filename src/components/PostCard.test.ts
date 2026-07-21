@@ -155,7 +155,35 @@ describe('PostCard', () => {
 
         expect(html).toContain('<iframe');
         expect(html).toContain('https://www.youtube-nocookie.com/embed/Y1t26WsnwCQ');
-        expect(html).not.toContain('>youtube.com</a>');
+        expect(html).toContain('class="post-external-link"');
+        expect(html).toContain('>youtube.com</a>');
+    });
+
+    it('shows only the hostname for a full URL even when the post has a rich preview', () => {
+        const url = 'https://dashboard.clerk.com/sign-in?redirect_url=https%3A%2F%2Fdashboard.clerk.com%2Fapps%2Fapp_3FvoFZELmIVyKH3jwa9a7GcBRII%2Finstances%2Fins_3FvoFXYYSObRbHgscuQr6p1duf0';
+        const html = renderToStaticMarkup(createElement(PostCard, {
+            post: {
+                id: 'clerk-link-post',
+                content: `Open ${url}`,
+                createdAt: '2026-07-21T00:00:00.000Z',
+                likesCount: 0,
+                repostsCount: 0,
+                repliesCount: 0,
+                author: {
+                    id: 'author-1',
+                    handle: 'author@local.example',
+                    displayName: 'Author',
+                },
+                linkPreviewUrl: url,
+                linkPreviewTitle: 'Clerk Dashboard',
+                linkPreviewDescription: 'Manage your application',
+            },
+        }));
+
+        expect(html).toContain('class="post-external-link"');
+        expect(html).toContain('>dashboard.clerk.com</a>');
+        expect(html).not.toContain(`title="${url}"`);
+        expect(html).toContain('class="link-preview-card ');
     });
 
     it('keeps a thread parent badge in the display-name row', () => {

@@ -850,6 +850,19 @@ a.btn-primary:visited {
   z-index: 2;
 }
 
+.post-content .post-external-link,
+.post-content .post-external-link:visited {
+  color: var(--accent);
+  font-weight: 550;
+  text-decoration: none;
+}
+
+.post-content .post-external-link:hover,
+.post-content .post-external-link:focus-visible {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
 .mention-link {
   color: var(--accent);
   font-weight: 550;
@@ -4159,7 +4172,7 @@ a.btn-primary:visited {
 
 .link-preview-url {
   font-size: 12px;
-  color: var(--foreground-tertiary);
+  color: var(--accent);
   text-transform: lowercase;
 }
 
