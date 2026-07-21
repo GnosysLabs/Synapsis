@@ -8,6 +8,8 @@ import { TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { completePostSignInNavigation } from '@/lib/auth/post-sign-in-navigation';
 
+const DEFAULT_NODE_DESCRIPTION = 'A swarm social network node.';
+
 declare global {
     interface Window {
         turnstile?: {
@@ -42,7 +44,8 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const [nodeInfoLoaded, setNodeInfoLoaded] = useState(false);
-    const [nodeInfo, setNodeInfo] = useState<{ name: string; description: string; logoUrl?: string; isNsfw?: boolean; turnstileSiteKey?: string | null }>({ name: '', description: '' });
+    const [nodeInfoUnavailable, setNodeInfoUnavailable] = useState(false);
+    const [nodeInfo, setNodeInfo] = useState<{ name: string; description: string; logoUrl?: string; isNsfw?: boolean; turnstileSiteKey?: string | null }>({ name: '', description: DEFAULT_NODE_DESCRIPTION });
     const [handleStatus, setHandleStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
     const [ageVerified, setAgeVerified] = useState(false);
     const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
@@ -96,11 +99,19 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
     // Fetch node info
     useEffect(() => {
         fetch('/api/node')
-            .then(res => res.json())
+            .then(async res => {
+                const data = await res.json();
+                if (!res.ok || data.classificationKnown === false) {
+                    throw new Error('Node configuration unavailable');
+                }
+                return data;
+            })
             .then(data => {
                 setNodeInfo({
                     name: data.name || '',
-                    description: data.description || 'Synapsis is designed to function like a global signal layer rather than a culture-bound platform. Anyone can run their own node and still participate in a shared, interconnected network, with global identity, clean terminology, and a modern interface that feels current rather than experimental. Synapsis aims to be neutral, resilient infrastructure for human and machine discourse, more like a protocol or nervous system than a social club.',
+                    description: typeof data.description === 'string' && data.description.trim()
+                        ? data.description.trim()
+                        : DEFAULT_NODE_DESCRIPTION,
                     logoUrl: data.logoUrl || undefined,
                     isNsfw: data.isNsfw || false,
                     turnstileSiteKey: data.turnstileSiteKey || null,
@@ -109,9 +120,11 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                 if (data.name && data.name !== 'Synapsis') {
                     document.title = data.name;
                 }
+                setNodeInfoUnavailable(false);
                 setNodeInfoLoaded(true);
             })
             .catch(() => {
+                setNodeInfoUnavailable(true);
                 setNodeInfoLoaded(true);
             });
     }, []);
@@ -419,6 +432,11 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                             <p style={{ color: 'var(--foreground-secondary)', marginTop: '0', textAlign: 'center' }}>
                                 {nodeInfo.description}
                             </p>
+                            {nodeInfoUnavailable && (
+                                <p role="status" style={{ color: 'var(--warning)', margin: '0', textAlign: 'center', fontSize: '13px' }}>
+                                    Node details are temporarily unavailable.
+                                </p>
+                            )}
                         </>
                     )}
                 </div>

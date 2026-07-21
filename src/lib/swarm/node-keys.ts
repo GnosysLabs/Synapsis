@@ -10,7 +10,7 @@ import { db, nodes } from '@/db';
 import { eq } from 'drizzle-orm';
 import { generateKeyPair } from '@/lib/crypto/keys';
 import crypto from 'crypto';
-import { requireCanonicalAccountHomeDomain } from '@/lib/identity/account-address';
+import { ensureLocalNodeRecord } from '@/lib/node/local-node';
 
 const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
 let cachedKeypair: { privateKey: string; publicKey: string } | null = null;
@@ -80,30 +80,7 @@ async function loadNodeKeypair(): Promise<{ privateKey: string; publicKey: strin
     throw new Error('Database not available');
   }
 
-  const domain = requireCanonicalAccountHomeDomain(
-    process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
-  );
-
-  // Try to get existing node
-  const node = await db.query.nodes.findFirst({
-    where: { domain: domain },
-  });
-
-  // If node doesn't exist, create it
-  if (!node) {
-    const { publicKey, privateKey } = await generateKeyPair();
-    const encryptedPrivateKey = await encryptPrivateKey(privateKey);
-
-    await db.insert(nodes).values({
-      domain,
-      name: process.env.NEXT_PUBLIC_NODE_NAME || 'Synapsis Node',
-      description: process.env.NEXT_PUBLIC_NODE_DESCRIPTION || 'A swarm social network node',
-      publicKey,
-      privateKeyEncrypted: encryptedPrivateKey,
-    });
-
-    return { privateKey, publicKey };
-  }
+  const node = await ensureLocalNodeRecord();
 
   // If node exists but has no keys, generate them
   if (!node.publicKey || !node.privateKeyEncrypted) {
@@ -158,12 +135,7 @@ export async function getNodePublicKey(): Promise<string | null> {
 
   if (cachedKeypair) return cachedKeypair.publicKey;
 
-  const domain = requireCanonicalAccountHomeDomain(
-    process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
-  );
-  const node = await db.query.nodes.findFirst({
-    where: { domain: domain },
-  });
+  const node = await ensureLocalNodeRecord();
 
   if (!node?.publicKey) {
     // Generate keys if they don't exist

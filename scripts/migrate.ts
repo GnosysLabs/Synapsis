@@ -3,6 +3,7 @@ import { migrate } from 'drizzle-orm/tursodatabase/migrator';
 import { closeDb, db } from '../src/db';
 import { reconcilePostSearchIndex } from '../src/lib/search/post-index';
 import { reconcileBlockedNodeQuarantines } from '../src/lib/swarm/node-blocklist';
+import { ensureLocalNodeRecord } from '../src/lib/node/local-node';
 import {
   getCanonicalSwarmSeedDomain,
   normalizeNodeDomain,
@@ -378,6 +379,7 @@ async function main() {
 
     await db.run(sql.raw('PRAGMA foreign_keys = ON'));
     foreignKeysDisabled = false;
+    await ensureLocalNodeRecord();
     const quarantine = await reconcileBlockedNodeQuarantines();
     if (quarantine.failed > 0) {
       console.warn(

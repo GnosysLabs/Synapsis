@@ -37,6 +37,23 @@ function AdultNodeWarning() {
   );
 }
 
+function NodeConfigurationWarning() {
+  return (
+    <section className="adult-node-warning card" role="status" aria-labelledby="node-configuration-warning-title">
+      <div className="adult-node-warning-icon" aria-hidden="true">
+        <TriangleAlert size={30} />
+      </div>
+      <div>
+        <h2 id="node-configuration-warning-title">Node configuration unavailable</h2>
+        <p>This node could not load its settings. Content is temporarily hidden for safety.</p>
+      </div>
+      <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>
+        Try again
+      </button>
+    </section>
+  );
+}
+
 export default function Home() {
   const { user, did, handle, loading: authLoading } = useAuth();
   const { config } = useRuntimeConfig();
@@ -47,7 +64,8 @@ export default function Home() {
   const [replyingTo, setReplyingTo] = useState<Post | null>(null);
   const [feedType, setFeedType] = useState<HomeFeedType>(DEFAULT_HOME_FEED);
   const activeFeedType = user ? feedType : ANONYMOUS_HOME_FEED;
-  const nodeFeedBlocked = !canAccessNodeFeed({
+  const nodeConfigurationUnavailable = config?.classificationKnown !== true;
+  const nodeFeedBlocked = nodeConfigurationUnavailable || !canAccessNodeFeed({
     isAuthenticated: Boolean(user),
     localNodeIsNsfw: config?.isNsfw === true,
   });
@@ -295,7 +313,9 @@ export default function Home() {
         </div>
       </header>
 
-      {nodeFeedBlocked ? (
+      {nodeConfigurationUnavailable ? (
+        <NodeConfigurationWarning />
+      ) : nodeFeedBlocked ? (
         <AdultNodeWarning />
       ) : (
         <>
