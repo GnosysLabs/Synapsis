@@ -379,7 +379,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const responseProfile: SwarmUserProfile & { nsfwRestricted?: boolean } = profileRestricted
       ? {
           ...profile,
-          displayName: profile.handle,
+          displayName: profile.displayName,
           bio: undefined,
           avatarUrl: undefined,
           headerUrl: undefined,

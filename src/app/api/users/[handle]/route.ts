@@ -95,7 +95,7 @@ export async function GET(request: Request, context: RouteContext) {
                             user: {
                                 id: `swarm:${remote.domain}:${profileAddress.username}`,
                                 handle: profileAddress.canonical,
-                                displayName: canAccessProfile ? profile.displayName : profile.handle,
+                                displayName: profile.displayName || profile.handle,
                                 bio: canAccessProfile ? profile.bio || null : null,
                                 avatarUrl: canAccessProfile ? profile.avatarUrl || null : null,
                                 headerUrl: canAccessProfile ? profile.headerUrl || null : null,
@@ -169,7 +169,7 @@ export async function GET(request: Request, context: RouteContext) {
                 user: {
                     id: user.id,
                     handle: user.handle,
-                    displayName: user.handle,
+                    displayName: user.displayName || user.handle,
                     bio: null,
                     avatarUrl: null,
                     headerUrl: null,

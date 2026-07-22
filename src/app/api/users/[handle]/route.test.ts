@@ -102,6 +102,8 @@ describe('user profile route', () => {
       user: {
         id: 'user-1',
         handle: 'wpb8erboy@rprh.link',
+        displayName: 'Wpb8erboy',
+        nsfwRestricted: true,
       },
     });
     expect(mocks.findUser).toHaveBeenCalledWith({
@@ -117,7 +119,7 @@ describe('user profile route', () => {
     expect(mocks.fetchSwarmUserProfile).not.toHaveBeenCalled();
   });
 
-  it('redacts an adult-only remote profile for a signed-out visitor', async () => {
+  it('redacts adult-only profile content without replacing its display name', async () => {
     mocks.findUser.mockResolvedValue(null);
     mocks.isSwarmNode.mockResolvedValue(true);
     mocks.fetchSwarmUserProfile.mockResolvedValue({
@@ -150,7 +152,7 @@ describe('user profile route', () => {
     await expect(response.json()).resolves.toMatchObject({
       user: {
         handle: 'remoteuser@adult.example',
-        displayName: 'remoteuser',
+        displayName: 'Explicit display name',
         bio: null,
         avatarUrl: null,
         headerUrl: null,
