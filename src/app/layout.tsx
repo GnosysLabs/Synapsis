@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Saira_Condensed } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 
 const inter = Inter({
@@ -59,12 +60,16 @@ import { AccentColorProvider } from '@/lib/contexts/AccentColorContext';
 import { ConfigProvider } from '@/lib/contexts/ConfigContext';
 import { ProfilePresentationProvider } from '@/lib/contexts/ProfilePresentationContext';
 import { LayoutWrapper } from '@/components/LayoutWrapper';
+import { isIPhoneUserAgent } from '@/lib/platform/ios-web-funnel';
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const requestHeaders = await headers();
+  const isIPhone = isIPhoneUserAgent(requestHeaders.get('user-agent'));
+
   return (
     <html lang="en" className={`${inter.variable} ${sairaCondensed.variable}`}>
       <body>
@@ -74,7 +79,7 @@ export default function RootLayout({
               <AccentColorProvider>
                 <DialogProvider>
                   <ToastProvider>
-                    <LayoutWrapper>
+                    <LayoutWrapper isIPhone={isIPhone}>
                       {children}
                     </LayoutWrapper>
                   </ToastProvider>

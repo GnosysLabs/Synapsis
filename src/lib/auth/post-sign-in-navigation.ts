@@ -10,11 +10,12 @@ export interface AppRouterNavigation {
 export function completePostSignInNavigation(
     router: AppRouterNavigation,
     onSuccess?: () => void,
+    destination = '/',
 ): void {
     if (onSuccess) {
         onSuccess();
         return;
     }
 
-    router.replace('/');
+    router.replace(destination);
 }

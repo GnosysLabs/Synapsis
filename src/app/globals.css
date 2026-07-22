@@ -133,6 +133,407 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* iPhone account setup and native-app handoff */
+.auth-page {
+  min-height: 100vh;
+  min-height: 100svh;
+}
+
+.auth-screen-shell {
+  display: flex;
+  min-height: 100vh;
+  min-height: 100svh;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-screen-shell.auth-screen-modal {
+  min-height: auto;
+  padding: 0;
+}
+
+.auth-screen-panel {
+  width: 100%;
+}
+
+.auth-screen-header {
+  display: flex;
+  min-height: 120px;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 32px;
+  text-align: center;
+}
+
+.auth-node-logo {
+  margin-bottom: 16px;
+}
+
+.auth-screen-header p {
+  margin: 0;
+  color: var(--foreground-secondary);
+}
+
+.auth-node-name {
+  margin-bottom: 8px;
+  color: var(--foreground);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.auth-screen-header .auth-node-warning {
+  margin: 8px 0 0;
+  color: var(--warning);
+  font-size: 13px;
+}
+
+.auth-mode-switcher {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 24px;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background: var(--background-secondary);
+}
+
+.auth-mode-switcher button {
+  min-height: 42px;
+  flex: 1;
+  padding: 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.auth-mode-switcher button.active {
+  background: var(--background-tertiary);
+  color: var(--foreground);
+}
+
+.auth-card {
+  padding: 24px;
+}
+
+.auth-register-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.auth-field-email {
+  grid-column: 1 / -1;
+}
+
+.auth-age-confirmation {
+  margin-bottom: 20px;
+  padding: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: var(--radius-md);
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.auth-back-link {
+  margin-top: 24px;
+  color: var(--foreground-tertiary);
+  font-size: 14px;
+  text-align: center;
+}
+
+.auth-ios-funnel .auth-screen-header {
+  min-height: 0;
+  margin-bottom: 24px;
+}
+
+.auth-ios-funnel .auth-node-logo {
+  width: auto;
+  max-width: 172px;
+  height: auto;
+  max-height: 48px;
+  margin-bottom: 20px;
+}
+
+.auth-ios-eyebrow,
+.ios-handoff-eyebrow {
+  margin-bottom: 8px;
+  color: var(--foreground-tertiary);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.auth-ios-funnel h1 {
+  margin-bottom: 8px;
+  font-size: clamp(28px, 8vw, 36px);
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.auth-ios-funnel .auth-screen-header > p {
+  max-width: 360px;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.auth-ios-funnel .auth-card {
+  border-radius: 16px;
+}
+
+.auth-ios-funnel .auth-submit {
+  min-height: 52px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.auth-ios-footnote {
+  max-width: 360px;
+  margin: 20px auto 0;
+  color: var(--foreground-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.app-handoff-loading {
+  display: flex;
+  min-height: 100vh;
+  min-height: 100svh;
+  align-items: center;
+  justify-content: center;
+  background: var(--background);
+}
+
+.app-handoff-loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: app-handoff-spin 0.8s linear infinite;
+}
+
+@keyframes app-handoff-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ios-handoff-page {
+  display: flex;
+  min-height: 100vh;
+  min-height: 100svh;
+  align-items: center;
+  justify-content: center;
+  padding: max(24px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  background: var(--background);
+}
+
+.ios-handoff-card {
+  width: 100%;
+  max-width: 440px;
+  padding: 30px 24px 24px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--background-secondary);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+
+.ios-handoff-card > img {
+  width: 168px;
+  height: auto;
+  margin-bottom: 28px;
+}
+
+.ios-handoff-icon {
+  display: inline-flex;
+  width: 58px;
+  height: 58px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+  border: 1px solid var(--border-hover);
+  border-radius: 18px;
+  background: var(--background-tertiary);
+  color: var(--foreground);
+}
+
+.ios-handoff-icon-ready {
+  border-color: rgba(34, 197, 94, 0.28);
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--success);
+}
+
+.ios-handoff-card h1 {
+  margin-bottom: 12px;
+  font-size: clamp(30px, 9vw, 40px);
+  line-height: 1.02;
+  letter-spacing: -0.045em;
+}
+
+.ios-handoff-lede {
+  color: var(--foreground-secondary);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.ios-handoff-lede strong {
+  color: var(--foreground);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.ios-handoff-steps {
+  display: grid;
+  gap: 10px;
+  margin: 24px 0;
+  text-align: left;
+}
+
+.ios-handoff-steps > div {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--background-tertiary);
+}
+
+.ios-handoff-steps span {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ios-handoff-steps p {
+  color: var(--foreground-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.ios-handoff-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.ios-handoff-primary {
+  width: 100%;
+  min-height: 52px;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.ios-handoff-text-link {
+  display: inline-block;
+  margin-top: 16px;
+  color: var(--foreground-secondary);
+  font-size: 13px;
+}
+
+.ios-handoff-return-note {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--background-tertiary);
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ios-handoff-boundary {
+  margin-top: 20px;
+  color: var(--foreground-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ios-handoff-signout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--foreground-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.ios-handoff-signout:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@media (max-width: 600px) {
+  .auth-screen-shell {
+    align-items: flex-start;
+    padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+
+  .auth-register-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .auth-register-fields > div {
+    grid-column: 1;
+  }
+
+  .ios-auth-funnel .auth-field-handle { order: 1; }
+  .ios-auth-funnel .auth-field-display-name { order: 2; }
+  .ios-auth-funnel .auth-field-email { order: 3; }
+  .ios-auth-funnel .auth-field-password { order: 4; }
+  .ios-auth-funnel .auth-field-confirm-password { order: 5; }
+
+  .ios-auth-funnel .auth-card {
+    padding: 18px;
+  }
+
+  .ios-auth-funnel .auth-mode-switcher {
+    margin-bottom: 16px;
+  }
+
+  .ios-auth-funnel .input {
+    min-height: 50px;
+    font-size: 16px;
+  }
+
+  .ios-auth-funnel .auth-age-confirmation {
+    padding: 14px;
+  }
+
+  .ios-auth-funnel .auth-age-confirmation input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 20px;
+  }
+
+  .ios-handoff-page {
+    align-items: flex-start;
+  }
+
+  .ios-handoff-card {
+    padding: 26px 18px 20px;
+  }
+}
+
 /* Hide scrollbars globally but keep functionality */
 ::-webkit-scrollbar {
   display: none;

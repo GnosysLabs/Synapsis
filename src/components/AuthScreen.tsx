@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { completePostSignInNavigation } from '@/lib/auth/post-sign-in-navigation';
+import { getSafeIosPublicUrl } from '@/lib/platform/ios-web-funnel';
 
 const DEFAULT_NODE_DESCRIPTION = 'A swarm social network node.';
 
@@ -31,11 +32,19 @@ interface AuthScreenProps {
     modal?: boolean;
     onClose?: () => void;
     onSuccess?: () => void;
+    iosFunnel?: boolean;
+    initialMode?: 'login' | 'register';
 }
 
-export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProps) {
+export function AuthScreen({
+    modal = false,
+    onClose,
+    onSuccess,
+    iosFunnel = false,
+    initialMode = 'login',
+}: AuthScreenProps) {
     const router = useRouter();
-    const [mode, setMode] = useState<'login' | 'register' | 'import'>('login');
+    const [mode, setMode] = useState<'login' | 'register' | 'import'>(iosFunnel ? 'register' : initialMode);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -54,6 +63,9 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
     const [turnstileError, setTurnstileError] = useState('');
     const turnstileRef = useRef<HTMLDivElement>(null);
     const turnstileWidgetId = useRef<string | null>(null);
+    const iosAppUrl = getSafeIosPublicUrl(process.env.NEXT_PUBLIC_IOS_APP_URL, true);
+    const iosAppStoreUrl = getSafeIosPublicUrl(process.env.NEXT_PUBLIC_IOS_APP_STORE_URL);
+    const existingAccountDestination = iosAppUrl || iosAppStoreUrl;
 
     const resetTurnstile = () => {
         const widgetId = turnstileWidgetId.current;
@@ -382,7 +394,11 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
 
             // Keep this JavaScript realm alive: login just decrypted the signing
             // key into memory, and App Router navigation preserves it.
-            completePostSignInNavigation(router, onSuccess);
+            completePostSignInNavigation(
+                router,
+                onSuccess,
+                iosFunnel ? '/continue-in-app' : '/',
+            );
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
             if (turnstileRequired) resetTurnstile();
@@ -392,18 +408,13 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
     };
 
     const content = (
-        <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: modal ? '0' : '24px',
-        }}>
-            <div style={{
-                width: '100%',
-                maxWidth: mode === 'register' ? '680px' : '400px',
-            }}>
+        <div className={`auth-screen-shell${iosFunnel ? ' ios-auth-funnel' : ''}${modal ? ' auth-screen-modal' : ''}`}>
+            <div
+                className="auth-screen-panel"
+                style={{ maxWidth: iosFunnel ? '440px' : mode === 'register' ? '680px' : '400px' }}
+            >
                 {/* Logo */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '32px', minHeight: '120px' }}>
+                <div className="auth-screen-header">
                     {nodeInfoLoaded && (
                         <>
                             {nodeInfo.logoUrl ? (
@@ -412,7 +423,8 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                     alt={nodeInfo.name || 'Node logo'}
                                     width={200}
                                     height={60}
-                                    style={{ marginBottom: '16px', objectFit: 'contain', maxHeight: '60px', width: 'auto' }}
+                                    className="auth-node-logo"
+                                    style={{ objectFit: 'contain', maxHeight: '60px', width: 'auto' }}
                                     unoptimized
                                 />
                             ) : (
@@ -421,20 +433,31 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                     alt="Synapsis"
                                     width={200}
                                     height={48}
-                                    style={{ marginBottom: '16px', objectFit: 'contain' }}
+                                    className="auth-node-logo"
+                                    style={{ objectFit: 'contain' }}
                                     priority
                                 />
                             )}
-                            {nodeInfo.name && nodeInfo.name !== 'Synapsis' && !nodeInfo.logoUrl && (
-                                <div style={{ fontSize: '18px', fontWeight: 600, color: 'var(--foreground)', marginBottom: '8px' }}>
-                                    {nodeInfo.name}
-                                </div>
+                            {iosFunnel ? (
+                                <>
+                                    <div className="auth-ios-eyebrow">iPhone account setup</div>
+                                    <h1>Create your account</h1>
+                                    <p>
+                                        {`Join ${nodeInfo.name || 'this node'} here, then continue in the Synapsis app.`}
+                                    </p>
+                                </>
+                            ) : (
+                                <>
+                                    {nodeInfo.name && nodeInfo.name !== 'Synapsis' && !nodeInfo.logoUrl && (
+                                        <div className="auth-node-name">
+                                            {nodeInfo.name}
+                                        </div>
+                                    )}
+                                    <p>{nodeInfo.description}</p>
+                                </>
                             )}
-                            <p style={{ color: 'var(--foreground-secondary)', marginTop: '0', textAlign: 'center' }}>
-                                {nodeInfo.description}
-                            </p>
                             {nodeInfoUnavailable && (
-                                <p role="status" style={{ color: 'var(--warning)', margin: '0', textAlign: 'center', fontSize: '13px' }}>
+                                <p role="status" className="auth-node-warning">
                                     Node details are temporarily unavailable.
                                 </p>
                             )}
@@ -443,67 +466,35 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                 </div>
 
                 {/* Mode Switcher */}
-                <div style={{
-                    display: 'flex',
-                    marginBottom: '24px',
-                    background: 'var(--background-secondary)',
-                    borderRadius: 'var(--radius-md)',
-                    padding: '4px',
-                    gap: '4px'
-                }}>
-                    <button
-                        onClick={() => selectMode('login')}
-                        style={{
-                            flex: 1,
-                            padding: '10px',
-                            border: 'none',
-                            borderRadius: 'var(--radius-sm)',
-                            background: mode === 'login' ? 'var(--background-tertiary)' : 'transparent',
-                            color: mode === 'login' ? 'var(--foreground)' : 'var(--foreground-secondary)',
-                            fontWeight: 500,
-                            cursor: 'pointer',
-                            transition: 'all 0.15s ease',
-                        }}
-                    >
-                        Login
-                    </button>
-                    <button
-                        onClick={() => selectMode('register')}
-                        style={{
-                            flex: 1,
-                            padding: '10px',
-                            border: 'none',
-                            borderRadius: 'var(--radius-sm)',
-                            background: mode === 'register' ? 'var(--background-tertiary)' : 'transparent',
-                            color: mode === 'register' ? 'var(--foreground)' : 'var(--foreground-secondary)',
-                            fontWeight: 500,
-                            cursor: 'pointer',
-                            transition: 'all 0.15s ease',
-                        }}
-                    >
-                        Register
-                    </button>
-                    <button
-                        onClick={() => selectMode('import')}
-                        style={{
-                            flex: 1,
-                            padding: '10px',
-                            border: 'none',
-                            borderRadius: 'var(--radius-sm)',
-                            background: mode === 'import' ? 'var(--background-tertiary)' : 'transparent',
-                            color: mode === 'import' ? 'var(--foreground)' : 'var(--foreground-secondary)',
-                            fontWeight: 500,
-                            cursor: 'pointer',
-                            transition: 'all 0.15s ease',
-                        }}
-                    >
-                        Import
-                    </button>
-                </div>
+                {!iosFunnel && (
+                    <div className="auth-mode-switcher">
+                        <button
+                            type="button"
+                            onClick={() => selectMode('login')}
+                            className={mode === 'login' ? 'active' : ''}
+                        >
+                            Login
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => selectMode('register')}
+                            className={mode === 'register' ? 'active' : ''}
+                        >
+                            Register
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => selectMode('import')}
+                            className={mode === 'import' ? 'active' : ''}
+                        >
+                            Import
+                        </button>
+                    </div>
+                )}
 
                 {/* Form */}
                 {mode !== 'import' ? (
-                    <form onSubmit={handleSubmit} className="card" style={{ padding: '24px' }}>
+                    <form onSubmit={handleSubmit} className="card auth-card">
                         {error && (
                             <div style={{
                                 padding: '12px',
@@ -519,127 +510,116 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                         )}
 
                         {mode === 'register' && (
-                            <>
-                                {/* Row 1: Handle | Password */}
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                            Handle
-                                        </label>
-                                        <div style={{ position: 'relative' }}>
-                                            <span style={{
-                                                position: 'absolute',
-                                                left: '12px',
-                                                top: '50%',
-                                                transform: 'translateY(-50%)',
-                                                color: 'var(--foreground-tertiary)',
-                                            }}>@</span>
-                                            <input
-                                                type="text"
-                                                name="username"
-                                                autoComplete="username"
-                                                className="input"
-                                                value={handle}
-                                                onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
-                                                style={{ paddingLeft: '28px' }}
-                                                placeholder="yourhandle"
-                                                required
-                                                minLength={3}
-                                                maxLength={20}
-                                            />
-                                        </div>
-                                        <div style={{
-                                            fontSize: '12px',
-                                            marginTop: '4px',
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center'
-                                        }}>
-                                            <span style={{ color: 'var(--foreground-tertiary)' }}>
-                                                3-20 chars, a-z 0-9 _
-                                            </span>
-                                            {handleStatus === 'checking' && (
-                                                <span style={{ color: 'var(--foreground-tertiary)' }}>Checking...</span>
-                                            )}
-                                            {handleStatus === 'available' && (
-                                                <span style={{ color: 'var(--success)', fontWeight: 600 }}>✓</span>
-                                            )}
-                                            {handleStatus === 'taken' && (
-                                                <span style={{ color: 'var(--error)', fontWeight: 600 }}>Taken</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                            Password
-                                        </label>
-                                        <input
-                                            type="password"
-                                            name="password"
-                                            autoComplete="new-password"
-                                            className="input"
-                                            value={password}
-                                            onChange={(e) => setPassword(e.target.value)}
-                                            placeholder="••••••••"
-                                            required
-                                            minLength={8}
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* Row 2: Display Name | Confirm Password */}
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                            Display Name
-                                        </label>
+                            <div className="auth-register-fields">
+                                <div className="auth-field-handle">
+                                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
+                                        Handle
+                                    </label>
+                                    <div style={{ position: 'relative' }}>
+                                        <span style={{
+                                            position: 'absolute',
+                                            left: '12px',
+                                            top: '50%',
+                                            transform: 'translateY(-50%)',
+                                            color: 'var(--foreground-tertiary)',
+                                        }}>@</span>
                                         <input
                                             type="text"
-                                            name="displayName"
-                                            autoComplete="nickname"
+                                            name="username"
+                                            autoComplete="username"
                                             className="input"
-                                            value={displayName}
-                                            onChange={(e) => setDisplayName(e.target.value)}
-                                            placeholder="Your Name"
+                                            value={handle}
+                                            onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                                            style={{ paddingLeft: '28px' }}
+                                            placeholder="yourhandle"
+                                            required
+                                            minLength={3}
+                                            maxLength={20}
                                         />
                                     </div>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                            Confirm Password
-                                        </label>
-                                        <input
-                                            type="password"
-                                            name="confirmPassword"
-                                            autoComplete="new-password"
-                                            className="input"
-                                            value={confirmPassword}
-                                            onChange={(e) => setConfirmPassword(e.target.value)}
-                                            placeholder="••••••••"
-                                            required
-                                            minLength={8}
-                                        />
+                                    <div style={{
+                                        fontSize: '12px',
+                                        marginTop: '4px',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center'
+                                    }}>
+                                        <span style={{ color: 'var(--foreground-tertiary)' }}>
+                                            3-20 chars, a-z 0-9 _
+                                        </span>
+                                        {handleStatus === 'checking' && (
+                                            <span style={{ color: 'var(--foreground-tertiary)' }}>Checking...</span>
+                                        )}
+                                        {handleStatus === 'available' && (
+                                            <span style={{ color: 'var(--success)', fontWeight: 600 }}>✓</span>
+                                        )}
+                                        {handleStatus === 'taken' && (
+                                            <span style={{ color: 'var(--error)', fontWeight: 600 }}>Taken</span>
+                                        )}
                                     </div>
                                 </div>
-
-                                <div style={{ marginBottom: '16px' }}>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
-                                            Email
-                                        </label>
-                                        <input
-                                            type="email"
-                                            name="email"
-                                            autoComplete="email"
-                                            className="input"
-                                            value={email}
-                                            onChange={(e) => setEmail(e.target.value)}
-                                            placeholder="you@example.com"
-                                            required
-                                        />
-                                    </div>
+                                <div className="auth-field-password">
+                                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
+                                        Password
+                                    </label>
+                                    <input
+                                        type="password"
+                                        name="password"
+                                        autoComplete="new-password"
+                                        className="input"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        placeholder="••••••••"
+                                        required
+                                        minLength={8}
+                                    />
                                 </div>
-
-                            </>
+                                <div className="auth-field-display-name">
+                                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
+                                        Display Name
+                                    </label>
+                                    <input
+                                        type="text"
+                                        name="displayName"
+                                        autoComplete="nickname"
+                                        className="input"
+                                        value={displayName}
+                                        onChange={(e) => setDisplayName(e.target.value)}
+                                        placeholder="Your Name"
+                                    />
+                                </div>
+                                <div className="auth-field-confirm-password">
+                                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
+                                        Confirm Password
+                                    </label>
+                                    <input
+                                        type="password"
+                                        name="confirmPassword"
+                                        autoComplete="new-password"
+                                        className="input"
+                                        value={confirmPassword}
+                                        onChange={(e) => setConfirmPassword(e.target.value)}
+                                        placeholder="••••••••"
+                                        required
+                                        minLength={8}
+                                    />
+                                </div>
+                                <div className="auth-field-email">
+                                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: 500 }}>
+                                        Email
+                                    </label>
+                                    <input
+                                        type="email"
+                                        name="email"
+                                        autoComplete="email"
+                                        className="input"
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        placeholder="you@example.com"
+                                        required
+                                    />
+                                </div>
+                            </div>
                         )}
 
                         {/* Login Mode - Show email/password only */}
@@ -677,13 +657,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                         )}
 
                         {mode === 'register' && nodeInfo.isNsfw && (
-                            <div style={{
-                                marginBottom: '20px',
-                                padding: '12px',
-                                background: 'rgba(239, 68, 68, 0.05)',
-                                border: '1px solid rgba(239, 68, 68, 0.2)',
-                                borderRadius: 'var(--radius-md)',
-                            }}>
+                            <div className="auth-age-confirmation">
                                 <label style={{ display: 'flex', gap: '8px', cursor: 'pointer' }}>
                                     <input
                                         type="checkbox"
@@ -726,7 +700,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
 
                         <button
                             type="submit"
-                            className="btn btn-primary btn-lg"
+                            className="btn btn-primary btn-lg auth-submit"
                             style={{ width: '100%' }}
                             disabled={loading || 
                                 (turnstileRequired && !turnstileToken) ||
@@ -739,11 +713,15 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                                     (nodeInfo.isNsfw && !ageVerified)
                                 ))}
                         >
-                            {loading ? 'Please wait...' : (mode === 'login' ? 'Login' : 'Create Account')}
+                            {loading
+                                ? 'Please wait...'
+                                : mode === 'login'
+                                    ? iosFunnel ? 'Sign in and continue' : 'Login'
+                                    : iosFunnel ? 'Create account and continue' : 'Create Account'}
                         </button>
                     </form>
                 ) : (
-                    <form onSubmit={handleImport} className="card" style={{ padding: '24px' }}>
+                    <form onSubmit={handleImport} className="card auth-card">
                         {error && (
                             <div style={{
                                 padding: '12px',
@@ -957,11 +935,27 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                     </form>
                 )}
 
-                {!modal && (
-                    <p style={{ textAlign: 'center', marginTop: '24px', color: 'var(--foreground-tertiary)', fontSize: '14px' }}>
+                {!modal && (iosFunnel ? (
+                    <div className="auth-ios-footnote">
+                        <strong>Already have an account?</strong>{' '}
+                        {existingAccountDestination ? (
+                            <a
+                                href={existingAccountDestination}
+                                target={iosAppUrl ? undefined : '_blank'}
+                                rel={iosAppUrl ? undefined : 'noreferrer'}
+                            >
+                                {iosAppUrl ? 'Open Synapsis' : 'Download Synapsis'}
+                            </a>
+                        ) : (
+                            'Sign in inside the Synapsis app.'
+                        )}{' '}
+                        This website is only for creating an account on iPhone.
+                    </div>
+                ) : (
+                    <p className="auth-back-link">
                         <Link href="/">← Back to home</Link>
                     </p>
-                )}
+                ))}
             </div>
         </div>
     );
@@ -1031,7 +1025,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
     }
 
     return (
-        <div style={{ minHeight: '100vh' }}>
+        <div className="auth-page">
             {content}
         </div>
     );

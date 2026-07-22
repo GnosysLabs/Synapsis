@@ -181,6 +181,28 @@ notifications. It sends constrained, privacy-safe events to the central
 exist only at that separately deployed relay. See `services/push-relay/README.md` for
 the relay protocol and central deployment contract.
 
+## Native iPhone onboarding
+
+Synapsis treats the website as an account-setup bridge on iPhone, not as the
+product client. Every iPhone request to a normal web route is sent to the
+registration-only screen at `/login?app=ios`. Existing users sign in inside the
+native app. After a successful registration, and on later visits from an
+already authenticated iPhone browser, the website stops at
+`/continue-in-app` with instructions to return to or download Synapsis. Adult
+nodes keep the same required 18+ confirmation during registration.
+
+The iOS app should open this node-relative URL when a user needs an account:
+
+```text
+https://NODE_DOMAIN/login?app=ios
+```
+
+Set `NEXT_PUBLIC_IOS_APP_URL` to the app's `synapsis:` deep link or HTTPS
+universal link to show **Open Synapsis**. Set `NEXT_PUBLIC_IOS_APP_STORE_URL`
+once the listing is public to show **Download on the App Store**. If neither is
+set, the handoff remains functional and tells the user to close the page and
+return to the app manually. iPad and Android remain outside this first gate.
+
 ## Development
 
 ```bash

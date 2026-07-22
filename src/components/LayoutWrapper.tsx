@@ -1,7 +1,7 @@
 'use client';
 
-import { Fragment } from 'react';
-import { usePathname } from 'next/navigation';
+import { Fragment, useEffect } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { Sidebar } from './Sidebar';
 import { RightSidebar } from './RightSidebar';
 import { useAuth } from '@/lib/contexts/AuthContext';
@@ -9,16 +9,24 @@ import { useRuntimeConfig } from '@/lib/contexts/ConfigContext';
 import { isAppBootstrapReady } from '@/lib/bootstrap/readiness';
 import { GlobalPostComposer } from './GlobalPostComposer';
 import { BrowserNotificationBridge } from './BrowserNotificationBridge';
+import { getIPhoneWebDestination } from '@/lib/platform/ios-web-funnel';
 
-export function LayoutWrapper({ children }: { children: React.ReactNode }) {
+export function LayoutWrapper({ children, isIPhone }: { children: React.ReactNode; isIPhone: boolean }) {
     const { loading, user, activeAccountId } = useAuth();
     const { config, isLoading: configLoading } = useRuntimeConfig();
     const pathname = usePathname();
+    const router = useRouter();
 
     // Paths that should NOT have the app layout
-    const isStandalone =
-        pathname === '/login' ||
-        pathname === '/register';
+    const isAccountSetup = pathname === '/login' || pathname === '/register';
+    const isAppHandoff = pathname === '/continue-in-app';
+    const isStandalone = isAccountSetup || isAppHandoff;
+
+    useEffect(() => {
+        if (!isIPhone || isAppHandoff || loading) return;
+        if (isAccountSetup && !user) return;
+        router.replace(getIPhoneWebDestination(Boolean(user)));
+    }, [isAccountSetup, isAppHandoff, isIPhone, loading, router, user]);
 
     // Hide right sidebar on chat page for more space
     const hideRightSidebar = false;
@@ -55,8 +63,19 @@ export function LayoutWrapper({ children }: { children: React.ReactNode }) {
         );
     }
 
-    if (isStandalone) {
+    if (isStandalone && !(isIPhone && isAccountSetup && user)) {
         return <>{children}</>;
+    }
+
+    // Do not paint a frame of the desktop-style web client while the iPhone
+    // gate is navigating. The native app is the product surface on iPhone;
+    // the website exists there only for account setup and recovery.
+    if (isIPhone) {
+        return (
+            <div className="app-handoff-loading" role="status" aria-label="Opening iPhone account setup">
+                <div className="app-handoff-loading-spinner" />
+            </div>
+        );
     }
 
     return (
