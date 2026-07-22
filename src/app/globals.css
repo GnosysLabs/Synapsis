@@ -140,12 +140,15 @@ body {
 }
 
 .auth-screen-shell {
+  position: relative;
   display: flex;
   min-height: 100vh;
   min-height: 100svh;
   align-items: center;
   justify-content: center;
   padding: 24px;
+  overflow: hidden;
+  background: var(--background);
 }
 
 .auth-screen-shell.auth-screen-modal {
@@ -154,7 +157,29 @@ body {
 }
 
 .auth-screen-panel {
+  position: relative;
+  z-index: 1;
   width: 100%;
+}
+
+.signal-field {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.signal-field canvas,
+.signal-field-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.signal-field-scrim {
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0.72));
 }
 
 .auth-screen-header {
@@ -303,15 +328,12 @@ body {
 }
 
 .app-handoff-loading {
-  display: flex;
-  min-height: 100vh;
-  min-height: 100svh;
   align-items: center;
-  justify-content: center;
-  background: var(--background);
 }
 
 .app-handoff-loading-spinner {
+  position: relative;
+  z-index: 1;
   width: 24px;
   height: 24px;
   border: 2px solid var(--border);
@@ -325,52 +347,43 @@ body {
 }
 
 .ios-handoff-page {
+  position: relative;
   display: flex;
   min-height: 100vh;
   min-height: 100svh;
   align-items: center;
   justify-content: center;
   padding: max(24px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  overflow: hidden;
   background: var(--background);
 }
 
-.ios-handoff-card {
+.ios-handoff-content {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 440px;
-  padding: 30px 24px 24px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--background-secondary);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
   text-align: center;
 }
 
-.ios-handoff-card > img {
-  width: 168px;
+.ios-handoff-node-logo {
+  width: auto;
+  max-width: 200px;
   height: auto;
-  margin-bottom: 28px;
+  max-height: 80px;
+  margin-bottom: 30px;
+  object-fit: contain;
 }
 
-.ios-handoff-icon {
-  display: inline-flex;
-  width: 58px;
-  height: 58px;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 18px;
-  border: 1px solid var(--border-hover);
-  border-radius: 18px;
-  background: var(--background-tertiary);
+.ios-handoff-node-name {
+  margin-bottom: 30px;
   color: var(--foreground);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
-.ios-handoff-icon-ready {
-  border-color: rgba(34, 197, 94, 0.28);
-  background: rgba(34, 197, 94, 0.1);
-  color: var(--success);
-}
-
-.ios-handoff-card h1 {
+.ios-handoff-content h1 {
   margin-bottom: 12px;
   font-size: clamp(30px, 9vw, 40px);
   line-height: 1.02;
@@ -404,7 +417,8 @@ body {
   padding: 11px 13px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--background-tertiary);
+  background: rgba(17, 17, 17, 0.82);
+  backdrop-filter: blur(12px);
 }
 
 .ios-handoff-steps span {
@@ -427,6 +441,12 @@ body {
   line-height: 1.4;
 }
 
+.ios-handoff-steps p strong {
+  color: var(--foreground);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
 .ios-handoff-actions {
   display: grid;
   gap: 10px;
@@ -446,40 +466,12 @@ body {
   font-size: 13px;
 }
 
-.ios-handoff-return-note {
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--background-tertiary);
-  color: var(--foreground);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
 .ios-handoff-boundary {
-  margin-top: 20px;
-  color: var(--foreground-tertiary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.ios-handoff-signout {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 14px;
-  padding: 8px;
-  border: 0;
-  background: transparent;
-  color: var(--foreground-tertiary);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-}
-
-.ios-handoff-signout:disabled {
-  opacity: 0.55;
-  cursor: default;
+  max-width: 360px;
+  margin: 24px auto 0;
+  color: var(--foreground-secondary);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 @media (max-width: 600px) {
@@ -529,8 +521,8 @@ body {
     align-items: flex-start;
   }
 
-  .ios-handoff-card {
-    padding: 26px 18px 20px;
+  .ios-handoff-content {
+    padding: 12px 2px;
   }
 }
 

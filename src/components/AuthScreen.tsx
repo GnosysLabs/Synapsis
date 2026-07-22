@@ -8,6 +8,7 @@ import { TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { completePostSignInNavigation } from '@/lib/auth/post-sign-in-navigation';
 import { getSafeIosPublicUrl } from '@/lib/platform/ios-web-funnel';
+import { SignalField } from './SignalField';
 
 const DEFAULT_NODE_DESCRIPTION = 'A swarm social network node.';
 
@@ -409,6 +410,7 @@ export function AuthScreen({
 
     const content = (
         <div className={`auth-screen-shell${iosFunnel ? ' ios-auth-funnel' : ''}${modal ? ' auth-screen-modal' : ''}`}>
+            {iosFunnel && <SignalField />}
             <div
                 className="auth-screen-panel"
                 style={{ maxWidth: iosFunnel ? '440px' : mode === 'register' ? '680px' : '400px' }}
