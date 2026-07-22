@@ -333,7 +333,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!user?.did
             || !isUnlocked
             || identity?.did !== user.did
-            || user.profileVersion) return;
+            // Undefined means this is a partial auth projection, such as a
+            // response from an older server. Only an explicit null proves the
+            // server knows this complete profile has not been published yet.
+            || user.profileVersion !== null) return;
         const presentationKey = JSON.stringify([
             user.id,
             user.displayName,
@@ -348,14 +351,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let cancelled = false;
         void (async () => {
             try {
+                // Never turn the current React projection into a durable
+                // profile document. A login response, stale tab, or future
+                // partial auth response may omit media fields. Rehydrate the
+                // complete active account from the server immediately before
+                // signing so omitted fields cannot become signed deletions.
+                const sourceResponse = await fetch('/api/auth/me', {
+                    cache: 'no-store',
+                    credentials: 'same-origin',
+                });
+                const sourceData = await sourceResponse.json().catch(() => null) as {
+                    user?: User | null;
+                    error?: string;
+                } | null;
+                const sourceUser = sourceData?.user;
+                if (!sourceResponse.ok
+                    || !sourceUser
+                    || sourceUser.id !== user.id
+                    || sourceUser.did !== user.did) {
+                    throw new Error(sourceData?.error || 'Authoritative profile hydration failed');
+                }
+                if (sourceUser.profileVersion !== null) {
+                    if (!cancelled) updateUserProfile(sourceUser);
+                    return;
+                }
                 const profileDocument = await signUserAction(
                     PUBLISH_PROFILE_ACTION,
                     buildProfileDocumentData({
-                        displayName: user.displayName || user.handle,
-                        bio: user.bio,
-                        avatarUrl: user.avatarUrl,
-                        headerUrl: user.headerUrl,
-                        website: user.website,
+                        displayName: sourceUser.displayName || sourceUser.handle,
+                        bio: sourceUser.bio,
+                        avatarUrl: sourceUser.avatarUrl,
+                        headerUrl: sourceUser.headerUrl,
+                        website: sourceUser.website,
                     }),
                 );
                 const response = await fetch('/api/auth/me', {

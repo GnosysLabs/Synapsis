@@ -76,6 +76,11 @@ describe('POST /api/auth/login adaptive protection', () => {
             homeDomain: 'node.social',
             isLocalAccount: true,
             displayName: 'Alice',
+            avatarUrl: 'https://media.example/alice-avatar.jpg',
+            bio: 'Complete profile data',
+            headerUrl: 'https://media.example/alice-header.jpg',
+            website: 'https://alice.example',
+            profileVersion: null,
             did: 'did:synapsis:alice',
             publicKey: 'PUBLIC KEY',
             privateKeyEncrypted: 'ENCRYPTED PRIVATE KEY',
@@ -99,6 +104,11 @@ describe('POST /api/auth/login adaptive protection', () => {
                 username: 'alice',
                 homeDomain: 'node.social',
                 isLocalAccount: true,
+                avatarUrl: 'https://media.example/alice-avatar.jpg',
+                bio: 'Complete profile data',
+                headerUrl: 'https://media.example/alice-header.jpg',
+                website: 'https://alice.example',
+                profileVersion: null,
             },
         });
     });
