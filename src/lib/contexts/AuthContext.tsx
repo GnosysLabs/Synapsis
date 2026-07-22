@@ -5,6 +5,10 @@ import { useUserIdentity } from '@/lib/hooks/useUserIdentity';
 import { unlockE2EEFromSignIn } from '@/lib/e2ee/sign-in-unlock';
 import { parseAccountAddress } from '@/lib/identity/account-address';
 import type { StuffboxBadge } from '@/lib/types';
+import {
+    buildProfileDocumentData,
+    PUBLISH_PROFILE_ACTION,
+} from '@/lib/profile/profile-document';
 
 const AUTH_SYNC_CHANNEL = 'synapsis-auth-state';
 const AUTH_SYNC_STORAGE_KEY = 'synapsis:auth-state-changed';
@@ -96,6 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const authGenerationRef = useRef(0);
     const signInInProgressRef = useRef(false);
     const initialAuthResolvedRef = useRef(false);
+    const portableProfileAttemptRef = useRef<string | null>(null);
 
     // Integrate useUserIdentity hook with persistence
     const {
@@ -319,6 +324,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         )));
         broadcastAuthChange();
     }, [broadcastAuthChange, user?.id]);
+
+    // Legacy accounts may restore an already-unlocked key without ever passing
+    // through AuthScreen again. Publish their first signed presentation here so
+    // every unlock path, including reload and account switching, can repair the
+    // profile exactly once without requiring a meaningless profile edit.
+    useEffect(() => {
+        if (!user?.did
+            || !isUnlocked
+            || identity?.did !== user.did
+            || user.profileVersion) return;
+        const presentationKey = JSON.stringify([
+            user.id,
+            user.displayName,
+            user.bio ?? null,
+            user.avatarUrl ?? null,
+            user.headerUrl ?? null,
+            user.website ?? null,
+        ]);
+        if (portableProfileAttemptRef.current === presentationKey) return;
+        portableProfileAttemptRef.current = presentationKey;
+
+        let cancelled = false;
+        void (async () => {
+            try {
+                const profileDocument = await signUserAction(
+                    PUBLISH_PROFILE_ACTION,
+                    buildProfileDocumentData({
+                        displayName: user.displayName || user.handle,
+                        bio: user.bio,
+                        avatarUrl: user.avatarUrl,
+                        headerUrl: user.headerUrl,
+                        website: user.website,
+                    }),
+                );
+                const response = await fetch('/api/auth/me', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify(profileDocument),
+                });
+                const data = await response.json().catch(() => null) as { user?: User; error?: string } | null;
+                if (!response.ok || !data?.user) {
+                    throw new Error(data?.error || 'Portable profile publication failed');
+                }
+                if (!cancelled) updateUserProfile(data.user);
+            } catch (profileError) {
+                console.warn('[Auth] Portable profile publication will retry after the next reload', profileError);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [identity?.did, isUnlocked, signUserAction, updateUserProfile, user]);
 
     // Load auth state on mount
     useEffect(() => {

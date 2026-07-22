@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 const mocks = vi.hoisted(() => ({
   findConversations: vi.fn(),
   getSession: vi.fn(),
+  getBlockedNodeDomains: vi.fn(),
   select: vi.fn(),
 }));
 
@@ -11,6 +12,10 @@ vi.mock('@/lib/auth', () => ({ getSession: mocks.getSession }));
 
 vi.mock('@/lib/node/local-node', () => ({
   requireLocalNodeNsfwClassification: vi.fn().mockResolvedValue(false),
+}));
+
+vi.mock('@/lib/swarm/node-blocklist', () => ({
+  getBlockedNodeDomains: mocks.getBlockedNodeDomains,
 }));
 
 vi.mock('@/db', async () => {
@@ -45,6 +50,7 @@ function selectResult(rows: unknown[], grouped = false) {
 describe('GET /api/swarm/chat/conversations', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.select.mockReset();
     vi.stubEnv('NEXT_PUBLIC_NODE_DOMAIN', 'local.example');
     vi.stubGlobal('fetch', vi.fn());
     mocks.getSession.mockResolvedValue({
@@ -58,6 +64,7 @@ describe('GET /api/swarm/chat/conversations', () => {
         publicKey: 'owner-signing-key',
       },
     });
+    mocks.getBlockedNodeDomains.mockResolvedValue(new Set());
   });
 
   it('batches local metadata and never contacts remote nodes on the inbox path', async () => {
@@ -87,6 +94,8 @@ describe('GET /api/swarm/chat/conversations', () => {
           publicKey: 'alice-signing-key',
           homeDomain: 'offline.example',
           isLocalAccount: false,
+          profileVersion: 500,
+          profileDocumentJson: '{"signed":true}',
         },
         {
           handle: 'bob@local.example',
@@ -134,6 +143,41 @@ describe('GET /api/swarm/chat/conversations', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ conversations: [], nextOffset: null });
     expect(mocks.select).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not render an unsigned remote display name or avatar from cache', async () => {
+    mocks.findConversations.mockResolvedValue([{
+      id: 'legacy-remote-conversation',
+      participant1Id: 'owner-id',
+      participant2Handle: 'alice@remote.example',
+    }]);
+    mocks.select
+      .mockReturnValueOnce(selectResult([], true))
+      .mockReturnValueOnce(selectResult([]))
+      .mockReturnValueOnce(selectResult([{
+        handle: 'alice@remote.example',
+        displayName: 'Node Controlled Name',
+        avatarUrl: 'https://remote.example/unverified-avatar.jpg',
+        did: 'did:key:alice',
+        publicKey: 'alice-signing-key',
+        homeDomain: 'remote.example',
+        isLocalAccount: false,
+        isNsfw: false,
+        profileVersion: null,
+        profileDocumentJson: null,
+      }]));
+
+    const response = await GET(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.conversations[0].participant2).toMatchObject({
+      handle: 'alice@remote.example',
+      displayName: 'alice',
+      avatarUrl: null,
+      did: 'did:key:alice',
+    });
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -192,6 +236,8 @@ describe('GET /api/swarm/chat/conversations', () => {
         publicKey: 'alice-signing-key',
         homeDomain: 'canonical.example',
         isLocalAccount: false,
+        profileVersion: 500,
+        profileDocumentJson: '{"signed":true}',
       }]));
 
     const response = await GET(request());

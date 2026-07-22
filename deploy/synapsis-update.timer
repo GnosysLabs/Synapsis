@@ -2,11 +2,11 @@
 Description=Keep Synapsis on the latest main commit
 
 [Timer]
-OnBootSec=5min
-OnUnitInactiveSec=15min
+OnBootSec=1min
+OnUnitInactiveSec=2min
 # Fleet-wide jitter prevents thousands of nodes fetching/building at once.
-RandomizedDelaySec=30min
-AccuracySec=1min
+RandomizedDelaySec=3min
+AccuracySec=30s
 Persistent=true
 Unit=synapsis-update.service
 

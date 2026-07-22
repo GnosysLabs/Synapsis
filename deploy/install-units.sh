@@ -115,10 +115,10 @@ cat > "$unit_staging/${UPDATE_TIMER_NAME}.timer" <<EOF
 Description=Keep Synapsis${INSTANCE:+ instance $INSTANCE} on the latest $BRANCH commit
 
 [Timer]
-OnBootSec=5min
-OnUnitInactiveSec=15min
-RandomizedDelaySec=30min
-AccuracySec=1min
+OnBootSec=1min
+OnUnitInactiveSec=2min
+RandomizedDelaySec=3min
+AccuracySec=30s
 Persistent=true
 Unit=${UPDATE_SERVICE_NAME}.service
 

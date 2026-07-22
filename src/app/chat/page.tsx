@@ -247,6 +247,7 @@ export default function ChatPage() {
     const conversationsRequestRef = useRef(0);
     const conversationsAbortRef = useRef<AbortController | null>(null);
     const peerResolutionRef = useRef(0);
+    const participantPresentationRefreshRef = useRef(0);
     const composeRequestRef = useRef(0);
     const sendRequestRef = useRef(0);
     const accountDidRef = useRef<string | null>(null);
@@ -533,6 +534,7 @@ export default function ChatPage() {
     const selectConversation = useCallback((conversation: Conversation | null) => {
         messagesRequestRef.current += 1;
         peerResolutionRef.current += 1;
+        participantPresentationRefreshRef.current += 1;
         sendRequestRef.current += 1;
         const conversationKey = conversation
             ? encryptionConversationKey(conversation)
@@ -789,6 +791,69 @@ export default function ChatPage() {
             }
         }
     }, [user?.did, e2eeIdentity.state, markAsRead]);
+
+    const refreshConversationParticipant = useCallback(async (conversation: Conversation) => {
+        const participantAddress = resolveAccountAddress(
+            conversation.participant2.handle,
+            conversation.participant2.nodeDomain || domain,
+        );
+        if (!participantAddress
+            || participantAddress.homeDomain === domain
+            || conversation.nodeBlocked) return;
+
+        const requestId = ++participantPresentationRefreshRef.current;
+        const requestAccountDid = renderedAccountDidRef.current;
+        try {
+            const response = await fetch(`/api/users/${encodeURIComponent(participantAddress.canonical)}`, {
+                cache: 'no-store',
+            });
+            const body = await response.json().catch(() => null);
+            const profile = body?.user;
+            const refreshedAddress = profile
+                ? resolveAccountAddress(profile.handle, profile.nodeDomain || participantAddress.homeDomain)
+                : null;
+            if (!response.ok
+                || !profile
+                || profile.profilePresentationVerified !== true
+                || !refreshedAddress
+                || refreshedAddress.canonical !== participantAddress.canonical
+                || requestId !== participantPresentationRefreshRef.current
+                || renderedAccountDidRef.current !== requestAccountDid) return;
+
+            const mergePresentation = (current: Conversation): Conversation => ({
+                ...current,
+                participant2: {
+                    ...current.participant2,
+                    displayName: profile.displayName || refreshedAddress.username,
+                    avatarUrl: profile.avatarUrl ?? null,
+                    did: profile.did || current.participant2.did,
+                    nodeDomain: refreshedAddress.homeDomain,
+                    isNsfw: profile.isNsfw,
+                    nodeIsNsfw: profile.nodeIsNsfw,
+                    stuffboxBadge: profile.stuffboxBadge ?? null,
+                },
+            });
+            setConversations((current) => current.map((candidate) => (
+                candidate.id === conversation.id ? mergePresentation(candidate) : candidate
+            )));
+            const selected = selectedConversationRef.current;
+            if (!selected || selected.id !== conversation.id) return;
+            const refreshed = mergePresentation(selected);
+            const unchanged = refreshed.participant2.displayName === selected.participant2.displayName
+                && refreshed.participant2.avatarUrl === selected.participant2.avatarUrl
+                && refreshed.participant2.did === selected.participant2.did
+                && refreshed.participant2.isNsfw === selected.participant2.isNsfw
+                && refreshed.participant2.nodeIsNsfw === selected.participant2.nodeIsNsfw
+                && refreshed.participant2.stuffboxBadge?.attestation
+                    === selected.participant2.stuffboxBadge?.attestation;
+            if (unchanged) return;
+            selectedConversationRef.current = refreshed;
+            selectedConversationKeyRef.current = encryptionConversationKey(refreshed);
+            setSelectedConversation(refreshed);
+        } catch (error) {
+            console.warn(`[Chat] Could not refresh signed profile for ${participantAddress.canonical}`, error);
+        }
+    }, [domain]);
 
     const resolveConversationEncryption = useCallback(async (conversation: Conversation) => {
         const requestId = ++peerResolutionRef.current;
@@ -1098,6 +1163,7 @@ export default function ChatPage() {
         messagesRequestRef.current += 1;
         conversationsRequestRef.current += 1;
         peerResolutionRef.current += 1;
+        participantPresentationRefreshRef.current += 1;
         composeRequestRef.current += 1;
         sendRequestRef.current += 1;
         preparedSendsRef.current.clear();
@@ -1159,6 +1225,27 @@ export default function ChatPage() {
             conversationsRequestRef.current += 1;
         };
     }, [user?.did, activeE2EEKeyId, loadConversations]);
+
+    // DID/key continuity and profile presentation are separate trust states.
+    // Refresh the selected remote participant even when their DID is already
+    // cached, then keep long-open conversations reasonably fresh.
+    useEffect(() => {
+        if (!selectedConversation) return;
+        void refreshConversationParticipant(selectedConversation);
+        const interval = window.setInterval(() => {
+            const current = selectedConversationRef.current;
+            if (current) void refreshConversationParticipant(current);
+        }, 60_000);
+        return () => {
+            participantPresentationRefreshRef.current += 1;
+            window.clearInterval(interval);
+        };
+    }, [
+        refreshConversationParticipant,
+        selectedConversation?.id,
+        selectedConversation?.nodeBlocked,
+        selectedConversation?.participant2.handle,
+    ]);
 
     // Handle Compose Intent
     useEffect(() => {

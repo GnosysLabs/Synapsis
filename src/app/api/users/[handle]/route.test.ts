@@ -137,6 +137,7 @@ describe('user profile route', () => {
         isNsfw: false,
         nodeIsNsfw: true,
         nodeDomain: 'adult.example',
+        profilePresentationVerified: false,
       },
       posts: [],
       nodeDomain: 'adult.example',
@@ -153,6 +154,7 @@ describe('user profile route', () => {
       user: {
         handle: 'remoteuser@adult.example',
         displayName: 'Explicit display name',
+        profilePresentationVerified: false,
         bio: null,
         avatarUrl: null,
         headerUrl: null,
@@ -181,6 +183,7 @@ describe('user profile route', () => {
         did: 'did:key:alice',
         publicKey: 'verified-key',
         stuffboxBadge: null,
+        profilePresentationVerified: true,
       },
       posts: [],
       nodeDomain: 'remote.social',
@@ -193,6 +196,9 @@ describe('user profile route', () => {
     );
 
     expect(response.status).toBe(200);
+    await expect(response.clone().json()).resolves.toMatchObject({
+      user: { profilePresentationVerified: true },
+    });
     expect(mocks.upsertRemoteUser).toHaveBeenCalledWith(expect.objectContaining({
       handle: 'alice@remote.social',
       avatarUrl: 'https://remote.social/new-avatar.jpg',

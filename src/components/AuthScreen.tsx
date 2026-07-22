@@ -7,10 +7,6 @@ import { useRouter } from 'next/navigation';
 import { TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { completePostSignInNavigation } from '@/lib/auth/post-sign-in-navigation';
-import {
-    buildProfileDocumentData,
-    PUBLISH_PROFILE_ACTION,
-} from '@/lib/profile/profile-document';
 
 const DEFAULT_NODE_DESCRIPTION = 'A swarm social network node.';
 
@@ -89,7 +85,7 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
         setMode(nextMode);
     };
 
-    const { login, signUserAction } = useAuth();
+    const { login } = useAuth();
 
     const [importFile, setImportFile] = useState<File | null>(null);
     const [importPassword, setImportPassword] = useState('');
@@ -381,34 +377,6 @@ export function AuthScreen({ modal = false, onClose, onSuccess }: AuthScreenProp
                 throw new Error('Your sign-in session could not be saved. Please try again.');
             }
 
-            // Existing accounts acquire their first portable profile proof on
-            // the next successful unlock. This is intentionally best-effort so
-            // a transient publication failure never turns into a login outage.
-            if (!sessionData.user.profileVersion) {
-                try {
-                    const profileDocument = await signUserAction(
-                        PUBLISH_PROFILE_ACTION,
-                        buildProfileDocumentData({
-                            displayName: sessionData.user.displayName || sessionData.user.handle,
-                            bio: sessionData.user.bio,
-                            avatarUrl: sessionData.user.avatarUrl,
-                            headerUrl: sessionData.user.headerUrl,
-                            website: sessionData.user.website,
-                        }),
-                    );
-                    const publication = await fetch('/api/auth/me', {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'same-origin',
-                        body: JSON.stringify(profileDocument),
-                    });
-                    if (!publication.ok) {
-                        console.warn('[Auth] Portable profile publication will retry after the next sign-in');
-                    }
-                } catch (profileError) {
-                    console.warn('[Auth] Portable profile publication failed', profileError);
-                }
-            }
             setPassword('');
             setConfirmPassword('');
 

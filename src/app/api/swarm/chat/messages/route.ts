@@ -138,14 +138,20 @@ export async function GET(request: NextRequest) {
         msg.senderNodeDomain || localDomain,
       );
       const canonicalSenderHandle = senderAddress?.canonical || msg.senderHandle;
-      const displayName = user?.displayName || msg.senderDisplayName || canonicalSenderHandle;
-      const avatarUrl = user?.avatarUrl || msg.senderAvatarUrl;
       const senderDomain = senderAddress?.homeDomain
         || canonicalAccountHomeDomain(user?.homeDomain)
         || null;
       const senderIsRemote = user
         ? !user.isLocalAccount
         : Boolean(senderDomain && senderDomain !== localDomain);
+      const cachedPresentationVerified = Boolean(
+        user
+        && (!senderIsRemote || (user.profileVersion && user.profileDocumentJson)),
+      );
+      const displayName = cachedPresentationVerified
+        ? user?.displayName || senderAddress?.username || canonicalSenderHandle
+        : senderAddress?.username || canonicalSenderHandle;
+      const avatarUrl = cachedPresentationVerified ? user?.avatarUrl || null : null;
       const senderNodeBlocked = Boolean(
         senderDomain
         && senderDomain !== localDomain
@@ -162,7 +168,7 @@ export async function GET(request: NextRequest) {
         isRemote: senderIsRemote || senderClassifierMissing,
         nodeDomain: senderDomain,
         isNsfw: senderIsRemote
-          ? user?.isNsfw === true ? true : undefined
+          ? cachedPresentationVerified ? user?.isNsfw : undefined
           : user?.isNsfw ?? (isSentByMe ? session.user.isNsfw : undefined),
         nodeIsNsfw: senderIsRemote || senderClassifierMissing ? undefined : localNodeIsNsfw,
       }, canViewSensitive);

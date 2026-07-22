@@ -142,6 +142,8 @@ export async function GET(request: NextRequest) {
           isNsfw: users.isNsfw,
           isLocalAccount: users.isLocalAccount,
           homeDomain: users.homeDomain,
+          profileVersion: users.profileVersion,
+          profileDocumentJson: users.profileDocumentJson,
           stuffboxBadgeProof: users.stuffboxBadgeProof,
           stuffboxBadgeLevel: users.stuffboxBadgeLevel,
           stuffboxBadgePlan: users.stuffboxBadgePlan,
@@ -173,6 +175,11 @@ export async function GET(request: NextRequest) {
         const participantIsRemote = cachedUser
           ? !cachedUser.isLocalAccount
           : Boolean(participantDomain && participantDomain !== localNodeDomain);
+        const cachedPresentationVerified = Boolean(
+          cachedUser
+          && (!participantIsRemote
+            || (cachedUser.profileVersion && cachedUser.profileDocumentJson)),
+        );
         const nodeBlocked = Boolean(
           participantDomain
           && participantDomain !== localNodeDomain
@@ -181,20 +188,22 @@ export async function GET(request: NextRequest) {
         const participant2Info = redactSensitiveUserSummary(cachedUser
           ? {
               handle: cachedUser.handle,
-              displayName: cachedUser.displayName || cachedUser.handle,
-              avatarUrl: cachedUser.avatarUrl || null,
+              displayName: cachedPresentationVerified
+                ? cachedUser.displayName || participantAddress?.username || cachedUser.handle
+                : participantAddress?.username || cachedUser.handle,
+              avatarUrl: cachedPresentationVerified ? cachedUser.avatarUrl || null : null,
               did: cachedUser.did || '',
               isRemote: participantIsRemote,
               nodeDomain: participantDomain,
               isNsfw: participantIsRemote
-                ? cachedUser.isNsfw === true ? true : undefined
+                ? cachedPresentationVerified ? cachedUser.isNsfw : undefined
                 : cachedUser.isNsfw,
               nodeIsNsfw: participantIsRemote ? undefined : localNodeIsNsfw,
               stuffboxBadge: stuffboxBadgeFromStoredUser(cachedUser),
             }
           : {
               handle: participant2Handle,
-              displayName: participant2Handle,
+              displayName: participantAddress?.username || participant2Handle,
               avatarUrl: null as string | null,
               did: '',
               isRemote: participantIsRemote,

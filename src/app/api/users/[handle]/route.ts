@@ -111,6 +111,7 @@ export async function GET(request: Request, context: RouteContext) {
                                 publicKey: profile.publicKey,
                                 isNsfw: profile.isNsfw,
                                 nodeIsNsfw: profile.nodeIsNsfw,
+                                profilePresentationVerified: profile.profilePresentationVerified,
                                 nsfwRestricted: !canAccessProfile,
                                 stuffboxBadge: profile.stuffboxBadge || null,
                             }
@@ -182,6 +183,8 @@ export async function GET(request: Request, context: RouteContext) {
                     publicKey: user.publicKey,
                     isNsfw: user.isNsfw,
                     nodeIsNsfw: profileAccess.nodeIsNsfw,
+                    profilePresentationVerified: user.isLocalAccount
+                        || Boolean(user.profileVersion && user.profileDocumentJson),
                     nsfwRestricted: true,
                     stuffboxBadge: stuffboxBadgeFromStoredUser(user),
                 },
@@ -207,6 +210,8 @@ export async function GET(request: Request, context: RouteContext) {
             dmPrivacy: user.dmPrivacy,
             isNsfw: user.isNsfw,
             nodeIsNsfw: profileAccess.nodeIsNsfw,
+            profilePresentationVerified: user.isLocalAccount
+                || Boolean(user.profileVersion && user.profileDocumentJson),
             stuffboxBadge: await getOrRefreshStuffboxBadge(user),
         };
 

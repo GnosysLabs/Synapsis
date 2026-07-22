@@ -27,6 +27,17 @@ env \
 [[ -f "$PRIMARY_UNITS/synapsis-update.service" ]] || fail 'primary updater unit was not generated'
 [[ -f "$PRIMARY_UNITS/synapsis-update.timer" ]] || fail 'primary update timer was not generated'
 [[ -f "$PRIMARY_UNITS/synapsis-update.path" ]] || fail 'primary admin trigger was not generated'
+for timer_setting in \
+  'OnBootSec=1min' \
+  'OnUnitInactiveSec=2min' \
+  'RandomizedDelaySec=3min' \
+  'AccuracySec=30s'
+do
+  grep -q "^${timer_setting}$" "$SCRIPT_DIR/synapsis-update.timer" \
+    || fail "packaged primary timer is missing ${timer_setting}"
+  grep -q "^${timer_setting}$" "$PRIMARY_UNITS/synapsis-update.timer" \
+    || fail "generated primary timer is missing ${timer_setting}"
+done
 grep -q '^WorkingDirectory=/opt/synapsis-current$' "$PRIMARY_UNITS/synapsis.service" \
   || fail 'primary app does not run from its active-release symlink'
 grep -q '^ExecStart=/usr/bin/env bash /opt/synapsis/deploy/update.sh$' "$PRIMARY_UNITS/synapsis-update.service" \
@@ -60,5 +71,9 @@ grep -q '^ExecStart=/usr/bin/env bash /opt/synapsis-onlynerds/deploy/update.sh$'
   || fail 'sibling updater does not use the shared atomic updater'
 grep -q '^Unit=synapsis-onlynerds-update.service$' "$SIBLING_UNITS/synapsis-onlynerds-update.timer" \
   || fail 'sibling timer targets the wrong updater'
+grep -q '^OnUnitInactiveSec=2min$' "$SIBLING_UNITS/synapsis-onlynerds-update.timer" \
+  || fail 'sibling updater does not check again within the integrity window'
+grep -q '^RandomizedDelaySec=3min$' "$SIBLING_UNITS/synapsis-onlynerds-update.timer" \
+  || fail 'sibling updater does not preserve bounded fleet jitter'
 
 echo 'Multi-instance unit tests passed.'
