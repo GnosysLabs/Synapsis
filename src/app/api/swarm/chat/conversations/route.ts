@@ -19,7 +19,7 @@ import {
   resolveAccountAddress,
 } from '@/lib/identity/account-address';
 import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
-import { stuffboxBadgeFromStoredUser } from '@/lib/stuffbox/badge';
+import { storedProfilePresentation } from '@/lib/profile/stored-presentation';
 
 const conversationsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -175,33 +175,18 @@ export async function GET(request: NextRequest) {
         const participantIsRemote = cachedUser
           ? !cachedUser.isLocalAccount
           : Boolean(participantDomain && participantDomain !== localNodeDomain);
-        const cachedPresentationVerified = Boolean(
-          cachedUser
-          && (!participantIsRemote
-            || (cachedUser.profileVersion && cachedUser.profileDocumentJson)),
-        );
         const nodeBlocked = Boolean(
           participantDomain
           && participantDomain !== localNodeDomain
           && canonicalBlockedDomains.has(participantDomain),
         );
-        const participant2Info = redactSensitiveUserSummary(cachedUser
-          ? {
-              handle: cachedUser.handle,
-              displayName: cachedPresentationVerified
-                ? cachedUser.displayName || participantAddress?.username || cachedUser.handle
-                : participantAddress?.username || cachedUser.handle,
-              avatarUrl: cachedPresentationVerified ? cachedUser.avatarUrl || null : null,
-              did: cachedUser.did || '',
-              isRemote: participantIsRemote,
-              nodeDomain: participantDomain,
-              isNsfw: participantIsRemote
-                ? cachedPresentationVerified ? cachedUser.isNsfw : undefined
-                : cachedUser.isNsfw,
-              nodeIsNsfw: participantIsRemote ? undefined : localNodeIsNsfw,
-              stuffboxBadge: stuffboxBadgeFromStoredUser(cachedUser),
-            }
-          : {
+        const participant2Info = (cachedUser
+          ? storedProfilePresentation(cachedUser, {
+              localNodeDomain,
+              localNodeIsNsfw,
+              canViewSensitive,
+            })
+          : null) ?? redactSensitiveUserSummary({
               handle: participant2Handle,
               displayName: participantAddress?.username || participant2Handle,
               avatarUrl: null as string | null,
@@ -210,6 +195,9 @@ export async function GET(request: NextRequest) {
               nodeDomain: participantDomain,
               isNsfw: participantIsRemote ? undefined : false,
               nodeIsNsfw: participantIsRemote ? undefined : localNodeIsNsfw,
+              profilePresentationVerified: false,
+              profileVersion: null as number | null,
+              stuffboxBadge: null,
             }, canViewSensitive);
 
         const latest = latestByConversation.get(conv.id) || null;

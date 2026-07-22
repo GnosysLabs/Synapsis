@@ -20,6 +20,7 @@ import {
   resolveAccountAddress,
 } from '@/lib/identity/account-address';
 import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
+import { storedProfilePresentation } from '@/lib/profile/stored-presentation';
 
 // Schema for query parameters
 const messagesQuerySchema = z.object({
@@ -144,14 +145,6 @@ export async function GET(request: NextRequest) {
       const senderIsRemote = user
         ? !user.isLocalAccount
         : Boolean(senderDomain && senderDomain !== localDomain);
-      const cachedPresentationVerified = Boolean(
-        user
-        && (!senderIsRemote || (user.profileVersion && user.profileDocumentJson)),
-      );
-      const displayName = cachedPresentationVerified
-        ? user?.displayName || senderAddress?.username || canonicalSenderHandle
-        : senderAddress?.username || canonicalSenderHandle;
-      const avatarUrl = cachedPresentationVerified ? user?.avatarUrl || null : null;
       const senderNodeBlocked = Boolean(
         senderDomain
         && senderDomain !== localDomain
@@ -161,17 +154,24 @@ export async function GET(request: NextRequest) {
       // avatar snapshots have no trustworthy classifier, so fail closed unless
       // this is the authenticated viewer's own message.
       const senderClassifierMissing = !user && !isSentByMe;
-      const senderProfile = redactSensitiveUserSummary({
-        handle: canonicalSenderHandle,
-        displayName,
-        avatarUrl,
-        isRemote: senderIsRemote || senderClassifierMissing,
-        nodeDomain: senderDomain,
-        isNsfw: senderIsRemote
-          ? cachedPresentationVerified ? user?.isNsfw : undefined
-          : user?.isNsfw ?? (isSentByMe ? session.user.isNsfw : undefined),
-        nodeIsNsfw: senderIsRemote || senderClassifierMissing ? undefined : localNodeIsNsfw,
-      }, canViewSensitive);
+      const senderProfile = (user
+        ? storedProfilePresentation(user, {
+            localNodeDomain: localDomain,
+            localNodeIsNsfw,
+            canViewSensitive,
+          })
+        : null) ?? redactSensitiveUserSummary({
+          handle: canonicalSenderHandle,
+          displayName: senderAddress?.username || canonicalSenderHandle,
+          avatarUrl: null as string | null,
+          isRemote: senderIsRemote || senderClassifierMissing,
+          nodeDomain: senderDomain,
+          isNsfw: isSentByMe ? session.user.isNsfw : undefined,
+          nodeIsNsfw: senderIsRemote || senderClassifierMissing ? undefined : localNodeIsNsfw,
+          profilePresentationVerified: isSentByMe,
+          profileVersion: null as number | null,
+          stuffboxBadge: null,
+        }, canViewSensitive);
 
       let encryptedEnvelope = null;
       let signedAction = null;
@@ -205,6 +205,8 @@ export async function GET(request: NextRequest) {
         senderNodeBlocked,
         senderIsNsfw: senderProfile.isNsfw,
         senderNodeIsNsfw: senderProfile.nodeIsNsfw,
+        senderProfilePresentationVerified: senderProfile.profilePresentationVerified,
+        senderProfileVersion: senderProfile.profileVersion,
         senderDid: msg.senderDid,
         content: msg.protocolVersion === 0 ? msg.content : null,
         protocolVersion: msg.protocolVersion,

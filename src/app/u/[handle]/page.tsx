@@ -26,6 +26,7 @@ import {
     buildProfileDocumentData,
     PUBLISH_PROFILE_ACTION,
 } from '@/lib/profile/profile-document';
+import { useProfilePresentationRegistry } from '@/lib/contexts/ProfilePresentationContext';
 
 interface UserSummary {
     id: string;
@@ -85,6 +86,7 @@ export default function ProfilePage() {
         signUserAction,
         updateUserProfile,
     } = useAuth();
+    const { publishVerifiedPresentation } = useProfilePresentationRegistry();
     const { showAlert, showPrompt } = useAppDialog();
 
     const [user, setUser] = useState<User | null>(null);
@@ -150,6 +152,7 @@ export default function ProfilePage() {
             .then(res => res.json())
             .then(data => {
                 setUser(data.user);
+                publishVerifiedPresentation(data.user);
                 setLoading(false);
             })
             .catch(() => setLoading(false));
@@ -165,7 +168,7 @@ export default function ProfilePage() {
             })
             .catch(() => { })
             .finally(() => setPostsLoading(false));
-    }, [handle, userApiPath]);
+    }, [handle, publishVerifiedPresentation, userApiPath]);
 
     // Infinite scroll ref
     const loadMoreRef = useRef<HTMLDivElement>(null);

@@ -47,6 +47,7 @@ import {
     resolveAccountAddress,
 } from '@/lib/identity/account-address';
 import type { StuffboxBadge as StuffboxBadgeValue } from '@/lib/types';
+import { useProfilePresentationRegistry } from '@/lib/contexts/ProfilePresentationContext';
 
 interface Conversation {
     id: string;
@@ -60,6 +61,8 @@ interface Conversation {
         isNsfw?: boolean;
         nodeIsNsfw?: boolean;
         stuffboxBadge?: StuffboxBadgeValue | null;
+        profilePresentationVerified?: boolean;
+        profileVersion?: number | null;
     };
     lastMessageAt: string;
     lastMessagePreview: string;
@@ -80,6 +83,8 @@ interface ChatMessagePayload extends StoredChatMessage {
     senderNodeBlocked: boolean;
     senderIsNsfw?: boolean;
     senderNodeIsNsfw?: boolean;
+    senderProfilePresentationVerified?: boolean;
+    senderProfileVersion?: number | null;
     senderDid?: string;
     isSentByMe: boolean;
     deliveredAt?: string;
@@ -189,6 +194,7 @@ export default function ChatPage() {
     const { user, loading: authLoading, isIdentityUnlocked, isRestoring: isIdentityRestoring } = useAuth();
     const router = useRouter();
     const domain = useDomain();
+    const { getPresentation, publishVerifiedPresentation } = useProfilePresentationRegistry();
     const searchParams = useSearchParams();
     const composeHandle = canonicalAccountAddress(searchParams.get('compose') || '', domain);
     const sharedPostUrl = searchParams.get('share');
@@ -608,6 +614,13 @@ export default function ChatPage() {
             let nextConversations = ((Array.isArray(data.conversations) ? data.conversations : []) as Conversation[])
                 .map((conversation) => normalizeConversation(conversation, domain))
                 .filter((conversation): conversation is Conversation => conversation !== null);
+            nextConversations.forEach((conversation) => {
+                if (conversation.participant2.profilePresentationVerified !== true) return;
+                publishVerifiedPresentation({
+                    ...conversation.participant2,
+                    profilePresentationVerified: true,
+                });
+            });
 
             // Render the server's generic encrypted previews as soon as the list
             // arrives; local preview decryption can finish without holding the
@@ -669,7 +682,7 @@ export default function ChatPage() {
                 setLoading(false);
             }
         }
-    }, [applyConversationList, domain]);
+    }, [applyConversationList, domain, publishVerifiedPresentation]);
 
     const markAsRead = useCallback(async (conversationId: string) => {
         const requestAccountDid = renderedAccountDidRef.current;
@@ -701,6 +714,20 @@ export default function ChatPage() {
             const data = await res.json();
 
             const storedMessages = (Array.isArray(data.messages) ? data.messages : []) as ChatMessagePayload[];
+            storedMessages.forEach((message) => {
+                if (message.senderProfilePresentationVerified !== true) return;
+                publishVerifiedPresentation({
+                    handle: message.senderHandle,
+                    displayName: message.senderDisplayName,
+                    avatarUrl: message.senderAvatarUrl,
+                    did: message.senderDid,
+                    nodeDomain: message.senderNodeDomain,
+                    isNsfw: message.senderIsNsfw,
+                    nodeIsNsfw: message.senderNodeIsNsfw,
+                    profilePresentationVerified: true,
+                    profileVersion: message.senderProfileVersion ?? null,
+                });
+            });
             const decryptedMessages = await Promise.all(storedMessages.map(async (msg): Promise<Message> => {
                 const senderAddress = resolveAccountAddress(
                     msg.senderHandle,
@@ -790,7 +817,7 @@ export default function ChatPage() {
                 setLoadingMessages(false);
             }
         }
-    }, [user?.did, e2eeIdentity.state, markAsRead]);
+    }, [domain, user?.did, e2eeIdentity.state, markAsRead, publishVerifiedPresentation]);
 
     const refreshConversationParticipant = useCallback(async (conversation: Conversation) => {
         const participantAddress = resolveAccountAddress(
@@ -819,6 +846,8 @@ export default function ChatPage() {
                 || refreshedAddress.canonical !== participantAddress.canonical
                 || requestId !== participantPresentationRefreshRef.current
                 || renderedAccountDidRef.current !== requestAccountDid) return;
+
+            publishVerifiedPresentation(profile);
 
             const mergePresentation = (current: Conversation): Conversation => ({
                 ...current,
@@ -853,7 +882,7 @@ export default function ChatPage() {
         } catch (error) {
             console.warn(`[Chat] Could not refresh signed profile for ${participantAddress.canonical}`, error);
         }
-    }, [domain]);
+    }, [domain, publishVerifiedPresentation]);
 
     const resolveConversationEncryption = useCallback(async (conversation: Conversation) => {
         const requestId = ++peerResolutionRef.current;
@@ -1230,8 +1259,9 @@ export default function ChatPage() {
     // Refresh the selected remote participant even when their DID is already
     // cached, then keep long-open conversations reasonably fresh.
     useEffect(() => {
-        if (!selectedConversation) return;
-        void refreshConversationParticipant(selectedConversation);
+        const current = selectedConversationRef.current;
+        if (!current) return;
+        void refreshConversationParticipant(current);
         const interval = window.setInterval(() => {
             const current = selectedConversationRef.current;
             if (current) void refreshConversationParticipant(current);
@@ -1464,10 +1494,50 @@ export default function ChatPage() {
     // RENDER LOGIC
     // ============================================
 
-    const filteredConversations = conversations.filter((conv) =>
+    const presentedConversations = conversations.map((conversation) => {
+        const presentation = getPresentation(
+            conversation.participant2.handle,
+            conversation.participant2.nodeDomain,
+        );
+        return presentation
+            ? {
+                ...conversation,
+                participant2: {
+                    ...conversation.participant2,
+                    displayName: presentation.displayName,
+                    avatarUrl: presentation.avatarUrl,
+                    did: presentation.did || conversation.participant2.did,
+                    nodeDomain: presentation.nodeDomain,
+                    isNsfw: presentation.isNsfw,
+                    nodeIsNsfw: presentation.nodeIsNsfw,
+                    stuffboxBadge: presentation.stuffboxBadge,
+                    profilePresentationVerified: true,
+                    profileVersion: presentation.profileVersion,
+                },
+            }
+            : conversation;
+    });
+    const filteredConversations = presentedConversations.filter((conv) =>
         conv.participant2.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         conv.participant2.handle.toLowerCase().includes(searchQuery.toLowerCase())
     );
+    const selectedParticipantPresentation = selectedConversation
+        ? getPresentation(
+            selectedConversation.participant2.handle,
+            selectedConversation.participant2.nodeDomain,
+        )
+        : undefined;
+    const selectedPresentedParticipant = selectedParticipantPresentation
+        ? {
+            ...selectedConversation?.participant2,
+            displayName: selectedParticipantPresentation.displayName,
+            avatarUrl: selectedParticipantPresentation.avatarUrl,
+            nodeDomain: selectedParticipantPresentation.nodeDomain,
+            isNsfw: selectedParticipantPresentation.isNsfw,
+            nodeIsNsfw: selectedParticipantPresentation.nodeIsNsfw,
+            stuffboxBadge: selectedParticipantPresentation.stuffboxBadge,
+        }
+        : selectedConversation?.participant2;
     const selectedEncryptionReady = !selectedNodeBlocked
         && conversationEncryption.status === 'ready'
         && conversationEncryption.conversationKey === selectedConversationKey;
@@ -1477,7 +1547,7 @@ export default function ChatPage() {
         : null;
     const selectedParticipantLabel = selectedNodeBlocked
         ? selectedHandle
-        : selectedConversation?.participant2.displayName || selectedHandle;
+        : selectedPresentedParticipant?.displayName || selectedHandle;
 
     if (authLoading || isIdentityRestoring) {
         return (
@@ -1597,11 +1667,11 @@ export default function ChatPage() {
                         </button>
                         <div className="avatar" style={{ width: '32px', height: '32px', fontSize: '14px' }}>
                             <AvatarImage
-                                avatarUrl={selectedNodeBlocked ? null : selectedConversation.participant2.avatarUrl}
+                                avatarUrl={selectedNodeBlocked ? null : selectedPresentedParticipant?.avatarUrl}
                                 seed={selectedConversation.participant2.handle}
-                                nodeDomain={selectedConversation.participant2.nodeDomain}
-                                isNsfw={selectedConversation.participant2.isNsfw}
-                                nodeIsNsfw={selectedConversation.participant2.nodeIsNsfw}
+                                nodeDomain={selectedPresentedParticipant?.nodeDomain}
+                                isNsfw={selectedPresentedParticipant?.isNsfw}
+                                nodeIsNsfw={selectedPresentedParticipant?.nodeIsNsfw}
                                 alt={selectedParticipantLabel}
                             />
                         </div>
@@ -1632,7 +1702,7 @@ export default function ChatPage() {
                                 >
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '15px' }}>
                                         <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedParticipantLabel}</span>
-                                        <StuffboxBadge badge={selectedConversation.participant2.stuffboxBadge} />
+                                        <StuffboxBadge badge={selectedPresentedParticipant?.stuffboxBadge} />
                                     </div>
                                     <div style={{ fontSize: '12px', color: 'var(--foreground-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                         {selectedHandle}

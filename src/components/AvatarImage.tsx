@@ -9,6 +9,7 @@ import { isRemoteAvatarSensitivityUnknown } from '@/lib/nsfw/content-visibility'
 import { normalizeNodeDomain } from '@/lib/swarm/node-domain';
 import { isTrustedFederationMediaUrl } from '@/lib/utils/federation';
 import { resolveAccountAddress } from '@/lib/identity/account-address';
+import { useProfilePresentation } from '@/lib/contexts/ProfilePresentationContext';
 
 export function getDiceBearAvatarSeed(
     seed: string,
@@ -48,10 +49,21 @@ export function AvatarImage({ avatarUrl, seed, isNsfw, nodeIsNsfw, nodeDomain, a
     const { user } = useAuth();
     const { config } = useRuntimeConfig();
     const localNodeDomain = useDomain();
-    const customAvatar = avatarUrl?.trim();
-    const handleDomain = resolveAccountAddress(seed, nodeDomain || localNodeDomain)?.homeDomain ?? null;
+    const { presentation, resolved } = useProfilePresentation(
+        seed,
+        nodeDomain || localNodeDomain,
+    );
+    // Props are an immediate rendering hint only. Once the shared registry has
+    // answered, every AvatarImage in the application uses the same verified
+    // account presentation instead of keeping feature-local avatar copies.
+    const effectiveAvatarUrl = resolved ? presentation?.avatarUrl ?? null : avatarUrl;
+    const effectiveNodeDomain = presentation?.nodeDomain || nodeDomain;
+    const effectiveIsNsfw = presentation?.isNsfw ?? isNsfw;
+    const effectiveNodeIsNsfw = presentation?.nodeIsNsfw ?? nodeIsNsfw;
+    const customAvatar = effectiveAvatarUrl?.trim();
+    const handleDomain = resolveAccountAddress(seed, effectiveNodeDomain || localNodeDomain)?.homeDomain ?? null;
     const assertedDomain = handleDomain
-        || resolveAccountAddress('account', nodeDomain)?.homeDomain
+        || resolveAccountAddress('account', effectiveNodeDomain)?.homeDomain
         || null;
     const isRemoteAvatar = Boolean(
         assertedDomain
@@ -61,19 +73,19 @@ export function AvatarImage({ avatarUrl, seed, isNsfw, nodeIsNsfw, nodeDomain, a
         && (!isRemoteAvatar || isTrustedFederationMediaUrl(customAvatar))
         ? customAvatar
         : null;
-    const placeholderUrl = getDiceBearAvatarUrl(seed, nodeDomain, localNodeDomain);
+    const placeholderUrl = getDiceBearAvatarUrl(seed, effectiveNodeDomain, localNodeDomain);
     const localNodeClassificationKnown = config?.classificationKnown === true;
     const localNodeIsNsfw = localNodeClassificationKnown && config?.isNsfw === true;
     const sensitivityUnknown = isRemoteAvatarSensitivityUnknown({
         seed,
-        nodeDomain,
+        nodeDomain: effectiveNodeDomain,
         localNodeDomain,
-        isNsfw,
-        nodeIsNsfw,
+        isNsfw: effectiveIsNsfw,
+        nodeIsNsfw: effectiveNodeIsNsfw,
     });
     const blurred = shouldBlurProfileMedia({
-        accountIsNsfw: isNsfw === true || sensitivityUnknown || !localNodeClassificationKnown,
-        nodeIsNsfw: nodeIsNsfw ?? localNodeIsNsfw,
+        accountIsNsfw: effectiveIsNsfw === true || sensitivityUnknown || !localNodeClassificationKnown,
+        nodeIsNsfw: effectiveNodeIsNsfw ?? localNodeIsNsfw,
         localNodeIsNsfw,
         viewer: user,
     });

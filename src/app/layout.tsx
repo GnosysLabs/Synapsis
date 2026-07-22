@@ -57,6 +57,7 @@ import { ToastProvider } from '@/lib/contexts/ToastContext';
 import { DialogProvider } from '@/lib/contexts/DialogContext';
 import { AccentColorProvider } from '@/lib/contexts/AccentColorContext';
 import { ConfigProvider } from '@/lib/contexts/ConfigContext';
+import { ProfilePresentationProvider } from '@/lib/contexts/ProfilePresentationContext';
 import { LayoutWrapper } from '@/components/LayoutWrapper';
 
 export default function RootLayout({
@@ -69,15 +70,17 @@ export default function RootLayout({
       <body>
         <ConfigProvider>
           <AuthProvider>
-            <AccentColorProvider>
-              <DialogProvider>
-                <ToastProvider>
-                  <LayoutWrapper>
-                    {children}
-                  </LayoutWrapper>
-                </ToastProvider>
-              </DialogProvider>
-            </AccentColorProvider>
+            <ProfilePresentationProvider>
+              <AccentColorProvider>
+                <DialogProvider>
+                  <ToastProvider>
+                    <LayoutWrapper>
+                      {children}
+                    </LayoutWrapper>
+                  </ToastProvider>
+                </DialogProvider>
+              </AccentColorProvider>
+            </ProfilePresentationProvider>
           </AuthProvider>
         </ConfigProvider>
       </body>
