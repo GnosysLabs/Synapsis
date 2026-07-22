@@ -301,7 +301,10 @@ export async function GET(request: Request) {
                             const remoteUser: SearchUser = {
                                 id: `swarm:${parsedRemote.domain}:${parsedRemote.handle}`,
                                 handle: fullHandle,
-                                displayName: canAccessProfile ? profile.displayName || parsedRemote.handle : parsedRemote.handle,
+                                // The display name is public identity metadata, even when the
+                                // rest of an adult profile is restricted. Keep its authored
+                                // casing while continuing to hide sensitive presentation fields.
+                                displayName: profile.displayName || parsedRemote.handle,
                                 avatarUrl: canAccessProfile ? profile.avatarUrl || null : null,
                                 bio: canAccessProfile ? profile.bio || null : null,
                                 profileUrl: `https://${parsedRemote.domain}/@${parsedRemote.handle}`,

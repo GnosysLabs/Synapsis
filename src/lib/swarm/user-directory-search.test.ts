@@ -14,6 +14,7 @@ vi.mock('drizzle-orm', () => {
         eq: expression('eq'),
         gte: expression('gte'),
         inArray: mocks.inArray,
+        isNotNull: expression('isNotNull'),
         isNull: expression('isNull'),
         like: expression('like'),
         or: expression('or'),
@@ -23,6 +24,13 @@ vi.mock('drizzle-orm', () => {
 vi.mock('@/db', () => ({
     db: { select: mocks.select },
     handleRegistry: { handle: 'handle', nodeDomain: 'nodeDomain', deletedAt: 'deletedAt' },
+    users: {
+        handle: 'users.handle',
+        displayName: 'users.displayName',
+        isLocalAccount: 'users.isLocalAccount',
+        profileVersion: 'users.profileVersion',
+        profileDocumentJson: 'users.profileDocumentJson',
+    },
     swarmNodes: {
         domain: 'swarmNodes.domain',
         isActive: 'swarmNodes.isActive',
@@ -64,6 +72,10 @@ describe('searchKnownSwarmUsers', () => {
                 domain: 'rprh.link',
                 isNsfw: true,
                 nsfwClassificationKnown: true,
+            }]))
+            .mockReturnValueOnce(registryQuery([{
+                handle: 'theredpillgod@rprh.link',
+                displayName: 'The Red Pill God',
             }]));
         mocks.fetchDirectory.mockResolvedValue([{
             handle: 'theredpillgod@rprh.link',
@@ -94,7 +106,30 @@ describe('searchKnownSwarmUsers', () => {
         );
     });
 
-    it('keeps the full handle out of the display-name fallback', async () => {
+    it('uses a signed cached display name when directory enrichment is unavailable', async () => {
+        mocks.fetchDirectory.mockResolvedValue([]);
+
+        await expect(searchKnownSwarmUsers('theredpillgod', {
+            limit: 8,
+            localDomain: 'local.com',
+        })).resolves.toMatchObject([{
+            handle: 'theredpillgod@rprh.link',
+            displayName: 'The Red Pill God',
+        }]);
+    });
+
+    it('keeps the full handle out of the last-resort display-name fallback', async () => {
+        mocks.select.mockReset();
+        mocks.select
+            .mockReturnValueOnce(registryQuery([
+                { handle: 'theredpillgod@rprh.link', nodeDomain: 'rprh.link' },
+            ]))
+            .mockReturnValueOnce(registryQuery([{
+                domain: 'rprh.link',
+                isNsfw: true,
+                nsfwClassificationKnown: true,
+            }]))
+            .mockReturnValueOnce(registryQuery([]));
         mocks.fetchDirectory.mockResolvedValue([]);
 
         await expect(searchKnownSwarmUsers('theredpillgod', {

@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
     postFindMany: vi.fn(),
     getCachedSwarmTimeline: vi.fn(),
     searchIndexedPostIds: vi.fn(),
+    canAccessRemoteProfile: vi.fn(),
+    fetchSwarmUserProfile: vi.fn(),
+    isSwarmNode: vi.fn(),
 }));
 
 function queryBuilder(rows: unknown[]) {
@@ -63,7 +66,7 @@ vi.mock('@/lib/nsfw/content-visibility', () => ({
     redactSensitiveUserSummary: vi.fn((user) => user),
 }));
 vi.mock('@/lib/nsfw/remote-profile-access', () => ({
-    canCurrentViewerAccessSensitiveRemoteProfile: vi.fn(),
+    canCurrentViewerAccessSensitiveRemoteProfile: mocks.canAccessRemoteProfile,
 }));
 vi.mock('@/lib/swarm/user-directory-search', () => ({
     searchKnownSwarmUsers: mocks.searchKnownUsers,
@@ -75,10 +78,11 @@ vi.mock('@/lib/search/post-index', () => ({
     searchIndexedPostIds: mocks.searchIndexedPostIds,
 }));
 vi.mock('@/lib/swarm/interactions', () => ({
-    fetchSwarmUserProfile: vi.fn(),
-    isSwarmNode: vi.fn(),
+    fetchSwarmUserProfile: mocks.fetchSwarmUserProfile,
+    isSwarmNode: mocks.isSwarmNode,
 }));
 vi.mock('@/lib/swarm/transient-node-probe', () => ({ probeTransientNode: vi.fn() }));
+vi.mock('@/lib/swarm/node-blocklist', () => ({ getBlockedNodeDomains: vi.fn().mockResolvedValue(new Set()) }));
 
 import { GET } from './route';
 
@@ -109,6 +113,9 @@ describe('GET /api/search swarm users', () => {
             fetchedAt: '2026-07-18T00:00:00.000Z',
             continuationDate: null,
         });
+        mocks.canAccessRemoteProfile.mockResolvedValue(false);
+        mocks.isSwarmNode.mockResolvedValue(true);
+        mocks.fetchSwarmUserProfile.mockResolvedValue(null);
     });
 
     it('finds an exact remote username without requiring its node domain', async () => {
@@ -196,5 +203,40 @@ describe('GET /api/search swarm users', () => {
             excludeDomains: Set<string>;
         };
         expect(options.excludeDomains).toContain('local.com');
+    });
+
+    it('preserves a restricted remote profile display name while hiding sensitive fields', async () => {
+        mocks.fetchSwarmUserProfile.mockResolvedValue({
+            profile: {
+                handle: 'bubbabator@batorbros.bond',
+                displayName: 'BubbaBator',
+                avatarUrl: 'https://batorbros.bond/avatar.jpg',
+                bio: 'restricted bio',
+                isNsfw: true,
+                nodeIsNsfw: true,
+                profilePresentationVerified: true,
+            },
+            posts: [],
+            nodeDomain: 'batorbros.bond',
+        });
+
+        const response = await GET(new Request(
+            'https://local.com/api/search?q=bubbabator%40batorbros.bond&type=users',
+        ));
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({
+            users: [{
+                handle: 'bubbabator@batorbros.bond',
+                displayName: 'BubbaBator',
+                avatarUrl: null,
+                bio: null,
+            }],
+            posts: [],
+        });
+        expect(mocks.canAccessRemoteProfile).toHaveBeenCalledWith({
+            accountIsNsfw: true,
+            nodeIsNsfw: true,
+        });
     });
 });

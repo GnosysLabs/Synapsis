@@ -1,6 +1,6 @@
-import { and, asc, eq, inArray, isNull, like } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, like } from 'drizzle-orm';
 
-import { db, handleRegistry, swarmNodes } from '@/db';
+import { db, handleRegistry, swarmNodes, users } from '@/db';
 import { liveHandleRegistryEntryWhere } from '@/lib/federation/handles';
 import { getSwarmSeedDomainAliases } from '@/lib/swarm/node-domain';
 import {
@@ -105,6 +105,29 @@ export async function searchKnownSwarmUsers(
         return leftExact - rightExact || left.handle.localeCompare(right.handle);
     }).slice(0, options.limit);
 
+    // A directory timeout should not erase the authored casing of a display
+    // name we have already verified. Only profile-document-backed remote rows
+    // are trusted here; legacy node hints remain handle-only fallbacks.
+    const cachedPresentations = candidates.length > 0
+        ? await db.select({
+            handle: users.handle,
+            displayName: users.displayName,
+        })
+            .from(users)
+            .where(and(
+                inArray(users.handle, candidates.map((candidate) => candidate.handle)),
+                eq(users.isLocalAccount, false),
+                isNotNull(users.profileVersion),
+                isNotNull(users.profileDocumentJson),
+            ))
+        : [];
+    const cachedDisplayNameByHandle = new Map(
+        cachedPresentations.flatMap((user) => {
+            const displayName = user.displayName?.trim();
+            return displayName ? [[user.handle.toLowerCase(), displayName] as const] : [];
+        }),
+    );
+
     // Enrichment is bounded by the result set, not by the size of the swarm.
     const domains = [...new Set(candidates.map((candidate) => candidate.nodeDomain))];
     const enriched = (await Promise.all(domains.map((domain) => {
@@ -119,7 +142,13 @@ export async function searchKnownSwarmUsers(
         enriched.map((user) => [user.handle.toLowerCase(), user]),
     );
 
-    return candidates.map((candidate) => (
-        enrichedByHandle.get(candidate.handle.toLowerCase()) ?? candidate
-    ));
+    return candidates.map((candidate) => {
+        const handle = candidate.handle.toLowerCase();
+        const enrichedUser = enrichedByHandle.get(handle);
+        const cachedDisplayName = cachedDisplayNameByHandle.get(handle);
+        if (enrichedUser) return enrichedUser;
+        return cachedDisplayName
+            ? { ...candidate, displayName: cachedDisplayName }
+            : candidate;
+    });
 }
