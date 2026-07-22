@@ -6,7 +6,6 @@ import { useEffect, useState } from 'react';
 import { ArrowUpRight, Download, Smartphone } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { getSafeIosPublicUrl } from '@/lib/platform/ios-web-funnel';
-import { SignalField } from '@/components/SignalField';
 
 type NodeInfo = {
     name: string;
@@ -57,7 +56,6 @@ export function IosAppHandoff() {
     if (loading || !nodeInfo) {
         return (
             <main className="ios-handoff-page app-handoff-loading" role="status" aria-label="Checking your account">
-                <SignalField />
                 <div className="app-handoff-loading-spinner" />
             </main>
         );
@@ -80,7 +78,6 @@ export function IosAppHandoff() {
     if (!user) {
         return (
             <main className="ios-handoff-page">
-                <SignalField />
                 <section className="ios-handoff-content">
                     {nodeIdentity}
                     <p className="ios-handoff-eyebrow">iPhone account setup</p>
@@ -99,7 +96,6 @@ export function IosAppHandoff() {
 
     return (
         <main className="ios-handoff-page">
-            <SignalField />
             <section className="ios-handoff-content">
                 {nodeIdentity}
                 <p className="ios-handoff-eyebrow">Account ready</p>
