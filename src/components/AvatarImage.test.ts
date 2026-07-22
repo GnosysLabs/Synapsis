@@ -4,6 +4,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     user: null as null | { nsfwEnabled: boolean; ageVerifiedAt?: string | null },
+    presentation: undefined as undefined | null | {
+        handle: string;
+        displayName: string;
+        avatarUrl: string | null;
+        did: string | null;
+        nodeDomain: string;
+        stuffboxBadge: null;
+        profilePresentationVerified: true;
+        profileVersion: number | null;
+    },
     config: {
         domain: 'local.example',
         isNsfw: false,
@@ -20,10 +30,15 @@ vi.mock('@/lib/contexts/ConfigContext', () => ({
     useDomain: () => mocks.config.domain,
 }));
 
+vi.mock('@/lib/contexts/ProfilePresentationContext', () => ({
+    useProfilePresentation: () => mocks.presentation,
+}));
+
 import { AvatarImage, getDiceBearAvatarSeed, getDiceBearAvatarUrl } from './AvatarImage';
 
 beforeEach(() => {
     mocks.user = null;
+    mocks.presentation = undefined;
     mocks.config.domain = 'local.example';
     mocks.config.isNsfw = false;
     mocks.config.classificationKnown = true;
@@ -111,6 +126,47 @@ describe('getDiceBearAvatarUrl', () => {
         }));
 
         expect(html).toContain(privateUrl);
+    });
+
+    it('keeps a federated payload avatar when the registry has no verified presentation', () => {
+        const payloadAvatar = 'https://stuffbox.xyz/f/remote-avatar';
+        mocks.presentation = null;
+
+        const html = renderToStaticMarkup(createElement(AvatarImage, {
+            avatarUrl: payloadAvatar,
+            seed: 'remote@remote.example',
+            nodeDomain: 'remote.example',
+            isNsfw: false,
+            nodeIsNsfw: false,
+        }));
+
+        expect(html).toContain(payloadAvatar);
+        expect(html).not.toContain('/avatar?seed=');
+    });
+
+    it('honors a verified registry entry that explicitly removed its avatar', () => {
+        const stalePayloadAvatar = 'https://stuffbox.xyz/f/stale-avatar';
+        mocks.presentation = {
+            handle: 'remote@remote.example',
+            displayName: 'Remote',
+            avatarUrl: null,
+            did: 'did:key:remote',
+            nodeDomain: 'remote.example',
+            stuffboxBadge: null,
+            profilePresentationVerified: true,
+            profileVersion: 2,
+        };
+
+        const html = renderToStaticMarkup(createElement(AvatarImage, {
+            avatarUrl: stalePayloadAvatar,
+            seed: 'remote@remote.example',
+            nodeDomain: 'remote.example',
+            isNsfw: false,
+            nodeIsNsfw: false,
+        }));
+
+        expect(html).not.toContain(stalePayloadAvatar);
+        expect(html).toContain('/avatar?seed=');
     });
 
     it('still rejects an eligible remote avatar hosted by the peer in production', () => {

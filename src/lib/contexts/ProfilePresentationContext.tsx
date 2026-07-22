@@ -51,6 +51,8 @@ function normalizePresentation(value: PresentationInput): ProfilePresentation | 
 
 export function ProfilePresentationProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
+  // undefined means not looked up yet; null means the lookup found no verified
+  // overlay. Neither state is a verified claim that the account has no avatar.
   const entriesRef = useRef(new Map<string, ProfilePresentation | null>());
   const queuedRef = useRef(new Set<string>());
   const inFlightRef = useRef(new Set<string>());
@@ -192,9 +194,5 @@ export function useProfilePresentation(handle: string, nodeDomain?: string | nul
   useEffect(() => {
     if (canonical) registry.ensurePresentation(canonical);
   }, [canonical, registry]);
-  const presentation = canonical ? registry.getPresentation(canonical) : undefined;
-  return {
-    presentation,
-    resolved: presentation !== undefined,
-  };
+  return canonical ? registry.getPresentation(canonical) : undefined;
 }

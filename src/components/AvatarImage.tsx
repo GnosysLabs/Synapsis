@@ -49,14 +49,14 @@ export function AvatarImage({ avatarUrl, seed, isNsfw, nodeIsNsfw, nodeDomain, a
     const { user } = useAuth();
     const { config } = useRuntimeConfig();
     const localNodeDomain = useDomain();
-    const { presentation, resolved } = useProfilePresentation(
+    const presentation = useProfilePresentation(
         seed,
         nodeDomain || localNodeDomain,
     );
-    // Props are an immediate rendering hint only. Once the shared registry has
-    // answered, every AvatarImage in the application uses the same verified
-    // account presentation instead of keeping feature-local avatar copies.
-    const effectiveAvatarUrl = resolved ? presentation?.avatarUrl ?? null : avatarUrl;
+    // A verified registry entry is authoritative, including an explicit null
+    // when the user removed their avatar. A missing/unverified registry entry
+    // must not erase a usable avatar already carried by a federated payload.
+    const effectiveAvatarUrl = presentation ? presentation.avatarUrl : avatarUrl;
     const effectiveNodeDomain = presentation?.nodeDomain || nodeDomain;
     const effectiveIsNsfw = presentation?.isNsfw ?? isNsfw;
     const effectiveNodeIsNsfw = presentation?.nodeIsNsfw ?? nodeIsNsfw;
