@@ -10,6 +10,7 @@ import {
 import { requireLocalNodeNsfwClassification } from '@/lib/node/local-node';
 import { shouldIncludeNsfwFeed } from '@/lib/nsfw/feed-access';
 import { storedProfilePresentation } from '@/lib/profile/stored-presentation';
+import { getKnownSwarmNodeNsfwByDomain } from '@/lib/swarm/registry';
 
 const requestSchema = z.object({
   handles: z.array(z.string().min(1).max(320)).min(1).max(100),
@@ -59,11 +60,20 @@ export async function POST(request: Request) {
       })
       .from(users)
       .where(inArray(users.handle, handles));
+    const remoteDomains = new Set(storedUsers.flatMap((user) => {
+      const address = resolveAccountAddress(user.handle, user.homeDomain || localNodeDomain);
+      return address && address.homeDomain !== localNodeDomain ? [address.homeDomain] : [];
+    }));
+    const nodeNsfwByDomain = await getKnownSwarmNodeNsfwByDomain(remoteDomains);
     const presentations = storedUsers.flatMap((user) => {
+      const address = resolveAccountAddress(user.handle, user.homeDomain || localNodeDomain);
       const presentation = storedProfilePresentation(user, {
         localNodeDomain,
         localNodeIsNsfw,
         canViewSensitive,
+        remoteNodeIsNsfw: address
+          ? nodeNsfwByDomain.get(address.homeDomain)
+          : undefined,
       });
       return presentation ? [presentation] : [];
     });

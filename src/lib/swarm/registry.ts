@@ -5,7 +5,7 @@
  */
 
 import { db, media, posts, remotePosts, swarmContentSyncStates, swarmNodes, swarmSeeds, swarmSyncLog, users } from '@/db';
-import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { SwarmNodeInfo, SwarmSyncResult } from './types';
 import { SWARM_CONFIG, DEFAULT_SEED_NODES } from './types';
 import {
@@ -301,6 +301,32 @@ export async function getKnownSwarmNodeNsfw(domain: string): Promise<boolean | u
   if (!node) return undefined;
   if (node.isNsfw) return true;
   return node.nsfwClassificationKnown ? false : undefined;
+}
+
+/** Batch form for presentation/feed paths that must not lose a known-safe false. */
+export async function getKnownSwarmNodeNsfwByDomain(
+  domains: Iterable<string | null | undefined>,
+): Promise<Map<string, boolean>> {
+  if (!db) return new Map();
+  const normalizedDomains = [...new Set([...domains].flatMap((domain) => {
+    const normalized = domain ? getPublicSwarmDomain(domain) : null;
+    return normalized ? [normalized] : [];
+  }))];
+  if (normalizedDomains.length === 0) return new Map();
+  const rows = await db
+    .select({
+      domain: swarmNodes.domain,
+      isNsfw: swarmNodes.isNsfw,
+      known: swarmNodes.nsfwClassificationKnown,
+    })
+    .from(swarmNodes)
+    .where(inArray(swarmNodes.domain, normalizedDomains));
+  const classifications = new Map<string, boolean>();
+  for (const node of rows) {
+    if (node.isNsfw) classifications.set(node.domain, true);
+    else if (node.known) classifications.set(node.domain, false);
+  }
+  return classifications;
 }
 
 /**

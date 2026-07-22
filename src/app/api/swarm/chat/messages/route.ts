@@ -21,6 +21,7 @@ import {
 } from '@/lib/identity/account-address';
 import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 import { storedProfilePresentation } from '@/lib/profile/stored-presentation';
+import { getKnownSwarmNodeNsfwByDomain } from '@/lib/swarm/registry';
 
 // Schema for query parameters
 const messagesQuerySchema = z.object({
@@ -127,6 +128,14 @@ export async function GET(request: NextRequest) {
         .map(canonicalAccountHomeDomain)
         .filter((domain): domain is string => Boolean(domain)),
     );
+    const senderNodeDomains = new Set(messages.flatMap((message) => {
+      const address = resolveAccountAddress(
+        message.senderHandle,
+        message.senderNodeDomain || localDomain,
+      );
+      return address && address.homeDomain !== localDomain ? [address.homeDomain] : [];
+    }));
+    const nodeNsfwByDomain = await getKnownSwarmNodeNsfwByDomain(senderNodeDomains);
 
     const messagesMapped = messages.map((msg) => {
       const isSentByMe = msg.senderDid === session.user.did || msg.senderHandle === session.user.handle;
@@ -159,6 +168,9 @@ export async function GET(request: NextRequest) {
             localNodeDomain: localDomain,
             localNodeIsNsfw,
             canViewSensitive,
+            remoteNodeIsNsfw: senderDomain
+              ? nodeNsfwByDomain.get(senderDomain)
+              : undefined,
           })
         : null) ?? redactSensitiveUserSummary({
           handle: canonicalSenderHandle,

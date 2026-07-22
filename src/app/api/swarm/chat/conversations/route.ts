@@ -20,6 +20,7 @@ import {
 } from '@/lib/identity/account-address';
 import { getBlockedNodeDomains } from '@/lib/swarm/node-blocklist';
 import { storedProfilePresentation } from '@/lib/profile/stored-presentation';
+import { getKnownSwarmNodeNsfwByDomain } from '@/lib/swarm/registry';
 
 const conversationsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -69,6 +70,7 @@ export async function GET(request: NextRequest) {
 
     const conversationIds = conversations.map((conversation) => conversation.id);
     const participantLookupHandles = new Set<string>();
+    const participantNodeDomains = new Set<string>();
     const latestSenderDids = new Set<string>();
     const localNodeDomain = requireCanonicalAccountHomeDomain(
       process.env.NEXT_PUBLIC_NODE_DOMAIN || 'localhost:43821',
@@ -78,7 +80,12 @@ export async function GET(request: NextRequest) {
         conversation.participant2Handle,
         localNodeDomain,
       );
-      if (participantAddress) participantLookupHandles.add(participantAddress.canonical);
+      if (participantAddress) {
+        participantLookupHandles.add(participantAddress.canonical);
+        if (participantAddress.homeDomain !== localNodeDomain) {
+          participantNodeDomains.add(participantAddress.homeDomain);
+        }
+      }
     }
 
     // The inbox must be local-data-only. The previous implementation issued an
@@ -86,7 +93,7 @@ export async function GET(request: NextRequest) {
     // for every row. A single unavailable peer could therefore block the entire
     // response. Batch local metadata here; independent federation paths refresh
     // the remote-user cache without being on the inbox critical path.
-    const [unreadRows, latestMessages, blockedDomains] = await Promise.all([
+    const [unreadRows, latestMessages, blockedDomains, nodeNsfwByDomain] = await Promise.all([
       conversationIds.length > 0
         ? db
           .select({
@@ -117,6 +124,7 @@ export async function GET(request: NextRequest) {
           ))
         : Promise.resolve([]),
       getBlockedNodeDomains(),
+      getKnownSwarmNodeNsfwByDomain(participantNodeDomains),
     ]);
     const canonicalBlockedDomains = new Set(
       [...blockedDomains]
@@ -185,6 +193,9 @@ export async function GET(request: NextRequest) {
               localNodeDomain,
               localNodeIsNsfw,
               canViewSensitive,
+              remoteNodeIsNsfw: participantDomain
+                ? nodeNsfwByDomain.get(participantDomain)
+                : undefined,
             })
           : null) ?? redactSensitiveUserSummary({
               handle: participant2Handle,

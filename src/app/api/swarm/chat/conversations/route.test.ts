@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   findConversations: vi.fn(),
   getSession: vi.fn(),
   getBlockedNodeDomains: vi.fn(),
+  getKnownSwarmNodeNsfwByDomain: vi.fn(),
   select: vi.fn(),
 }));
 
@@ -16,6 +17,10 @@ vi.mock('@/lib/node/local-node', () => ({
 
 vi.mock('@/lib/swarm/node-blocklist', () => ({
   getBlockedNodeDomains: mocks.getBlockedNodeDomains,
+}));
+
+vi.mock('@/lib/swarm/registry', () => ({
+  getKnownSwarmNodeNsfwByDomain: mocks.getKnownSwarmNodeNsfwByDomain,
 }));
 
 vi.mock('@/db', async () => {
@@ -65,6 +70,9 @@ describe('GET /api/swarm/chat/conversations', () => {
       },
     });
     mocks.getBlockedNodeDomains.mockResolvedValue(new Set());
+    mocks.getKnownSwarmNodeNsfwByDomain.mockImplementation(async (domains: Set<string>) => (
+      new Map([...domains].map((domain) => [domain, false]))
+    ));
   });
 
   it('batches local metadata and never contacts remote nodes on the inbox path', async () => {
@@ -89,11 +97,12 @@ describe('GET /api/swarm/chat/conversations', () => {
         {
           handle: 'alice@offline.example',
           displayName: 'Alice',
-          avatarUrl: null,
+          avatarUrl: 'https://offline.example/alice.jpg',
           did: 'did:key:alice',
           publicKey: 'alice-signing-key',
           homeDomain: 'offline.example',
           isLocalAccount: false,
+          isNsfw: false,
           profileVersion: 500,
           profileDocumentJson: '{"signed":true}',
         },
@@ -124,7 +133,12 @@ describe('GET /api/swarm/chat/conversations', () => {
     expect(body.conversations).toMatchObject([
       {
         id: 'remote-conversation',
-        participant2: { handle: 'alice@offline.example', displayName: 'Alice' },
+        participant2: {
+          handle: 'alice@offline.example',
+          displayName: 'Alice',
+          avatarUrl: 'https://offline.example/alice.jpg',
+          nodeIsNsfw: false,
+        },
         unreadCount: 2,
       },
       {

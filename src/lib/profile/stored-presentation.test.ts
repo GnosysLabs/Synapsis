@@ -48,6 +48,20 @@ describe('storedProfilePresentation', () => {
     });
   });
 
+  it('keeps a verified safe-node avatar visible when the viewer disables NSFW', () => {
+    expect(storedProfilePresentation(baseRemoteUser, {
+      localNodeDomain: 'local.example',
+      localNodeIsNsfw: false,
+      canViewSensitive: false,
+      remoteNodeIsNsfw: false,
+    })).toMatchObject({
+      displayName: 'Alice McExample',
+      avatarUrl: 'https://remote.example/avatar.jpg',
+      nodeIsNsfw: false,
+      profilePresentationVerified: true,
+    });
+  });
+
   it('redacts sensitive avatar media without replacing the signed display name', () => {
     expect(storedProfilePresentation({
       ...baseRemoteUser,

@@ -49,10 +49,12 @@ export function storedProfilePresentation(
     localNodeDomain: localNodeDomainInput,
     localNodeIsNsfw,
     canViewSensitive,
+    remoteNodeIsNsfw,
   }: {
     localNodeDomain: string;
     localNodeIsNsfw: boolean;
     canViewSensitive: boolean;
+    remoteNodeIsNsfw?: boolean;
   },
 ): ProfilePresentation | null {
   const localNodeDomain = requireCanonicalAccountHomeDomain(localNodeDomainInput);
@@ -78,7 +80,7 @@ export function storedProfilePresentation(
         ? user.isNsfw
         : undefined
       : user.isNsfw ?? false,
-    nodeIsNsfw: isRemote ? undefined : localNodeIsNsfw,
+    nodeIsNsfw: isRemote ? remoteNodeIsNsfw : localNodeIsNsfw,
     stuffboxBadge: stuffboxBadgeFromStoredUser(user),
   }, canViewSensitive);
 
