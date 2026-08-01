@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { ArrowUpRight, Download, TriangleAlert, X } from 'lucide-react';
+import { Download, TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { completePostSignInNavigation } from '@/lib/auth/post-sign-in-navigation';
 import { getIosAppStoreUrl, getSafeIosPublicUrl } from '@/lib/platform/ios-web-funnel';
@@ -452,8 +452,7 @@ export function AuthScreen({
                                         rel="noreferrer"
                                     >
                                         <Download size={18} />
-                                        <span>Download Synapsis for iPhone</span>
-                                        <ArrowUpRight size={15} />
+                                        <span>Download for iOS</span>
                                     </a>
                                 </>
                             ) : (
@@ -954,7 +953,7 @@ export function AuthScreen({
                                 target={iosAppUrl ? undefined : '_blank'}
                                 rel={iosAppUrl ? undefined : 'noreferrer'}
                             >
-                                {iosAppUrl ? 'Open Synapsis' : 'Download Synapsis for iPhone'}
+                                {iosAppUrl ? 'Open Synapsis' : 'Download for iOS'}
                             </a>
                         ) : (
                             'Sign in inside the Synapsis app.'
