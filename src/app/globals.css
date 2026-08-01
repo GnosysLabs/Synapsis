@@ -248,7 +248,7 @@ body {
 
 .ios-auth-funnel .auth-screen-header {
   min-height: 0;
-  margin-bottom: 24px;
+  margin-bottom: 23px;
 }
 
 .ios-auth-funnel .auth-node-logo {
@@ -286,7 +286,7 @@ body {
   width: 100%;
   max-width: 360px;
   min-height: 52px;
-  margin-top: 28px;
+  margin-top: 23px;
   border-radius: 10px;
   font-size: 15px;
   font-weight: 700;
