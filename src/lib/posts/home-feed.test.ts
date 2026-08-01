@@ -8,10 +8,10 @@ import {
 } from './home-feed';
 
 describe('home feed defaults', () => {
-    it('opens signed-in Home on For You by default', () => {
-        expect(DEFAULT_HOME_FEED).toBe('forYou');
-        expect(HOME_FEED_LABELS[DEFAULT_HOME_FEED]).toBe('For You');
-        expect(HOME_FEED_API_TYPES[DEFAULT_HOME_FEED]).toBe('for-you');
+    it('opens signed-in Home on the joined node by default', () => {
+        expect(DEFAULT_HOME_FEED).toBe('node');
+        expect(HOME_FEED_LABELS[DEFAULT_HOME_FEED]).toBe('Node');
+        expect(HOME_FEED_API_TYPES[DEFAULT_HOME_FEED]).toBe('local');
     });
 
     it('maps Following to the personalized home timeline', () => {
@@ -19,9 +19,9 @@ describe('home feed defaults', () => {
         expect(HOME_FEED_API_TYPES.following).toBe('home');
     });
 
-    it('keeps transparent Node and Following alternatives beside For You', () => {
-        expect(Object.keys(HOME_FEED_LABELS)).toEqual(['forYou', 'node', 'following']);
-        expect(Object.values(HOME_FEED_API_TYPES)).toEqual(['for-you', 'local', 'home']);
+    it('places For You between Node and Following', () => {
+        expect(Object.keys(HOME_FEED_LABELS)).toEqual(['node', 'forYou', 'following']);
+        expect(Object.values(HOME_FEED_API_TYPES)).toEqual(['local', 'for-you', 'home']);
     });
 
     it('sends signed-out visitors to the node feed', () => {

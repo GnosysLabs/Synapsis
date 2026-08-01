@@ -285,20 +285,20 @@ export default function Home() {
           {user && (
             <div className="feed-toggle" role="tablist" aria-label="Home feed">
               <button
-                className={`feed-toggle-btn ${activeFeedType === 'forYou' ? 'active' : ''}`}
-                onClick={() => setFeedType('forYou')}
-                role="tab"
-                aria-selected={activeFeedType === 'forYou'}
-              >
-                {HOME_FEED_LABELS.forYou}
-              </button>
-              <button
                 className={`feed-toggle-btn ${activeFeedType === 'node' ? 'active' : ''}`}
                 onClick={() => setFeedType('node')}
                 role="tab"
                 aria-selected={activeFeedType === 'node'}
               >
                 {HOME_FEED_LABELS.node}
+              </button>
+              <button
+                className={`feed-toggle-btn ${activeFeedType === 'forYou' ? 'active' : ''}`}
+                onClick={() => setFeedType('forYou')}
+                role="tab"
+                aria-selected={activeFeedType === 'forYou'}
+              >
+                {HOME_FEED_LABELS.forYou}
               </button>
               <button
                 className={`feed-toggle-btn ${activeFeedType === 'following' ? 'active' : ''}`}
