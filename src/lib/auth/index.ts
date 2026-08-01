@@ -20,7 +20,10 @@ import type { StuffboxBadge } from '@/lib/types';
 
 const ACTIVE_SESSION_COOKIE_NAME = 'synapsis_session';
 const SESSION_COOKIE_NAME = 'synapsis_sessions';
-const SESSION_EXPIRY_DAYS = 3650;
+// Sessions remain valid until their database record is explicitly revoked.
+// Persistent browser cookies still require a finite date, so use a distant
+// horizon and renew it after every verified session read.
+const PERSISTENT_SESSION_HORIZON_DAYS = 3650;
 
 type SessionRecord = typeof sessions.$inferSelect & {
     user: typeof users.$inferSelect;
@@ -85,7 +88,7 @@ async function writeSessionState(tokens: string[], activeToken?: string | null) 
     }
 
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + SESSION_EXPIRY_DAYS);
+    expiresAt.setDate(expiresAt.getDate() + PERSISTENT_SESSION_HORIZON_DAYS);
 
     const nextActiveToken = activeToken && dedupedTokens.includes(activeToken)
         ? activeToken
@@ -183,7 +186,7 @@ export async function createSession(userId: string): Promise<string> {
 
     const token = uuid();
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + SESSION_EXPIRY_DAYS);
+    expiresAt.setDate(expiresAt.getDate() + PERSISTENT_SESSION_HORIZON_DAYS);
 
     await db.insert(sessions).values({
         userId,

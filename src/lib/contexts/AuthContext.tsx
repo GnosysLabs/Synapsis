@@ -152,15 +152,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (blocksAppBootstrap) setLoading(true);
         try {
             const res = await fetch('/api/auth/me', { cache: 'no-store' });
-            const data = await res.json();
+            const data = await res.json() as {
+                user?: User | null;
+                accounts?: AuthAccount[];
+                error?: string;
+            };
             if (generation !== authGenerationRef.current) return;
+            if (!res.ok) {
+                throw new Error(data.error || `Session check failed (${res.status})`);
+            }
             await applyAuthState({
-                user: res.ok ? data.user ?? null : null,
-                accounts: res.ok ? data.accounts ?? [] : [],
+                user: data.user ?? null,
+                accounts: data.accounts ?? [],
             });
-        } catch {
+        } catch (error) {
             if (generation !== authGenerationRef.current) return;
-            await applyAuthState({ user: null, accounts: [] });
+            // A network or server failure is not proof that the session ended.
+            // Preserve the last verified account until the server explicitly
+            // confirms that this browser no longer has an active session.
+            console.warn('[Auth] Session refresh failed; retaining authentication state', error);
         } finally {
             if (generation === authGenerationRef.current) {
                 initialAuthResolvedRef.current = true;
@@ -432,7 +442,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         const refreshWhenActive = () => {
-            if (document.visibilityState === 'visible') void refreshStuffboxBadge();
+            if (document.visibilityState !== 'visible') return;
+            // A failed initial session lookup leaves the cookie untouched. Try
+            // it again when the user returns instead of stranding them on the
+            // signed-out screen until a full reload.
+            if (!user) {
+                void refreshAuth();
+                return;
+            }
+            void refreshStuffboxBadge();
         };
         window.addEventListener('focus', refreshWhenActive);
         document.addEventListener('visibilitychange', refreshWhenActive);
@@ -440,7 +458,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             window.removeEventListener('focus', refreshWhenActive);
             document.removeEventListener('visibilitychange', refreshWhenActive);
         };
-    }, [refreshStuffboxBadge]);
+    }, [refreshAuth, refreshStuffboxBadge, user]);
 
     const activeAccountId = user?.id ?? null;
 

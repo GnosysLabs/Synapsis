@@ -82,7 +82,10 @@ export async function GET() {
         });
     } catch (error) {
         console.error('Session check error:', error);
-        return NextResponse.json({ user: null, accounts: [] });
+        return NextResponse.json(
+            { error: 'Session check temporarily unavailable' },
+            { status: 503 },
+        );
     }
 }
 

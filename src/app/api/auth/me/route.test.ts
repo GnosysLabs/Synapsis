@@ -98,4 +98,17 @@ describe('GET /api/auth/me canonical account contract', () => {
             { force: true },
         );
     });
+
+    it('does not report a transient session lookup failure as a signed-out user', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        mocks.getSession.mockRejectedValueOnce(new Error('database temporarily unavailable'));
+
+        const response = await GET();
+
+        expect(response.status).toBe(503);
+        await expect(response.json()).resolves.toEqual({
+            error: 'Session check temporarily unavailable',
+        });
+        consoleError.mockRestore();
+    });
 });
