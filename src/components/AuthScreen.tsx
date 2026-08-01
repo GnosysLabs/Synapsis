@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { TriangleAlert, X } from 'lucide-react';
+import { ArrowUpRight, Download, TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { completePostSignInNavigation } from '@/lib/auth/post-sign-in-navigation';
 import { getIosAppStoreUrl, getSafeIosPublicUrl } from '@/lib/platform/ios-web-funnel';
@@ -445,6 +445,16 @@ export function AuthScreen({
                                     <p>
                                         {`Join ${nodeInfo.name || 'this node'} here, then continue in the Synapsis app.`}
                                     </p>
+                                    <a
+                                        className="btn btn-primary auth-ios-app-store"
+                                        href={iosAppStoreUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        <Download size={18} />
+                                        <span>Download Synapsis for iPhone</span>
+                                        <ArrowUpRight size={15} />
+                                    </a>
                                 </>
                             ) : (
                                 <>

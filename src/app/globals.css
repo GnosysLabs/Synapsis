@@ -282,6 +282,16 @@ body {
   line-height: 1.55;
 }
 
+.auth-ios-funnel .auth-ios-app-store {
+  width: 100%;
+  max-width: 360px;
+  min-height: 52px;
+  margin-top: 18px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .auth-ios-funnel .auth-card {
   border-radius: 16px;
 }
