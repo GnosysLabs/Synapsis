@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ArrowUpRight, Download, Smartphone } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
-import { getSafeIosPublicUrl } from '@/lib/platform/ios-web-funnel';
+import { getIosAppStoreUrl, getSafeIosPublicUrl } from '@/lib/platform/ios-web-funnel';
 
 type NodeInfo = {
     name: string;
@@ -20,7 +20,7 @@ export function IosAppHandoff() {
     const { user, loading } = useAuth();
     const [nodeInfo, setNodeInfo] = useState<NodeInfo | null>(null);
     const openAppUrl = getSafeIosPublicUrl(process.env.NEXT_PUBLIC_IOS_APP_URL, true);
-    const appStoreUrl = getSafeIosPublicUrl(process.env.NEXT_PUBLIC_IOS_APP_STORE_URL);
+    const appStoreUrl = getIosAppStoreUrl(process.env.NEXT_PUBLIC_IOS_APP_STORE_URL);
 
     useEffect(() => {
         let cancelled = false;
@@ -88,6 +88,14 @@ export function IosAppHandoff() {
                     <Link className="btn btn-primary ios-handoff-primary" href="/login?app=ios">
                         Create an account
                     </Link>
+                    <a
+                        className="btn btn-ghost ios-handoff-primary"
+                        href={appStoreUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                    >
+                        <Download size={18} /> Download Synapsis for iPhone <ArrowUpRight size={15} />
+                    </a>
                     <p className="ios-handoff-text-link">Already have an account? Sign in inside the app.</p>
                 </section>
             </main>
@@ -105,24 +113,22 @@ export function IosAppHandoff() {
                 </p>
 
                 <div className="ios-handoff-steps" aria-label="Next steps">
-                    <div><span>1</span><p>Return to or download the Synapsis app.</p></div>
+                    <div><span>1</span><p>Download Synapsis from the App Store.</p></div>
                     <div><span>2</span><p>Enter <strong>{nodeInfo.domain}</strong> in the Synapsis app and sign in.</p></div>
                 </div>
 
                 <div className="ios-handoff-actions">
+                    <a
+                        className="btn btn-primary ios-handoff-primary ios-handoff-app-store"
+                        href={appStoreUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                    >
+                        <Download size={19} /> Download Synapsis for iPhone <ArrowUpRight size={15} />
+                    </a>
                     {openAppUrl && (
-                        <a className="btn btn-primary ios-handoff-primary" href={openAppUrl}>
+                        <a className="btn btn-ghost ios-handoff-primary" href={openAppUrl}>
                             <Smartphone size={18} /> Open Synapsis
-                        </a>
-                    )}
-                    {appStoreUrl && (
-                        <a
-                            className={`btn ${openAppUrl ? 'btn-secondary' : 'btn-primary'} ios-handoff-primary`}
-                            href={appStoreUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                        >
-                            <Download size={18} /> Download on the App Store <ArrowUpRight size={15} />
                         </a>
                     )}
                 </div>

@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { TriangleAlert, X } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { completePostSignInNavigation } from '@/lib/auth/post-sign-in-navigation';
-import { getSafeIosPublicUrl } from '@/lib/platform/ios-web-funnel';
+import { getIosAppStoreUrl, getSafeIosPublicUrl } from '@/lib/platform/ios-web-funnel';
 
 const DEFAULT_NODE_DESCRIPTION = 'A swarm social network node.';
 
@@ -64,7 +64,7 @@ export function AuthScreen({
     const turnstileRef = useRef<HTMLDivElement>(null);
     const turnstileWidgetId = useRef<string | null>(null);
     const iosAppUrl = getSafeIosPublicUrl(process.env.NEXT_PUBLIC_IOS_APP_URL, true);
-    const iosAppStoreUrl = getSafeIosPublicUrl(process.env.NEXT_PUBLIC_IOS_APP_STORE_URL);
+    const iosAppStoreUrl = getIosAppStoreUrl(process.env.NEXT_PUBLIC_IOS_APP_STORE_URL);
     const existingAccountDestination = iosAppUrl || iosAppStoreUrl;
 
     const resetTurnstile = () => {
@@ -944,7 +944,7 @@ export function AuthScreen({
                                 target={iosAppUrl ? undefined : '_blank'}
                                 rel={iosAppUrl ? undefined : 'noreferrer'}
                             >
-                                {iosAppUrl ? 'Open Synapsis' : 'Download Synapsis'}
+                                {iosAppUrl ? 'Open Synapsis' : 'Download Synapsis for iPhone'}
                             </a>
                         ) : (
                             'Sign in inside the Synapsis app.'

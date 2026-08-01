@@ -197,11 +197,12 @@ The iOS app should open this node-relative URL when a user needs an account:
 https://NODE_DOMAIN/login?app=ios
 ```
 
-Set `NEXT_PUBLIC_IOS_APP_URL` to the app's `synapsis:` deep link or HTTPS
-universal link to show **Open Synapsis**. Set `NEXT_PUBLIC_IOS_APP_STORE_URL`
-once the listing is public to show **Download on the App Store**. If neither is
-set, the handoff remains functional and tells the user to close the page and
-return to the app manually. iPad and Android remain outside this first gate.
+The handoff always shows the official **Download Synapsis for iPhone** action,
+linked to the public App Store listing. Set `NEXT_PUBLIC_IOS_APP_URL` to the
+app's `synapsis:` deep link or HTTPS universal link to additionally show
+**Open Synapsis**. Forks can override the store destination with
+`NEXT_PUBLIC_IOS_APP_STORE_URL`. iPad and Android remain outside this first
+gate.
 
 ## Development
 

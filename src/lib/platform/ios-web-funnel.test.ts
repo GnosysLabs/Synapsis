@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
     getIPhoneWebDestination,
+    getIosAppStoreUrl,
     getSafeIosPublicUrl,
     IOS_ACCOUNT_SETUP_PATH,
     IOS_APP_HANDOFF_PATH,
+    IOS_APP_STORE_URL,
     isIPhoneUserAgent,
 } from './ios-web-funnel';
 
@@ -24,5 +26,13 @@ describe('iPhone web funnel', () => {
         expect(getSafeIosPublicUrl('https://apps.apple.com/app/id1')).toBe('https://apps.apple.com/app/id1');
         expect(getSafeIosPublicUrl('synapsis://', true)).toBe('synapsis://');
         expect(getSafeIosPublicUrl('javascript:alert(1)', true)).toBeNull();
+    });
+
+    it('uses the official App Store listing unless a safe override is configured', () => {
+        expect(getIosAppStoreUrl()).toBe(IOS_APP_STORE_URL);
+        expect(getIosAppStoreUrl('javascript:alert(1)')).toBe(IOS_APP_STORE_URL);
+        expect(getIosAppStoreUrl('https://apps.apple.com/ca/app/synapsis/id1')).toBe(
+            'https://apps.apple.com/ca/app/synapsis/id1',
+        );
     });
 });

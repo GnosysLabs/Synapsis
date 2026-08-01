@@ -1,5 +1,6 @@
 export const IOS_ACCOUNT_SETUP_PATH = '/login?app=ios';
 export const IOS_APP_HANDOFF_PATH = '/continue-in-app';
+export const IOS_APP_STORE_URL = 'https://apps.apple.com/us/app/synapsis-social/id6792197034';
 
 /**
  * iPad remains outside the first release gate intentionally. Apple can make
@@ -28,4 +29,8 @@ export function getSafeIosPublicUrl(
         // A missing or malformed release URL simply hides its button.
     }
     return null;
+}
+
+export function getIosAppStoreUrl(configuredUrl?: string): string {
+    return getSafeIosPublicUrl(configuredUrl) || IOS_APP_STORE_URL;
 }

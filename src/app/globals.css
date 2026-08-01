@@ -427,6 +427,12 @@ body {
   font-weight: 700;
 }
 
+.ios-handoff-primary.ios-handoff-app-store {
+  min-height: 58px;
+  font-size: 15px;
+  box-shadow: 0 12px 34px rgba(255, 255, 255, 0.12);
+}
+
 .ios-handoff-text-link {
   display: inline-block;
   margin-top: 16px;
