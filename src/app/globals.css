@@ -246,12 +246,12 @@ body {
   text-align: center;
 }
 
-.auth-ios-funnel .auth-screen-header {
+.ios-auth-funnel .auth-screen-header {
   min-height: 0;
   margin-bottom: 24px;
 }
 
-.auth-ios-funnel .auth-node-logo {
+.ios-auth-funnel .auth-node-logo {
   width: auto;
   max-width: 172px;
   height: auto;
@@ -269,20 +269,20 @@ body {
   text-transform: uppercase;
 }
 
-.auth-ios-funnel h1 {
+.ios-auth-funnel h1 {
   margin-bottom: 8px;
   font-size: clamp(28px, 8vw, 36px);
   line-height: 1.08;
   letter-spacing: -0.035em;
 }
 
-.auth-ios-funnel .auth-screen-header > p {
+.ios-auth-funnel .auth-screen-header > p {
   max-width: 360px;
   font-size: 15px;
   line-height: 1.55;
 }
 
-.auth-ios-funnel .auth-ios-app-store {
+.ios-auth-funnel .auth-ios-app-store {
   width: 100%;
   max-width: 360px;
   min-height: 52px;
@@ -292,11 +292,11 @@ body {
   font-weight: 700;
 }
 
-.auth-ios-funnel .auth-card {
+.ios-auth-funnel .auth-card {
   border-radius: 16px;
 }
 
-.auth-ios-funnel .auth-submit {
+.ios-auth-funnel .auth-submit {
   min-height: 52px;
   border-radius: 10px;
   font-size: 15px;
