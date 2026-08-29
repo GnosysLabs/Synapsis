@@ -86,7 +86,9 @@ export async function GET(request: NextRequest) {
     // Get messages
     const messages = await db.query.chatMessages.findMany({
       where: whereCondition,
-      orderBy: (chatMessages, { desc }) => [desc(chatMessages.createdAt)],
+      // Stabilize ordering when multiple messages share the same createdAt.
+      // Use a deterministic secondary sort key to avoid pagination gaps/dupes.
+      orderBy: (chatMessages, { desc }) => [desc(chatMessages.createdAt), desc(chatMessages.id)],
       limit,
     });
 
