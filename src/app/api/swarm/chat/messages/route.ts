@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db, chatMessages, users } from '@/db';
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, ne } from 'drizzle-orm';
 import { getSession } from '@/lib/auth';
 import { z } from 'zod';
 import { E2EE_CHAT_ACTION, E2EE_PROTOCOL_VERSION, e2eeMessageEnvelopeSchema } from '@/lib/e2ee/protocol';
@@ -86,7 +86,9 @@ export async function GET(request: NextRequest) {
     // Get messages
     const messages = await db.query.chatMessages.findMany({
       where: whereCondition,
-      orderBy: (chatMessages, { desc }) => [desc(chatMessages.createdAt)],
+      // Stabilize ordering when multiple messages share the same createdAt.
+      // Use a deterministic secondary sort key to avoid pagination gaps/dupes.
+      orderBy: (chatMessages, { desc }) => [desc(chatMessages.createdAt), desc(chatMessages.id)],
       limit,
     });
 
@@ -275,15 +277,14 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Conversation not found' }, { status: 404 });
     }
 
-    // Mark all unread messages as read
+    // Mark all unread messages from the other participant as read
     await db.update(chatMessages)
       .set({ readAt: new Date() })
-      .where(
-        and(
-          eq(chatMessages.conversationId, conversationId),
-          isNull(chatMessages.readAt)
-        )
-      );
+      .where(and(
+        eq(chatMessages.conversationId, conversationId),
+        isNull(chatMessages.readAt),
+        ne(chatMessages.senderHandle, session.user.handle),
+      ));
 
     return NextResponse.json({ success: true });
   } catch (error) {
